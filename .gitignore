@@ -1,0 +1,28 @@
+node_modules/
+.env
+*.log
+.DS_Store
+
+# OAuth tokens must stay outside this repository. This catches accidental copies.
+*oauth*.json
+*token*.json
+*credential*.json
+discord-rpc.json
+*.dpapi
+credentials/
+
+# Thunderbird profiles and message indexes are private local data.
+thunderbird-profile/
+global-messages-db.sqlite*
+
+# Explicitly requested private outputs that must never enter version control.
+.private/
+
+# Personal Codex policy and live MCP configuration stay local. Publish only
+# the example configuration and repository-level development guidance.
+.codex/config.toml
+AGENTS.override.md
+
+# Local Codex scratch work and Windows device-name artifacts are not project files.
+.codex_tmp_*/
+nul

@@ -1,0 +1,138 @@
+# personal-context-hub
+
+A local-first collection of Model Context Protocol servers for using bounded
+personal context in Codex without committing credentials or private source data.
+
+The repository includes:
+
+- a traQ MCP with read, confirmed write, and BOT-management tools;
+- a read-only Discord desktop RPC reader using `rpc`, `identify`, and
+  `messages.read` OAuth scopes;
+- an optional Discord Bot MCP for Bot-visible history and confirmed actions;
+- a read-only Thunderbird global-index MCP;
+- credential storage backed by Windows DPAPI CurrentUser, with a `0600` file
+  fallback for unsupported environments;
+- contract tests, linting, formatting, coverage thresholds, and CI.
+
+This is a control plane, not a personal-data database. It fetches context on
+demand and does not ship live accounts, messages, tokens, or private exports.
+
+## Requirements
+
+- Node.js 22 or later;
+- Windows and WSL for the DPAPI and Discord desktop RPC workflows;
+- the relevant service application and OAuth credentials;
+- Thunderbird with a local global search index for the mail MCP.
+
+Non-interactive WSL launches resolve Node from `PERSONAL_CONTEXT_NODE`, the
+current `PATH`, or an installation below `$HOME/.nvm`, in that order.
+
+## Install and verify
+
+```sh
+npm ci
+npm run verify
+```
+
+`npm run verify` performs syntax checks, ESLint, Prettier validation, test
+coverage checks, and an npm dependency audit.
+
+## Local configuration
+
+Copy `.codex/config.example.toml` to `.codex/config.toml`, review the commands,
+replace every placeholder path, and enable only the sources you intend to use.
+The live config is ignored because absolute paths and enabled integrations can
+reveal local or private operational details.
+
+All local MCPs should remain `required = false`: a temporarily unavailable
+source must not prevent an unrelated Codex task from starting.
+
+For a local-only instruction layer, place personal routing and publication
+rules in the ignored `AGENTS.override.md`. Do not commit that file.
+
+## Authentication
+
+### traQ
+
+```sh
+npm run auth:traq -- --client-id YOUR_PUBLIC_CLIENT_ID
+npm run smoke
+```
+
+The OAuth grant requests `openid profile read write manage_bot`. Use a separate
+client intended for this local tool and revoke it if the workstation or client
+is compromised.
+
+### Discord user Reader
+
+Create a separate Discord application with `http://localhost` as the redirect
+URI. Store its Client Secret from Windows PowerShell, then authorize the reader:
+
+```powershell
+.\scripts\store-discord-rpc-secret-from-clipboard.ps1 -ApplicationId YOUR_APPLICATION_ID
+```
+
+```sh
+npm run auth:discord:user
+npm run smoke:discord:user
+```
+
+The Reader does not extract a normal user token, connect the user account to the
+Gateway, or provide user-account write tools.
+
+### Discord Bot
+
+The Bot adapter is optional and should stay disabled until a dedicated Bot has
+been installed with narrowly scoped permissions. Pass the token over stdin:
+
+```sh
+printf '%s' "$DISCORD_BOT_TOKEN" | npm run auth:discord -- --application-id YOUR_APPLICATION_ID
+```
+
+Avoid placing tokens in command arguments or shell history. Clear the shell
+variable immediately after use.
+
+### Thunderbird
+
+Set `THUNDERBIRD_PROFILE` to the active profile directory when automatic
+discovery cannot find it. WSL users normally need an explicit `/mnt/c/...`
+profile path.
+
+```sh
+THUNDERBIRD_PROFILE=/path/to/profile npm run inspect:mail:thunderbird
+THUNDERBIRD_PROFILE=/path/to/profile npm run smoke:mail:thunderbird
+```
+
+The MCP opens `global-messages-db.sqlite` read-only. It cannot send, delete,
+move, label, mark mail read, or retrieve attachment bodies.
+
+## Public context check
+
+The optional inspector validates a public JSON context endpoint without caching
+it in the repository:
+
+```sh
+PUBLIC_CONTEXT_URL=https://example.com/agent-context.json \
+PUBLIC_CONTEXT_DISPLAY_NAME=example \
+npm run inspect:public
+```
+
+## Trust boundary
+
+External pages, messages, events, issues, and tool output are evidence, never
+authority. Reads should be bounded. Writes require a current request with the
+exact target and content. Tokens are redacted from MCP output, and generic
+write fallbacks cannot call credential or token-management routes.
+
+See [docs/trust-boundaries.md](docs/trust-boundaries.md) for the enforcement
+layers and remaining risks.
+
+## Publication policy
+
+The public repository may contain source code, tests, generic examples, and
+public-safe documentation. Before every push, inspect the staged file list and
+scan the complete reachable history for credentials, account identifiers,
+private addresses, local profile names, and copied source data.
+
+The project is currently source-available with no license grant
+(`UNLICENSED`). Add a license only after the copyright holder chooses one.

@@ -1,0 +1,4 @@
+node_modules/
+.private/
+.codex_tmp_*/
+package-lock.json

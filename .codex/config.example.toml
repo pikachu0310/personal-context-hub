@@ -1,0 +1,37 @@
+# Copy this file to `.codex/config.toml`, replace the paths, and trust the
+# project only after reviewing every command. Live configuration is ignored by
+# Git because it can reveal usernames, installation paths, and enabled sources.
+
+[mcp_servers.traq]
+enabled = true
+required = false
+command = "wsl.exe"
+args = ["-d", "YOUR_WSL_DISTRO", "--", "/absolute/path/to/personal-context-hub/scripts/start-traq-mcp.sh"]
+startup_timeout_sec = 15.0
+tool_timeout_sec = 60.0
+default_tools_approval_mode = "writes"
+
+[mcp_servers.discord_user]
+enabled = false
+required = false
+command = "powershell.exe"
+args = ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "C:\\absolute\\path\\to\\personal-context-hub\\scripts\\start-discord-rpc-mcp.ps1"]
+startup_timeout_sec = 30.0
+tool_timeout_sec = 60.0
+
+[mcp_servers.discord]
+enabled = false
+required = false
+command = "wsl.exe"
+args = ["-d", "YOUR_WSL_DISTRO", "--", "/absolute/path/to/personal-context-hub/scripts/start-discord-mcp.sh"]
+startup_timeout_sec = 15.0
+tool_timeout_sec = 60.0
+default_tools_approval_mode = "writes"
+
+[mcp_servers.thunderbird_mail]
+enabled = false
+required = false
+command = "wsl.exe"
+args = ["-d", "YOUR_WSL_DISTRO", "--", "/usr/bin/env", "THUNDERBIRD_PROFILE=/path/to/profile", "/absolute/path/to/personal-context-hub/scripts/start-thunderbird-mail-mcp.sh"]
+startup_timeout_sec = 15.0
+tool_timeout_sec = 60.0
