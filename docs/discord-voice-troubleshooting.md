@@ -6,9 +6,10 @@
 
 1. `npm run inspect:discord:voice:offline`
 2. `npm run smoke:discord:voice:mock`
-3. 資格情報を設定してから`npm run inspect:discord:voice`
-4. `npm run smoke:discord:voice:local -- /path/to/codex-home`
-5. 必要な場合だけ`npm run smoke:discord:voice:codex -- /path/to/workspace`
+3. `npm run smoke:discord:voice:local -- /path/to/codex-home`
+4. `npm run doctor:discord:voice`
+5. 資格情報を設定してから`npm run inspect:discord:voice`
+6. 必要な場合だけ`npm run smoke:discord:voice:codex -- /path/to/workspace`
 
 診断JSONを共有するときは`code`、`message`、`action`だけを使う。`.env`、Bot token、OpenAI API key、`auth.json`、生errorは共有しない。
 
@@ -33,4 +34,4 @@
 | `SERVICE_STOPPED`             | 停止処理により進行中turnが中断された                    | 意図した停止なら対応不要。意図しない場合はsignalとVoice切断を確認する     |
 | `UNEXPECTED_ERROR`            | 固定分類に該当しない内部失敗                            | 秘密を除いたerror codeとstageだけを保存し、`npm run verify`から再確認する |
 
-オフライン診断の`ready: true`は公開設定が有効であることだけを示す。Discordへ接続可能という意味ではない。実接続前には完全診断の`serviceReady: true`を確認する。
+オフライン診断の`ready: true`は公開設定が有効であることだけを示す。Discordへ接続可能という意味ではない。実接続前にはdoctorの全local checkと完全診断の`serviceReady: true`を確認する。結果は[検証記録](./discord-voice-verification.md)へ追記する。

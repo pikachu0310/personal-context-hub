@@ -33,8 +33,8 @@
 
 ## Cycle 4
 
-- [ ] Setup doctor aggregates offline config, mock vertical, and local isolation checks
-- [ ] Doctor output and exit status contain no raw errors or credential values
-- [ ] Preflight checklist separates local gates, credential setup, and one-time Discord verification
-- [ ] Verification record fixes commands, commits, results, and unperformed external actions
-- [ ] Full verification, doctor, smokes, secret scan, diff review, and commit pass
+- [x] Setup doctor aggregates offline config, mock vertical, and local isolation checks
+- [x] Doctor output and exit status contain no raw errors or credential values
+- [x] Preflight checklist separates local gates, credential setup, and one-time Discord verification
+- [x] Verification record fixes commands, commits, results, and unperformed external actions
+- [x] Full verification, doctor, smokes, secret scan, diff review, and commit pass

@@ -105,6 +105,7 @@ inspection does not:
 ```sh
 npm run inspect:discord:voice:offline
 npm run smoke:discord:voice:mock
+npm run doctor:discord:voice
 npm run inspect:discord:voice
 npm run start:discord:voice
 ```
@@ -114,9 +115,10 @@ public `PERSONAL_CONTEXT_VOICE_*` IDs/path variables when running it. It checks
 their syntax and the working directory without reading the Bot credential,
 OpenAI API key, or Codex authentication. The mock smoke drives synthetic PCM
 through receive, WAV conversion, fake STT/Codex, Text/TTS, and playback without
-network access. Add credentials only after these two checks pass. See the
-[Voice diagnostic guide](docs/discord-voice-troubleshooting.md) for stable error
-codes and the remaining verification order.
+network access. Add credentials only after the doctor reports all local gates
+passed. See the [Voice diagnostic guide](docs/discord-voice-troubleshooting.md)
+and [preflight checklist](docs/discord-voice-preflight-checklist.md) for stable
+error codes and the remaining verification order.
 
 When the service runs in WSL, set `PERSONAL_CONTEXT_VOICE_CODEX_HOME` to the
 WSL path of the signed-in Windows Codex App home (for example,
