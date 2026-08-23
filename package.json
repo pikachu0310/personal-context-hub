@@ -15,6 +15,7 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:discord": "node scripts/discord-smoke.mjs",
     "smoke:discord:voice:local": "node scripts/discord-voice-local-smoke.mjs",
+    "smoke:discord:voice:mock": "node --test test/discord-voice-mock-e2e.test.mjs",
     "smoke:discord:voice:codex": "node --env-file-if-exists=.env scripts/discord-voice-codex-smoke.mjs",
     "smoke:discord:user": "bash scripts/run-discord-rpc-windows.sh smoke",
     "smoke:mail:thunderbird": "node scripts/thunderbird-mail-smoke.mjs",
@@ -22,6 +23,7 @@
     "inspect:mail:thunderbird": "node scripts/inspect-thunderbird-mail.mjs",
     "inspect:discord": "node scripts/inspect-discord-auth.mjs",
     "inspect:discord:voice": "node --env-file-if-exists=.env scripts/inspect-discord-voice-config.mjs",
+    "inspect:discord:voice:offline": "node scripts/inspect-discord-voice-config.mjs --offline",
     "inspect:discord:user": "bash scripts/run-discord-rpc-windows.sh inspect",
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test/**/*.mjs\" \"docs/**/*.md\" \".github/**/*.yml\" \"*.{js,json,md}\"",
@@ -29,7 +31,7 @@
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/**/*.mjs --test-coverage-lines=60 --test-coverage-branches=60 --test-coverage-functions=30",
     "verify": "npm run check && npm run lint && npm run format:check && npm run test:coverage && npm audit",
-    "check": "node --check src/auth.mjs && node --check src/config.mjs && node --check src/server.mjs && node --check src/traq-client.mjs && node --check src/discord-config.mjs && node --check src/discord-client.mjs && node --check src/discord-server.mjs && node --check src/discord-rpc-config.mjs && node --check src/discord-rpc-transport.mjs && node --check src/discord-rpc-client.mjs && node --check src/discord-rpc-server.mjs && node --check src/discord-voice-audio.mjs && node --check src/discord-voice-config.mjs && node --check src/discord-voice-errors.mjs && node --check src/discord-voice-openai.mjs && node --check src/discord-voice-session.mjs && node --check src/discord-voice-server.mjs && node --check src/thunderbird-config.mjs && node --check src/thunderbird-mail-client.mjs && node --check src/thunderbird-mail-server.mjs && node --check scripts/store-discord-token.mjs && node --check scripts/discord-smoke.mjs && node --check scripts/discord-voice-codex-smoke.mjs && node --check scripts/discord-voice-local-smoke.mjs && node --check scripts/inspect-discord-auth.mjs && node --check scripts/inspect-discord-voice-config.mjs && node --check scripts/store-discord-rpc-secret.mjs && node --check scripts/auth-discord-rpc.mjs && node --check scripts/discord-rpc-smoke.mjs && node --check scripts/inspect-discord-rpc-auth.mjs && node --check scripts/inspect-public-context.mjs && node --check scripts/inspect-thunderbird-mail.mjs && node --check scripts/thunderbird-mail-smoke.mjs"
+    "check": "node --check src/auth.mjs && node --check src/config.mjs && node --check src/server.mjs && node --check src/traq-client.mjs && node --check src/discord-config.mjs && node --check src/discord-client.mjs && node --check src/discord-server.mjs && node --check src/discord-rpc-config.mjs && node --check src/discord-rpc-transport.mjs && node --check src/discord-rpc-client.mjs && node --check src/discord-rpc-server.mjs && node --check src/discord-voice-audio.mjs && node --check src/discord-voice-config.mjs && node --check src/discord-voice-diagnostics.mjs && node --check src/discord-voice-errors.mjs && node --check src/discord-voice-openai.mjs && node --check src/discord-voice-session.mjs && node --check src/discord-voice-server.mjs && node --check src/thunderbird-config.mjs && node --check src/thunderbird-mail-client.mjs && node --check src/thunderbird-mail-server.mjs && node --check scripts/store-discord-token.mjs && node --check scripts/discord-smoke.mjs && node --check scripts/discord-voice-codex-smoke.mjs && node --check scripts/discord-voice-local-smoke.mjs && node --check scripts/inspect-discord-auth.mjs && node --check scripts/inspect-discord-voice-config.mjs && node --check scripts/store-discord-rpc-secret.mjs && node --check scripts/auth-discord-rpc.mjs && node --check scripts/discord-rpc-smoke.mjs && node --check scripts/inspect-discord-rpc-auth.mjs && node --check scripts/inspect-public-context.mjs && node --check scripts/inspect-thunderbird-mail.mjs && node --check scripts/thunderbird-mail-smoke.mjs"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
