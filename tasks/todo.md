@@ -18,6 +18,15 @@
 - [x] Oversized, malformed, and non-buffer audio frames are discarded once with fixed guidance
 - [x] Discord and TTS text bounds preserve Unicode surrogate pairs
 - [x] Installed Opus decoder and Discord Voice encryption/DAVE dependencies pass runtime inspection
-- [x] Voice start, inspection, and SDK smoke scripts load the ignored `.env` when present
+- [x] Voice start, full inspection, and SDK smoke scripts load the ignored `.env` when present
 - [x] `npm run verify`, local smoke, and isolated SDK smoke pass
 - [x] Secret scan, diff review, and follow-up commits complete
+
+## Cycle 3
+
+- [x] Credential-free offline diagnostic implemented and tested
+- [x] Diagnostic failures use stable codes and fixed remediation without raw errors
+- [x] Synthetic PCM mock vertical covers receive through playback with zero external calls
+- [x] Failure guide and operator command order documented
+- [x] Full verification, offline smoke, mock smoke, local smoke, audit, and secret scan pass
+- [x] Reviewed changes committed in logical units without push or Discord access

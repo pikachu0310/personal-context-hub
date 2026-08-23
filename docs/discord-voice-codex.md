@@ -61,6 +61,9 @@
 11. Windows側Codex homeにCLIが解釈できないMCP設定があってもそれを読まず、隔離先の空configとMCP 0件でCLIおよびSDKのsmokeが通る。
 12. Voice接続や起動通知に失敗した場合は、途中生成したVoice connectionとログイン済みBot clientを必ず破棄する。通常停止は複数回呼んでも1回だけ後始末する。
 13. SIGINT／SIGTERM時は進行中stageをcancelし、未処理queueを破棄して、依存処理の最大timeoutを待たず停止できる。
+14. オフライン設定診断はBot資格情報、OpenAI API key、Codex認証を読まず、公開設定と作業ディレクトリだけを検査できる。
+15. モック縦断は合成PCMの受信からWAV化、STT、Codex、Text投稿、TTS、Voice再生までを通し、外部呼び出しが0件であることを検証する。
+16. 設定診断の失敗は安定したcode、固定message、具体的なactionで報告し、生error、Bot token、OpenAI API keyを含めない。
 
 ## 第2段階
 
@@ -71,7 +74,9 @@
 
 ## 起動前診断
 
-`npm run inspect:discord:voice`で、Bot資格情報、必須環境変数、Codex作業ディレクトリ、隔離`CODEX_HOME`を秘密値なしで検査する。`npm run smoke:discord:voice:local -- /path/to/codex-home`は外部接続なしで、`auth.json`だけの隔離、空config、MCP 0件、Voice pipelineを検証する。`npm run smoke:discord:voice:codex -- /path/to/workspace`はDiscordや音声APIへ接続せず、Codex SDK認証だけをread-only threadで検証する。Windows Codex Appで既にサインイン済みなら、WSLから見えるWindows側`.codex`を`PERSONAL_CONTEXT_VOICE_CODEX_HOME`へ設定して同じ認証を使う。元の`config.toml`は読み込まれない。`Your access token could not be refreshed`の場合はこのパスを確認し、それでも使えない場合だけWSL内で`npx codex login --device-auth`を実行する。
+最初に`npm run inspect:discord:voice:offline`で、秘密値やCodex認証を読まずに公開ID、作業ディレクトリ、制限値を検査する。次に`npm run smoke:discord:voice:mock`で、合成PCMを使ったVoice受信からText/TTS再生までの縦断を外部接続0件で検証する。
+
+資格情報を設定した後だけ`npm run inspect:discord:voice`でBot資格情報、OpenAI API key、隔離`CODEX_HOME`を含む完全診断を行う。`npm run smoke:discord:voice:local -- /path/to/codex-home`は外部接続なしで、`auth.json`だけの隔離、空config、MCP 0件、Voice pipelineを検証する。`npm run smoke:discord:voice:codex -- /path/to/workspace`はDiscordや音声APIへ接続せず、Codex SDK認証だけをread-only threadで検証する。Windows Codex Appで既にサインイン済みなら、WSLから見えるWindows側`.codex`を`PERSONAL_CONTEXT_VOICE_CODEX_HOME`へ設定して同じ認証を使う。元の`config.toml`は読み込まれない。失敗時は[診断ガイド](./discord-voice-troubleshooting.md)に従う。
 
 ## 根拠
 

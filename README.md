@@ -99,12 +99,24 @@ The Voice bridge uses the same dedicated Bot credential, but additionally needs
 the exact Guild, Voice channel, Text channel, and owner user IDs. Copy
 `.env.example` to the ignored `.env`, replace every placeholder needed by the
 Voice bridge, set a repository working directory for Codex, then run. The Voice
-start and inspection scripts load `.env` when it exists:
+start and full inspection scripts load `.env` when it exists; the offline
+inspection does not:
 
 ```sh
+npm run inspect:discord:voice:offline
+npm run smoke:discord:voice:mock
 npm run inspect:discord:voice
 npm run start:discord:voice
 ```
+
+The offline inspection intentionally does not load `.env`; export only the five
+public `PERSONAL_CONTEXT_VOICE_*` IDs/path variables when running it. It checks
+their syntax and the working directory without reading the Bot credential,
+OpenAI API key, or Codex authentication. The mock smoke drives synthetic PCM
+through receive, WAV conversion, fake STT/Codex, Text/TTS, and playback without
+network access. Add credentials only after these two checks pass. See the
+[Voice diagnostic guide](docs/discord-voice-troubleshooting.md) for stable error
+codes and the remaining verification order.
 
 When the service runs in WSL, set `PERSONAL_CONTEXT_VOICE_CODEX_HOME` to the
 WSL path of the signed-in Windows Codex App home (for example,

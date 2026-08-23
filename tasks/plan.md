@@ -10,3 +10,12 @@ Capability: `discord-voice-codex`
 6. Commit the complete reviewed delta without registering, inviting, starting, or sending through Discord.
 
 Follow-up authorization was received and the real Codex SDK smoke was repeated through the isolated home. Live Discord login, Discord send, and audio API calls remain gated because no dedicated Bot credential or exact Guild, Voice channel, Text channel, owner user, and OpenAI audio API configuration is currently present.
+
+## Cycle 3: credential-free verification
+
+1. Define credential-free preflight, a fully mocked audio vertical, and stable failure guidance as acceptance criteria.
+2. Extract configuration diagnostics into a dependency-injected module with explicit offline and full modes.
+3. Drive synthetic owner PCM through the real Discord receive/session orchestration while mocking every external boundary.
+4. Verify that diagnostic output and mock evidence contain no credentials, raw dependency errors, or external calls.
+5. Run the complete repository verification, offline preflight, mock smoke, local smoke, audit, secret scan, and diff review.
+6. Commit the verified changes in logical units without pushing or contacting Discord.
