@@ -281,3 +281,38 @@ test("long transcripts are posted in Discord-safe chunks before Codex runs", asy
   assert.ok(transcriptPosts.length > 1);
   assert.ok(transcriptPosts.every((text) => text.length <= 1_900));
 });
+
+test("a long serial session preserves one response per queued turn", async () => {
+  const responses = [];
+  let active = 0;
+  let peak = 0;
+  const session = new DiscordVoiceSession({
+    transcribe: async (wav) => wav.toString(),
+    runCodex: async (text) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      return `応答:${text}`;
+    },
+    postText: async (text) => {
+      if (text.startsWith("応答:")) responses.push(text);
+    },
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    logger: { info: () => undefined },
+    maximumQueuedTurns: 100,
+  });
+  for (let index = 0; index < 100; index += 1) {
+    assert.equal(session.enqueue(Buffer.from(String(index))), true);
+  }
+  await eventually(
+    () => session.state === "idle" && responses.length === 100,
+    5_000,
+  );
+  assert.equal(peak, 1);
+  assert.deepEqual(
+    responses,
+    Array.from({ length: 100 }, (_, index) => `応答:${index}`),
+  );
+});

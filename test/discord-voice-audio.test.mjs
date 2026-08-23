@@ -61,3 +61,29 @@ test("PCM turn buffer accepts complete speech and drops short or oversized turns
   assert.equal(long.finish().status, "too_long");
   assert.equal(long.byteLength, 0);
 });
+
+test("PCM turn buffer keeps VAD boundaries exact and does not retain rejected audio", () => {
+  const boundary = new PcmTurnBuffer({
+    minimumAudioMs: 250,
+    maximumAudioSeconds: 1,
+  });
+  assert.equal(boundary.push(Buffer.alloc(48_000)), true);
+  assert.equal(boundary.finish().status, "accepted");
+
+  const belowBoundary = new PcmTurnBuffer({
+    minimumAudioMs: 250,
+    maximumAudioSeconds: 1,
+  });
+  belowBoundary.push(Buffer.alloc(47_996));
+  assert.equal(belowBoundary.finish().status, "too_short");
+  assert.equal(belowBoundary.byteLength, 47_996);
+
+  const rejected = new PcmTurnBuffer({
+    minimumAudioMs: 100,
+    maximumAudioSeconds: 1,
+  });
+  assert.equal(rejected.push(Buffer.alloc(192_001)), false);
+  assert.equal(rejected.push(Buffer.alloc(1)), false);
+  assert.equal(rejected.finish().status, "too_long");
+  assert.equal(rejected.byteLength, 0);
+});
