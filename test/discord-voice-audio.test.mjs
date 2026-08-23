@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  PcmTurnBuffer,
   pcmDurationSeconds,
   ttsPcm24kMonoToDiscordRaw,
   wrapPcmAsWav,
@@ -35,4 +36,28 @@ test("audio helpers reject partial sample frames", () => {
     () => ttsPcm24kMonoToDiscordRaw(Buffer.alloc(1)),
     /complete int16/,
   );
+});
+
+test("PCM turn buffer accepts complete speech and drops short or oversized turns", () => {
+  const accepted = new PcmTurnBuffer({
+    minimumAudioMs: 250,
+    maximumAudioSeconds: 1,
+  });
+  accepted.push(Buffer.alloc(48_000));
+  assert.equal(accepted.finish().status, "accepted");
+
+  const short = new PcmTurnBuffer({
+    minimumAudioMs: 500,
+    maximumAudioSeconds: 1,
+  });
+  short.push(Buffer.alloc(1_000));
+  assert.equal(short.finish().status, "too_short");
+
+  const long = new PcmTurnBuffer({
+    minimumAudioMs: 100,
+    maximumAudioSeconds: 1,
+  });
+  assert.equal(long.push(Buffer.alloc(192_001)), false);
+  assert.equal(long.finish().status, "too_long");
+  assert.equal(long.byteLength, 0);
 });

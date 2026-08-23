@@ -56,3 +56,37 @@ export function pcmDurationSeconds(
 ) {
   return pcm.length / (sampleRate * channels * 2);
 }
+
+export class PcmTurnBuffer {
+  constructor({ minimumAudioMs, maximumAudioSeconds }) {
+    this.minimumAudioMs = minimumAudioMs;
+    this.maximumBytes = maximumAudioSeconds * 48_000 * 2 * 2;
+    this.chunks = [];
+    this.byteLength = 0;
+    this.rejected = false;
+  }
+
+  push(chunk) {
+    if (!Buffer.isBuffer(chunk))
+      throw new TypeError("PCM chunk must be a Buffer");
+    if (this.rejected) return false;
+    if (this.byteLength + chunk.length > this.maximumBytes) {
+      this.rejected = true;
+      this.chunks = [];
+      this.byteLength = 0;
+      return false;
+    }
+    this.chunks.push(chunk);
+    this.byteLength += chunk.length;
+    return true;
+  }
+
+  finish() {
+    if (this.rejected) return { status: "too_long" };
+    const pcm = Buffer.concat(this.chunks, this.byteLength);
+    if (pcmDurationSeconds(pcm) * 1_000 < this.minimumAudioMs) {
+      return { status: "too_short" };
+    }
+    return { status: "accepted", pcm };
+  }
+}
