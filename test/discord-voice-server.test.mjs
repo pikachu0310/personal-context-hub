@@ -255,6 +255,43 @@ test("a decoder error is contained and tells the owner to retry", async () => {
   ]);
 });
 
+test("a decoder error cannot be followed by a duplicate queued turn", async () => {
+  const speaking = new EventEmitter();
+  const decoder = new EventEmitter();
+  decoder.destroy = () => decoder.emit("close");
+  const opusStream = new EventEmitter();
+  opusStream.pipe = () => decoder;
+  opusStream.destroy = () => undefined;
+  const queued = [];
+  const messages = [];
+  subscribeToAllowedSpeaker({
+    connection: {
+      receiver: { speaking, subscribe: () => opusStream },
+    },
+    config: {
+      allowedUserId: "44444444444444444",
+      silenceMs: 1_000,
+      minimumAudioMs: 250,
+      maximumAudioSeconds: 90,
+    },
+    session: {
+      enqueue: (wav) => (queued.push(wav), true),
+    },
+    postText: async (content) => messages.push(content),
+    logger: { error: () => undefined },
+    createDecoder: () => decoder,
+  });
+
+  speaking.emit("start", "44444444444444444");
+  decoder.emit("error", new Error("decoder detail"));
+  decoder.emit("end");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(queued.length, 0);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0], /音声データを処理できませんでした/);
+});
+
 test("a full voice queue reports bounded backpressure to the configured channel", async () => {
   const speaking = new EventEmitter();
   const decoder = new EventEmitter();

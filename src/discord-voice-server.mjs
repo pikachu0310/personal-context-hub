@@ -122,6 +122,7 @@ export function subscribeToAllowedSpeaker({
     });
     const turnBuffer = new PcmTurnBuffer(config);
     let discardedTurn = false;
+    let finalized = false;
 
     decoder.on("data", (chunk) => {
       if (discardedTurn) return;
@@ -145,6 +146,8 @@ export function subscribeToAllowedSpeaker({
     });
     const release = () => active.delete(userId);
     opusStream.once("error", (error) => {
+      discardedTurn = true;
+      finalized = true;
       release();
       decoder.destroy();
       logAudioFailure(logger, "receive_failed", error);
@@ -153,12 +156,16 @@ export function subscribeToAllowedSpeaker({
     opusStream.once("close", release);
     decoder.once("close", release);
     decoder.once("error", (error) => {
+      discardedTurn = true;
+      finalized = true;
       release();
       opusStream.destroy();
       logAudioFailure(logger, "decode_failed", error);
       void notify(AUDIO_RETRY_MESSAGE);
     });
     decoder.once("end", () => {
+      if (finalized) return;
+      finalized = true;
       release();
       if (discardedTurn) return;
       try {
