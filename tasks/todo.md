@@ -30,3 +30,11 @@
 - [x] Failure guide and operator command order documented
 - [x] Full verification, offline smoke, mock smoke, local smoke, audit, and secret scan pass
 - [x] Reviewed changes committed in logical units without push or Discord access
+
+## Cycle 4
+
+- [ ] Setup doctor aggregates offline config, mock vertical, and local isolation checks
+- [ ] Doctor output and exit status contain no raw errors or credential values
+- [ ] Preflight checklist separates local gates, credential setup, and one-time Discord verification
+- [ ] Verification record fixes commands, commits, results, and unperformed external actions
+- [ ] Full verification, doctor, smokes, secret scan, diff review, and commit pass

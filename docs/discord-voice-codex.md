@@ -64,6 +64,10 @@
 14. オフライン設定診断はBot資格情報、OpenAI API key、Codex認証を読まず、公開設定と作業ディレクトリだけを検査できる。
 15. モック縦断は合成PCMの受信からWAV化、STT、Codex、Text投稿、TTS、Voice再生までを通し、外部呼び出しが0件であることを検証する。
 16. 設定診断の失敗は安定したcode、固定message、具体的なactionで報告し、生error、Bot token、OpenAI API keyを含めない。
+17. Setup doctorはNode runtime、offline公開設定、mock縦断、Codex isolation smokeを一つのJSONで診断し、外部呼び出し0件を明示する。
+18. 実接続前checklistは、秘密値不要のローカル確認、資格情報設定後の完全診断、本人が行う一回限りのDiscord接続確認を分離する。
+19. 検証記録fileは実行日、対象commit、各コマンドの結果、未実施の外部操作を秘密値・個人ID・端末固有パスなしで固定する。
+20. Setup doctorは公開設定またはローカルsmokeの失敗時に非0終了し、生stderrや資格情報をJSON・ログへ転載しない。
 
 ## 第2段階
 
@@ -75,6 +79,8 @@
 ## 起動前診断
 
 最初に`npm run inspect:discord:voice:offline`で、秘密値やCodex認証を読まずに公開ID、作業ディレクトリ、制限値を検査する。次に`npm run smoke:discord:voice:mock`で、合成PCMを使ったVoice受信からText/TTS再生までの縦断を外部接続0件で検証する。
+
+`npm run doctor:discord:voice`は上記offline診断、mock縦断、隔離Codexのlocal smokeを連続実行し、`ready`、`checks`、`issues`、`externalCalls`をJSONでまとめる。doctor自体は`.env`を読み込まず、公開設定はshellへexportして渡す。出力の`ready: true`だけを実接続前のローカルゲートとして扱い、JSONを共有するときはcode・message・actionだけを抜粋する。
 
 資格情報を設定した後だけ`npm run inspect:discord:voice`でBot資格情報、OpenAI API key、隔離`CODEX_HOME`を含む完全診断を行う。`npm run smoke:discord:voice:local -- /path/to/codex-home`は外部接続なしで、`auth.json`だけの隔離、空config、MCP 0件、Voice pipelineを検証する。`npm run smoke:discord:voice:codex -- /path/to/workspace`はDiscordや音声APIへ接続せず、Codex SDK認証だけをread-only threadで検証する。Windows Codex Appで既にサインイン済みなら、WSLから見えるWindows側`.codex`を`PERSONAL_CONTEXT_VOICE_CODEX_HOME`へ設定して同じ認証を使う。元の`config.toml`は読み込まれない。失敗時は[診断ガイド](./discord-voice-troubleshooting.md)に従う。
 
