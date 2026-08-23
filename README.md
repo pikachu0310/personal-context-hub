@@ -9,6 +9,7 @@ The repository includes:
 - a read-only Discord desktop RPC reader using `rpc`, `identify`, and
   `messages.read` OAuth scopes;
 - an optional Discord Bot MCP for Bot-visible history and confirmed actions;
+- an optional single-user Discord Voice bridge for speech-to-text, a persistent local Codex SDK thread, and AI-generated speech replies;
 - a read-only Thunderbird global-index MCP;
 - credential storage backed by Windows DPAPI CurrentUser, with a `0600` file
   fallback for unsupported environments;
@@ -91,6 +92,26 @@ printf '%s' "$DISCORD_BOT_TOKEN" | npm run auth:discord -- --application-id YOUR
 
 Avoid placing tokens in command arguments or shell history. Clear the shell
 variable immediately after use.
+
+### Discord Voice to Codex
+
+The Voice bridge uses the same dedicated Bot credential, but additionally needs
+the exact Guild, Voice channel, Text channel, and owner user IDs. Copy the names
+from `.env.example` into an ignored local environment loader, set a repository
+working directory for Codex, then run:
+
+```sh
+npm run inspect:discord:voice
+npm run start:discord:voice
+```
+
+The Bot must have View Channel, Connect, Speak, Send Messages, and Read Message
+History only in those two channels. It does not use a Discord user token. The
+MVP accepts audio only from the configured owner ID, serializes turns, posts the
+transcript and full response to the configured Text channel, and speaks an
+AI-generated excerpt. Audio bytes are not persisted. See
+[the Voice MVP specification](docs/discord-voice-codex.md) for limits and trust
+boundaries.
 
 ### Thunderbird
 
