@@ -72,6 +72,36 @@ test("a failed STT turn reports the stage and the next queued turn still runs", 
   assert.doesNotMatch(JSON.stringify(logs), /secret-value|temporary STT error/);
 });
 
+test("a Discord transcript post failure reports the exact stage", async () => {
+  let postAttempts = 0;
+  const posts = [];
+  const logs = [];
+  const session = new DiscordVoiceSession({
+    transcribe: async () => "投稿テスト",
+    runCodex: async () => "not reached",
+    postText: async (text) => {
+      postAttempts += 1;
+      if (postAttempts === 1) throw new Error("private transport detail");
+      posts.push(text);
+    },
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    logger: { info: (entry) => logs.push(entry) },
+  });
+
+  session.enqueue(Buffer.from("post-failure"));
+  await eventually(() => session.state === "idle" && posts.length === 1);
+
+  assert.match(posts[0], /posting_transcript/);
+  assert.doesNotMatch(posts[0], /private transport detail/);
+  assert.ok(
+    logs.some(
+      (entry) =>
+        entry.event === "failed" && entry.stage === "posting_transcript",
+    ),
+  );
+});
+
 test("a timed out STT turn cannot permanently block the next queued turn", async () => {
   let transcriptions = 0;
   const posts = [];
@@ -118,6 +148,72 @@ test("stage timeout aborts cancellable work", async () => {
   assert.equal(aborted, true);
 });
 
+test("parent cancellation releases work even when the dependency ignores its signal", async () => {
+  const controller = new AbortController();
+  const pending = withTimeout(
+    () => new Promise(() => undefined),
+    60_000,
+    "test-stage",
+    controller.signal,
+  );
+  controller.abort({ code: "SERVICE_STOPPED" });
+  await assert.rejects(
+    () => pending,
+    (error) => error.code === "SERVICE_STOPPED",
+  );
+
+  let calledAfterStop = false;
+  const alreadyStopped = new AbortController();
+  alreadyStopped.abort({ code: "SERVICE_STOPPED" });
+  await assert.rejects(
+    () =>
+      withTimeout(
+        async () => {
+          calledAfterStop = true;
+        },
+        60_000,
+        "test-stage",
+        alreadyStopped.signal,
+      ),
+    (error) => error.code === "SERVICE_STOPPED",
+  );
+  assert.equal(calledAfterStop, false);
+});
+
+test("session stop cancels the active turn, drops the queue, and rejects new audio", async () => {
+  let transcriptions = 0;
+  const posts = [];
+  const logs = [];
+  const session = new DiscordVoiceSession({
+    transcribe: async () => {
+      transcriptions += 1;
+      return new Promise(() => undefined);
+    },
+    runCodex: async () => "not reached",
+    postText: async (text) => posts.push(text),
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    logger: { info: (entry) => logs.push(entry) },
+  });
+  assert.equal(session.enqueue(Buffer.from("active")), true);
+  assert.equal(session.enqueue(Buffer.from("queued")), true);
+  await eventually(() => session.state === "transcribing");
+
+  session.stop();
+  session.stop();
+  await eventually(() => session.state === "stopped" && !session.processing);
+
+  assert.equal(transcriptions, 1);
+  assert.deepEqual(posts, []);
+  assert.equal(session.queue.length, 0);
+  assert.equal(session.enqueue(Buffer.from("late")), false);
+  assert.ok(
+    logs.some(
+      (entry) => entry.event === "cancelled" && entry.stage === "transcribing",
+    ),
+  );
+});
+
 test("message splitting and speech excerpts keep bounded outputs", () => {
   const chunks = splitDiscordText(`${"a".repeat(1_500)}\n${"b".repeat(1_500)}`);
   assert.equal(chunks.length, 2);
@@ -128,8 +224,21 @@ test("message splitting and speech excerpts keep bounded outputs", () => {
   assert.ok(spoken.length <= 1_200);
   assert.doesNotMatch(spoken, /example\.com/);
   assert.equal(boundText("x".repeat(10_000), 8_000).length, 8_000);
+  assert.equal(boundText("text", 0), "");
+  assert.deepEqual(splitDiscordText("😀", 1), ["😀"]);
   assert.equal(speechExcerpt("123456789", 5).length, 5);
   assert.equal(speechExcerpt("123456789", 0), "");
+
+  const emojiBoundary = `${"a".repeat(9)}😀tail`;
+  assert.equal(boundText(emojiBoundary, 10, ""), "a".repeat(9));
+  const emojiChunks = splitDiscordText(emojiBoundary, 10);
+  assert.equal(emojiChunks.join(""), emojiBoundary);
+  for (const chunk of emojiChunks) {
+    const first = chunk.charCodeAt(0);
+    const last = chunk.charCodeAt(chunk.length - 1);
+    assert.ok(!(first >= 0xdc00 && first <= 0xdfff));
+    assert.ok(!(last >= 0xd800 && last <= 0xdbff));
+  }
 });
 
 test("transcripts and Codex responses are bounded before posting or speaking", async () => {

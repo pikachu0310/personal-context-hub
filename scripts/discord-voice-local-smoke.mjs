@@ -94,6 +94,9 @@ try {
   assert.equal(session.enqueue(Buffer.from("local-wav")), true);
   await eventually(() => session.state === "idle" && calls.includes("play"));
   assert.deepEqual(calls, ["stt", "post", "codex", "post", "tts", "play"]);
+  session.stop();
+  assert.equal(session.state, "stopped");
+  assert.equal(session.enqueue(Buffer.from("after-stop")), false);
 
   console.log(
     JSON.stringify({

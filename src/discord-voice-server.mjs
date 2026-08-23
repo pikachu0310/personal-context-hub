@@ -31,6 +31,8 @@ import {
 import { DiscordVoiceSession } from "./discord-voice-session.mjs";
 
 const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
+const AUDIO_RETRY_MESSAGE =
+  "⚠️ 音声データを処理できませんでした。もう一度話してください。";
 
 function logAudioFailure(logger, event, error) {
   try {
@@ -44,7 +46,23 @@ function logAudioFailure(logger, event, error) {
   }
 }
 
-function createDiscordPlayer(connection, logger = console) {
+function logInfoQuietly(logger, entry) {
+  try {
+    logger.info?.(entry);
+  } catch {
+    // Logging must never change service readiness or cleanup semantics.
+  }
+}
+
+async function destroyQuietly(resource) {
+  try {
+    await resource?.destroy?.();
+  } catch {
+    // Cleanup must preserve the original startup failure or shutdown signal.
+  }
+}
+
+export function createDiscordPlayer(connection, logger = console) {
   const player = createAudioPlayer({
     behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
   });
@@ -53,14 +71,15 @@ function createDiscordPlayer(connection, logger = console) {
   });
   connection.subscribe(player);
   return async (ttsPcm, { signal } = {}) => {
+    if (signal?.aborted) throw signal.reason;
     const stopOnAbort = () => player.stop(true);
     signal?.addEventListener("abort", stopOnAbort, { once: true });
-    const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
-    const seconds = raw.length / PCM_BYTES_PER_SECOND;
-    const resource = createAudioResource(Readable.from(raw), {
-      inputType: StreamType.Raw,
-    });
     try {
+      const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
+      const seconds = raw.length / PCM_BYTES_PER_SECOND;
+      const resource = createAudioResource(Readable.from(raw), {
+        inputType: StreamType.Raw,
+      });
       player.play(resource);
       await entersState(player, AudioPlayerStatus.Playing, 5_000);
       await entersState(
@@ -102,16 +121,26 @@ export function subscribeToAllowedSpeaker({
       frameSize: 960,
     });
     const turnBuffer = new PcmTurnBuffer(config);
+    let discardedTurn = false;
 
     decoder.on("data", (chunk) => {
-      if (!turnBuffer.push(chunk)) {
+      if (discardedTurn) return;
+      try {
+        if (turnBuffer.push(chunk)) return;
+        discardedTurn = true;
         active.delete(userId);
         opusStream.destroy();
         decoder.destroy();
         void notify(
           `⚠️ 発話が${config.maximumAudioSeconds}秒を超えたため破棄しました。`,
         );
-        return;
+      } catch (error) {
+        discardedTurn = true;
+        active.delete(userId);
+        opusStream.destroy();
+        decoder.destroy();
+        logAudioFailure(logger, "receive_frame_failed", error);
+        void notify(AUDIO_RETRY_MESSAGE);
       }
     });
     const release = () => active.delete(userId);
@@ -119,6 +148,7 @@ export function subscribeToAllowedSpeaker({
       release();
       decoder.destroy();
       logAudioFailure(logger, "receive_failed", error);
+      void notify(AUDIO_RETRY_MESSAGE);
     });
     opusStream.once("close", release);
     decoder.once("close", release);
@@ -126,15 +156,22 @@ export function subscribeToAllowedSpeaker({
       release();
       opusStream.destroy();
       logAudioFailure(logger, "decode_failed", error);
+      void notify(AUDIO_RETRY_MESSAGE);
     });
     decoder.once("end", () => {
       release();
-      const completed = turnBuffer.finish();
-      if (completed.status !== "accepted") return;
-      if (!session.enqueue(wrapPcmAsWav(completed.pcm), { userId })) {
-        void notify(
-          "⚠️ 音声ターンが混雑しています。少し待ってからもう一度話してください。",
-        );
+      if (discardedTurn) return;
+      try {
+        const completed = turnBuffer.finish();
+        if (completed.status !== "accepted") return;
+        if (!session.enqueue(wrapPcmAsWav(completed.pcm), { userId })) {
+          void notify(
+            "⚠️ 音声ターンが混雑しています。少し待ってからもう一度話してください。",
+          );
+        }
+      } catch (error) {
+        logAudioFailure(logger, "receive_finalize_failed", error);
+        void notify(AUDIO_RETRY_MESSAGE);
       }
     });
     opusStream.pipe(decoder);
@@ -157,72 +194,92 @@ export async function startDiscordVoiceCodex({
   const credential = await (
     dependencies.readCredential ?? readDiscordTokenStore
   )();
-  const ready = client.isReady()
-    ? Promise.resolve()
-    : once(client, Events.ClientReady);
-  await client.login(credential.token);
-  await ready;
-  const guild = await client.guilds.fetch(config.guildId);
-  const [voiceChannel, textChannel] = await Promise.all([
-    guild.channels.fetch(config.voiceChannelId),
-    guild.channels.fetch(config.textChannelId),
-  ]);
-  if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
-    throw new Error("Configured voice channel is not a Guild Voice channel.");
+  let connection;
+  let loginAttempted = false;
+  try {
+    client.on?.(Events.Error, (error) => {
+      logAudioFailure(logger, "discord_client_failed", error);
+    });
+    const ready = client.isReady()
+      ? Promise.resolve()
+      : once(client, Events.ClientReady);
+    loginAttempted = true;
+    await client.login(credential.token);
+    await ready;
+    const guild = await client.guilds.fetch(config.guildId);
+    const [voiceChannel, textChannel] = await Promise.all([
+      guild.channels.fetch(config.voiceChannelId),
+      guild.channels.fetch(config.textChannelId),
+    ]);
+    if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
+      throw new Error("Configured voice channel is not a Guild Voice channel.");
+    }
+    if (!textChannel?.isTextBased() || typeof textChannel.send !== "function") {
+      throw new Error("Configured text channel cannot receive Bot messages.");
+    }
+    const postText = (content) =>
+      textChannel.send({ content, allowedMentions: { parse: [] } });
+    connection = (dependencies.joinVoiceChannel ?? joinVoiceChannel)({
+      channelId: voiceChannel.id,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfDeaf: false,
+      selfMute: false,
+    });
+    connection.on?.("error", (error) => {
+      logAudioFailure(logger, "voice_connection_failed", error);
+    });
+    await (dependencies.entersState ?? entersState)(
+      connection,
+      VoiceConnectionStatus.Ready,
+      20_000,
+    );
+    const session = new DiscordVoiceSession({
+      transcribe: audio.transcribe,
+      runCodex: (transcript, options) => codex.run(transcript, options),
+      synthesize: audio.synthesize,
+      postText,
+      playAudio:
+        dependencies.playAudio ?? createDiscordPlayer(connection, logger),
+      logger,
+      maximumQueuedTurns: config.maximumQueuedTurns,
+      stageTimeouts: config.stageTimeouts,
+    });
+    subscribeToAllowedSpeaker({
+      connection,
+      config,
+      session,
+      postText,
+      logger,
+      createDecoder: dependencies.createDecoder,
+    });
+    await postText(
+      "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
+    );
+    logInfoQuietly(logger, {
+      component: "discord-voice",
+      event: "ready",
+      ...describeDiscordVoiceConfig(config),
+    });
+    let stopped = false;
+    return {
+      client,
+      connection,
+      session,
+      async stop() {
+        if (stopped) return;
+        stopped = true;
+        session.stop();
+        await Promise.all([destroyQuietly(connection), destroyQuietly(client)]);
+      },
+    };
+  } catch (error) {
+    await Promise.all([
+      destroyQuietly(connection),
+      loginAttempted ? destroyQuietly(client) : Promise.resolve(),
+    ]);
+    throw error;
   }
-  if (!textChannel?.isTextBased() || typeof textChannel.send !== "function") {
-    throw new Error("Configured text channel cannot receive Bot messages.");
-  }
-  const postText = (content) =>
-    textChannel.send({ content, allowedMentions: { parse: [] } });
-  const connection = (dependencies.joinVoiceChannel ?? joinVoiceChannel)({
-    channelId: voiceChannel.id,
-    guildId: guild.id,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: false,
-    selfMute: false,
-  });
-  await (dependencies.entersState ?? entersState)(
-    connection,
-    VoiceConnectionStatus.Ready,
-    20_000,
-  );
-  const session = new DiscordVoiceSession({
-    transcribe: audio.transcribe,
-    runCodex: (transcript, options) => codex.run(transcript, options),
-    synthesize: audio.synthesize,
-    postText,
-    playAudio:
-      dependencies.playAudio ?? createDiscordPlayer(connection, logger),
-    logger,
-    maximumQueuedTurns: config.maximumQueuedTurns,
-    stageTimeouts: config.stageTimeouts,
-  });
-  subscribeToAllowedSpeaker({
-    connection,
-    config,
-    session,
-    postText,
-    logger,
-    createDecoder: dependencies.createDecoder,
-  });
-  await postText(
-    "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
-  );
-  logger.info?.({
-    component: "discord-voice",
-    event: "ready",
-    ...describeDiscordVoiceConfig(config),
-  });
-  return {
-    client,
-    connection,
-    session,
-    async stop() {
-      connection.destroy();
-      client.destroy();
-    },
-  };
 }
 
 if (

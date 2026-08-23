@@ -12,5 +12,12 @@
 - [x] Owner allowlist behavior covered at the voice subscription boundary
 - [x] Direct imports are declared as direct dependencies
 - [x] Isolated Codex home uses only an auth symlink and empty config
+- [x] SIGINT/SIGTERM stop cancels the active stage and drops queued turns
+- [x] Startup and normal shutdown contain synchronous and asynchronous cleanup failures
+- [x] Client, Voice connection, stream, decoder, and player errors cannot crash the service
+- [x] Oversized, malformed, and non-buffer audio frames are discarded once with fixed guidance
+- [x] Discord and TTS text bounds preserve Unicode surrogate pairs
+- [x] Installed Opus decoder and Discord Voice encryption/DAVE dependencies pass runtime inspection
+- [x] Voice start, inspection, and SDK smoke scripts load the ignored `.env` when present
 - [x] `npm run verify`, local smoke, and isolated SDK smoke pass
 - [x] Secret scan, diff review, and follow-up commits complete

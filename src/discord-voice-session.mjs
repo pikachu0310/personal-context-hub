@@ -17,12 +17,57 @@ const DEFAULT_STAGE_TIMEOUTS = Object.freeze({
   speaking: 300_000,
 });
 
-export async function withTimeout(operation, timeoutMs, label) {
+function safeSliceEnd(text, end) {
+  if (end <= 0 || end >= text.length) return end;
+  const previous = text.charCodeAt(end - 1);
+  const next = text.charCodeAt(end);
+  return previous >= 0xd800 &&
+    previous <= 0xdbff &&
+    next >= 0xdc00 &&
+    next <= 0xdfff
+    ? end - 1
+    : end;
+}
+
+export async function withTimeout(operation, timeoutMs, label, parentSignal) {
+  if (parentSignal?.aborted) {
+    throw (
+      parentSignal.reason ??
+      new VoiceServiceError(
+        "SERVICE_STOPPED",
+        `${label} cancelled because the voice service stopped.`,
+        "音声サービスを停止しました。",
+      )
+    );
+  }
   const controller = new AbortController();
   let timer;
+  let removeParentAbort = () => undefined;
   try {
+    const parentAbort = new Promise((_, reject) => {
+      if (!parentSignal) return;
+      const abort = () => {
+        const reason =
+          parentSignal.reason ??
+          new VoiceServiceError(
+            "SERVICE_STOPPED",
+            `${label} cancelled because the voice service stopped.`,
+            "音声サービスを停止しました。",
+          );
+        controller.abort(reason);
+        reject(reason);
+      };
+      if (parentSignal.aborted) {
+        abort();
+        return;
+      }
+      parentSignal.addEventListener("abort", abort, { once: true });
+      removeParentAbort = () =>
+        parentSignal.removeEventListener("abort", abort);
+    });
     return await Promise.race([
       Promise.resolve().then(() => operation(controller.signal)),
+      parentAbort,
       new Promise((_, reject) => {
         timer = setTimeout(() => {
           const timeout = new VoiceServiceError(
@@ -37,19 +82,23 @@ export async function withTimeout(operation, timeoutMs, label) {
     ]);
   } finally {
     clearTimeout(timer);
+    removeParentAbort();
   }
 }
 
 export function boundText(text, maximum, suffix = TRUNCATION_SUFFIX) {
+  if (!Number.isInteger(maximum) || maximum <= 0) return "";
   const normalized = String(text ?? "").trim();
   if (normalized.length <= maximum) return normalized;
   const safeSuffix = suffix.length < maximum ? suffix : "";
-  return `${normalized.slice(0, maximum - safeSuffix.length).trimEnd()}${safeSuffix}`;
+  const end = safeSliceEnd(normalized, maximum - safeSuffix.length);
+  return `${normalized.slice(0, end).trimEnd()}${safeSuffix}`;
 }
 
 export function splitDiscordText(text, maximum = MAX_DISCORD_MESSAGE) {
   const normalized = String(text ?? "").trim();
   if (!normalized) return [];
+  if (!Number.isInteger(maximum) || maximum < 2) return [normalized];
   const chunks = [];
   let remaining = normalized;
   while (remaining.length > maximum) {
@@ -58,6 +107,7 @@ export function splitDiscordText(text, maximum = MAX_DISCORD_MESSAGE) {
     if (cut < maximum * 0.5) cut = remaining.lastIndexOf(" ", maximum - 1);
     if (cut < maximum * 0.5) cut = maximum;
     else cut += 1;
+    cut = safeSliceEnd(remaining, cut);
     chunks.push(remaining.slice(0, cut).trim());
     remaining = remaining.slice(cut).trimStart();
   }
@@ -74,7 +124,7 @@ export function speechExcerpt(text, maximum = 1_200) {
   const safeSuffix =
     TRUNCATION_SUFFIX.length < maximum ? TRUNCATION_SUFFIX : "";
   const budget = maximum - safeSuffix.length;
-  const candidate = normalized.slice(0, budget);
+  const candidate = normalized.slice(0, safeSliceEnd(normalized, budget));
   const boundary = Math.max(
     candidate.lastIndexOf("。"),
     candidate.lastIndexOf("\n"),
@@ -110,10 +160,14 @@ export class DiscordVoiceSession {
     this.queue = [];
     this.processing = false;
     this.state = "idle";
+    this.closed = false;
+    this.shutdownController = new AbortController();
+    this.stoppedAtStage = undefined;
   }
 
   enqueue(wav, metadata = {}) {
     if (!Buffer.isBuffer(wav)) throw new TypeError("wav must be a Buffer");
+    if (this.closed) return false;
     if (this.queue.length >= this.maximumQueuedTurns) return false;
     this.queue.push({ id: randomUUID(), wav, metadata, queuedAt: Date.now() });
     void this.#drain();
@@ -127,8 +181,23 @@ export class DiscordVoiceSession {
       const turn = this.queue.shift();
       await this.#processTurn(turn);
     }
-    this.state = "idle";
+    this.state = this.closed ? "stopped" : "idle";
     this.processing = false;
+  }
+
+  stop() {
+    if (this.closed) return;
+    this.closed = true;
+    this.queue = [];
+    this.stoppedAtStage = this.state;
+    this.state = "stopped";
+    this.shutdownController.abort(
+      new VoiceServiceError(
+        "SERVICE_STOPPED",
+        "Discord voice session stopped.",
+        "音声サービスを停止しました。",
+      ),
+    );
   }
 
   async #processTurn(turn) {
@@ -140,6 +209,7 @@ export class DiscordVoiceSession {
           (signal) => this.dependencies.transcribe(turn.wav, { signal }),
           this.stageTimeouts.transcribing,
           "transcribing",
+          this.shutdownController.signal,
         ),
         MAX_TRANSCRIPT_CHARACTERS,
       );
@@ -150,11 +220,13 @@ export class DiscordVoiceSession {
       const transcriptChunks = splitDiscordText(
         `🎙️ **聞き取った内容**\n${transcript}`,
       );
+      this.state = "posting_transcript";
       for (const chunk of transcriptChunks) {
         await withTimeout(
           (signal) => this.dependencies.postText(chunk, { signal }),
           this.stageTimeouts.posting,
           "posting transcript",
+          this.shutdownController.signal,
         );
       }
 
@@ -164,17 +236,20 @@ export class DiscordVoiceSession {
           (signal) => this.dependencies.runCodex(transcript, { signal }),
           this.stageTimeouts.running_codex,
           "running_codex",
+          this.shutdownController.signal,
         ),
         MAX_CODEX_RESPONSE_CHARACTERS,
       );
       const chunks = splitDiscordText(
         response || "Codexから空の応答が返りました。",
       );
+      this.state = "posting_response";
       for (const chunk of chunks) {
         await withTimeout(
           (signal) => this.dependencies.postText(chunk, { signal }),
           this.stageTimeouts.posting,
           "posting response",
+          this.shutdownController.signal,
         );
       }
 
@@ -185,12 +260,14 @@ export class DiscordVoiceSession {
           (signal) => this.dependencies.synthesize(spoken, { signal }),
           this.stageTimeouts.synthesizing,
           "synthesizing",
+          this.shutdownController.signal,
         );
         this.state = "speaking";
         await withTimeout(
           (signal) => this.dependencies.playAudio(audio, { signal }),
           this.stageTimeouts.speaking,
           "speaking",
+          this.shutdownController.signal,
         );
       }
       this.#log("completed", turn, startedAt, {
@@ -198,6 +275,13 @@ export class DiscordVoiceSession {
         responseCharacters: response.length,
       });
     } catch (error) {
+      if (this.closed) {
+        this.#log("cancelled", turn, startedAt, {
+          stage: this.stoppedAtStage ?? this.state,
+          errorCode: voiceErrorCode(error),
+        });
+        return;
+      }
       this.#log("failed", turn, startedAt, {
         stage: this.state,
         errorCode: voiceErrorCode(error),
@@ -210,6 +294,7 @@ export class DiscordVoiceSession {
           ),
         this.stageTimeouts.posting,
         "posting error",
+        this.shutdownController.signal,
       ).catch(() => undefined);
     }
   }

@@ -96,9 +96,10 @@ variable immediately after use.
 ### Discord Voice to Codex
 
 The Voice bridge uses the same dedicated Bot credential, but additionally needs
-the exact Guild, Voice channel, Text channel, and owner user IDs. Copy the names
-from `.env.example` into an ignored local environment loader, set a repository
-working directory for Codex, then run:
+the exact Guild, Voice channel, Text channel, and owner user IDs. Copy
+`.env.example` to the ignored `.env`, replace every placeholder needed by the
+Voice bridge, set a repository working directory for Codex, then run. The Voice
+start and inspection scripts load `.env` when it exists:
 
 ```sh
 npm run inspect:discord:voice

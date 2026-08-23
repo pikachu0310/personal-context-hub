@@ -30,16 +30,19 @@
 
 ## ターン状態
 
-`idle → receiving → transcribing → running_codex → synthesizing → speaking → idle`
+`idle → receiving → transcribing → posting_transcript → running_codex → posting_response → synthesizing → speaking → idle`
 
 各発話は一意なturn IDを持つ。状態遷移、処理時間、失敗段階だけを構造化ログへ残し、音声バイト列や認証情報は残さない。Codex thread IDはローカル状態ファイルへ保存し、再起動後にresumeする。明示的なreset時だけ新規threadを開始する。
+
+停止要求はどの処理段階からも`stopped`へ遷移する。進行中stageへAbortSignalを伝え、依存処理がsignalを無視してもsession側の待機を解除し、未処理queueを破棄して新しい音声を受け付けない。
 
 ## 音声契約
 
 - Discord受信: Opus 48kHz stereoをPCMへdecodeし、無音1,000msを発話終端とする。
 - STT入力: PCMを16-bit 48kHz stereo WAVへ包み、最大90秒・25MB未満に制限する。短すぎる発話は破棄する。
 - TTS出力: 24kHz mono signed 16-bit little-endian PCMを48kHz stereoへ決定的に変換し、Discordへ再生する。
-- Discord受信streamと再生playerの`error`はプロセスへ伝播させず、秘密を含まないerror種別だけを構造化ログへ残す。
+- Discord client、Voice connection、受信stream、再生playerの`error`はプロセスへ伝播させず、秘密を含まないerror種別だけを構造化ログへ残す。
+- Decode後のPCMが不完全なsample frameでもプロセスを落とさず、その発話だけを破棄して固定文で再入力を案内する。
 - 応答本文が長い場合、Textには全文を分割投稿し、音声は先頭1,200文字までを自然な区切りで読む。
 - 防御的上限として文字起こしは8,000文字、Codex応答は12,000文字までを扱い、それ以上は省略を明示する。
 
@@ -56,6 +59,8 @@
 9. Codex childに任意のprocess環境変数が漏れず、thread optionsでnetworkとWeb検索が無効になる。
 10. timeoutは対応するAbortSignalを発火し、生errorやsecretらしい値をDiscord・ログへ含めない。
 11. Windows側Codex homeにCLIが解釈できないMCP設定があってもそれを読まず、隔離先の空configとMCP 0件でCLIおよびSDKのsmokeが通る。
+12. Voice接続や起動通知に失敗した場合は、途中生成したVoice connectionとログイン済みBot clientを必ず破棄する。通常停止は複数回呼んでも1回だけ後始末する。
+13. SIGINT／SIGTERM時は進行中stageをcancelし、未処理queueを破棄して、依存処理の最大timeoutを待たず停止できる。
 
 ## 第2段階
 

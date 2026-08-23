@@ -9,4 +9,4 @@ Capability: `discord-voice-codex`
 5. Run the repository verification suite, a mock-only local smoke, dependency audit, secret scan, and diff review.
 6. Commit the complete reviewed delta without registering, inviting, starting, or sending through Discord.
 
-After explicit follow-up authorization, the real Codex SDK smoke is repeated once through the isolated home. Discord login, Discord send, and audio API calls remain out of scope.
+Follow-up authorization was received and the real Codex SDK smoke was repeated through the isolated home. Live Discord login, Discord send, and audio API calls remain gated because no dedicated Bot credential or exact Guild, Voice channel, Text channel, owner user, and OpenAI audio API configuration is currently present.
