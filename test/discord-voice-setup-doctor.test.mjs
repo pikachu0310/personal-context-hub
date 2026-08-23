@@ -60,8 +60,8 @@ test("setup doctor returns fixed issues when a local gate fails", async () => {
       issues: [
         {
           code: "CONFIG_INVALID",
-          message: "設定が不正です。",
-          action: "設定を修正してください。",
+          message: "raw secret child detail",
+          action: "raw remediation detail",
           field: "PERSONAL_CONTEXT_VOICE_USER_ID",
         },
       ],
@@ -90,7 +90,10 @@ test("setup doctor returns fixed issues when a local gate fails", async () => {
     report.issues.map(({ code }) => code),
     ["CONFIG_INVALID", "MOCK_SMOKE_FAILED"],
   );
-  assert.doesNotMatch(JSON.stringify(report), /secret child stderr/);
+  assert.doesNotMatch(
+    JSON.stringify(report),
+    /raw secret child detail|raw remediation detail|secret child stderr/,
+  );
 });
 
 test("unsupported Node runtime skips child checks without raw details", async () => {

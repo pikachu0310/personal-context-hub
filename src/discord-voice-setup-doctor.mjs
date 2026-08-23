@@ -47,6 +47,29 @@ const GUIDANCE = Object.freeze({
       "smoke:discord:voice:localを実行し、auth.jsonと空configの条件を確認してください。",
   }),
 });
+const DIAGNOSTIC_GUIDANCE = Object.freeze({
+  REQUIRED_ENVIRONMENT_MISSING: Object.freeze({
+    message: "必須の環境変数が設定されていません。",
+    action: ".env.exampleを参照し、fieldsの環境変数を設定してください。",
+  }),
+  CONFIG_INVALID: Object.freeze({
+    message: "Discord音声設定に許容範囲外の値があります。",
+    action: ".env.exampleとMVP仕様を参照して設定値を修正してください。",
+  }),
+  BOT_CREDENTIAL_MISSING: Object.freeze({
+    message: "専用Discord Bot資格情報を確認できません。",
+    action:
+      "リポジトリ外の資格情報ストアを設定して完全診断を再実行してください。",
+  }),
+  WORKING_DIRECTORY_UNAVAILABLE: Object.freeze({
+    message: "Codex作業ディレクトリをdirectoryとして確認できません。",
+    action: "絶対パスとWSLからのアクセス権を確認してください。",
+  }),
+  CODEX_ISOLATION_UNAVAILABLE: Object.freeze({
+    message: "安全な隔離CODEX_HOMEを準備できません。",
+    action: "認証元、隔離先、状態directoryの権限を確認してください。",
+  }),
+});
 
 function issue(code, detail = {}) {
   return { code, ...GUIDANCE[code], ...detail };
@@ -54,14 +77,37 @@ function issue(code, detail = {}) {
 
 function safeDiagnosticIssues(issues) {
   return (Array.isArray(issues) ? issues : []).map((entry) => {
+    const code =
+      typeof entry?.code === "string" &&
+      /^[A-Z][A-Z0-9_]{0,63}$/.test(entry.code)
+        ? entry.code
+        : "UNEXPECTED_ERROR";
+    const guidance =
+      DIAGNOSTIC_GUIDANCE[code] ??
+      Object.freeze({
+        message: "offline診断に失敗しました。",
+        action: "診断ガイドの手順を確認してください。",
+      });
     const safe = {
-      code: entry?.code ?? "UNEXPECTED_ERROR",
-      message: entry?.message ?? "診断に失敗しました。",
-      action: entry?.action ?? "診断ガイドの手順を確認してください。",
+      code,
+      ...guidance,
     };
-    if (Array.isArray(entry?.fields)) safe.fields = entry.fields;
-    if (typeof entry?.field === "string") safe.field = entry.field;
-    if (typeof entry?.causeCode === "string") safe.causeCode = entry.causeCode;
+    const environmentName = /^PERSONAL_CONTEXT_VOICE_[A-Z0-9_]+$/;
+    if (
+      Array.isArray(entry?.fields) &&
+      entry.fields.every((field) => environmentName.test(field))
+    ) {
+      safe.fields = entry.fields;
+    }
+    if (typeof entry?.field === "string" && environmentName.test(entry.field)) {
+      safe.field = entry.field;
+    }
+    if (
+      typeof entry?.causeCode === "string" &&
+      /^[A-Z][A-Z0-9_]{0,63}$/.test(entry.causeCode)
+    ) {
+      safe.causeCode = entry.causeCode;
+    }
     return safe;
   });
 }
