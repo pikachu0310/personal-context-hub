@@ -105,6 +105,24 @@ npm run inspect:discord:voice
 npm run start:discord:voice
 ```
 
+When the service runs in WSL, set `PERSONAL_CONTEXT_VOICE_CODEX_HOME` to the
+WSL path of the signed-in Windows Codex App home (for example,
+`/mnt/c/Users/YOU/.codex`). This reuses the existing ChatGPT sign-in without
+copying credentials into the repository. The path is used only as the
+authentication source: before Discord login, the service creates a private,
+isolated Codex home beside its state file, symlinks only `auth.json`, and
+requires an empty `config.toml`. Set
+`PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME` only when that default location
+must be changed. An unexpected auth file, nonempty config, or unsafe directory
+causes startup to fail without reading the Bot credential.
+
+The Codex child process receives only an allowlisted runtime environment. Voice
+turns run with Codex network access and web search disabled; the supported
+sandboxes are `read-only` and `workspace-write`. Inherited apps, plugins, hooks,
+multi-agent tools, and MCP servers are disabled for this unattended voice entry
+point. The Windows Codex App `config.toml` is never loaded, so an unrelated or
+incompatible local MCP entry cannot prevent the bridge from starting.
+
 The Bot must have View Channel, Connect, Speak, Send Messages, and Read Message
 History only in those two channels. It does not use a Discord user token. The
 MVP accepts audio only from the configured owner ID, serializes turns, posts the
