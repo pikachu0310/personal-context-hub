@@ -13,6 +13,8 @@ try {
     statePath: join(temporaryDirectory, "thread.json"),
     codexSandbox: "read-only",
     codexModel: undefined,
+    codexHome: process.env.PERSONAL_CONTEXT_VOICE_CODEX_HOME,
+    isolatedCodexHome: join(temporaryDirectory, "isolated-codex-home"),
   });
   const response = await runner.run(
     "疎通確認です。ファイルや外部状態を変更せず、VOICE_CODEX_SDK_OK とだけ返してください。",

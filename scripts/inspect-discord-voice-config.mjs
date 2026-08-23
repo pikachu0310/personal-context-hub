@@ -1,15 +1,18 @@
-import { access } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { readDiscordTokenStore } from "../src/discord-config.mjs";
 import {
   describeDiscordVoiceConfig,
   loadDiscordVoiceConfig,
 } from "../src/discord-voice-config.mjs";
+import { voiceErrorMessage } from "../src/discord-voice-errors.mjs";
+import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
 
 const readiness = {
   ready: false,
   botCredential: false,
   configuration: false,
   workingDirectory: false,
+  codexIsolation: false,
   issues: [],
 };
 const requiredEnvironment = [
@@ -50,18 +53,28 @@ if (missingEnvironment.length) {
 
 if (config) {
   try {
-    await access(config.workingDirectory);
+    const workingDirectory = await stat(config.workingDirectory);
+    if (!workingDirectory.isDirectory()) throw new Error("not a directory");
     readiness.workingDirectory = true;
   } catch {
     readiness.issues.push(
       "Configured Codex working directory is not accessible.",
     );
   }
+
+  try {
+    const codex = new CodexVoiceRunner(config);
+    await codex.prepare();
+    readiness.codexIsolation = true;
+  } catch (error) {
+    readiness.issues.push(voiceErrorMessage(error));
+  }
 }
 
 readiness.ready =
   readiness.botCredential &&
   readiness.configuration &&
-  readiness.workingDirectory;
+  readiness.workingDirectory &&
+  readiness.codexIsolation;
 console.log(JSON.stringify(readiness, null, 2));
 if (!readiness.ready) process.exitCode = 1;

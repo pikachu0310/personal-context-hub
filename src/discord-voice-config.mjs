@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const snowflake = /^\d{17,20}$/;
 
@@ -26,19 +26,38 @@ function integer(env, name, fallback, minimum, maximum) {
   return value;
 }
 
+function absolutePath(value, name) {
+  if (!isAbsolute(value)) throw new Error(`${name} must be an absolute path.`);
+  return resolve(value);
+}
+
 export function loadDiscordVoiceConfig(env = process.env) {
-  const workingDirectory = resolve(
+  const workingDirectory = absolutePath(
     required(env, "PERSONAL_CONTEXT_VOICE_WORKDIR"),
+    "PERSONAL_CONTEXT_VOICE_WORKDIR",
   );
+  const statePath = resolve(
+    env.PERSONAL_CONTEXT_VOICE_STATE_PATH ??
+      join(
+        homedir(),
+        ".local",
+        "state",
+        "personal-context-hub",
+        "discord-voice-codex.json",
+      ),
+  );
+  const isolatedCodexHome =
+    env.PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME?.trim()
+      ? absolutePath(
+          env.PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME,
+          "PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME",
+        )
+      : join(dirname(statePath), "discord-voice-codex-home");
   const codexSandbox =
     env.PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX?.trim() || "workspace-write";
-  if (
-    !new Set(["read-only", "workspace-write", "danger-full-access"]).has(
-      codexSandbox,
-    )
-  ) {
+  if (!new Set(["read-only", "workspace-write"]).has(codexSandbox)) {
     throw new Error(
-      "PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX must be read-only, workspace-write, or danger-full-access.",
+      "PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX must be read-only or workspace-write.",
     );
   }
   return {
@@ -50,20 +69,18 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     allowedUserId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_USER_ID"),
     workingDirectory,
-    statePath: resolve(
-      env.PERSONAL_CONTEXT_VOICE_STATE_PATH ??
-        join(
-          homedir(),
-          ".local",
-          "state",
-          "personal-context-hub",
-          "discord-voice-codex.json",
-        ),
-    ),
+    statePath,
     sttModel: env.PERSONAL_CONTEXT_VOICE_STT_MODEL?.trim() || "gpt-transcribe",
     ttsModel: env.PERSONAL_CONTEXT_VOICE_TTS_MODEL?.trim() || "gpt-4o-mini-tts",
     ttsVoice: env.PERSONAL_CONTEXT_VOICE_TTS_VOICE?.trim() || "marin",
     codexModel: env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined,
+    codexHome: env.PERSONAL_CONTEXT_VOICE_CODEX_HOME?.trim()
+      ? absolutePath(
+          env.PERSONAL_CONTEXT_VOICE_CODEX_HOME,
+          "PERSONAL_CONTEXT_VOICE_CODEX_HOME",
+        )
+      : undefined,
+    isolatedCodexHome,
     codexSandbox,
     silenceMs: integer(
       env,
@@ -93,6 +110,43 @@ export function loadDiscordVoiceConfig(env = process.env) {
       1,
       10,
     ),
+    stageTimeouts: {
+      transcribing: integer(
+        env,
+        "PERSONAL_CONTEXT_VOICE_STT_TIMEOUT_MS",
+        120_000,
+        5_000,
+        600_000,
+      ),
+      running_codex: integer(
+        env,
+        "PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS",
+        900_000,
+        30_000,
+        3_600_000,
+      ),
+      posting: integer(
+        env,
+        "PERSONAL_CONTEXT_VOICE_DISCORD_TIMEOUT_MS",
+        30_000,
+        5_000,
+        120_000,
+      ),
+      synthesizing: integer(
+        env,
+        "PERSONAL_CONTEXT_VOICE_TTS_TIMEOUT_MS",
+        120_000,
+        5_000,
+        600_000,
+      ),
+      speaking: integer(
+        env,
+        "PERSONAL_CONTEXT_VOICE_PLAYBACK_TIMEOUT_MS",
+        300_000,
+        10_000,
+        900_000,
+      ),
+    },
     openaiApiKey: required(env, "OPENAI_API_KEY"),
   };
 }
@@ -109,7 +163,10 @@ export function describeDiscordVoiceConfig(config) {
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
     codexModel: config.codexModel ?? "Codex configured default",
+    codexHomeConfigured: Boolean(config.codexHome),
+    isolatedCodexHomeConfigured: Boolean(config.isolatedCodexHome),
     codexSandbox: config.codexSandbox,
+    stageTimeouts: config.stageTimeouts,
     openaiApiKeyConfigured: Boolean(config.openaiApiKey),
   };
 }
