@@ -966,8 +966,10 @@ export class DiscordVoiceMeetingSession {
         if (!this.dependencies.controlTask(control)) rejectedControls += 1;
       }
       let rejectedTasks = 0;
+      const acceptedTasks = [];
       for (const task of tasks) {
-        if (!this.dependencies.enqueueTask(task)) rejectedTasks += 1;
+        if (this.dependencies.enqueueTask(task)) acceptedTasks.push(task);
+        else rejectedTasks += 1;
       }
       if (rejectedControls) {
         await withTimeout(
@@ -994,8 +996,13 @@ export class DiscordVoiceMeetingSession {
         );
       }
 
-      if (observation.shouldReply) {
-        for (const chunk of splitDiscordText(observation.reply)) {
+      const reply = acceptedTasks.length
+        ? `タスクを追加しました：${acceptedTasks.map((task) => task.title).join("、")}`
+        : observation.shouldReply
+          ? observation.reply
+          : "";
+      if (reply) {
+        for (const chunk of splitDiscordText(reply)) {
           await withTimeout(
             (signal) => this.dependencies.postText(chunk, { signal }),
             this.stageTimeouts.posting,
@@ -1003,7 +1010,7 @@ export class DiscordVoiceMeetingSession {
             this.shutdownController.signal,
           );
         }
-        const spoken = speechExcerpt(observation.reply);
+        const spoken = speechExcerpt(reply);
         if (spoken) {
           const audio = await withTimeout(
             (signal) => this.dependencies.synthesize(spoken, { signal }),
@@ -1022,7 +1029,7 @@ export class DiscordVoiceMeetingSession {
       this.#log("meeting_observation_completed", {
         elapsedMs: Date.now() - startedAt,
         statements: statements.length,
-        replied: observation.shouldReply,
+        replied: Boolean(reply),
         tasks: tasks.length - rejectedTasks,
       });
       return true;

@@ -100,7 +100,9 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
     send: async (payload) => {
       assert.equal(payload.flags, MessageFlags.SuppressNotifications);
       posts.push(payload);
-      if (payload.content === "モック応答") turnEvents.push("post_response");
+      if (payload.content === "タスクを追加しました：モック作業") {
+        turnEvents.push("post_response");
+      }
       const message = {
         id: `message-${posts.length}`,
         edit: async (edited) => {
@@ -169,7 +171,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
         },
         synthesize: async (text) => {
           turnEvents.push("tts");
-          assert.equal(text, "モック応答");
+          assert.equal(text, "タスクを追加しました：モック作業");
           return synthesized;
         },
       },
@@ -254,7 +256,9 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   assert.ok(posts.some(({ content }) => /会議観測モード/.test(content)));
   assert.ok(posts.some(({ content }) => /Owner.*モック発話/.test(content)));
   assert.ok(posts.some(({ content }) => /議事録/.test(content)));
-  assert.ok(posts.some(({ content }) => content === "モック応答"));
+  assert.ok(
+    posts.some(({ content }) => content === "タスクを追加しました：モック作業"),
+  );
   assert.ok(posts.some(({ content }) => /Codexタスク/.test(content)));
   assert.ok(
     posts.some(({ content }) => /ログ: <#55555555555555555>/.test(content)),

@@ -812,6 +812,49 @@ test("meeting mode dispatches only owner-authorized background tasks", async () 
   session.stop();
 });
 
+test("meeting task acknowledgement replaces the generated realtime reply", async () => {
+  const posts = [];
+  const spoken = [];
+  const dispatched = [];
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => "音声でのタスク提出を検証して",
+    observe: async () =>
+      JSON.stringify({
+        minutes: "- 音声タスクを追加",
+        shouldReply: true,
+        reply:
+          "対象実装を確認・検証してコミットするタスクに追加しました。詳細な補足説明です。",
+        tasks: [
+          {
+            title: "音声でのタスク提出を検証",
+            sourceSequences: [1],
+          },
+        ],
+      }),
+    upsertLiveTranscript: async () => undefined,
+    upsertMinutes: async () => undefined,
+    postText: async (content) => posts.push(content),
+    synthesize: async (content) => (spoken.push(content), Buffer.from("pcm")),
+    playAudio: async () => undefined,
+    enqueueTask: (task) => (dispatched.push(task), true),
+    ownerUserId: "owner-id",
+    tasksEnabled: true,
+    logger: { info: () => undefined },
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+  session.enqueue(Buffer.from("wav"), {
+    userId: "owner-id",
+    speakerName: "Owner",
+  });
+  await eventually(() => session.statements.length === 1);
+  assert.equal(await session.observeNow(), true);
+  assert.equal(dispatched.length, 1);
+  assert.deepEqual(posts, ["タスクを追加しました：音声でのタスク提出を検証"]);
+  assert.deepEqual(spoken, ["タスクを追加しました：音声でのタスク提出を検証"]);
+  session.stop();
+});
+
 test("meeting mode coalesces overload into the editable status instead of posting warnings", async () => {
   const liveEdits = [];
   let releaseTranscription;
