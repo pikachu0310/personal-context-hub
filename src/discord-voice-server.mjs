@@ -248,7 +248,7 @@ const DISCORD_TASK_STATES = Object.freeze({
 
 export function formatDiscordTaskCard(
   task,
-  { state = "queued", threadId, elapsedMs } = {},
+  { state = "queued", threadId, elapsedMs, pendingInstructions = 0 } = {},
 ) {
   const [icon, label] = DISCORD_TASK_STATES[state] ?? ["🧰", state];
   const id = String(task.id ?? "unknown").replace(/[^a-zA-Z0-9_-]/g, "");
@@ -259,7 +259,7 @@ export function formatDiscordTaskCard(
   return [
     `${icon} **Codexタスク** \`${id || "unknown"}\``,
     `**${title}**`,
-    `状態: **${label}**${Number.isFinite(elapsedMs) ? ` · ${formatElapsedTime(elapsedMs)}` : ""}`,
+    `状態: **${label}**${Number.isFinite(elapsedMs) ? ` · ${formatElapsedTime(elapsedMs)}` : ""}${pendingInstructions > 0 ? ` · 追加指示 **${pendingInstructions}件待機**` : ""}`,
     threadId ? `ログ: <#${threadId}>` : "ログスレッドを準備しています…",
   ].join("\n");
 }
@@ -293,13 +293,19 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
     }
     const threadId = String(thread.id ?? "");
     if (!threadId) throw new Error("Created task thread has no channel ID.");
-    const update = async ({ state, elapsedMs, signal } = {}) => {
+    const update = async ({
+      state,
+      elapsedMs,
+      pendingInstructions,
+      signal,
+    } = {}) => {
       if (signal?.aborted) throw signal.reason;
       const payload = {
         content: formatDiscordTaskCard(task, {
           state,
           threadId,
           elapsedMs,
+          pendingInstructions,
         }),
         allowedMentions: { parse: [] },
       };
@@ -322,12 +328,34 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
         boundText(task.request, 1_200) || "依頼内容を取得できませんでした。",
       );
       await post(`🧾 **依頼内容**\n${request}`);
+      await post(
+        [
+          "💡 **このスレッドで操作できます**",
+          "追加指示: そのままメッセージを送信",
+          "停止: `停止` / `中止` / `キャンセル` / `stop` / `cancel`",
+          "実行中の追加指示は、現在の処理が終わり次第、同じCodexセッションで続けます。",
+        ].join("\n"),
+      ).catch(() => undefined);
     } catch (error) {
       await update({ state: "failed" }).catch(() => undefined);
       throw error;
     }
     return { post, update, threadId };
   };
+}
+
+export function formatDiscordTaskAction(action) {
+  if (action?.type === "cancelled") {
+    return action.discardedInstructions
+      ? `⏹️ タスクを停止し、未処理の追加指示${action.discardedInstructions}件も破棄しました。`
+      : "⏹️ タスクを停止しました。";
+  }
+  if (action?.type === "instruction") {
+    return action.disposition === "resumed"
+      ? "▶️ 追加指示を受け付けました。同じCodexセッションで再開します。"
+      : `➕ 追加指示を受け付けました。現在の処理後に続けます（待機 ${action.pendingInstructions}件）。`;
+  }
+  return "";
 }
 
 export async function startDiscordVoiceCodex({
@@ -427,10 +455,8 @@ export async function startDiscordVoiceCodex({
           content: message.content,
         });
         if (!action) return;
-        const response =
-          action === "cancelled"
-            ? "⏹️ 停止要求を受け付けました。"
-            : "➕ 追加指示を受け付けました。このタスクの同じCodexセッションで続けます。";
+        const response = formatDiscordTaskAction(action);
+        if (!response) return;
         void message.channel
           .send(createDiscordMessagePayload(response, messageOptions))
           .catch(() => undefined);

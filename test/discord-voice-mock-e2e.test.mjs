@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { ChannelType, MessageFlags } from "discord.js";
 import {
+  formatDiscordTaskAction,
   formatDiscordTaskCard,
   startDiscordVoiceCodex,
 } from "../src/discord-voice-server.mjs";
@@ -62,6 +63,35 @@ test("Discord task cards expose a stable log link and readable state", () => {
   assert.match(content, /状態: \*\*完了\*\* · 1分5秒/);
   assert.match(content, /ログ: <#55555555555555555>/);
   assert.match(content, /README \\\*更新\\\*/);
+
+  const waiting = formatDiscordTaskCard(
+    { id: "task-123", title: "README更新" },
+    { state: "running", threadId: "55555555555555555", pendingInstructions: 2 },
+  );
+  assert.match(waiting, /追加指示 \*\*2件待機\*\*/);
+});
+
+test("Discord task actions explain whether work is queued, resumed, or stopped", () => {
+  assert.equal(
+    formatDiscordTaskAction({
+      type: "instruction",
+      disposition: "queued",
+      pendingInstructions: 2,
+    }),
+    "➕ 追加指示を受け付けました。現在の処理後に続けます（待機 2件）。",
+  );
+  assert.equal(
+    formatDiscordTaskAction({
+      type: "instruction",
+      disposition: "resumed",
+      pendingInstructions: 1,
+    }),
+    "▶️ 追加指示を受け付けました。同じCodexセッションで再開します。",
+  );
+  assert.equal(
+    formatDiscordTaskAction({ type: "cancelled", discardedInstructions: 1 }),
+    "⏹️ タスクを停止し、未処理の追加指示1件も破棄しました。",
+  );
 });
 
 test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and playback", async () => {
@@ -265,6 +295,11 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   );
   assert.ok(posts.some(({ content }) => /状態: \*\*完了\*\*/.test(content)));
   assert.ok(taskThreadPosts.some(({ content }) => /依頼内容/.test(content)));
+  assert.ok(
+    taskThreadPosts.some(({ content }) =>
+      /このスレッドで操作できます/.test(content),
+    ),
+  );
   assert.ok(taskThreadPosts.some(({ content }) => /モック進捗/.test(content)));
   assert.ok(
     taskThreadPosts.some(({ content }) => /Codexタスク開始/.test(content)),

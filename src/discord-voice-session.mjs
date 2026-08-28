@@ -563,8 +563,10 @@ export class DiscordVoiceTaskQueue {
     if (
       /^(?:停止|中止|キャンセル|stop|cancel)[!！。\s]*$/iu.test(instruction)
     ) {
+      const discardedInstructions = task.instructions.length;
       task.cancelled = true;
       task.instructions.length = 0;
+      task.cancelledInstructionCount = discardedInstructions;
       this.queue = this.queue.filter((queued) => queued !== task);
       task.controller?.abort(
         new VoiceServiceError(
@@ -574,16 +576,25 @@ export class DiscordVoiceTaskQueue {
         ),
       );
       if (!task.executing) void this.#markCancelled(task.surface, task);
-      return "cancelled";
+      return { type: "cancelled", discardedInstructions };
     }
+    const disposition =
+      task.executing || this.queue.includes(task) ? "queued" : "resumed";
     task.instructions.push(instruction);
     task.cancelled = false;
-    if (!task.executing && !this.queue.includes(task)) {
+    if (disposition === "resumed") {
       this.queue.push(task);
-      void task.surface?.update?.({ state: "queued" });
       this.#drain();
+    } else {
+      void Promise.resolve(
+        task.surface?.update?.({
+          state: task.executing ? "running" : "queued",
+          pendingInstructions: task.instructions.length,
+        }),
+      ).catch(() => undefined);
     }
-    return "instruction";
+    const pendingInstructions = task.instructions.length;
+    return { type: "instruction", disposition, pendingInstructions };
   }
 
   handleVoiceControl(control) {
@@ -672,24 +683,33 @@ export class DiscordVoiceTaskQueue {
         typeof taskSurface === "function"
           ? async () => undefined
           : (state) => taskSurface.update(state);
+      task.additionalInstruction = task.instructions.shift();
+      const isContinuation = Boolean(task.additionalInstruction);
       await withTimeout(
-        (signal) => updateTask({ state: "running", signal }),
+        (signal) =>
+          updateTask({
+            state: "running",
+            pendingInstructions: task.instructions.length,
+            signal,
+          }),
         DEFAULT_STAGE_TIMEOUTS.posting,
         "updating task status",
         this.shutdownController.signal,
       );
       await withTimeout(
         (signal) =>
-          postTaskText(`🧰 **Codexタスク開始** \`${task.id}\`\n${title}`, {
-            signal,
-          }),
+          postTaskText(
+            isContinuation
+              ? `🔁 **追加指示の処理を開始** \`${task.id}\`\n残り: ${task.instructions.length}件`
+              : `🧰 **Codexタスク開始** \`${task.id}\`\n${title}`,
+            { signal },
+          ),
         DEFAULT_STAGE_TIMEOUTS.posting,
         "posting task start",
         this.shutdownController.signal,
       );
       let progressPosts = 0;
       let lastProgress = "";
-      task.additionalInstruction = task.instructions.shift();
       const response = boundText(
         await withTimeout(
           (signal) =>
@@ -743,29 +763,61 @@ export class DiscordVoiceTaskQueue {
         );
       }
       const elapsedMs = Date.now() - task.createdAt;
-      await withTimeout(
-        (signal) =>
-          postTaskText(
-            `✅ **Codexタスク完了** \`${task.id}\`\n${title}\n所要時間: ${formatElapsedTime(elapsedMs)}`,
-            { signal },
-          ),
-        DEFAULT_STAGE_TIMEOUTS.posting,
-        "posting task completion",
-        this.shutdownController.signal,
+      const pendingInstructions = task.instructions.length;
+      if (pendingInstructions && !task.cancelled) {
+        await withTimeout(
+          (signal) =>
+            postTaskText(
+              `⏭️ **追加指示へ続行** \`${task.id}\`\n残り: ${pendingInstructions}件`,
+              { signal },
+            ),
+          DEFAULT_STAGE_TIMEOUTS.posting,
+          "posting task continuation",
+          this.shutdownController.signal,
+        );
+        await withTimeout(
+          (signal) =>
+            updateTask({
+              state: "queued",
+              pendingInstructions,
+              elapsedMs,
+              signal,
+            }),
+          DEFAULT_STAGE_TIMEOUTS.posting,
+          "updating task continuation",
+          this.shutdownController.signal,
+        );
+      } else {
+        await withTimeout(
+          (signal) =>
+            postTaskText(
+              `✅ **Codexタスク完了** \`${task.id}\`\n${title}\n所要時間: ${formatElapsedTime(elapsedMs)}`,
+              { signal },
+            ),
+          DEFAULT_STAGE_TIMEOUTS.posting,
+          "posting task completion",
+          this.shutdownController.signal,
+        );
+        await withTimeout(
+          (signal) => updateTask({ state: "completed", elapsedMs, signal }),
+          DEFAULT_STAGE_TIMEOUTS.posting,
+          "updating task completion",
+          this.shutdownController.signal,
+        );
+      }
+      this.#log(
+        pendingInstructions
+          ? "power_task_continuation_queued"
+          : "power_task_completed",
+        {
+          taskId: task.id,
+          elapsedMs,
+          queueWaitMs: startedAt - task.createdAt,
+          responseCharacters: response.length,
+          progressPosts,
+          pendingInstructions,
+        },
       );
-      await withTimeout(
-        (signal) => updateTask({ state: "completed", elapsedMs, signal }),
-        DEFAULT_STAGE_TIMEOUTS.posting,
-        "updating task completion",
-        this.shutdownController.signal,
-      );
-      this.#log("power_task_completed", {
-        taskId: task.id,
-        elapsedMs,
-        queueWaitMs: startedAt - task.createdAt,
-        responseCharacters: response.length,
-        progressPosts,
-      });
       if (task.instructions.length && !task.cancelled) this.queue.push(task);
     } catch (error) {
       if (this.closed || task.cancelled || error?.code === "TASK_CANCELLED") {
@@ -798,7 +850,9 @@ export class DiscordVoiceTaskQueue {
     if (!surface) return;
     const post = typeof surface === "function" ? surface : surface.post;
     await Promise.resolve(
-      post?.(`⏹️ **Codexタスク中止** \`${task.id}\``),
+      post?.(
+        `⏹️ **Codexタスク中止** \`${task.id}\`${task.cancelledInstructionCount ? `\n未処理の追加指示 ${task.cancelledInstructionCount}件も破棄しました。` : ""}`,
+      ),
     ).catch(() => undefined);
     await Promise.resolve(
       surface?.update?.({

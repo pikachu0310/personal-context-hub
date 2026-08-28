@@ -657,6 +657,8 @@ test("stopping the task queue marks an active Discord task as cancelled", async 
 test("owner thread messages continue the same power task and can cancel it", async () => {
   const runs = [];
   const states = [];
+  const updates = [];
+  const threadPosts = [];
   let releaseFirst;
   const firstRun = new Promise((resolve) => (releaseFirst = resolve));
   const queue = new DiscordVoiceTaskQueue({
@@ -675,14 +677,17 @@ test("owner thread messages continue the same power task and can cancel it", asy
     postText: async () => undefined,
     createTaskThread: async () => ({
       threadId: "task-thread",
-      post: async () => undefined,
-      update: async ({ state }) => states.push(state),
+      post: async (content) => threadPosts.push(content),
+      update: async (update) => {
+        states.push(update.state);
+        updates.push(update);
+      },
     }),
     logger: { info: () => undefined },
   });
   assert.equal(queue.enqueue({ title: "継続", request: "開始" }), true);
   await eventually(() => runs.length === 1);
-  assert.equal(
+  assert.deepEqual(
     queue.handleThreadMessage({
       threadId: "task-thread",
       userId: "guest",
@@ -691,40 +696,69 @@ test("owner thread messages continue the same power task and can cancel it", asy
     }),
     false,
   );
-  assert.equal(
+  assert.deepEqual(
     queue.handleThreadMessage({
       threadId: "task-thread",
       userId: "owner",
       ownerUserId: "owner",
       content: "テストも追加して",
     }),
-    "instruction",
+    { type: "instruction", disposition: "queued", pendingInstructions: 1 },
+  );
+  await eventually(() =>
+    updates.some(
+      ({ state, pendingInstructions }) =>
+        state === "running" && pendingInstructions === 1,
+    ),
   );
   releaseFirst();
   await eventually(() => runs.length === 2 && states.includes("completed"));
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal(runs[1].task, runs[0].task);
   assert.equal(runs[1].instruction, "テストも追加して");
-
+  assert.ok(threadPosts.some((content) => content.includes("追加指示へ続行")));
+  assert.ok(
+    threadPosts.some((content) => content.includes("追加指示の処理を開始")),
+  );
   assert.equal(
+    threadPosts.filter((content) => content.includes("Codexタスク完了")).length,
+    1,
+  );
+
+  assert.deepEqual(
     queue.handleThreadMessage({
       threadId: "task-thread",
       userId: "owner",
       ownerUserId: "owner",
       content: "もう一度確認して",
     }),
-    "instruction",
+    { type: "instruction", disposition: "resumed", pendingInstructions: 1 },
   );
   await eventually(() => runs.length === 3);
-  assert.equal(
+  assert.deepEqual(
+    queue.handleThreadMessage({
+      threadId: "task-thread",
+      userId: "owner",
+      ownerUserId: "owner",
+      content: "READMEも更新して",
+    }),
+    { type: "instruction", disposition: "queued", pendingInstructions: 1 },
+  );
+  assert.deepEqual(
     queue.handleThreadMessage({
       threadId: "task-thread",
       userId: "owner",
       ownerUserId: "owner",
       content: "キャンセル",
     }),
-    "cancelled",
+    { type: "cancelled", discardedInstructions: 1 },
   );
   await eventually(() => states.includes("cancelled"));
+  assert.ok(
+    threadPosts.some((content) =>
+      content.includes("未処理の追加指示 1件も破棄"),
+    ),
+  );
   await queue.stop();
 });
 
@@ -753,17 +787,20 @@ test("owner voice controls change and stop the latest power task", async () => {
   });
   queue.enqueue({ title: "音声操作", request: "開始" });
   await eventually(() => instructions.length === 1);
-  assert.equal(
+  assert.deepEqual(
     queue.handleVoiceControl({
       type: "instruction",
       instruction: "テスト対象を変更して",
     }),
-    "instruction",
+    { type: "instruction", disposition: "queued", pendingInstructions: 1 },
   );
   releaseFirst();
   await eventually(() => instructions.length === 2);
   assert.equal(instructions[1], "テスト対象を変更して");
-  assert.equal(queue.handleVoiceControl({ type: "stop" }), "cancelled");
+  assert.deepEqual(queue.handleVoiceControl({ type: "stop" }), {
+    type: "cancelled",
+    discardedInstructions: 0,
+  });
   await queue.stop();
 });
 
