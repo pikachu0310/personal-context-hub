@@ -2,6 +2,15 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const snowflake = /^\d{17,20}$/;
+const codexReasoningEfforts = new Set([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
 
 function required(env, name) {
   const value = env[name]?.trim();
@@ -89,6 +98,17 @@ export function loadDiscordVoiceConfig(env = process.env) {
   if (!new Set(["turn", "meeting"]).has(voiceMode)) {
     throw new Error("PERSONAL_CONTEXT_VOICE_MODE must be turn or meeting.");
   }
+  const codexReasoningEffort =
+    env.PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT?.trim().toLowerCase() ||
+    undefined;
+  if (
+    codexReasoningEffort &&
+    !codexReasoningEfforts.has(codexReasoningEffort)
+  ) {
+    throw new Error(
+      "PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT must be minimal, low, medium, high, xhigh, max, or ultra.",
+    );
+  }
   return {
     guildId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_GUILD_ID"),
     voiceChannelId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_CHANNEL_ID"),
@@ -121,6 +141,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ttsVoice: env.PERSONAL_CONTEXT_VOICE_TTS_VOICE?.trim() || "marin",
     ttsSpeed: number(env, "PERSONAL_CONTEXT_VOICE_TTS_SPEED", 1, 0.25, 4),
     codexModel: env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined,
+    codexReasoningEffort,
     codexHome: env.PERSONAL_CONTEXT_VOICE_CODEX_HOME?.trim()
       ? absolutePath(
           env.PERSONAL_CONTEXT_VOICE_CODEX_HOME,
@@ -256,6 +277,8 @@ export function describeDiscordVoiceConfig(config) {
     transcriptionConcurrency: config.transcriptionConcurrency,
     observationIntervalMs: config.observationIntervalMs,
     codexModel: config.codexModel ?? "Codex configured default",
+    codexReasoningEffort:
+      config.codexReasoningEffort ?? "Codex configured default",
     codexHomeConfigured: Boolean(config.codexHome),
     isolatedCodexHomeConfigured: Boolean(config.isolatedCodexHome),
     codexSandbox: config.codexSandbox,

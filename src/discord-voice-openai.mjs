@@ -464,6 +464,7 @@ export class CodexVoiceRunner {
         skipGitRepoCheck: false,
         additionalDirectories: [],
         model: this.config.codexModel,
+        modelReasoningEffort: this.config.codexReasoningEffort,
       });
     task.codexThread = thread;
     const prompt = task.additionalInstruction
@@ -557,6 +558,7 @@ export class CodexVoiceRunner {
       skipGitRepoCheck: false,
       additionalDirectories: [],
       model: this.config.codexModel,
+      modelReasoningEffort: this.config.codexReasoningEffort,
     };
     this.thread = threadId
       ? this.codex.resumeThread(threadId, options)

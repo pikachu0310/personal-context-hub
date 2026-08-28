@@ -31,6 +31,7 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
   assert.equal(config.maximumPendingTasks, 10);
   assert.equal(config.taskConcurrency, 2);
   assert.equal(config.codexHome, "/mnt/c/Users/example/.codex");
+  assert.equal(config.codexReasoningEffort, undefined);
   assert.match(
     config.isolatedCodexHome,
     /personal-context-hub\/discord-voice-codex-home$/,
@@ -61,6 +62,8 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
     PERSONAL_CONTEXT_VOICE_TASK_CONCURRENCY: "3",
     PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TASKS: "20",
     PERSONAL_CONTEXT_VOICE_TTS_SPEED: "2",
+    PERSONAL_CONTEXT_VOICE_CODEX_MODEL: "gpt-5.6-sol",
+    PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT: "HIGH",
   });
   assert.equal(config.listenToEveryone, true);
   assert.equal(config.voiceMode, "meeting");
@@ -74,12 +77,16 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   assert.equal(config.codexSandbox, "danger-full-access");
   assert.equal(config.taskConcurrency, 3);
   assert.equal(config.maximumPendingTasks, 20);
+  assert.equal(config.codexModel, "gpt-5.6-sol");
+  assert.equal(config.codexReasoningEffort, "high");
   const description = describeDiscordVoiceConfig(config);
   assert.equal(description.listenToEveryone, true);
   assert.equal(description.voiceMode, "meeting");
   assert.equal(description.powerMode, true);
   assert.equal(description.silentMessages, false);
   assert.equal(description.ttsSpeed, 2);
+  assert.equal(description.codexModel, "gpt-5.6-sol");
+  assert.equal(description.codexReasoningEffort, "high");
 });
 
 test("voice config rejects missing and malformed trust-boundary IDs", () => {
@@ -142,6 +149,14 @@ test("voice config rejects missing and malformed trust-boundary IDs", () => {
         PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX: "danger-full-access",
       }),
     /power mode explicitly enables danger-full-access/,
+  );
+  assert.throws(
+    () =>
+      loadDiscordVoiceConfig({
+        ...valid,
+        PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT: "heroic",
+      }),
+    /minimal, low, medium, high, xhigh, max, or ultra/,
   );
   assert.throws(
     () =>

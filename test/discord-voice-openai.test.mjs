@@ -262,7 +262,8 @@ test("Codex voice runner persists and resumes the same local thread", async () =
     statePath,
     workingDirectory: root,
     codexSandbox: "workspace-write",
-    codexModel: undefined,
+    codexModel: "test-model",
+    codexReasoningEffort: "high",
   };
   const first = new CodexVoiceRunner(config, { codex });
   assert.equal(await first.run("テストして"), "完了しました");
@@ -273,6 +274,8 @@ test("Codex voice runner persists and resumes the same local thread", async () =
   assert.equal(runs[0].webSearchMode, "disabled");
   assert.equal(runs[0].approvalPolicy, "never");
   assert.deepEqual(runs[0].additionalDirectories, []);
+  assert.equal(runs[0].model, "test-model");
+  assert.equal(runs[0].modelReasoningEffort, "high");
   assert.ok(turnOptions.signal instanceof AbortSignal);
 
   let resumed;
@@ -289,6 +292,8 @@ test("Codex voice runner persists and resumes the same local thread", async () =
   assert.equal(resumed.id, thread.id);
   assert.equal(resumed.options.workingDirectory, root);
   assert.equal(resumed.options.networkAccessEnabled, false);
+  assert.equal(resumed.options.model, "test-model");
+  assert.equal(resumed.options.modelReasoningEffort, "high");
 });
 
 test("Codex voice runner enforces structured meeting observations", async () => {
@@ -376,6 +381,7 @@ test("power tasks run in a separate unrestricted networked thread", async () => 
       workingDirectory: "/home/example/github",
       codexSandbox: "danger-full-access",
       codexModel: "test-model",
+      codexReasoningEffort: "high",
       powerMode: true,
       voiceMode: "meeting",
     },
@@ -441,6 +447,8 @@ test("power tasks run in a separate unrestricted networked thread", async () => 
   assert.equal(threadOptions.networkAccessEnabled, true);
   assert.equal(threadOptions.webSearchMode, "live");
   assert.equal(threadOptions.workingDirectory, "/home/example/github");
+  assert.equal(threadOptions.model, "test-model");
+  assert.equal(threadOptions.modelReasoningEffort, "high");
   assert.match(prompt, /検索して/);
   assert.deepEqual(progress, [
     "🤖 Codexが作業を開始しました。",
