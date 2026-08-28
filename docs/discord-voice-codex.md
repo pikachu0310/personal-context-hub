@@ -17,6 +17,7 @@
 - 会議観測中に到着した発話は次回分として保持し、CodexやTTSの処理中でも短い発話ごとの混雑通知を送らない。
 - Powerモードでは本人allowlistの発言だけから作業依頼を抽出し、会議観測とは別のCodex threadへqueueする。他参加者の発言は文脈には使うが操作権限には使わない。
 - Power taskは`danger-full-access`、network有効、live Web検索、`approvalPolicy: never`で最大2件を並列実行する。taskをqueueした時点でTextチャンネルに状態カードと専用Discordスレッドを作る。カードはスレッドへのリンクを常に表示し、`待機中 → 実行中 → 完了・失敗・中止`へ更新する。依頼内容、Codex SDKの要約済み進捗、結果、所要時間はスレッドへ投稿する。
+- Botの新規メッセージは既定でDiscordの`SUPPRESS_NOTIFICATIONS` flagを付け、親チャンネルとtaskスレッドのpush・desktop通知を抑制する。メッセージと未読状態は通常どおり残す。通常通知が必要な場合だけ`PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES=false`にする。
 - STT、Codex、TTS、再生、Discord投稿には個別の上限時間を設け、外部サービスが応答しないターンもqueueを永久に塞がない。
 - 作業ディレクトリ、sandbox、モデルは明示設定する。既定sandboxは`workspace-write`とし、任意ディレクトリへの無制限書き込みを暗黙に許可しない。
 - 会議観測threadは`read-only`、networkとWeb検索無効、`approvalPolicy: never`で開始する。Power taskだけは明示設定により`danger-full-access`、network有効、live Web検索を使う。

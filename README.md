@@ -149,6 +149,11 @@ an AI-generated excerpt is spoken. Audio bytes are not persisted. See
 [the Voice MVP specification](docs/discord-voice-codex.md) for limits and trust
 boundaries.
 
+Bot messages use Discord's suppressed-notification flag by default, including
+task-thread posts. Set `PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES=false` only when
+normal push and desktop notifications are wanted. This does not hide messages
+or remove Discord's unread state.
+
 For group development sessions, set `PERSONAL_CONTEXT_VOICE_MODE=meeting`.
 Meeting mode transcribes speakers in parallel, edits one live transcript message,
 and, by default, observes accumulated speech immediately after transcription.

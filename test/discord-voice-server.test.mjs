@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { ChannelType } from "discord.js";
+import { ChannelType, MessageFlags } from "discord.js";
 import {
+  createDiscordMessagePayload,
   createDiscordPlayer,
   startDiscordVoiceCodex,
   subscribeToAllowedSpeaker,
 } from "../src/discord-voice-server.mjs";
+
+test("Discord messages suppress notifications by default and can opt out", () => {
+  assert.equal(
+    createDiscordMessagePayload("静かな投稿").flags,
+    MessageFlags.SuppressNotifications,
+  );
+  assert.equal(
+    createDiscordMessagePayload("通常の投稿", { silent: false }).flags,
+    undefined,
+  );
+});
 
 function makeVoiceConfig(overrides = {}) {
   return {

@@ -12,7 +12,13 @@ import {
   entersState,
   joinVoiceChannel,
 } from "@discordjs/voice";
-import { ChannelType, Client, Events, GatewayIntentBits } from "discord.js";
+import {
+  ChannelType,
+  Client,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
+} from "discord.js";
 import prism from "prism-media";
 import { readDiscordTokenStore } from "./discord-config.mjs";
 import {
@@ -204,16 +210,27 @@ export function subscribeToAllowedSpeaker({
   });
 }
 
-export function createEditableDiscordPost(textChannel) {
+export function createDiscordMessagePayload(content, { silent = true } = {}) {
+  return {
+    content,
+    allowedMentions: { parse: [] },
+    ...(silent ? { flags: MessageFlags.SuppressNotifications } : {}),
+  };
+}
+
+export function createEditableDiscordPost(textChannel, { silent = true } = {}) {
   let message;
   return async (content) => {
-    const payload = { content, allowedMentions: { parse: [] } };
+    const payload = createDiscordMessagePayload(content, { silent });
     if (!message || typeof message.edit !== "function") {
       message = await textChannel.send(payload);
       return message;
     }
     try {
-      message = await message.edit(payload);
+      message = await message.edit({
+        content,
+        allowedMentions: { parse: [] },
+      });
     } catch {
       message = await textChannel.send(payload);
     }
@@ -247,15 +264,14 @@ export function formatDiscordTaskCard(
   ].join("\n");
 }
 
-export function createDiscordTaskThread(textChannel) {
+export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
   return async (task) => {
     const title = String(task.title ?? "Codexタスク")
       .replace(/[\r\n]+/g, " ")
       .trim();
-    let starter = await textChannel.send({
-      content: formatDiscordTaskCard(task),
-      allowedMentions: { parse: [] },
-    });
+    let starter = await textChannel.send(
+      createDiscordMessagePayload(formatDiscordTaskCard(task), { silent }),
+    );
     if (typeof starter.startThread !== "function") {
       throw new Error("Configured text channel cannot create task threads.");
     }
@@ -290,13 +306,15 @@ export function createDiscordTaskThread(textChannel) {
       try {
         starter = await starter.edit(payload);
       } catch {
-        starter = await textChannel.send(payload);
+        starter = await textChannel.send(
+          createDiscordMessagePayload(payload.content, { silent }),
+        );
       }
       return starter;
     };
     const post = (content, { signal } = {}) => {
       if (signal?.aborted) return Promise.reject(signal.reason);
-      return thread.send({ content, allowedMentions: { parse: [] } });
+      return thread.send(createDiscordMessagePayload(content, { silent }));
     };
     try {
       await update({ state: "queued" });
@@ -351,11 +369,21 @@ export async function startDiscordVoiceCodex({
     if (!textChannel?.isTextBased() || typeof textChannel.send !== "function") {
       throw new Error("Configured text channel cannot receive Bot messages.");
     }
+    const messageOptions = { silent: config.silentMessages !== false };
     const postText = (content) =>
-      textChannel.send({ content, allowedMentions: { parse: [] } });
-    const createTaskThread = createDiscordTaskThread(textChannel);
-    const upsertLiveTranscript = createEditableDiscordPost(textChannel);
-    const upsertMinutes = createEditableDiscordPost(textChannel);
+      textChannel.send(createDiscordMessagePayload(content, messageOptions));
+    const createTaskThread = createDiscordTaskThread(
+      textChannel,
+      messageOptions,
+    );
+    const upsertLiveTranscript = createEditableDiscordPost(
+      textChannel,
+      messageOptions,
+    );
+    const upsertMinutes = createEditableDiscordPost(
+      textChannel,
+      messageOptions,
+    );
     connection = (dependencies.joinVoiceChannel ?? joinVoiceChannel)({
       channelId: voiceChannel.id,
       guildId: guild.id,

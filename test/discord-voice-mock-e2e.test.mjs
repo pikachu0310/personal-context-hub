@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { ChannelType } from "discord.js";
+import { ChannelType, MessageFlags } from "discord.js";
 import {
   formatDiscordTaskCard,
   startDiscordVoiceCodex,
@@ -15,6 +15,7 @@ const config = Object.freeze({
   listenToEveryone: true,
   powerMode: true,
   voiceMode: "meeting",
+  silentMessages: true,
   workingDirectory: "/tmp/mock-workspace",
   statePath: "/tmp/mock-state.json",
   sttModel: "gpt-transcribe",
@@ -97,11 +98,13 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   const textChannel = {
     isTextBased: () => true,
     send: async (payload) => {
+      assert.equal(payload.flags, MessageFlags.SuppressNotifications);
       posts.push(payload);
       if (payload.content === "モック応答") turnEvents.push("post_response");
       const message = {
         id: `message-${posts.length}`,
         edit: async (edited) => {
+          assert.equal(edited.flags, undefined);
           posts.push(edited);
           return message;
         },
@@ -111,6 +114,10 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
           return {
             id: "55555555555555555",
             send: async (threadPayload) => {
+              assert.equal(
+                threadPayload.flags,
+                MessageFlags.SuppressNotifications,
+              );
               taskThreadPosts.push(threadPayload);
               return { id: `thread-message-${taskThreadPosts.length}` };
             },
