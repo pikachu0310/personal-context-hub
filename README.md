@@ -110,6 +110,17 @@ npm run inspect:discord:voice
 npm run start:discord:voice
 ```
 
+Run multiple independent Bot applications from the same checkout by keeping one
+ignored `.env.voice.<profile>` per server. The profile overrides the shared
+ignored `.env`; give every profile distinct Discord token, meeting state, and
+isolated Codex home paths. The tracked `.env.voice.example` is the template.
+
+```bash
+npm run auth:discord:voice:instance -- tdm --application-id 11111111111111111
+npm run inspect:discord:voice:instance -- tdm
+npm run start:discord:voice:instance -- tdm
+```
+
 The offline inspection intentionally does not load `.env`; export only the five
 public `PERSONAL_CONTEXT_VOICE_*` IDs/path variables when running it. It checks
 their syntax and the working directory without reading the Bot credential,
