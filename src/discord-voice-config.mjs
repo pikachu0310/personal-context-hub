@@ -71,11 +71,18 @@ export function loadDiscordVoiceConfig(env = process.env) {
           "PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME",
         )
       : join(dirname(statePath), "discord-voice-codex-home");
+  const powerMode = boolean(env, "PERSONAL_CONTEXT_VOICE_POWER_MODE", false);
   const codexSandbox =
-    env.PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX?.trim() || "workspace-write";
-  if (!new Set(["read-only", "workspace-write"]).has(codexSandbox)) {
+    env.PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX?.trim() ||
+    (powerMode ? "danger-full-access" : "workspace-write");
+  if (
+    !new Set(["read-only", "workspace-write", "danger-full-access"]).has(
+      codexSandbox,
+    ) ||
+    (codexSandbox === "danger-full-access" && !powerMode)
+  ) {
     throw new Error(
-      "PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX must be read-only or workspace-write.",
+      "PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX must be read-only or workspace-write unless power mode explicitly enables danger-full-access.",
     );
   }
   const voiceMode = env.PERSONAL_CONTEXT_VOICE_MODE?.trim() || "turn";
@@ -95,6 +102,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE",
       false,
     ),
+    powerMode,
     voiceMode,
     workingDirectory,
     statePath,
@@ -145,6 +153,20 @@ export function loadDiscordVoiceConfig(env = process.env) {
       60,
       1,
       100,
+    ),
+    maximumPendingTasks: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TASKS",
+      10,
+      1,
+      50,
+    ),
+    taskConcurrency: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_TASK_CONCURRENCY",
+      2,
+      1,
+      4,
     ),
     transcriptionConcurrency: integer(
       env,
@@ -208,6 +230,7 @@ export function describeDiscordVoiceConfig(config) {
     textChannelId: config.textChannelId,
     allowedUserId: config.allowedUserId,
     listenToEveryone: config.listenToEveryone,
+    powerMode: config.powerMode,
     voiceMode: config.voiceMode,
     workingDirectory: config.workingDirectory,
     statePath: config.statePath,
@@ -216,6 +239,8 @@ export function describeDiscordVoiceConfig(config) {
     ttsVoice: config.ttsVoice,
     ttsSpeed: config.ttsSpeed,
     maximumPendingTranscriptions: config.maximumPendingTranscriptions,
+    maximumPendingTasks: config.maximumPendingTasks,
+    taskConcurrency: config.taskConcurrency,
     transcriptionConcurrency: config.transcriptionConcurrency,
     observationIntervalMs: config.observationIntervalMs,
     codexModel: config.codexModel ?? "Codex configured default",

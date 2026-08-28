@@ -31,6 +31,7 @@ import {
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceSession,
+  DiscordVoiceTaskQueue,
 } from "./discord-voice-session.mjs";
 
 const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
@@ -277,6 +278,16 @@ export async function startDiscordVoiceCodex({
     );
     const playAudio =
       dependencies.playAudio ?? createDiscordPlayer(connection, logger);
+    const taskQueue = config.powerMode
+      ? new DiscordVoiceTaskQueue({
+          runTask: (task, options) => codex.runTask(task, options),
+          postText,
+          logger,
+          concurrency: config.taskConcurrency,
+          maximumPendingTasks: config.maximumPendingTasks,
+          taskTimeoutMs: config.stageTimeouts.running_codex,
+        })
+      : undefined;
     const session =
       config.voiceMode === "meeting"
         ? new DiscordVoiceMeetingSession({
@@ -288,6 +299,9 @@ export async function startDiscordVoiceCodex({
             postText,
             synthesize: audio.synthesize,
             playAudio,
+            enqueueTask: (task) => taskQueue?.enqueue(task) ?? false,
+            ownerUserId: config.allowedUserId,
+            tasksEnabled: config.powerMode,
             logger,
             observationIntervalMs: config.observationIntervalMs,
             transcriptionConcurrency: config.transcriptionConcurrency,
@@ -320,7 +334,7 @@ export async function startDiscordVoiceCodex({
     });
     await postText(
       config.voiceMode === "meeting"
-        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の文字起こしと議事録を更新し、${Math.round(config.observationIntervalMs / 1_000)}秒ごとに必要な場合だけ応答します。返答音声はAI生成です。`
+        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の文字起こしと議事録を更新し、${Math.round(config.observationIntervalMs / 1_000)}秒ごとに必要な場合だけ応答します。${config.powerMode ? "本人の作業依頼は高権限Codexタスクとしてバックグラウンド実行します。" : ""}返答音声はAI生成です。`
         : config.listenToEveryone
           ? "🔊 Discord音声Codexを起動しました。ボイスチャンネル内の全参加者の発話を処理します。返答音声はAI生成です。"
           : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
@@ -335,10 +349,12 @@ export async function startDiscordVoiceCodex({
       client,
       connection,
       session,
+      taskQueue,
       async stop() {
         if (stopped) return;
         stopped = true;
         session.stop();
+        taskQueue?.stop();
         await Promise.all([destroyQuietly(connection), destroyQuietly(client)]);
       },
     };

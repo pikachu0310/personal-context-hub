@@ -392,11 +392,192 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
     boundText(fallbackMinutes, MAX_MEETING_MINUTES_CHARACTERS) ||
     "まだ議事録に残す要点はありません。";
   const reply = boundText(parsed?.reply, MAX_CODEX_RESPONSE_CHARACTERS);
+  const tasks = Array.isArray(parsed?.tasks)
+    ? parsed.tasks.slice(0, 3).map((task) => ({
+        title: boundText(task?.title, 120, "…") || "Codexタスク",
+        sourceSequences: Array.isArray(task?.sourceSequences)
+          ? [
+              ...new Set(
+                task.sourceSequences.filter(
+                  (sequence) => Number.isInteger(sequence) && sequence > 0,
+                ),
+              ),
+            ].slice(0, 20)
+          : [],
+      }))
+    : [];
   return {
     minutes,
     shouldReply: parsed?.shouldReply === true && Boolean(reply),
     reply,
+    tasks,
   };
+}
+
+export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
+  if (!ownerUserId || !Array.isArray(tasks) || !Array.isArray(statements))
+    return [];
+  const bySequence = new Map(
+    statements.map((statement) => [statement.sequence, statement]),
+  );
+  const context = formatMeetingObservationTranscript(statements);
+  const authorizedSources = new Set();
+  return tasks.flatMap((task) => {
+    const sources = task.sourceSequences
+      .map((sequence) => bySequence.get(sequence))
+      .filter(Boolean);
+    if (
+      !sources.length ||
+      sources.length !== task.sourceSequences.length ||
+      sources.some((statement) => statement.userId !== ownerUserId)
+    ) {
+      return [];
+    }
+    const sourceKey = [...task.sourceSequences].sort((a, b) => a - b).join(",");
+    if (authorizedSources.has(sourceKey)) return [];
+    authorizedSources.add(sourceKey);
+    const request = sources
+      .map((statement) => statement.text)
+      .join("\n")
+      .trim();
+    if (!request) return [];
+    return [
+      {
+        title: task.title,
+        request,
+        context,
+        sourceSequences: [...task.sourceSequences],
+      },
+    ];
+  });
+}
+
+export class DiscordVoiceTaskQueue {
+  constructor({
+    runTask,
+    postText,
+    logger = console,
+    concurrency = 2,
+    maximumPendingTasks = 10,
+    taskTimeoutMs = 3_600_000,
+  }) {
+    this.runTask = runTask;
+    this.postText = postText;
+    this.logger = logger;
+    this.concurrency = concurrency;
+    this.maximumPendingTasks = maximumPendingTasks;
+    this.taskTimeoutMs = taskTimeoutMs;
+    this.queue = [];
+    this.active = 0;
+    this.closed = false;
+    this.shutdownController = new AbortController();
+  }
+
+  enqueue(task) {
+    if (this.closed) return false;
+    if (this.queue.length + this.active >= this.maximumPendingTasks)
+      return false;
+    this.queue.push({ ...task, id: randomUUID().slice(0, 8) });
+    this.#drain();
+    return true;
+  }
+
+  stop() {
+    if (this.closed) return;
+    this.closed = true;
+    this.queue = [];
+    this.shutdownController.abort(
+      new VoiceServiceError(
+        "SERVICE_STOPPED",
+        "Discord voice task queue stopped.",
+        "音声サービスを停止しました。",
+      ),
+    );
+  }
+
+  #drain() {
+    while (
+      !this.closed &&
+      this.active < this.concurrency &&
+      this.queue.length
+    ) {
+      const task = this.queue.shift();
+      this.active += 1;
+      void this.#execute(task).finally(() => {
+        this.active -= 1;
+        this.#drain();
+      });
+    }
+  }
+
+  async #execute(task) {
+    const startedAt = Date.now();
+    const title = escapeDiscordMarkdown(task.title);
+    try {
+      await withTimeout(
+        (signal) =>
+          this.postText(`🧰 **Codexタスク開始** \`${task.id}\`\n${title}`, {
+            signal,
+          }),
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "posting task start",
+        this.shutdownController.signal,
+      );
+      const response = boundText(
+        await withTimeout(
+          (signal) => this.runTask(task, { signal }),
+          this.taskTimeoutMs,
+          "running power task",
+          this.shutdownController.signal,
+        ),
+        MAX_CODEX_RESPONSE_CHARACTERS,
+      );
+      const chunks = splitDiscordText(
+        response || "タスクは完了しましたが、結果メッセージは空でした。",
+      );
+      await withTimeout(
+        (signal) =>
+          this.postText(`✅ **Codexタスク完了** \`${task.id}\`\n${title}`, {
+            signal,
+          }),
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "posting task completion",
+        this.shutdownController.signal,
+      );
+      for (const chunk of chunks) {
+        await withTimeout(
+          (signal) => this.postText(chunk, { signal }),
+          DEFAULT_STAGE_TIMEOUTS.posting,
+          "posting task result",
+          this.shutdownController.signal,
+        );
+      }
+      this.#log("power_task_completed", {
+        taskId: task.id,
+        elapsedMs: Date.now() - startedAt,
+        responseCharacters: response.length,
+      });
+    } catch (error) {
+      if (!this.closed) {
+        this.#log("power_task_failed", {
+          taskId: task.id,
+          elapsedMs: Date.now() - startedAt,
+          errorCode: voiceErrorCode(error),
+        });
+        await this.postText(
+          `⚠️ **Codexタスク失敗** \`${task.id}\`\n${voiceErrorMessage(error)}`,
+        ).catch(() => undefined);
+      }
+    }
+  }
+
+  #log(event, detail) {
+    try {
+      this.logger.info?.({ component: "discord-voice", event, ...detail });
+    } catch {
+      // Task execution must not depend on logging.
+    }
+  }
 }
 
 export class DiscordVoiceMeetingSession {
@@ -408,6 +589,9 @@ export class DiscordVoiceMeetingSession {
     postText,
     synthesize,
     playAudio,
+    enqueueTask = () => false,
+    ownerUserId,
+    tasksEnabled = false,
     logger = console,
     observationIntervalMs = 60_000,
     transcriptionConcurrency = 4,
@@ -424,8 +608,11 @@ export class DiscordVoiceMeetingSession {
       postText,
       synthesize,
       playAudio,
+      enqueueTask,
     };
     this.logger = logger;
+    this.ownerUserId = ownerUserId;
+    this.tasksEnabled = tasksEnabled;
     this.stageTimeouts = { ...DEFAULT_STAGE_TIMEOUTS, ...stageTimeouts };
     this.transcriptionConcurrency = transcriptionConcurrency;
     this.maximumPendingTranscriptions = maximumPendingTranscriptions;
@@ -491,6 +678,9 @@ export class DiscordVoiceMeetingSession {
         this.shutdownController.signal,
       );
       const observation = parseMeetingObservation(raw, this.minutes);
+      const tasks = this.tasksEnabled
+        ? authorizeMeetingTasks(observation.tasks, statements, this.ownerUserId)
+        : [];
       await withTimeout(
         (signal) =>
           this.dependencies.upsertMinutes(
@@ -509,6 +699,23 @@ export class DiscordVoiceMeetingSession {
       this.droppedAudio = 0;
       this.failedTranscriptions = 0;
       this.#queueLiveUpdate();
+
+      let rejectedTasks = 0;
+      for (const task of tasks) {
+        if (!this.dependencies.enqueueTask(task)) rejectedTasks += 1;
+      }
+      if (rejectedTasks) {
+        await withTimeout(
+          (signal) =>
+            this.dependencies.postText(
+              `⚠️ Codexタスクqueueが満杯のため、${rejectedTasks}件を開始できませんでした。`,
+              { signal },
+            ),
+          this.stageTimeouts.posting,
+          "posting task queue status",
+          this.shutdownController.signal,
+        );
+      }
 
       if (observation.shouldReply) {
         for (const chunk of splitDiscordText(observation.reply)) {
@@ -539,6 +746,7 @@ export class DiscordVoiceMeetingSession {
         elapsedMs: Date.now() - startedAt,
         statements: statements.length,
         replied: observation.shouldReply,
+        tasks: tasks.length - rejectedTasks,
       });
       return true;
     } catch (error) {

@@ -15,14 +15,16 @@
 - 会議観測モードでは話者ごとのSTTを並列実行し、確定した発話を一つのライブ文字起こしメッセージへ編集反映する。
 - 会議観測モードでは既定60秒ごとに未観測の発話を時系列で一括観測し、累積議事録を更新する。未解決の質問・依頼などがある場合だけTextとTTSで応答する。
 - 会議観測中に到着した発話は次回分として保持し、CodexやTTSの処理中でも短い発話ごとの混雑通知を送らない。
+- Powerモードでは本人allowlistの発言だけから作業依頼を抽出し、会議観測とは別のCodex threadへqueueする。他参加者の発言は文脈には使うが操作権限には使わない。
+- Power taskは`danger-full-access`、network有効、live Web検索、`approvalPolicy: never`で最大2件を並列実行し、開始・完了・結果をTextチャンネルへ投稿する。
 - STT、Codex、TTS、再生、Discord投稿には個別の上限時間を設け、外部サービスが応答しないターンもqueueを永久に塞がない。
 - 作業ディレクトリ、sandbox、モデルは明示設定する。既定sandboxは`workspace-write`とし、任意ディレクトリへの無制限書き込みを暗黙に許可しない。
-- Codex threadは`networkAccessEnabled: false`、Web検索無効、`approvalPolicy: never`で開始する。sandboxは`read-only`または`workspace-write`だけを許可する。
+- 会議観測threadは`read-only`、networkとWeb検索無効、`approvalPolicy: never`で開始する。Power taskだけは明示設定により`danger-full-access`、network有効、live Web検索を使う。
 - Codex App homeは認証元としてのみ扱う。Bot資格情報を読む前に、状態ファイルと同じ親directoryへmode `0700`の隔離Codex homeを作り、元の`auth.json`だけをsymlinkし、mode `0600`の空`config.toml`を置く。SDKには追加でapps、plugins、hooks、multi-agent、MCP serverを無効にするoverrideを渡す。
 
 ## 信頼境界
 
-- Discord上の発話は外部入力である。既定では発話者IDが本人allowlistと一致する場合だけCodex入力として扱い、全参加者モードではVoice内の各発話者を同じqueueへ入れる。
+- Discord上の発話は外部入力である。既定では発話者IDが本人allowlistと一致する場合だけCodex入力として扱い、全参加者モードではVoice内の各発話者を会議記録へ入れる。Power taskの根拠にできるのは本人IDと一致する発言sequenceだけとする。
 - Bot tokenとOpenAI認証情報はリポジトリ外に保持し、ログへ出さない。
 - Codex子プロセスへ渡す環境変数は実行・locale・Codex認証pathに必要な名前だけをallowlistし、OpenAI音声API keyや他サービスのsecretを継承しない。
 - 認証元と隔離先が同一、隔離先がsymlink、`auth.json`が想定外のfile、または`config.toml`が空でない場合は既存fileを上書きせず起動を中止する。Windows Codex App側の`config.toml`、MCP、plugin、skillは隔離先へcopyもsymlinkもしない。
@@ -35,7 +37,7 @@
 
 通常ターンは`idle → receiving → transcribing → posting_transcript → running_codex → posting_response → synthesizing → speaking → idle`で処理する。
 
-会議観測モードは`receiving → parallel_transcribing → editing_live_transcript`を継続し、定期的に`observing → updating_minutes → optional_posting_response → optional_synthesizing → optional_speaking`を実行する。
+会議観測モードは`receiving → parallel_transcribing → editing_live_transcript`を継続し、定期的に`observing → updating_minutes → optional_posting_response → optional_synthesizing → optional_speaking`を実行する。Power taskは`queued → running_in_separate_thread → posting_result`として独立に進む。
 
 各発話は一意なturn IDを持つ。状態遷移、処理時間、失敗段階だけを構造化ログへ残し、音声バイト列や認証情報は残さない。Codex thread IDはローカル状態ファイルへ保存し、再起動後にresumeする。明示的なreset時だけ新規threadを開始する。
 
@@ -76,6 +78,9 @@
 21. 会議観測モードでは複数話者のSTTが並列に進み、観測時に話者名付きで一つの入力へまとめられる。
 22. 応答不要と判断した観測では議事録だけを更新し、Discord応答とTTSを実行しない。
 23. ライブ文字起こしと累積議事録はそれぞれ同じBotメッセージを編集し、発話ごとの新規メッセージを増やさない。
+24. Powerモードでも他参加者だけの依頼、または本人と他参加者のsequenceが混在する依頼はtask queueへ入れない。
+25. Power taskは会議観測threadと別に実行し、ファイル操作、network、live Web検索を利用できる。
+26. Power taskの開始・完了・失敗は秘密値や生errorを含まない固定形式でTextチャンネルへ通知する。
 
 ## 第2段階
 

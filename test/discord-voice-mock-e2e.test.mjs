@@ -10,6 +10,7 @@ const config = Object.freeze({
   textChannelId: "33333333333333333",
   allowedUserId: "44444444444444444",
   listenToEveryone: true,
+  powerMode: true,
   voiceMode: "meeting",
   workingDirectory: "/tmp/mock-workspace",
   statePath: "/tmp/mock-state.json",
@@ -20,12 +21,14 @@ const config = Object.freeze({
   codexModel: undefined,
   codexHome: undefined,
   isolatedCodexHome: "/tmp/mock-codex-home",
-  codexSandbox: "workspace-write",
+  codexSandbox: "danger-full-access",
   silenceMs: 1_000,
   minimumAudioMs: 250,
   maximumAudioSeconds: 90,
   maximumQueuedTurns: 3,
   maximumPendingTranscriptions: 60,
+  maximumPendingTasks: 10,
+  taskConcurrency: 2,
   transcriptionConcurrency: 4,
   observationIntervalMs: 60_000,
   stageTimeouts: {
@@ -64,7 +67,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   connection.receiver = {
     speaking,
     subscribe: (userId) => {
-      assert.equal(userId, "55555555555555555");
+      assert.equal(userId, config.allowedUserId);
       return opusStream;
     },
   };
@@ -75,7 +78,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   const voiceChannel = {
     id: config.voiceChannelId,
     type: ChannelType.GuildVoice,
-    members: new Map([["55555555555555555", { displayName: "Guest" }]]),
+    members: new Map([[config.allowedUserId, { displayName: "Owner" }]]),
   };
   const textChannel = {
     isTextBased: () => true,
@@ -142,12 +145,18 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
         prepare: async () => undefined,
         observeMeeting: async ({ transcript }) => {
           turnEvents.push("codex");
-          assert.equal(transcript, "[Guest] モック発話");
+          assert.equal(transcript, "[Owner] モック発話");
           return JSON.stringify({
-            minutes: "- Guestがモック発話",
+            minutes: "- Ownerがモック発話",
             shouldReply: true,
             reply: "モック応答",
+            tasks: [{ title: "モック作業", sourceSequences: [1] }],
           });
+        },
+        runTask: async (task) => {
+          turnEvents.push("power_task");
+          assert.equal(task.request, "モック発話");
+          return "モックタスク完了";
         },
       },
       readCredential: async () => ({ token: "mock-discord-token" }),
@@ -185,28 +194,37 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
     },
   });
 
-  speaking.emit("start", "55555555555555555");
+  speaking.emit("start", config.allowedUserId);
   decoder.emit("data", Buffer.alloc(48_000));
   decoder.emit("end");
   await eventually(() => service.session.statements.length === 1);
   assert.equal(await service.session.observeNow(), true);
+  await eventually(() =>
+    posts.some(({ content }) => content === "モックタスク完了"),
+  );
 
   assert.deepEqual(decoderOptions, {
     rate: 48_000,
     channels: 2,
     frameSize: 960,
   });
-  assert.deepEqual(turnEvents, [
-    "stt",
+  assert.equal(turnEvents[0], "stt");
+  for (const stage of [
     "codex",
     "post_response",
     "tts",
     "playback",
-  ]);
+    "power_task",
+  ]) {
+    assert.ok(turnEvents.includes(stage));
+  }
   assert.ok(posts.some(({ content }) => /会議観測モード/.test(content)));
-  assert.ok(posts.some(({ content }) => /Guest.*モック発話/.test(content)));
+  assert.ok(posts.some(({ content }) => /Owner.*モック発話/.test(content)));
   assert.ok(posts.some(({ content }) => /議事録/.test(content)));
   assert.ok(posts.some(({ content }) => content === "モック応答"));
+  assert.ok(posts.some(({ content }) => /Codexタスク開始/.test(content)));
+  assert.ok(posts.some(({ content }) => /Codexタスク完了/.test(content)));
+  assert.ok(posts.some(({ content }) => content === "モックタスク完了"));
   assert.ok(
     posts.every(
       ({ allowedMentions }) =>

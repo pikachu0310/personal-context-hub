@@ -20,11 +20,14 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
   assert.equal(config.silenceMs, 1_000);
   assert.equal(config.maximumAudioSeconds, 90);
   assert.equal(config.listenToEveryone, false);
+  assert.equal(config.powerMode, false);
   assert.equal(config.voiceMode, "turn");
   assert.equal(config.ttsSpeed, 1);
   assert.equal(config.observationIntervalMs, 60_000);
   assert.equal(config.transcriptionConcurrency, 4);
   assert.equal(config.maximumPendingTranscriptions, 60);
+  assert.equal(config.maximumPendingTasks, 10);
+  assert.equal(config.taskConcurrency, 2);
   assert.equal(config.codexHome, "/mnt/c/Users/example/.codex");
   assert.match(
     config.isolatedCodexHome,
@@ -49,6 +52,10 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
     PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS: "45000",
     PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY: "6",
     PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TRANSCRIPTIONS: "80",
+    PERSONAL_CONTEXT_VOICE_POWER_MODE: "true",
+    PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX: "danger-full-access",
+    PERSONAL_CONTEXT_VOICE_TASK_CONCURRENCY: "3",
+    PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TASKS: "20",
     PERSONAL_CONTEXT_VOICE_TTS_SPEED: "2",
   });
   assert.equal(config.listenToEveryone, true);
@@ -57,9 +64,14 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   assert.equal(config.observationIntervalMs, 45_000);
   assert.equal(config.transcriptionConcurrency, 6);
   assert.equal(config.maximumPendingTranscriptions, 80);
+  assert.equal(config.powerMode, true);
+  assert.equal(config.codexSandbox, "danger-full-access");
+  assert.equal(config.taskConcurrency, 3);
+  assert.equal(config.maximumPendingTasks, 20);
   const description = describeDiscordVoiceConfig(config);
   assert.equal(description.listenToEveryone, true);
   assert.equal(description.voiceMode, "meeting");
+  assert.equal(description.powerMode, true);
   assert.equal(description.ttsSpeed, 2);
 });
 
@@ -122,7 +134,15 @@ test("voice config rejects missing and malformed trust-boundary IDs", () => {
         ...valid,
         PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX: "danger-full-access",
       }),
-    /read-only or workspace-write/,
+    /power mode explicitly enables danger-full-access/,
+  );
+  assert.throws(
+    () =>
+      loadDiscordVoiceConfig({
+        ...valid,
+        PERSONAL_CONTEXT_VOICE_POWER_MODE: "yes",
+      }),
+    /true or false/,
   );
   assert.throws(
     () =>

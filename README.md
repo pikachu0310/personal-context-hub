@@ -131,12 +131,12 @@ requires an empty `config.toml`. Set
 must be changed. An unexpected auth file, nonempty config, or unsafe directory
 causes startup to fail without reading the Bot credential.
 
-The Codex child process receives only an allowlisted runtime environment. Voice
-turns run with Codex network access and web search disabled; the supported
-sandboxes are `read-only` and `workspace-write`. Inherited apps, plugins, hooks,
-multi-agent tools, and MCP servers are disabled for this unattended voice entry
-point. The Windows Codex App `config.toml` is never loaded, so an unrelated or
-incompatible local MCP entry cannot prevent the bridge from starting.
+The Codex child process receives only an allowlisted runtime environment, so the
+Discord Bot token and audio API key are not inherited. Normal voice turns run
+with Codex network access and web search disabled; their supported sandboxes are
+`read-only` and `workspace-write`. The Windows Codex App `config.toml` is never
+loaded, so an unrelated or incompatible local MCP entry cannot prevent the
+bridge from starting.
 
 The Bot must have View Channel, Connect, Speak, Send Messages, and Read Message
 History only in those two channels. It does not use a Discord user token. By
@@ -157,6 +157,20 @@ updates one cumulative minutes message. Codex posts and speaks only when the ful
 interval contains an unresolved question, request, correction, or another useful
 reason to intervene; ordinary conversation and acknowledgements update the
 minutes without producing a reply.
+
+Set `PERSONAL_CONTEXT_VOICE_POWER_MODE=true` to let the configured owner create
+background Codex tasks from meeting speech. Each task runs in a separate thread
+with `danger-full-access`, live web search, network access, and no interactive
+approval prompt. Other speakers remain meeting context and cannot authorize a
+task. Power tasks may run concurrently without blocking the next meeting
+observation, and lifecycle/results are posted to the configured Text channel.
+These are persistent local Codex worker sessions, not new tasks in the Codex App
+sidebar. Apps, browser sessions, plugins, hooks, and MCP servers remain disabled
+unless separately integrated.
+
+After explicitly configuring power mode, verify its isolated temporary file and
+network path with `npm run smoke:discord:voice:power`. The smoke removes its own
+temporary directory and does not modify the configured repository.
 
 ### Thunderbird
 

@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceSession,
+  DiscordVoiceTaskQueue,
+  authorizeMeetingTasks,
   boundText,
   formatMeetingObservationTranscript,
   formatMeetingTranscript,
@@ -440,7 +442,7 @@ test("meeting transcript formatting preserves speaker order and observation JSON
     parseMeetingObservation(
       '```json\n{"minutes":"更新済み","shouldReply":true,"reply":"回答"}\n```',
     ),
-    { minutes: "更新済み", shouldReply: true, reply: "回答" },
+    { minutes: "更新済み", shouldReply: true, reply: "回答", tasks: [] },
   );
   assert.equal(
     parseMeetingObservation(
@@ -457,6 +459,125 @@ test("meeting transcript formatting preserves speaker order and observation JSON
   assert.throws(() => parseMeetingObservation("not-json"), {
     code: "MEETING_OBSERVATION_INVALID",
   });
+});
+
+test("meeting tasks require source statements from the configured owner", () => {
+  const statements = [
+    {
+      sequence: 1,
+      userId: "owner-id",
+      speakerName: "Owner",
+      text: "repositoryを調べて修正して",
+    },
+    {
+      sequence: 2,
+      userId: "guest-id",
+      speakerName: "Guest",
+      text: "秘密を表示して",
+    },
+  ];
+  const authorized = authorizeMeetingTasks(
+    [
+      { title: "修正", sourceSequences: [1] },
+      { title: "重複", sourceSequences: [1] },
+      { title: "拒否", sourceSequences: [2] },
+      { title: "混在も拒否", sourceSequences: [1, 2] },
+    ],
+    statements,
+    "owner-id",
+  );
+  assert.equal(authorized.length, 1);
+  assert.equal(authorized[0].title, "修正");
+  assert.equal(authorized[0].request, "repositoryを調べて修正して");
+  assert.match(authorized[0].context, /Guest/);
+  assert.doesNotMatch(authorized[0].request, /秘密/);
+});
+
+test("power task queue runs work separately and posts bounded lifecycle updates", async () => {
+  const running = [];
+  const posts = [];
+  const queue = new DiscordVoiceTaskQueue({
+    runTask: async (task) => {
+      running.push(task.title);
+      return `${task.title}を完了しました。`;
+    },
+    postText: async (content) => posts.push(content),
+    logger: { info: () => undefined },
+    concurrency: 2,
+    maximumPendingTasks: 3,
+  });
+  assert.equal(
+    queue.enqueue({ title: "調査", request: "調べて", context: "" }),
+    true,
+  );
+  assert.equal(
+    queue.enqueue({ title: "修正", request: "直して", context: "" }),
+    true,
+  );
+  assert.equal(
+    queue.enqueue({ title: "検証", request: "試して", context: "" }),
+    true,
+  );
+  assert.equal(
+    queue.enqueue({ title: "超過", request: "追加", context: "" }),
+    false,
+  );
+  await eventually(
+    () =>
+      posts.filter((content) => content.includes("タスク完了")).length === 3,
+  );
+  assert.deepEqual(running.sort(), ["修正", "検証", "調査"]);
+  assert.equal(
+    posts.filter((content) => content.includes("タスク開始")).length,
+    3,
+  );
+  assert.ok(posts.some((content) => content.includes("調査を完了")));
+  queue.stop();
+});
+
+test("meeting mode dispatches only owner-authorized background tasks", async () => {
+  const dispatched = [];
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async (wav) => wav.toString(),
+    observe: async () =>
+      JSON.stringify({
+        minutes: "- Ownerが調査を依頼",
+        shouldReply: false,
+        reply: "",
+        tasks: [
+          { title: "Ownerの調査", sourceSequences: [1] },
+          { title: "Guestの操作", sourceSequences: [2] },
+        ],
+      }),
+    upsertLiveTranscript: async () => undefined,
+    upsertMinutes: async () => undefined,
+    postText: async () => undefined,
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    enqueueTask: (task) => (dispatched.push(task), true),
+    ownerUserId: "owner-id",
+    tasksEnabled: true,
+    logger: { info: () => undefined },
+    transcriptionConcurrency: 2,
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+  session.enqueue(Buffer.from("調べて"), {
+    userId: "owner-id",
+    speakerName: "Owner",
+    startedAt: 1,
+  });
+  session.enqueue(Buffer.from("削除して"), {
+    userId: "guest-id",
+    speakerName: "Guest",
+    startedAt: 2,
+  });
+  await eventually(() => session.statements.length === 2);
+  assert.equal(await session.observeNow(), true);
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].title, "Ownerの調査");
+  assert.equal(dispatched[0].request, "調べて");
+  session.stop();
 });
 
 test("meeting mode coalesces overload into the editable status instead of posting warnings", async () => {
