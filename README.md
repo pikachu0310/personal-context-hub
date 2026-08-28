@@ -164,7 +164,9 @@ background Codex tasks from meeting speech. Each task runs in a separate thread
 with `danger-full-access`, live web search, network access, and no interactive
 approval prompt. Other speakers remain meeting context and cannot authorize a
 task. Power tasks may run concurrently without blocking the next meeting
-observation, and lifecycle/results are posted to the configured Text channel.
+observation. The configured Text channel receives one starter message per task;
+all lifecycle updates and results stay in the Discord thread created from it, so
+meeting transcripts and minutes remain readable in the parent channel.
 These are persistent local Codex worker sessions, not new tasks in the Codex App
 sidebar. Apps, browser sessions, plugins, hooks, and MCP servers remain disabled
 unless separately integrated.

@@ -537,13 +537,18 @@ test("meeting tasks require source statements from the configured owner", () => 
 
 test("power task queue runs work separately and posts bounded lifecycle updates", async () => {
   const running = [];
-  const posts = [];
+  const parentPosts = [];
+  const threadPosts = [];
   const queue = new DiscordVoiceTaskQueue({
     runTask: async (task) => {
       running.push(task.title);
       return `${task.title}を完了しました。`;
     },
-    postText: async (content) => posts.push(content),
+    postText: async (content) => parentPosts.push(content),
+    createTaskThread: async (task) => {
+      parentPosts.push(`thread:${task.title}`);
+      return async (content) => threadPosts.push(content);
+    },
     logger: { info: () => undefined },
     concurrency: 2,
     maximumPendingTasks: 3,
@@ -566,14 +571,20 @@ test("power task queue runs work separately and posts bounded lifecycle updates"
   );
   await eventually(
     () =>
-      posts.filter((content) => content.includes("タスク完了")).length === 3,
+      threadPosts.filter((content) => content.includes("タスク完了")).length ===
+      3,
   );
   assert.deepEqual(running.sort(), ["修正", "検証", "調査"]);
   assert.equal(
-    posts.filter((content) => content.includes("タスク開始")).length,
+    threadPosts.filter((content) => content.includes("タスク開始")).length,
     3,
   );
-  assert.ok(posts.some((content) => content.includes("調査を完了")));
+  assert.ok(threadPosts.some((content) => content.includes("調査を完了")));
+  assert.deepEqual(parentPosts.sort(), [
+    "thread:修正",
+    "thread:検証",
+    "thread:調査",
+  ]);
   queue.stop();
 });
 

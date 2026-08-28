@@ -218,6 +218,28 @@ export function createEditableDiscordPost(textChannel) {
   };
 }
 
+export function createDiscordTaskThread(textChannel) {
+  return async (task) => {
+    const title = String(task.title ?? "Codexタスク")
+      .replace(/[\r\n]+/g, " ")
+      .trim();
+    const starter = await textChannel.send({
+      content: `🧰 **Codexタスク** \`${task.id}\` — ${title}`,
+      allowedMentions: { parse: [] },
+    });
+    if (typeof starter.startThread !== "function") {
+      throw new Error("Configured text channel cannot create task threads.");
+    }
+    const thread = await starter.startThread({
+      name: `${task.id} ${title}`.slice(0, 100),
+      autoArchiveDuration: 1_440,
+      reason: "Keep Codex task output separate from meeting minutes",
+    });
+    return (content) =>
+      thread.send({ content, allowedMentions: { parse: [] } });
+  };
+}
+
 export async function startDiscordVoiceCodex({
   config = loadDiscordVoiceConfig(),
   client = new Client({
@@ -259,6 +281,7 @@ export async function startDiscordVoiceCodex({
     }
     const postText = (content) =>
       textChannel.send({ content, allowedMentions: { parse: [] } });
+    const createTaskThread = createDiscordTaskThread(textChannel);
     const upsertLiveTranscript = createEditableDiscordPost(textChannel);
     const upsertMinutes = createEditableDiscordPost(textChannel);
     connection = (dependencies.joinVoiceChannel ?? joinVoiceChannel)({
@@ -282,6 +305,7 @@ export async function startDiscordVoiceCodex({
       ? new DiscordVoiceTaskQueue({
           runTask: (task, options) => codex.runTask(task, options),
           postText,
+          createTaskThread,
           logger,
           concurrency: config.taskConcurrency,
           maximumPendingTasks: config.maximumPendingTasks,

@@ -456,6 +456,7 @@ export class DiscordVoiceTaskQueue {
   constructor({
     runTask,
     postText,
+    createTaskThread,
     logger = console,
     concurrency = 2,
     maximumPendingTasks = 10,
@@ -463,6 +464,7 @@ export class DiscordVoiceTaskQueue {
   }) {
     this.runTask = runTask;
     this.postText = postText;
+    this.createTaskThread = createTaskThread;
     this.logger = logger;
     this.concurrency = concurrency;
     this.maximumPendingTasks = maximumPendingTasks;
@@ -513,10 +515,17 @@ export class DiscordVoiceTaskQueue {
   async #execute(task) {
     const startedAt = Date.now();
     const title = escapeDiscordMarkdown(task.title);
+    let postTaskText;
     try {
+      postTaskText = await withTimeout(
+        () => this.createTaskThread(task),
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "creating task thread",
+        this.shutdownController.signal,
+      );
       await withTimeout(
         (signal) =>
-          this.postText(`🧰 **Codexタスク開始** \`${task.id}\`\n${title}`, {
+          postTaskText(`🧰 **Codexタスク開始** \`${task.id}\`\n${title}`, {
             signal,
           }),
         DEFAULT_STAGE_TIMEOUTS.posting,
@@ -537,7 +546,7 @@ export class DiscordVoiceTaskQueue {
       );
       await withTimeout(
         (signal) =>
-          this.postText(`✅ **Codexタスク完了** \`${task.id}\`\n${title}`, {
+          postTaskText(`✅ **Codexタスク完了** \`${task.id}\`\n${title}`, {
             signal,
           }),
         DEFAULT_STAGE_TIMEOUTS.posting,
@@ -546,7 +555,7 @@ export class DiscordVoiceTaskQueue {
       );
       for (const chunk of chunks) {
         await withTimeout(
-          (signal) => this.postText(chunk, { signal }),
+          (signal) => postTaskText(chunk, { signal }),
           DEFAULT_STAGE_TIMEOUTS.posting,
           "posting task result",
           this.shutdownController.signal,
@@ -564,7 +573,7 @@ export class DiscordVoiceTaskQueue {
           elapsedMs: Date.now() - startedAt,
           errorCode: voiceErrorCode(error),
         });
-        await this.postText(
+        await (postTaskText ?? this.postText)(
           `⚠️ **Codexタスク失敗** \`${task.id}\`\n${voiceErrorMessage(error)}`,
         ).catch(() => undefined);
       }

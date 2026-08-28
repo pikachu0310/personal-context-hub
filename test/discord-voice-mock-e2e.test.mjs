@@ -53,6 +53,7 @@ async function eventually(check, timeoutMs = 1_000) {
 test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and playback", async () => {
   const turnEvents = [];
   const posts = [];
+  const taskThreadPosts = [];
   const speaking = new EventEmitter();
   const opusStream = new EventEmitter();
   const decoder = new EventEmitter();
@@ -90,6 +91,16 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
         edit: async (edited) => {
           posts.push(edited);
           return message;
+        },
+        startThread: async ({ name, autoArchiveDuration }) => {
+          assert.match(name, /モック作業/);
+          assert.equal(autoArchiveDuration, 1_440);
+          return {
+            send: async (threadPayload) => {
+              taskThreadPosts.push(threadPayload);
+              return { id: `thread-message-${taskThreadPosts.length}` };
+            },
+          };
         },
       };
       return message;
@@ -200,7 +211,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   await eventually(() => service.session.statements.length === 1);
   assert.equal(await service.session.observeNow(), true);
   await eventually(() =>
-    posts.some(({ content }) => content === "モックタスク完了"),
+    taskThreadPosts.some(({ content }) => content === "モックタスク完了"),
   );
 
   assert.deepEqual(decoderOptions, {
@@ -222,11 +233,21 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   assert.ok(posts.some(({ content }) => /Owner.*モック発話/.test(content)));
   assert.ok(posts.some(({ content }) => /議事録/.test(content)));
   assert.ok(posts.some(({ content }) => content === "モック応答"));
-  assert.ok(posts.some(({ content }) => /Codexタスク開始/.test(content)));
-  assert.ok(posts.some(({ content }) => /Codexタスク完了/.test(content)));
-  assert.ok(posts.some(({ content }) => content === "モックタスク完了"));
+  assert.ok(posts.some(({ content }) => /Codexタスク/.test(content)));
   assert.ok(
-    posts.every(
+    taskThreadPosts.some(({ content }) => /Codexタスク開始/.test(content)),
+  );
+  assert.ok(
+    taskThreadPosts.some(({ content }) => /Codexタスク完了/.test(content)),
+  );
+  assert.ok(
+    taskThreadPosts.some(({ content }) => content === "モックタスク完了"),
+  );
+  assert.ok(
+    posts.every(({ content }) => !/Codexタスク(開始|完了)/.test(content)),
+  );
+  assert.ok(
+    [...posts, ...taskThreadPosts].every(
       ({ allowedMentions }) =>
         Array.isArray(allowedMentions?.parse) &&
         allowedMentions.parse.length === 0,
