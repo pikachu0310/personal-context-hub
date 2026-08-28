@@ -143,11 +143,20 @@ History only in those two channels. It does not use a Discord user token. By
 default, the bridge accepts audio only from the configured owner ID. Set
 `PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE=true` to accept every speaker in the
 configured Voice channel, and tune playback with
-`PERSONAL_CONTEXT_VOICE_TTS_SPEED` from `0.25` through `4`. Turns are serialized,
+`PERSONAL_CONTEXT_VOICE_TTS_SPEED` from `0.25` through `4`. In turn mode, turns are serialized,
 the transcript and full response are posted to the configured Text channel, and
 an AI-generated excerpt is spoken. Audio bytes are not persisted. See
 [the Voice MVP specification](docs/discord-voice-codex.md) for limits and trust
 boundaries.
+
+For group development sessions, set `PERSONAL_CONTEXT_VOICE_MODE=meeting`.
+Meeting mode transcribes speakers in parallel, edits one live transcript message,
+and observes the accumulated conversation every
+`PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS` milliseconds. Each observation
+updates one cumulative minutes message. Codex posts and speaks only when the full
+interval contains an unresolved question, request, correction, or another useful
+reason to intervene; ordinary conversation and acknowledgements update the
+minutes without producing a reply.
 
 ### Thunderbird
 

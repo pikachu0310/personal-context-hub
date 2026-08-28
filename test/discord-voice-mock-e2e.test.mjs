@@ -10,6 +10,7 @@ const config = Object.freeze({
   textChannelId: "33333333333333333",
   allowedUserId: "44444444444444444",
   listenToEveryone: true,
+  voiceMode: "meeting",
   workingDirectory: "/tmp/mock-workspace",
   statePath: "/tmp/mock-state.json",
   sttModel: "gpt-transcribe",
@@ -24,6 +25,9 @@ const config = Object.freeze({
   minimumAudioMs: 250,
   maximumAudioSeconds: 90,
   maximumQueuedTurns: 3,
+  maximumPendingTranscriptions: 60,
+  transcriptionConcurrency: 4,
+  observationIntervalMs: 60_000,
   stageTimeouts: {
     transcribing: 1_000,
     running_codex: 1_000,
@@ -71,20 +75,21 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   const voiceChannel = {
     id: config.voiceChannelId,
     type: ChannelType.GuildVoice,
+    members: new Map([["55555555555555555", { displayName: "Guest" }]]),
   };
   const textChannel = {
     isTextBased: () => true,
     send: async (payload) => {
       posts.push(payload);
-      if (payload.content.includes("Discord音声Codexを起動")) {
-        return { id: "announcement" };
-      }
-      if (payload.content.includes("聞き取った内容")) {
-        turnEvents.push("post_transcript");
-      } else {
-        turnEvents.push("post_response");
-      }
-      return { id: `message-${posts.length}` };
+      if (payload.content === "モック応答") turnEvents.push("post_response");
+      const message = {
+        id: `message-${posts.length}`,
+        edit: async (edited) => {
+          posts.push(edited);
+          return message;
+        },
+      };
+      return message;
     },
   };
   const guild = {
@@ -135,10 +140,14 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
       },
       codexRunner: {
         prepare: async () => undefined,
-        run: async (transcript) => {
+        observeMeeting: async ({ transcript }) => {
           turnEvents.push("codex");
-          assert.equal(transcript, "モック発話");
-          return "モック応答";
+          assert.equal(transcript, "[Guest] モック発話");
+          return JSON.stringify({
+            minutes: "- Guestがモック発話",
+            shouldReply: true,
+            reply: "モック応答",
+          });
         },
       },
       readCredential: async () => ({ token: "mock-discord-token" }),
@@ -171,15 +180,16 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
         turnEvents.push("playback");
         assert.equal(audio, synthesized);
       },
+      scheduleInterval: () => ({ unref: () => undefined }),
+      cancelInterval: () => undefined,
     },
   });
 
   speaking.emit("start", "55555555555555555");
   decoder.emit("data", Buffer.alloc(48_000));
   decoder.emit("end");
-  await eventually(
-    () => service.session.state === "idle" && turnEvents.includes("playback"),
-  );
+  await eventually(() => service.session.statements.length === 1);
+  assert.equal(await service.session.observeNow(), true);
 
   assert.deepEqual(decoderOptions, {
     rate: 48_000,
@@ -188,16 +198,15 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   });
   assert.deepEqual(turnEvents, [
     "stt",
-    "post_transcript",
     "codex",
     "post_response",
     "tts",
     "playback",
   ]);
-  assert.equal(posts.length, 3);
-  assert.match(posts[0].content, /全参加者/);
-  assert.match(posts[1].content, /モック発話/);
-  assert.equal(posts[2].content, "モック応答");
+  assert.ok(posts.some(({ content }) => /会議観測モード/.test(content)));
+  assert.ok(posts.some(({ content }) => /Guest.*モック発話/.test(content)));
+  assert.ok(posts.some(({ content }) => /議事録/.test(content)));
+  assert.ok(posts.some(({ content }) => content === "モック応答"));
   assert.ok(
     posts.every(
       ({ allowedMentions }) =>

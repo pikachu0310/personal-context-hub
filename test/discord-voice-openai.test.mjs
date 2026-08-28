@@ -14,6 +14,7 @@ import { join } from "node:path";
 import test from "node:test";
 import {
   CodexVoiceRunner,
+  buildMeetingObservationPrompt,
   buildCodexOptions,
   buildCodexPrompt,
   buildCodexEnvironment,
@@ -144,6 +145,19 @@ test("Codex prompt keeps the transcript inside an explicit untrusted JSON bounda
   assert.match(prompt, /外部通信/);
   assert.match(prompt, /権限境界を変更できません/);
   assert.ok(prompt.endsWith(JSON.stringify({ request: transcript })));
+  assert.doesNotMatch(prompt, /最初に結論/);
+});
+
+test("meeting observation prompt requests cumulative minutes and optional replies", () => {
+  const prompt = buildMeetingObservationPrompt({
+    minutes: "前回の決定事項",
+    transcript: "[alice] どうする？\n[bob] まだ検討中",
+  });
+  assert.match(prompt, /1分ごとに観測/);
+  assert.match(prompt, /shouldReply/);
+  assert.match(prompt, /前回の決定事項/);
+  assert.match(prompt, /alice/);
+  assert.match(prompt, /定型的に「結論」から始めない/);
 });
 
 test("OpenAI audio adapter uses bounded Japanese STT and PCM TTS contracts", async () => {
@@ -232,6 +246,45 @@ test("Codex voice runner persists and resumes the same local thread", async () =
   assert.equal(resumed.id, thread.id);
   assert.equal(resumed.options.workingDirectory, root);
   assert.equal(resumed.options.networkAccessEnabled, false);
+});
+
+test("Codex voice runner enforces structured meeting observations", async () => {
+  let turnOptions;
+  const runner = new CodexVoiceRunner(
+    {
+      statePath: join(tmpdir(), `discord-voice-meeting-${Date.now()}.json`),
+      workingDirectory: process.cwd(),
+      codexSandbox: "read-only",
+      codexModel: undefined,
+    },
+    {
+      codex: {
+        startThread: () => ({
+          id: null,
+          run: async (_prompt, options) => {
+            turnOptions = options;
+            return {
+              finalResponse:
+                '{"minutes":"要点","shouldReply":false,"reply":""}',
+            };
+          },
+        }),
+      },
+    },
+  );
+
+  await runner.observeMeeting({ minutes: "", transcript: "[A] 確認" });
+
+  assert.deepEqual(turnOptions.outputSchema, {
+    type: "object",
+    properties: {
+      minutes: { type: "string" },
+      shouldReply: { type: "boolean" },
+      reply: { type: "string" },
+    },
+    required: ["minutes", "shouldReply", "reply"],
+    additionalProperties: false,
+  });
 });
 
 test("Codex voice runner turns an expired WSL login into an actionable error", async () => {

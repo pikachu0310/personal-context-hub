@@ -28,7 +28,10 @@ import {
   CodexVoiceRunner,
   createOpenAIAudioAdapter,
 } from "./discord-voice-openai.mjs";
-import { DiscordVoiceSession } from "./discord-voice-session.mjs";
+import {
+  DiscordVoiceMeetingSession,
+  DiscordVoiceSession,
+} from "./discord-voice-session.mjs";
 
 const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
 const AUDIO_RETRY_MESSAGE =
@@ -99,6 +102,7 @@ export function subscribeToAllowedSpeaker({
   session,
   postText,
   logger,
+  resolveSpeakerName = (userId) => userId,
   createDecoder = (options) => new prism.opus.Decoder(options),
 }) {
   const active = new Set();
@@ -112,6 +116,7 @@ export function subscribeToAllowedSpeaker({
       active.has(userId)
     )
       return;
+    const startedAt = Date.now();
     active.add(userId);
     const opusStream = connection.receiver.subscribe(userId, {
       end: {
@@ -175,7 +180,13 @@ export function subscribeToAllowedSpeaker({
       try {
         const completed = turnBuffer.finish();
         if (completed.status !== "accepted") return;
-        if (!session.enqueue(wrapPcmAsWav(completed.pcm), { userId })) {
+        if (
+          !session.enqueue(wrapPcmAsWav(completed.pcm), {
+            userId,
+            speakerName: resolveSpeakerName(userId),
+            startedAt,
+          })
+        ) {
           void notify(
             "⚠️ 音声ターンが混雑しています。少し待ってからもう一度話してください。",
           );
@@ -187,6 +198,23 @@ export function subscribeToAllowedSpeaker({
     });
     opusStream.pipe(decoder);
   });
+}
+
+export function createEditableDiscordPost(textChannel) {
+  let message;
+  return async (content) => {
+    const payload = { content, allowedMentions: { parse: [] } };
+    if (!message || typeof message.edit !== "function") {
+      message = await textChannel.send(payload);
+      return message;
+    }
+    try {
+      message = await message.edit(payload);
+    } catch {
+      message = await textChannel.send(payload);
+    }
+    return message;
+  };
 }
 
 export async function startDiscordVoiceCodex({
@@ -230,6 +258,8 @@ export async function startDiscordVoiceCodex({
     }
     const postText = (content) =>
       textChannel.send({ content, allowedMentions: { parse: [] } });
+    const upsertLiveTranscript = createEditableDiscordPost(textChannel);
+    const upsertMinutes = createEditableDiscordPost(textChannel);
     connection = (dependencies.joinVoiceChannel ?? joinVoiceChannel)({
       channelId: voiceChannel.id,
       guildId: guild.id,
@@ -245,29 +275,55 @@ export async function startDiscordVoiceCodex({
       VoiceConnectionStatus.Ready,
       20_000,
     );
-    const session = new DiscordVoiceSession({
-      transcribe: audio.transcribe,
-      runCodex: (transcript, options) => codex.run(transcript, options),
-      synthesize: audio.synthesize,
-      postText,
-      playAudio:
-        dependencies.playAudio ?? createDiscordPlayer(connection, logger),
-      logger,
-      maximumQueuedTurns: config.maximumQueuedTurns,
-      stageTimeouts: config.stageTimeouts,
-    });
+    const playAudio =
+      dependencies.playAudio ?? createDiscordPlayer(connection, logger);
+    const session =
+      config.voiceMode === "meeting"
+        ? new DiscordVoiceMeetingSession({
+            transcribe: audio.transcribe,
+            observe: (observation, options) =>
+              codex.observeMeeting(observation, options),
+            upsertLiveTranscript,
+            upsertMinutes,
+            postText,
+            synthesize: audio.synthesize,
+            playAudio,
+            logger,
+            observationIntervalMs: config.observationIntervalMs,
+            transcriptionConcurrency: config.transcriptionConcurrency,
+            maximumPendingTranscriptions: config.maximumPendingTranscriptions,
+            stageTimeouts: config.stageTimeouts,
+            scheduleInterval: dependencies.scheduleInterval,
+            cancelInterval: dependencies.cancelInterval,
+          })
+        : new DiscordVoiceSession({
+            transcribe: audio.transcribe,
+            runCodex: (transcript, options) => codex.run(transcript, options),
+            synthesize: audio.synthesize,
+            postText,
+            playAudio,
+            logger,
+            maximumQueuedTurns: config.maximumQueuedTurns,
+            stageTimeouts: config.stageTimeouts,
+          });
     subscribeToAllowedSpeaker({
       connection,
       config,
       session,
       postText,
       logger,
+      resolveSpeakerName: (userId) =>
+        voiceChannel.members?.get?.(userId)?.displayName ??
+        guild.members?.cache?.get?.(userId)?.displayName ??
+        userId,
       createDecoder: dependencies.createDecoder,
     });
     await postText(
-      config.listenToEveryone
-        ? "🔊 Discord音声Codexを起動しました。ボイスチャンネル内の全参加者の発話を処理します。返答音声はAI生成です。"
-        : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
+      config.voiceMode === "meeting"
+        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の文字起こしと議事録を更新し、${Math.round(config.observationIntervalMs / 1_000)}秒ごとに必要な場合だけ応答します。返答音声はAI生成です。`
+        : config.listenToEveryone
+          ? "🔊 Discord音声Codexを起動しました。ボイスチャンネル内の全参加者の発話を処理します。返答音声はAI生成です。"
+          : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
     );
     logInfoQuietly(logger, {
       component: "discord-voice",

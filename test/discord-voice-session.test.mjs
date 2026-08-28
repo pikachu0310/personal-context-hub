@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  DiscordVoiceMeetingSession,
   DiscordVoiceSession,
   boundText,
+  formatMeetingObservationTranscript,
+  formatMeetingTranscript,
+  parseMeetingObservation,
   speechExcerpt,
   splitDiscordText,
   withTimeout,
@@ -315,4 +319,207 @@ test("a long serial session preserves one response per queued turn", async () =>
     responses,
     Array.from({ length: 100 }, (_, index) => `応答:${index}`),
   );
+});
+
+test("meeting mode transcribes speakers in parallel, edits one live view, and observes once", async () => {
+  let active = 0;
+  let peak = 0;
+  const liveEdits = [];
+  const minutesEdits = [];
+  const posts = [];
+  const spoken = [];
+  const observations = [];
+  const timer = { unref: () => undefined };
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async (wav) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      return wav.toString();
+    },
+    observe: async (input) => {
+      observations.push(input);
+      return JSON.stringify({
+        minutes: "- Aliceが案を提示\n- Bobが確認を依頼",
+        shouldReply: true,
+        reply: "二人の案をまとめると、この方針で進められます。",
+      });
+    },
+    upsertLiveTranscript: async (content) => liveEdits.push(content),
+    upsertMinutes: async (content) => minutesEdits.push(content),
+    postText: async (content) => posts.push(content),
+    synthesize: async (content) => (
+      spoken.push(content),
+      Buffer.from("meeting-pcm")
+    ),
+    playAudio: async (audio) => spoken.push(audio.toString()),
+    logger: { info: () => undefined },
+    transcriptionConcurrency: 2,
+    scheduleInterval: () => timer,
+    cancelInterval: () => undefined,
+  });
+
+  session.enqueue(Buffer.from("最初の案です"), {
+    userId: "alice-id",
+    speakerName: "Alice",
+    startedAt: 1,
+  });
+  session.enqueue(Buffer.from("確認してほしい"), {
+    userId: "bob-id",
+    speakerName: "Bob",
+    startedAt: 2,
+  });
+  await eventually(
+    () =>
+      session.statements.length === 2 &&
+      liveEdits.some((content) => content.includes("Alice")) &&
+      liveEdits.some((content) => content.includes("Bob")),
+  );
+  assert.equal(peak, 2);
+  assert.deepEqual(posts, []);
+
+  assert.equal(await session.observeNow(), true);
+  assert.equal(observations.length, 1);
+  assert.match(observations[0].transcript, /\[Alice\] 最初の案です/);
+  assert.match(observations[0].transcript, /\[Bob\] 確認してほしい/);
+  assert.match(minutesEdits[0], /議事録/);
+  assert.deepEqual(posts, ["二人の案をまとめると、この方針で進められます。"]);
+  assert.deepEqual(spoken, [
+    "二人の案をまとめると、この方針で進められます。",
+    "meeting-pcm",
+  ]);
+  assert.equal(session.statements.length, 0);
+  session.stop();
+});
+
+test("meeting observation updates minutes without replying to ordinary conversation", async () => {
+  const minutesEdits = [];
+  const posts = [];
+  let synthesized = false;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => "うん、そうだね",
+    observe: async () =>
+      JSON.stringify({
+        minutes: "- 方針について雑談中",
+        shouldReply: false,
+        reply: "",
+      }),
+    upsertLiveTranscript: async () => undefined,
+    upsertMinutes: async (content) => minutesEdits.push(content),
+    postText: async (content) => posts.push(content),
+    synthesize: async () => ((synthesized = true), Buffer.alloc(2)),
+    playAudio: async () => undefined,
+    logger: { info: () => undefined },
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+  session.enqueue(Buffer.from("wav"), {
+    userId: "alice-id",
+    speakerName: "Alice",
+  });
+  await eventually(() => session.statements.length === 1);
+  assert.equal(await session.observeNow(), true);
+  assert.match(minutesEdits[0], /方針について雑談中/);
+  assert.deepEqual(posts, []);
+  assert.equal(synthesized, false);
+  session.stop();
+});
+
+test("meeting transcript formatting preserves speaker order and observation JSON is strict", () => {
+  const statements = [
+    { sequence: 2, startedAt: 2, speakerName: "Bob", text: "二番目" },
+    { sequence: 1, startedAt: 1, speakerName: "Alice", text: "最初" },
+  ];
+  assert.match(formatMeetingTranscript(statements), /Alice[\s\S]*Bob/);
+  assert.equal(
+    formatMeetingObservationTranscript(statements),
+    "[Alice] 最初\n[Bob] 二番目",
+  );
+  assert.deepEqual(
+    parseMeetingObservation(
+      '```json\n{"minutes":"更新済み","shouldReply":true,"reply":"回答"}\n```',
+    ),
+    { minutes: "更新済み", shouldReply: true, reply: "回答" },
+  );
+  assert.equal(
+    parseMeetingObservation(
+      '{"minutes":"","shouldReply":false,"reply":""}',
+      "既存の議事録",
+    ).minutes,
+    "既存の議事録",
+  );
+  assert.equal(
+    parseMeetingObservation('{"minutes":"","shouldReply":false,"reply":""}')
+      .minutes,
+    "まだ議事録に残す要点はありません。",
+  );
+  assert.throws(() => parseMeetingObservation("not-json"), {
+    code: "MEETING_OBSERVATION_INVALID",
+  });
+});
+
+test("meeting mode coalesces overload into the editable status instead of posting warnings", async () => {
+  const liveEdits = [];
+  let releaseTranscription;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () =>
+      new Promise((resolve) => {
+        releaseTranscription = resolve;
+      }),
+    observe: async () => assert.fail("observation must not run"),
+    upsertLiveTranscript: async (content) => liveEdits.push(content),
+    upsertMinutes: async () => undefined,
+    postText: async () => assert.fail("overload must not post a warning"),
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    logger: { info: () => undefined },
+    transcriptionConcurrency: 1,
+    maximumPendingTranscriptions: 1,
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+  assert.equal(session.enqueue(Buffer.from("first")), true);
+  assert.equal(session.enqueue(Buffer.from("overflow")), true);
+  await eventually(
+    () =>
+      typeof releaseTranscription === "function" &&
+      liveEdits.some((content) => /未処理音声 1 件/.test(content)),
+  );
+  releaseTranscription("");
+  session.stop();
+});
+
+test("meeting mode retains statements when an observation is invalid and retries later", async () => {
+  let attempts = 0;
+  const minutesEdits = [];
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => "再試行対象",
+    observe: async () => {
+      attempts += 1;
+      return attempts === 1
+        ? "invalid"
+        : JSON.stringify({
+            minutes: "- 再試行で回収済み",
+            shouldReply: false,
+            reply: "",
+          });
+    },
+    upsertLiveTranscript: async () => undefined,
+    upsertMinutes: async (content) => minutesEdits.push(content),
+    postText: async () => assert.fail("retry must not post a warning"),
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    logger: { info: () => undefined },
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+  session.enqueue(Buffer.from("wav"), { speakerName: "Alice" });
+  await eventually(() => session.statements.length === 1);
+  assert.equal(await session.observeNow(), false);
+  assert.equal(session.statements.length, 1);
+  assert.equal(await session.observeNow(), true);
+  assert.equal(session.statements.length, 0);
+  assert.match(minutesEdits[0], /再試行で回収済み/);
+  session.stop();
 });

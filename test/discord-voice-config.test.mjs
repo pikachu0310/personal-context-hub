@@ -20,7 +20,11 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
   assert.equal(config.silenceMs, 1_000);
   assert.equal(config.maximumAudioSeconds, 90);
   assert.equal(config.listenToEveryone, false);
+  assert.equal(config.voiceMode, "turn");
   assert.equal(config.ttsSpeed, 1);
+  assert.equal(config.observationIntervalMs, 60_000);
+  assert.equal(config.transcriptionConcurrency, 4);
+  assert.equal(config.maximumPendingTranscriptions, 60);
   assert.equal(config.codexHome, "/mnt/c/Users/example/.codex");
   assert.match(
     config.isolatedCodexHome,
@@ -41,16 +45,33 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   const config = loadDiscordVoiceConfig({
     ...valid,
     PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE: "true",
+    PERSONAL_CONTEXT_VOICE_MODE: "meeting",
+    PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS: "45000",
+    PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY: "6",
+    PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TRANSCRIPTIONS: "80",
     PERSONAL_CONTEXT_VOICE_TTS_SPEED: "2",
   });
   assert.equal(config.listenToEveryone, true);
+  assert.equal(config.voiceMode, "meeting");
   assert.equal(config.ttsSpeed, 2);
+  assert.equal(config.observationIntervalMs, 45_000);
+  assert.equal(config.transcriptionConcurrency, 6);
+  assert.equal(config.maximumPendingTranscriptions, 80);
   const description = describeDiscordVoiceConfig(config);
   assert.equal(description.listenToEveryone, true);
+  assert.equal(description.voiceMode, "meeting");
   assert.equal(description.ttsSpeed, 2);
 });
 
 test("voice config rejects missing and malformed trust-boundary IDs", () => {
+  assert.throws(
+    () =>
+      loadDiscordVoiceConfig({
+        ...valid,
+        PERSONAL_CONTEXT_VOICE_MODE: "realtime-everything",
+      }),
+    /turn or meeting/,
+  );
   assert.throws(
     () =>
       loadDiscordVoiceConfig({

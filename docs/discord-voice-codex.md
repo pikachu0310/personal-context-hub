@@ -12,6 +12,9 @@
 - 確定した文字起こしを同じTextチャンネルへ記録してから、`@openai/codex-sdk`の同一ローカルthreadへ渡す。
 - Codexの最終応答をTextチャンネルへ分割投稿し、`gpt-4o-mini-tts`で生成したPCMをVoiceへ返す。
 - 同時発話は直列queueに積み、再生中も受信する。1ターンの失敗は次のターンを止めない。
+- 会議観測モードでは話者ごとのSTTを並列実行し、確定した発話を一つのライブ文字起こしメッセージへ編集反映する。
+- 会議観測モードでは既定60秒ごとに未観測の発話を時系列で一括観測し、累積議事録を更新する。未解決の質問・依頼などがある場合だけTextとTTSで応答する。
+- 会議観測中に到着した発話は次回分として保持し、CodexやTTSの処理中でも短い発話ごとの混雑通知を送らない。
 - STT、Codex、TTS、再生、Discord投稿には個別の上限時間を設け、外部サービスが応答しないターンもqueueを永久に塞がない。
 - 作業ディレクトリ、sandbox、モデルは明示設定する。既定sandboxは`workspace-write`とし、任意ディレクトリへの無制限書き込みを暗黙に許可しない。
 - Codex threadは`networkAccessEnabled: false`、Web検索無効、`approvalPolicy: never`で開始する。sandboxは`read-only`または`workspace-write`だけを許可する。
@@ -30,7 +33,9 @@
 
 ## ターン状態
 
-`idle → receiving → transcribing → posting_transcript → running_codex → posting_response → synthesizing → speaking → idle`
+通常ターンは`idle → receiving → transcribing → posting_transcript → running_codex → posting_response → synthesizing → speaking → idle`で処理する。
+
+会議観測モードは`receiving → parallel_transcribing → editing_live_transcript`を継続し、定期的に`observing → updating_minutes → optional_posting_response → optional_synthesizing → optional_speaking`を実行する。
 
 各発話は一意なturn IDを持つ。状態遷移、処理時間、失敗段階だけを構造化ログへ残し、音声バイト列や認証情報は残さない。Codex thread IDはローカル状態ファイルへ保存し、再起動後にresumeする。明示的なreset時だけ新規threadを開始する。
 
@@ -68,6 +73,9 @@
 18. 実接続前checklistは、秘密値不要のローカル確認、資格情報設定後の完全診断、本人が行う一回限りのDiscord接続確認を分離する。
 19. 検証記録fileは実行日、対象commit、各コマンドの結果、未実施の外部操作を秘密値・個人ID・端末固有パスなしで固定する。
 20. Setup doctorは公開設定またはローカルsmokeの失敗時に非0終了し、生stderrや資格情報をJSON・ログへ転載しない。
+21. 会議観測モードでは複数話者のSTTが並列に進み、観測時に話者名付きで一つの入力へまとめられる。
+22. 応答不要と判断した観測では議事録だけを更新し、Discord応答とTTSを実行しない。
+23. ライブ文字起こしと累積議事録はそれぞれ同じBotメッセージを編集し、発話ごとの新規メッセージを増やさない。
 
 ## 第2段階
 

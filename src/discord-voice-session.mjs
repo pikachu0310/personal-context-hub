@@ -313,3 +313,356 @@ export class DiscordVoiceSession {
     }
   }
 }
+
+const MAX_MEETING_MINUTES_CHARACTERS = 1_600;
+const MAX_MEETING_TRANSCRIPT_CHARACTERS = 16_000;
+const MAX_LIVE_TRANSCRIPT_CHARACTERS = 1_850;
+
+function escapeDiscordMarkdown(value) {
+  return String(value ?? "").replace(/([\\`*_{}[\]()#+.!|>~-])/g, "\\$1");
+}
+
+function speakerLabel(statement) {
+  return boundText(
+    String(statement.speakerName ?? statement.userId ?? "不明な話者")
+      .replace(/[\r\n]+/g, " ")
+      .trim(),
+    80,
+    "…",
+  );
+}
+
+export function formatMeetingTranscript(
+  statements,
+  maximum = MAX_LIVE_TRANSCRIPT_CHARACTERS,
+) {
+  const ordered = [...statements].sort(
+    (left, right) =>
+      (left.startedAt ?? 0) - (right.startedAt ?? 0) ||
+      (left.sequence ?? 0) - (right.sequence ?? 0),
+  );
+  const lines = ordered.map(
+    (statement) =>
+      `**${escapeDiscordMarkdown(speakerLabel(statement))}**: ${statement.text}`,
+  );
+  const header = "🎙️ **会話中（次回の定期観測まで）**";
+  const kept = [];
+  let used = header.length;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index];
+    if (used + line.length + 1 > maximum) break;
+    kept.unshift(line);
+    used += line.length + 1;
+  }
+  const omitted = lines.length - kept.length;
+  const body = kept.length ? kept.join("\n") : "_発話を待っています。_";
+  return `${header}\n${omitted ? `_古い発話 ${omitted} 件は議事録へ移動しました。_\n` : ""}${body}`;
+}
+
+export function formatMeetingObservationTranscript(statements) {
+  const ordered = [...statements].sort(
+    (left, right) =>
+      (left.startedAt ?? 0) - (right.startedAt ?? 0) ||
+      (left.sequence ?? 0) - (right.sequence ?? 0),
+  );
+  const transcript = ordered
+    .map((statement) => `[${speakerLabel(statement)}] ${statement.text}`)
+    .join("\n");
+  return boundText(transcript, MAX_MEETING_TRANSCRIPT_CHARACTERS);
+}
+
+export function parseMeetingObservation(value, fallbackMinutes = "") {
+  const text = String(value ?? "").trim();
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+  const candidate =
+    fenced ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
+  let parsed;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch (error) {
+    throw new VoiceServiceError(
+      "MEETING_OBSERVATION_INVALID",
+      "Meeting observation did not return valid JSON.",
+      "会議の観測結果を整理できませんでした。次回の観測で再試行します。",
+      { cause: error },
+    );
+  }
+  const minutes =
+    boundText(parsed?.minutes, MAX_MEETING_MINUTES_CHARACTERS) ||
+    boundText(fallbackMinutes, MAX_MEETING_MINUTES_CHARACTERS) ||
+    "まだ議事録に残す要点はありません。";
+  const reply = boundText(parsed?.reply, MAX_CODEX_RESPONSE_CHARACTERS);
+  return {
+    minutes,
+    shouldReply: parsed?.shouldReply === true && Boolean(reply),
+    reply,
+  };
+}
+
+export class DiscordVoiceMeetingSession {
+  constructor({
+    transcribe,
+    observe,
+    upsertLiveTranscript,
+    upsertMinutes,
+    postText,
+    synthesize,
+    playAudio,
+    logger = console,
+    observationIntervalMs = 60_000,
+    transcriptionConcurrency = 4,
+    maximumPendingTranscriptions = 60,
+    stageTimeouts = {},
+    scheduleInterval = setInterval,
+    cancelInterval = clearInterval,
+  }) {
+    this.dependencies = {
+      transcribe,
+      observe,
+      upsertLiveTranscript,
+      upsertMinutes,
+      postText,
+      synthesize,
+      playAudio,
+    };
+    this.logger = logger;
+    this.stageTimeouts = { ...DEFAULT_STAGE_TIMEOUTS, ...stageTimeouts };
+    this.transcriptionConcurrency = transcriptionConcurrency;
+    this.maximumPendingTranscriptions = maximumPendingTranscriptions;
+    this.cancelInterval = cancelInterval;
+    this.audioQueue = [];
+    this.activeTranscriptions = 0;
+    this.statements = [];
+    this.sequence = 0;
+    this.minutes = "";
+    this.observing = false;
+    this.closed = false;
+    this.droppedAudio = 0;
+    this.failedTranscriptions = 0;
+    this.shutdownController = new AbortController();
+    this.liveUpdate = Promise.resolve();
+    this.interval = scheduleInterval(
+      () => void this.observeNow(),
+      observationIntervalMs,
+    );
+    this.interval?.unref?.();
+    this.#queueLiveUpdate();
+  }
+
+  enqueue(wav, metadata = {}) {
+    if (!Buffer.isBuffer(wav)) throw new TypeError("wav must be a Buffer");
+    if (this.closed) return false;
+    const pending = this.audioQueue.length + this.activeTranscriptions;
+    if (pending >= this.maximumPendingTranscriptions) {
+      this.droppedAudio += 1;
+      this.#log("meeting_audio_dropped", { pending });
+      this.#queueLiveUpdate();
+      return true;
+    }
+    this.audioQueue.push({
+      id: randomUUID(),
+      sequence: (this.sequence += 1),
+      wav,
+      metadata,
+      queuedAt: Date.now(),
+    });
+    this.#drainTranscriptions();
+    return true;
+  }
+
+  async observeNow() {
+    if (this.closed || this.observing) return false;
+    const statements = this.statements.filter(
+      (statement) => !statement.observed,
+    );
+    if (!statements.length) return false;
+    this.observing = true;
+    const startedAt = Date.now();
+    try {
+      const transcript = formatMeetingObservationTranscript(statements);
+      const raw = await withTimeout(
+        (signal) =>
+          this.dependencies.observe(
+            { minutes: this.minutes, transcript, statements },
+            { signal },
+          ),
+        this.stageTimeouts.running_codex,
+        "observing meeting",
+        this.shutdownController.signal,
+      );
+      const observation = parseMeetingObservation(raw, this.minutes);
+      await withTimeout(
+        (signal) =>
+          this.dependencies.upsertMinutes(
+            `📝 **議事録（自動更新）**\n${observation.minutes}`,
+            { signal },
+          ),
+        this.stageTimeouts.posting,
+        "updating meeting minutes",
+        this.shutdownController.signal,
+      );
+      this.minutes = observation.minutes;
+      for (const statement of statements) statement.observed = true;
+      this.statements = this.statements.filter(
+        (statement) => !statement.observed,
+      );
+      this.droppedAudio = 0;
+      this.failedTranscriptions = 0;
+      this.#queueLiveUpdate();
+
+      if (observation.shouldReply) {
+        for (const chunk of splitDiscordText(observation.reply)) {
+          await withTimeout(
+            (signal) => this.dependencies.postText(chunk, { signal }),
+            this.stageTimeouts.posting,
+            "posting meeting response",
+            this.shutdownController.signal,
+          );
+        }
+        const spoken = speechExcerpt(observation.reply);
+        if (spoken) {
+          const audio = await withTimeout(
+            (signal) => this.dependencies.synthesize(spoken, { signal }),
+            this.stageTimeouts.synthesizing,
+            "synthesizing meeting response",
+            this.shutdownController.signal,
+          );
+          await withTimeout(
+            (signal) => this.dependencies.playAudio(audio, { signal }),
+            this.stageTimeouts.speaking,
+            "speaking meeting response",
+            this.shutdownController.signal,
+          );
+        }
+      }
+      this.#log("meeting_observation_completed", {
+        elapsedMs: Date.now() - startedAt,
+        statements: statements.length,
+        replied: observation.shouldReply,
+      });
+      return true;
+    } catch (error) {
+      if (!this.closed) {
+        this.#log("meeting_observation_failed", {
+          elapsedMs: Date.now() - startedAt,
+          errorCode: voiceErrorCode(error),
+        });
+      }
+      return false;
+    } finally {
+      this.observing = false;
+    }
+  }
+
+  stop() {
+    if (this.closed) return;
+    this.closed = true;
+    this.cancelInterval(this.interval);
+    this.audioQueue = [];
+    this.shutdownController.abort(
+      new VoiceServiceError(
+        "SERVICE_STOPPED",
+        "Discord voice meeting session stopped.",
+        "音声サービスを停止しました。",
+      ),
+    );
+  }
+
+  #drainTranscriptions() {
+    while (
+      !this.closed &&
+      this.activeTranscriptions < this.transcriptionConcurrency &&
+      this.audioQueue.length
+    ) {
+      const item = this.audioQueue.shift();
+      this.activeTranscriptions += 1;
+      void this.#transcribeItem(item).finally(() => {
+        this.activeTranscriptions -= 1;
+        this.#drainTranscriptions();
+      });
+    }
+  }
+
+  async #transcribeItem(item) {
+    const startedAt = Date.now();
+    try {
+      const text = boundText(
+        await withTimeout(
+          (signal) => this.dependencies.transcribe(item.wav, { signal }),
+          this.stageTimeouts.transcribing,
+          "transcribing meeting audio",
+          this.shutdownController.signal,
+        ),
+        MAX_TRANSCRIPT_CHARACTERS,
+      );
+      if (!text) {
+        this.#log("meeting_transcript_discarded", {
+          sequence: item.sequence,
+          elapsedMs: Date.now() - startedAt,
+          reason: "empty_transcript",
+        });
+        return;
+      }
+      this.statements.push({
+        sequence: item.sequence,
+        userId: item.metadata.userId,
+        speakerName: item.metadata.speakerName,
+        startedAt: item.metadata.startedAt ?? item.queuedAt,
+        text,
+        observed: false,
+      });
+      this.#log("meeting_transcript_completed", {
+        sequence: item.sequence,
+        elapsedMs: Date.now() - startedAt,
+        transcriptCharacters: text.length,
+      });
+    } catch (error) {
+      if (!this.closed) {
+        this.failedTranscriptions += 1;
+        this.#log("meeting_transcript_failed", {
+          sequence: item.sequence,
+          elapsedMs: Date.now() - startedAt,
+          errorCode: voiceErrorCode(error),
+        });
+      }
+    } finally {
+      this.#queueLiveUpdate();
+    }
+  }
+
+  #queueLiveUpdate() {
+    const statements = this.statements.filter(
+      (statement) => !statement.observed,
+    );
+    let content = formatMeetingTranscript(statements);
+    const notices = [];
+    if (this.droppedAudio) notices.push(`未処理音声 ${this.droppedAudio} 件`);
+    if (this.failedTranscriptions)
+      notices.push(`認識失敗 ${this.failedTranscriptions} 件`);
+    if (notices.length) content += `\n_状態: ${notices.join(" / ")}_`;
+    this.liveUpdate = this.liveUpdate
+      .then(() =>
+        withTimeout(
+          (signal) =>
+            this.dependencies.upsertLiveTranscript(content, { signal }),
+          this.stageTimeouts.posting,
+          "updating live transcript",
+          this.shutdownController.signal,
+        ),
+      )
+      .catch((error) => {
+        if (!this.closed)
+          this.#log("meeting_live_update_failed", {
+            errorCode: voiceErrorCode(error),
+          });
+      });
+  }
+
+  #log(event, detail) {
+    try {
+      this.logger.info?.({ component: "discord-voice", event, ...detail });
+    } catch {
+      // Meeting capture must not depend on logging.
+    }
+  }
+}

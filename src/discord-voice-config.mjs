@@ -78,6 +78,10 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX must be read-only or workspace-write.",
     );
   }
+  const voiceMode = env.PERSONAL_CONTEXT_VOICE_MODE?.trim() || "turn";
+  if (!new Set(["turn", "meeting"]).has(voiceMode)) {
+    throw new Error("PERSONAL_CONTEXT_VOICE_MODE must be turn or meeting.");
+  }
   return {
     guildId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_GUILD_ID"),
     voiceChannelId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_CHANNEL_ID"),
@@ -91,6 +95,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE",
       false,
     ),
+    voiceMode,
     workingDirectory,
     statePath,
     sttModel: env.PERSONAL_CONTEXT_VOICE_STT_MODEL?.trim() || "gpt-transcribe",
@@ -133,6 +138,27 @@ export function loadDiscordVoiceConfig(env = process.env) {
       3,
       1,
       10,
+    ),
+    maximumPendingTranscriptions: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TRANSCRIPTIONS",
+      60,
+      1,
+      100,
+    ),
+    transcriptionConcurrency: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY",
+      4,
+      1,
+      8,
+    ),
+    observationIntervalMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS",
+      60_000,
+      5_000,
+      600_000,
     ),
     stageTimeouts: {
       transcribing: integer(
@@ -182,12 +208,16 @@ export function describeDiscordVoiceConfig(config) {
     textChannelId: config.textChannelId,
     allowedUserId: config.allowedUserId,
     listenToEveryone: config.listenToEveryone,
+    voiceMode: config.voiceMode,
     workingDirectory: config.workingDirectory,
     statePath: config.statePath,
     sttModel: config.sttModel,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
     ttsSpeed: config.ttsSpeed,
+    maximumPendingTranscriptions: config.maximumPendingTranscriptions,
+    transcriptionConcurrency: config.transcriptionConcurrency,
+    observationIntervalMs: config.observationIntervalMs,
     codexModel: config.codexModel ?? "Codex configured default",
     codexHomeConfigured: Boolean(config.codexHome),
     isolatedCodexHomeConfigured: Boolean(config.isolatedCodexHome),

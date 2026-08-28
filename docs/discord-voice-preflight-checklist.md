@@ -30,9 +30,11 @@
 1. `npm run inspect:discord:voice`で`serviceReady: true`を確認する。
 2. `npm run start:discord:voice`を限定環境で起動する。
 3. 起動通知、設定した話者モード、文字起こし、Codex応答、AI生成音声を確認する。
-4. 全参加者モードではowner以外の発話でもSTT／Codex／Text投稿が発生することを確認する。
-5. `Ctrl+C`で停止し、Voice切断とBot client cleanupを確認する。
-6. token、API key、音声原本、raw errorをログや共有画面へ出していないことを確認する。
+4. 会議観測モードでは複数話者の発話が一つのライブ文字起こしへ編集反映され、観測間隔まではCodex応答が発生しないことを確認する。
+5. 観測後に累積議事録が更新され、応答不要な雑談ではText返信とTTSが発生しないことを確認する。
+6. 未解決の質問または依頼を含む観測だけがText返信とTTSを一度ずつ実行することを確認する。
+7. `Ctrl+C`で停止し、Voice切断とBot client cleanupを確認する。
+8. token、API key、音声原本、raw errorをログや共有画面へ出していないことを確認する。
 
 ## 4. 失敗時と撤回
 
