@@ -20,6 +20,7 @@ import {
   buildCodexEnvironment,
   buildPowerTaskPrompt,
   createOpenAIAudioAdapter,
+  describePowerTaskEvent,
   prepareIsolatedCodexHome,
 } from "../src/discord-voice-openai.mjs";
 
@@ -350,6 +351,7 @@ test("Codex voice runner enforces structured meeting observations", async () => 
 test("power tasks run in a separate unrestricted networked thread", async () => {
   let threadOptions;
   let prompt;
+  const progress = [];
   const runner = new CodexVoiceRunner(
     {
       statePath: join(tmpdir(), `discord-power-${Date.now()}.json`),
@@ -365,9 +367,39 @@ test("power tasks run in a separate unrestricted networked thread", async () => 
           threadOptions = options;
           return {
             id: "power-thread",
-            run: async (input) => {
+            runStreamed: async (input) => {
               prompt = input;
-              return { finalResponse: "完了" };
+              return {
+                events: (async function* () {
+                  yield { type: "turn.started" };
+                  yield {
+                    type: "item.completed",
+                    item: {
+                      type: "web_search",
+                      id: "search-1",
+                      query: "private query must not be posted",
+                    },
+                  };
+                  yield {
+                    type: "item.completed",
+                    item: {
+                      type: "agent_message",
+                      id: "message-1",
+                      text: "完了",
+                    },
+                  };
+                  yield {
+                    type: "turn.completed",
+                    usage: {
+                      input_tokens: 1,
+                      cached_input_tokens: 0,
+                      cache_write_input_tokens: 0,
+                      output_tokens: 1,
+                      reasoning_output_tokens: 0,
+                    },
+                  };
+                })(),
+              };
             },
           };
         },
@@ -376,11 +408,14 @@ test("power tasks run in a separate unrestricted networked thread", async () => 
   );
 
   assert.equal(
-    await runner.runTask({
-      title: "調査",
-      request: "検索して",
-      context: "会議文脈",
-    }),
+    await runner.runTask(
+      {
+        title: "調査",
+        request: "検索して",
+        context: "会議文脈",
+      },
+      { onProgress: async (message) => progress.push(message) },
+    ),
     "完了",
   );
   assert.equal(threadOptions.sandboxMode, "danger-full-access");
@@ -389,6 +424,25 @@ test("power tasks run in a separate unrestricted networked thread", async () => 
   assert.equal(threadOptions.webSearchMode, "live");
   assert.equal(threadOptions.workingDirectory, "/home/example/github");
   assert.match(prompt, /検索して/);
+  assert.deepEqual(progress, [
+    "🤖 Codexが作業を開始しました。",
+    "🔎 Web検索を完了しました。",
+  ]);
+});
+
+test("power task progress describes outcomes without raw command output", () => {
+  const message = describePowerTaskEvent({
+    type: "item.completed",
+    item: {
+      type: "command_execution",
+      command: "print-secret",
+      aggregated_output: "secret-value",
+      exit_code: 0,
+      status: "completed",
+    },
+  });
+  assert.match(message, /終了コード: 0/);
+  assert.doesNotMatch(message, /print-secret|secret-value/);
 });
 
 test("power tasks cannot run unless power mode is explicit", async () => {

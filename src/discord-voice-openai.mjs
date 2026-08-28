@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import OpenAI, { toFile } from "openai";
 import { VoiceServiceError } from "./discord-voice-errors.mjs";
@@ -158,6 +158,55 @@ export function buildPowerTaskPrompt({ title, request, context }) {
       meetingContext: String(context ?? "").slice(0, 16_000),
     }),
   ].join("\n");
+}
+
+function inlineCode(value) {
+  return String(value ?? "")
+    .replace(/[`\r\n]+/g, " ")
+    .trim();
+}
+
+export function describePowerTaskEvent(event) {
+  if (event?.type === "turn.started") {
+    return "🤖 Codexが作業を開始しました。";
+  }
+  if (event?.type !== "item.completed") return "";
+  const item = event.item;
+  switch (item?.type) {
+    case "web_search":
+      return "🔎 Web検索を完了しました。";
+    case "command_execution":
+      return item.status === "failed" || item.exit_code > 0
+        ? `⚠️ コマンドが失敗しました（終了コード: ${item.exit_code ?? "不明"}）。`
+        : `⚙️ コマンドを実行しました（終了コード: ${item.exit_code ?? 0}）。`;
+    case "file_change": {
+      const files = (item.changes ?? [])
+        .slice(0, 5)
+        .map(
+          ({ path }) =>
+            `\`${inlineCode(basename(String(path ?? ""))) || "不明"}\``,
+        )
+        .join("、");
+      const omitted = Math.max(0, (item.changes?.length ?? 0) - 5);
+      return `📝 ファイルを${item.status === "failed" ? "変更できませんでした" : "変更しました"}${files ? `: ${files}` : ""}${omitted ? ` ほか${omitted}件` : ""}。`;
+    }
+    case "mcp_tool_call": {
+      const tool = [inlineCode(item.server), inlineCode(item.tool)]
+        .filter(Boolean)
+        .join("/");
+      return `${item.status === "failed" ? "⚠️" : "🔌"} 外部ツール${tool ? ` \`${tool}\`` : ""}を${item.status === "failed" ? "完了できませんでした" : "実行しました"}。`;
+    }
+    case "todo_list": {
+      const total = item.items?.length ?? 0;
+      const completed =
+        item.items?.filter(({ completed: done }) => done).length ?? 0;
+      return total ? `📋 作業計画: ${completed}/${total}件完了。` : "";
+    }
+    case "error":
+      return "⚠️ Codex内部で回復可能な問題が報告されました。";
+    default:
+      return "";
+  }
 }
 
 export function buildCodexOptions(
@@ -377,7 +426,7 @@ export class CodexVoiceRunner {
     );
   }
 
-  async runTask(task, { signal } = {}) {
+  async runTask(task, { signal, onProgress } = {}) {
     if (!this.config.powerMode) {
       throw new VoiceServiceError(
         "POWER_MODE_DISABLED",
@@ -396,7 +445,35 @@ export class CodexVoiceRunner {
       additionalDirectories: [],
       model: this.config.codexModel,
     });
-    return this.#runOnThread(thread, buildPowerTaskPrompt(task), { signal });
+    const prompt = buildPowerTaskPrompt(task);
+    if (typeof thread.runStreamed !== "function") {
+      return this.#runOnThread(thread, prompt, { signal });
+    }
+    try {
+      const { events } = await thread.runStreamed(prompt, {
+        signal: signal ?? new AbortController().signal,
+      });
+      let finalResponse = "";
+      for await (const event of events) {
+        if (
+          event.type === "item.completed" &&
+          event.item?.type === "agent_message"
+        ) {
+          finalResponse = event.item.text;
+        }
+        const progress = describePowerTaskEvent(event);
+        if (progress) await onProgress?.(progress);
+        if (event.type === "turn.failed") {
+          throw new Error(event.error?.message ?? "Codex task failed.");
+        }
+        if (event.type === "error") {
+          throw new Error(event.message ?? "Codex task stream failed.");
+        }
+      }
+      return finalResponse;
+    } catch (error) {
+      this.#throwActionableError(error);
+    }
   }
 
   async #runPrompt(prompt, { signal, outputSchema } = {}) {
@@ -417,16 +494,20 @@ export class CodexVoiceRunner {
       });
       return result.finalResponse;
     } catch (error) {
-      if (/access token could not be refreshed/i.test(error?.message ?? "")) {
-        throw new VoiceServiceError(
-          "CODEX_AUTH_EXPIRED",
-          "WSL側のCodexログインが期限切れです。npx codex login --device-auth で再認証してください。",
-          "Codexの認証期限が切れています。ローカル管理者が再認証してください。",
-          { cause: error },
-        );
-      }
-      throw error;
+      this.#throwActionableError(error);
     }
+  }
+
+  #throwActionableError(error) {
+    if (/access token could not be refreshed/i.test(error?.message ?? "")) {
+      throw new VoiceServiceError(
+        "CODEX_AUTH_EXPIRED",
+        "WSL側のCodexログインが期限切れです。npx codex login --device-auth で再認証してください。",
+        "Codexの認証期限が切れています。ローカル管理者が再認証してください。",
+        { cause: error },
+      );
+    }
+    throw error;
   }
 
   async #ensureThread() {

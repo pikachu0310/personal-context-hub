@@ -6,6 +6,7 @@ import {
   DiscordVoiceTaskQueue,
   authorizeMeetingTasks,
   boundText,
+  formatElapsedTime,
   formatMeetingObservationTranscript,
   formatMeetingTranscript,
   parseMeetingObservation,
@@ -245,6 +246,12 @@ test("message splitting and speech excerpts keep bounded outputs", () => {
     assert.ok(!(first >= 0xdc00 && first <= 0xdfff));
     assert.ok(!(last >= 0xd800 && last <= 0xdbff));
   }
+});
+
+test("task durations stay readable for short and queued work", () => {
+  assert.equal(formatElapsedTime(42_400), "42秒");
+  assert.equal(formatElapsedTime(125_000), "2分5秒");
+  assert.equal(formatElapsedTime(Number.NaN), "0秒");
 });
 
 test("transcripts and Codex responses are bounded before posting or speaking", async () => {
@@ -539,15 +546,20 @@ test("power task queue runs work separately and posts bounded lifecycle updates"
   const running = [];
   const parentPosts = [];
   const threadPosts = [];
+  const states = [];
   const queue = new DiscordVoiceTaskQueue({
-    runTask: async (task) => {
+    runTask: async (task, { onProgress }) => {
       running.push(task.title);
+      await onProgress(`進捗:${task.title}`);
       return `${task.title}を完了しました。`;
     },
     postText: async (content) => parentPosts.push(content),
     createTaskThread: async (task) => {
       parentPosts.push(`thread:${task.title}`);
-      return async (content) => threadPosts.push(content);
+      return {
+        post: async (content) => threadPosts.push(content),
+        update: async ({ state }) => states.push(`${task.title}:${state}`),
+      };
     },
     logger: { info: () => undefined },
     concurrency: 2,
@@ -580,12 +592,40 @@ test("power task queue runs work separately and posts bounded lifecycle updates"
     3,
   );
   assert.ok(threadPosts.some((content) => content.includes("調査を完了")));
+  assert.ok(threadPosts.some((content) => content === "進捗:調査"));
+  assert.equal(states.filter((state) => state.endsWith(":running")).length, 3);
+  assert.equal(
+    states.filter((state) => state.endsWith(":completed")).length,
+    3,
+  );
   assert.deepEqual(parentPosts.sort(), [
     "thread:修正",
     "thread:検証",
     "thread:調査",
   ]);
-  queue.stop();
+  await queue.stop();
+});
+
+test("stopping the task queue marks an active Discord task as cancelled", async () => {
+  const states = [];
+  const threadPosts = [];
+  const queue = new DiscordVoiceTaskQueue({
+    runTask: async (_task, { signal }) =>
+      new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }),
+    postText: async () => undefined,
+    createTaskThread: async () => ({
+      post: async (content) => threadPosts.push(content),
+      update: async ({ state }) => states.push(state),
+    }),
+  });
+  assert.equal(queue.enqueue({ title: "長い処理", request: "続けて" }), true);
+  await eventually(() => states.includes("running"));
+  await queue.stop();
+  assert.ok(threadPosts.some((content) => content.includes("タスク中止")));
 });
 
 test("meeting mode dispatches only owner-authorized background tasks", async () => {

@@ -32,6 +32,9 @@ import {
   DiscordVoiceMeetingSession,
   DiscordVoiceSession,
   DiscordVoiceTaskQueue,
+  boundText,
+  escapeDiscordMarkdown,
+  formatElapsedTime,
 } from "./discord-voice-session.mjs";
 
 const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
@@ -218,25 +221,94 @@ export function createEditableDiscordPost(textChannel) {
   };
 }
 
+const DISCORD_TASK_STATES = Object.freeze({
+  queued: ["⏳", "待機中"],
+  running: ["🟡", "実行中"],
+  completed: ["✅", "完了"],
+  failed: ["⚠️", "失敗"],
+  cancelled: ["⏹️", "中止"],
+});
+
+export function formatDiscordTaskCard(
+  task,
+  { state = "queued", threadId, elapsedMs } = {},
+) {
+  const [icon, label] = DISCORD_TASK_STATES[state] ?? ["🧰", state];
+  const id = String(task.id ?? "unknown").replace(/[^a-zA-Z0-9_-]/g, "");
+  const title = escapeDiscordMarkdown(
+    boundText(String(task.title ?? "").replace(/[\r\n]+/g, " "), 120) ||
+      "Codexタスク",
+  );
+  return [
+    `${icon} **Codexタスク** \`${id || "unknown"}\``,
+    `**${title}**`,
+    `状態: **${label}**${Number.isFinite(elapsedMs) ? ` · ${formatElapsedTime(elapsedMs)}` : ""}`,
+    threadId ? `ログ: <#${threadId}>` : "ログスレッドを準備しています…",
+  ].join("\n");
+}
+
 export function createDiscordTaskThread(textChannel) {
   return async (task) => {
     const title = String(task.title ?? "Codexタスク")
       .replace(/[\r\n]+/g, " ")
       .trim();
-    const starter = await textChannel.send({
-      content: `🧰 **Codexタスク** \`${task.id}\` — ${title}`,
+    let starter = await textChannel.send({
+      content: formatDiscordTaskCard(task),
       allowedMentions: { parse: [] },
     });
     if (typeof starter.startThread !== "function") {
       throw new Error("Configured text channel cannot create task threads.");
     }
-    const thread = await starter.startThread({
-      name: `${task.id} ${title}`.slice(0, 100),
-      autoArchiveDuration: 1_440,
-      reason: "Keep Codex task output separate from meeting minutes",
-    });
-    return (content) =>
-      thread.send({ content, allowedMentions: { parse: [] } });
+    let thread;
+    try {
+      thread = await starter.startThread({
+        name: `${task.id} ${title}`.slice(0, 100),
+        autoArchiveDuration: 1_440,
+        reason: "Keep Codex task output separate from meeting minutes",
+      });
+    } catch (error) {
+      await starter
+        .edit({
+          content: formatDiscordTaskCard(task, { state: "failed" }),
+          allowedMentions: { parse: [] },
+        })
+        .catch(() => undefined);
+      throw error;
+    }
+    const threadId = String(thread.id ?? "");
+    if (!threadId) throw new Error("Created task thread has no channel ID.");
+    const update = async ({ state, elapsedMs, signal } = {}) => {
+      if (signal?.aborted) throw signal.reason;
+      const payload = {
+        content: formatDiscordTaskCard(task, {
+          state,
+          threadId,
+          elapsedMs,
+        }),
+        allowedMentions: { parse: [] },
+      };
+      try {
+        starter = await starter.edit(payload);
+      } catch {
+        starter = await textChannel.send(payload);
+      }
+      return starter;
+    };
+    const post = (content, { signal } = {}) => {
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      return thread.send({ content, allowedMentions: { parse: [] } });
+    };
+    try {
+      await update({ state: "queued" });
+      const request = escapeDiscordMarkdown(
+        boundText(task.request, 1_200) || "依頼内容を取得できませんでした。",
+      );
+      await post(`🧾 **依頼内容**\n${request}`);
+    } catch (error) {
+      await update({ state: "failed" }).catch(() => undefined);
+      throw error;
+    }
+    return { post, update, threadId };
   };
 }
 
@@ -379,7 +451,7 @@ export async function startDiscordVoiceCodex({
         if (stopped) return;
         stopped = true;
         session.stop();
-        taskQueue?.stop();
+        await taskQueue?.stop?.();
         await Promise.all([destroyQuietly(connection), destroyQuietly(client)]);
       },
     };

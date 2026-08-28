@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import { ChannelType } from "discord.js";
-import { startDiscordVoiceCodex } from "../src/discord-voice-server.mjs";
+import {
+  formatDiscordTaskCard,
+  startDiscordVoiceCodex,
+} from "../src/discord-voice-server.mjs";
 
 const config = Object.freeze({
   guildId: "11111111111111111",
@@ -50,6 +53,16 @@ async function eventually(check, timeoutMs = 1_000) {
   assert.fail("mock voice vertical did not complete");
 }
 
+test("Discord task cards expose a stable log link and readable state", () => {
+  const content = formatDiscordTaskCard(
+    { id: "task-123", title: "README *更新*" },
+    { state: "completed", threadId: "55555555555555555", elapsedMs: 65_000 },
+  );
+  assert.match(content, /状態: \*\*完了\*\* · 1分5秒/);
+  assert.match(content, /ログ: <#55555555555555555>/);
+  assert.match(content, /README \\\*更新\\\*/);
+});
+
 test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and playback", async () => {
   const turnEvents = [];
   const posts = [];
@@ -96,6 +109,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
           assert.match(name, /モック作業/);
           assert.equal(autoArchiveDuration, 1_440);
           return {
+            id: "55555555555555555",
             send: async (threadPayload) => {
               taskThreadPosts.push(threadPayload);
               return { id: `thread-message-${taskThreadPosts.length}` };
@@ -164,9 +178,10 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
             tasks: [{ title: "モック作業", sourceSequences: [1] }],
           });
         },
-        runTask: async (task) => {
+        runTask: async (task, { onProgress }) => {
           turnEvents.push("power_task");
           assert.equal(task.request, "モック発話");
+          await onProgress("🔎 モック進捗");
           return "モックタスク完了";
         },
       },
@@ -234,6 +249,12 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   assert.ok(posts.some(({ content }) => /議事録/.test(content)));
   assert.ok(posts.some(({ content }) => content === "モック応答"));
   assert.ok(posts.some(({ content }) => /Codexタスク/.test(content)));
+  assert.ok(
+    posts.some(({ content }) => /ログ: <#55555555555555555>/.test(content)),
+  );
+  assert.ok(posts.some(({ content }) => /状態: \*\*完了\*\*/.test(content)));
+  assert.ok(taskThreadPosts.some(({ content }) => /依頼内容/.test(content)));
+  assert.ok(taskThreadPosts.some(({ content }) => /モック進捗/.test(content)));
   assert.ok(
     taskThreadPosts.some(({ content }) => /Codexタスク開始/.test(content)),
   );

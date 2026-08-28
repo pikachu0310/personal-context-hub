@@ -165,8 +165,10 @@ with `danger-full-access`, live web search, network access, and no interactive
 approval prompt. Other speakers remain meeting context and cannot authorize a
 task. Power tasks may run concurrently without blocking the next meeting
 observation. The configured Text channel receives one starter message per task;
-all lifecycle updates and results stay in the Discord thread created from it, so
-meeting transcripts and minutes remain readable in the parent channel.
+that message is updated from queued through completed, failed, or cancelled and
+always links to the task thread. The thread contains the request, curated Codex
+progress, final result, and elapsed time, so meeting transcripts and minutes
+remain readable in the parent channel without hiding task status.
 These are persistent local Codex worker sessions, not new tasks in the Codex App
 sidebar. Apps, browser sessions, plugins, hooks, and MCP servers remain disabled
 unless separately integrated.

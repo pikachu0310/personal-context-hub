@@ -13,10 +13,10 @@
 - Codexの最終応答をTextチャンネルへ分割投稿し、`gpt-4o-mini-tts`で生成したPCMをVoiceへ返す。
 - 同時発話は直列queueに積み、再生中も受信する。1ターンの失敗は次のターンを止めない。
 - 会議観測モードでは話者ごとのSTTを並列実行し、確定した発話を一つのライブ文字起こしメッセージへ編集反映する。
-- 会議観測モードでは既定60秒ごとに未観測の発話を時系列で一括観測し、累積議事録を更新する。未解決の質問・依頼などがある場合だけTextとTTSで応答する。
+- 会議観測モードでは既定で文字起こし完了後に未観測の発話を時系列で一括観測し、累積議事録を更新する。即時観測を無効にした場合は既定60秒ごとに観測する。未解決の質問・依頼などがある場合だけTextとTTSで応答する。
 - 会議観測中に到着した発話は次回分として保持し、CodexやTTSの処理中でも短い発話ごとの混雑通知を送らない。
 - Powerモードでは本人allowlistの発言だけから作業依頼を抽出し、会議観測とは別のCodex threadへqueueする。他参加者の発言は文脈には使うが操作権限には使わない。
-- Power taskは`danger-full-access`、network有効、live Web検索、`approvalPolicy: never`で最大2件を並列実行する。Textチャンネルにはタスクごとの起点メッセージだけを置き、開始・完了・結果はそのメッセージから作成したDiscordスレッドへ投稿する。
+- Power taskは`danger-full-access`、network有効、live Web検索、`approvalPolicy: never`で最大2件を並列実行する。taskをqueueした時点でTextチャンネルに状態カードと専用Discordスレッドを作る。カードはスレッドへのリンクを常に表示し、`待機中 → 実行中 → 完了・失敗・中止`へ更新する。依頼内容、Codex SDKの要約済み進捗、結果、所要時間はスレッドへ投稿する。
 - STT、Codex、TTS、再生、Discord投稿には個別の上限時間を設け、外部サービスが応答しないターンもqueueを永久に塞がない。
 - 作業ディレクトリ、sandbox、モデルは明示設定する。既定sandboxは`workspace-write`とし、任意ディレクトリへの無制限書き込みを暗黙に許可しない。
 - 会議観測threadは`read-only`、networkとWeb検索無効、`approvalPolicy: never`で開始する。Power taskだけは明示設定により`danger-full-access`、network有効、live Web検索を使う。
@@ -37,7 +37,7 @@
 
 通常ターンは`idle → receiving → transcribing → posting_transcript → running_codex → posting_response → synthesizing → speaking → idle`で処理する。
 
-会議観測モードは`receiving → parallel_transcribing → editing_live_transcript`を継続し、既定では文字起こし完了直後（無効時は定期的）に`observing → updating_minutes → optional_posting_response → optional_synthesizing → optional_speaking`を実行する。重なった発話は次の観測へまとめ、定期観測は取りこぼし防止として残す。Power taskは`queued → running_in_separate_thread → posting_result`として独立に進む。
+会議観測モードは`receiving → parallel_transcribing → editing_live_transcript`を継続し、既定では文字起こし完了直後（無効時は定期的）に`observing → updating_minutes → optional_posting_response → optional_synthesizing → optional_speaking`を実行する。重なった発話は次の観測へまとめ、定期観測は取りこぼし防止として残す。Power taskは`creating_discord_thread → queued → running_in_separate_thread → streaming_curated_progress → posting_result → completed | failed | cancelled`として独立に進む。
 
 各発話は一意なturn IDを持つ。状態遷移、処理時間、失敗段階だけを構造化ログへ残し、音声バイト列や認証情報は残さない。Codex thread IDはローカル状態ファイルへ保存し、再起動後にresumeする。明示的なreset時だけ新規threadを開始する。
 
@@ -80,7 +80,8 @@
 23. ライブ文字起こしと累積議事録はそれぞれ同じBotメッセージを編集し、発話ごとの新規メッセージを増やさない。
 24. Powerモードでも他参加者だけの依頼、または本人と他参加者のsequenceが混在する依頼はtask queueへ入れない。
 25. Power taskは会議観測threadと別に実行し、ファイル操作、network、live Web検索を利用できる。
-26. Power taskの開始・完了・失敗は秘密値や生errorを含まない固定形式でTextチャンネルへ通知する。
+26. Power taskの親メッセージは状態と専用スレッドへのリンクを表示し、開始・完了・失敗・中止に合わせて同じメッセージを更新する。
+27. Power taskの依頼、要約済み進捗、結果、所要時間は専用スレッドへ時系列で投稿し、コマンドの生出力、秘密値、生errorは投稿しない。
 
 ## 第2段階
 

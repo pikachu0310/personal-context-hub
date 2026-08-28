@@ -318,7 +318,7 @@ const MAX_MEETING_MINUTES_CHARACTERS = 1_600;
 const MAX_MEETING_TRANSCRIPT_CHARACTERS = 16_000;
 const MAX_LIVE_TRANSCRIPT_CHARACTERS = 1_850;
 
-function escapeDiscordMarkdown(value) {
+export function escapeDiscordMarkdown(value) {
   return String(value ?? "").replace(/([\\`*_{}[\]()#+.!|>~-])/g, "\\$1");
 }
 
@@ -470,8 +470,10 @@ export class DiscordVoiceTaskQueue {
     this.maximumPendingTasks = maximumPendingTasks;
     this.taskTimeoutMs = taskTimeoutMs;
     this.queue = [];
+    this.running = new Set();
     this.active = 0;
     this.closed = false;
+    this.stopping = undefined;
     this.shutdownController = new AbortController();
   }
 
@@ -479,15 +481,28 @@ export class DiscordVoiceTaskQueue {
     if (this.closed) return false;
     if (this.queue.length + this.active >= this.maximumPendingTasks)
       return false;
-    this.queue.push({ ...task, id: randomUUID().slice(0, 8) });
+    const queuedTask = {
+      ...task,
+      id: randomUUID().slice(0, 8),
+      createdAt: Date.now(),
+    };
+    queuedTask.surfacePromise = withTimeout(
+      () => this.createTaskThread(queuedTask),
+      DEFAULT_STAGE_TIMEOUTS.posting,
+      "creating task thread",
+      undefined,
+    );
+    void queuedTask.surfacePromise.catch(() => undefined);
+    this.queue.push(queuedTask);
     this.#drain();
     return true;
   }
 
   stop() {
-    if (this.closed) return;
+    if (this.stopping) return this.stopping;
+    if (this.closed) return Promise.resolve();
     this.closed = true;
-    this.queue = [];
+    const queued = this.queue.splice(0);
     this.shutdownController.abort(
       new VoiceServiceError(
         "SERVICE_STOPPED",
@@ -495,6 +510,16 @@ export class DiscordVoiceTaskQueue {
         "音声サービスを停止しました。",
       ),
     );
+    const cancellations = queued.map((task) =>
+      task.surfacePromise
+        .then((surface) => this.#markCancelled(surface, task))
+        .catch(() => undefined),
+    );
+    this.stopping = Promise.allSettled([
+      ...this.running,
+      ...cancellations,
+    ]).then(() => undefined);
+    return this.stopping;
   }
 
   #drain() {
@@ -505,7 +530,10 @@ export class DiscordVoiceTaskQueue {
     ) {
       const task = this.queue.shift();
       this.active += 1;
-      void this.#execute(task).finally(() => {
+      const execution = this.#execute(task);
+      this.running.add(execution);
+      void execution.finally(() => {
+        this.running.delete(execution);
         this.active -= 1;
         this.#drain();
       });
@@ -515,12 +543,20 @@ export class DiscordVoiceTaskQueue {
   async #execute(task) {
     const startedAt = Date.now();
     const title = escapeDiscordMarkdown(task.title);
+    let taskSurface;
     let postTaskText;
     try {
-      postTaskText = await withTimeout(
-        () => this.createTaskThread(task),
+      taskSurface = await task.surfacePromise;
+      postTaskText =
+        typeof taskSurface === "function" ? taskSurface : taskSurface.post;
+      const updateTask =
+        typeof taskSurface === "function"
+          ? async () => undefined
+          : (state) => taskSurface.update(state);
+      await withTimeout(
+        (signal) => updateTask({ state: "running", signal }),
         DEFAULT_STAGE_TIMEOUTS.posting,
-        "creating task thread",
+        "updating task status",
         this.shutdownController.signal,
       );
       await withTimeout(
@@ -532,9 +568,37 @@ export class DiscordVoiceTaskQueue {
         "posting task start",
         this.shutdownController.signal,
       );
+      let progressPosts = 0;
+      let lastProgress = "";
       const response = boundText(
         await withTimeout(
-          (signal) => this.runTask(task, { signal }),
+          (signal) =>
+            this.runTask(task, {
+              signal,
+              onProgress: async (progress) => {
+                const content = boundText(progress, MAX_DISCORD_MESSAGE);
+                if (
+                  !content ||
+                  content === lastProgress ||
+                  progressPosts >= 50
+                ) {
+                  return;
+                }
+                lastProgress = content;
+                progressPosts += 1;
+                await withTimeout(
+                  (postSignal) => postTaskText(content, { signal: postSignal }),
+                  DEFAULT_STAGE_TIMEOUTS.posting,
+                  "posting task progress",
+                  this.shutdownController.signal,
+                ).catch((error) => {
+                  this.#log("power_task_progress_post_failed", {
+                    taskId: task.id,
+                    errorCode: voiceErrorCode(error),
+                  });
+                });
+              },
+            }),
           this.taskTimeoutMs,
           "running power task",
           this.shutdownController.signal,
@@ -545,12 +609,9 @@ export class DiscordVoiceTaskQueue {
         response || "タスクは完了しましたが、結果メッセージは空でした。",
       );
       await withTimeout(
-        (signal) =>
-          postTaskText(`✅ **Codexタスク完了** \`${task.id}\`\n${title}`, {
-            signal,
-          }),
+        (signal) => postTaskText("📦 **実行結果**", { signal }),
         DEFAULT_STAGE_TIMEOUTS.posting,
-        "posting task completion",
+        "posting task result header",
         this.shutdownController.signal,
       );
       for (const chunk of chunks) {
@@ -561,13 +622,34 @@ export class DiscordVoiceTaskQueue {
           this.shutdownController.signal,
         );
       }
+      const elapsedMs = Date.now() - task.createdAt;
+      await withTimeout(
+        (signal) =>
+          postTaskText(
+            `✅ **Codexタスク完了** \`${task.id}\`\n${title}\n所要時間: ${formatElapsedTime(elapsedMs)}`,
+            { signal },
+          ),
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "posting task completion",
+        this.shutdownController.signal,
+      );
+      await withTimeout(
+        (signal) => updateTask({ state: "completed", elapsedMs, signal }),
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "updating task completion",
+        this.shutdownController.signal,
+      );
       this.#log("power_task_completed", {
         taskId: task.id,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs,
+        queueWaitMs: startedAt - task.createdAt,
         responseCharacters: response.length,
+        progressPosts,
       });
     } catch (error) {
-      if (!this.closed) {
+      if (this.closed) {
+        await this.#markCancelled(taskSurface, task);
+      } else {
         this.#log("power_task_failed", {
           taskId: task.id,
           elapsedMs: Date.now() - startedAt,
@@ -576,8 +658,28 @@ export class DiscordVoiceTaskQueue {
         await (postTaskText ?? this.postText)(
           `⚠️ **Codexタスク失敗** \`${task.id}\`\n${voiceErrorMessage(error)}`,
         ).catch(() => undefined);
+        await Promise.resolve(
+          taskSurface?.update?.({
+            state: "failed",
+            elapsedMs: Date.now() - task.createdAt,
+          }),
+        ).catch(() => undefined);
       }
     }
+  }
+
+  async #markCancelled(surface, task) {
+    if (!surface) return;
+    const post = typeof surface === "function" ? surface : surface.post;
+    await Promise.resolve(
+      post?.(`⏹️ **Codexタスク中止** \`${task.id}\``),
+    ).catch(() => undefined);
+    await Promise.resolve(
+      surface?.update?.({
+        state: "cancelled",
+        elapsedMs: Date.now() - task.createdAt,
+      }),
+    ).catch(() => undefined);
   }
 
   #log(event, detail) {
@@ -587,6 +689,17 @@ export class DiscordVoiceTaskQueue {
       // Task execution must not depend on logging.
     }
   }
+}
+
+export function formatElapsedTime(elapsedMs) {
+  const numeric = Number(elapsedMs);
+  const totalSeconds = Number.isFinite(numeric)
+    ? Math.max(0, Math.round(numeric / 1_000))
+    : 0;
+  if (totalSeconds < 60) return `${totalSeconds}秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds ? `${minutes}分${seconds}秒` : `${minutes}分`;
 }
 
 export class DiscordVoiceMeetingSession {
