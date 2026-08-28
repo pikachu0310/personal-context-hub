@@ -342,8 +342,26 @@ test("Codex voice runner enforces structured meeting observations", async () => 
           additionalProperties: false,
         },
       },
+      taskControls: {
+        type: "array",
+        maxItems: 3,
+        items: {
+          type: "object",
+          properties: {
+            type: { type: "string", enum: ["stop", "instruction"] },
+            sourceSequences: {
+              type: "array",
+              minItems: 1,
+              maxItems: 20,
+              items: { type: "integer" },
+            },
+          },
+          required: ["type", "sourceSequences"],
+          additionalProperties: false,
+        },
+      },
     },
-    required: ["minutes", "shouldReply", "reply", "tasks"],
+    required: ["minutes", "shouldReply", "reply", "tasks", "taskControls"],
     additionalProperties: false,
   });
 });

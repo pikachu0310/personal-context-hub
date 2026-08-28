@@ -189,6 +189,18 @@ These are persistent local Codex worker sessions, not new tasks in the Codex App
 sidebar. Apps, browser sessions, plugins, hooks, and MCP servers remain disabled
 unless separately integrated.
 
+The configured owner can post a follow-up instruction directly in a task
+thread. The Bot queues it on the same Codex task session, including after a task
+has completed. Posting only `停止`, `中止`, `キャンセル`, `stop`, or `cancel`
+stops that task without stopping the Voice bridge. Enable the Discord
+application's privileged Message Content intent; messages from other users and
+messages outside known task threads are ignored.
+
+In meeting mode, owner speech that clearly refers to the latest existing task
+is also classified as either a stop or a follow-up instruction. It is applied to
+that task's same Codex session instead of creating a duplicate task. Speech from
+other participants can never control a task.
+
 After explicitly configuring power mode, verify its isolated temporary file and
 network path with `npm run smoke:discord:voice:power`. The smoke removes its own
 temporary directory and does not modify the configured repository.

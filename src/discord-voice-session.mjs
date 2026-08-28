@@ -406,12 +406,59 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
           : [],
       }))
     : [];
+  const taskControls = Array.isArray(parsed?.taskControls)
+    ? parsed.taskControls.slice(0, 3).map((control) => ({
+        type:
+          control?.type === "stop" || control?.type === "instruction"
+            ? control.type
+            : undefined,
+        sourceSequences: Array.isArray(control?.sourceSequences)
+          ? [
+              ...new Set(
+                control.sourceSequences.filter(
+                  (sequence) => Number.isInteger(sequence) && sequence > 0,
+                ),
+              ),
+            ].slice(0, 20)
+          : [],
+      }))
+    : [];
   return {
     minutes,
     shouldReply: parsed?.shouldReply === true && Boolean(reply),
     reply,
     tasks,
+    taskControls,
   };
+}
+
+export function authorizeMeetingTaskControls(
+  controls,
+  statements,
+  ownerUserId,
+) {
+  if (!ownerUserId || !Array.isArray(controls) || !Array.isArray(statements))
+    return [];
+  const bySequence = new Map(
+    statements.map((statement) => [statement.sequence, statement]),
+  );
+  return controls.flatMap((control) => {
+    const sources = control.sourceSequences
+      .map((sequence) => bySequence.get(sequence))
+      .filter(Boolean);
+    if (
+      !control.type ||
+      !sources.length ||
+      sources.length !== control.sourceSequences.length ||
+      sources.some((statement) => statement.userId !== ownerUserId)
+    )
+      return [];
+    const instruction = sources
+      .map((statement) => statement.text)
+      .join("\n")
+      .trim();
+    return instruction ? [{ type: control.type, instruction }] : [];
+  });
 }
 
 export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
@@ -471,6 +518,7 @@ export class DiscordVoiceTaskQueue {
     this.taskTimeoutMs = taskTimeoutMs;
     this.queue = [];
     this.running = new Set();
+    this.tasksByThreadId = new Map();
     this.active = 0;
     this.closed = false;
     this.stopping = undefined;
@@ -485,6 +533,9 @@ export class DiscordVoiceTaskQueue {
       ...task,
       id: randomUUID().slice(0, 8),
       createdAt: Date.now(),
+      instructions: [],
+      cancelled: false,
+      executing: false,
     };
     queuedTask.surfacePromise = withTimeout(
       () => this.createTaskThread(queuedTask),
@@ -492,10 +543,65 @@ export class DiscordVoiceTaskQueue {
       "creating task thread",
       undefined,
     );
-    void queuedTask.surfacePromise.catch(() => undefined);
+    void queuedTask.surfacePromise
+      .then((surface) => {
+        queuedTask.surface = surface;
+        if (surface?.threadId)
+          this.tasksByThreadId.set(String(surface.threadId), queuedTask);
+      })
+      .catch(() => undefined);
     this.queue.push(queuedTask);
     this.#drain();
     return true;
+  }
+
+  handleThreadMessage({ threadId, userId, ownerUserId, content }) {
+    if (this.closed || userId !== ownerUserId) return false;
+    const task = this.tasksByThreadId.get(String(threadId));
+    const instruction = boundText(content, MAX_DISCORD_MESSAGE);
+    if (!task || !instruction) return false;
+    if (
+      /^(?:停止|中止|キャンセル|stop|cancel)[!！。\s]*$/iu.test(instruction)
+    ) {
+      task.cancelled = true;
+      task.instructions.length = 0;
+      this.queue = this.queue.filter((queued) => queued !== task);
+      task.controller?.abort(
+        new VoiceServiceError(
+          "TASK_CANCELLED",
+          "Discord task cancelled by its owner.",
+          "本人の操作によりタスクを中止しました。",
+        ),
+      );
+      if (!task.executing) void this.#markCancelled(task.surface, task);
+      return "cancelled";
+    }
+    task.instructions.push(instruction);
+    task.cancelled = false;
+    if (!task.executing && !this.queue.includes(task)) {
+      this.queue.push(task);
+      void task.surface?.update?.({ state: "queued" });
+      this.#drain();
+    }
+    return "instruction";
+  }
+
+  handleVoiceControl(control) {
+    const candidates = [...this.tasksByThreadId.values()]
+      .filter((task) =>
+        control?.type === "stop"
+          ? !task.cancelled && (task.executing || this.queue.includes(task))
+          : !task.cancelled,
+      )
+      .sort((left, right) => right.createdAt - left.createdAt);
+    const task = candidates[0];
+    if (!task) return false;
+    return this.handleThreadMessage({
+      threadId: task.surface?.threadId,
+      userId: "voice-owner",
+      ownerUserId: "voice-owner",
+      content: control.type === "stop" ? "停止" : control.instruction,
+    });
   }
 
   stop() {
@@ -545,8 +651,21 @@ export class DiscordVoiceTaskQueue {
     const title = escapeDiscordMarkdown(task.title);
     let taskSurface;
     let postTaskText;
+    let removeShutdownAbort = () => undefined;
     try {
       taskSurface = await task.surfacePromise;
+      task.surface = taskSurface;
+      if (taskSurface?.threadId)
+        this.tasksByThreadId.set(String(taskSurface.threadId), task);
+      task.executing = true;
+      task.controller = new AbortController();
+      const abortTask = () =>
+        task.controller?.abort(this.shutdownController.signal.reason);
+      this.shutdownController.signal.addEventListener("abort", abortTask, {
+        once: true,
+      });
+      removeShutdownAbort = () =>
+        this.shutdownController.signal.removeEventListener("abort", abortTask);
       postTaskText =
         typeof taskSurface === "function" ? taskSurface : taskSurface.post;
       const updateTask =
@@ -570,6 +689,7 @@ export class DiscordVoiceTaskQueue {
       );
       let progressPosts = 0;
       let lastProgress = "";
+      task.additionalInstruction = task.instructions.shift();
       const response = boundText(
         await withTimeout(
           (signal) =>
@@ -601,7 +721,7 @@ export class DiscordVoiceTaskQueue {
             }),
           this.taskTimeoutMs,
           "running power task",
-          this.shutdownController.signal,
+          task.controller.signal,
         ),
         MAX_CODEX_RESPONSE_CHARACTERS,
       );
@@ -646,8 +766,9 @@ export class DiscordVoiceTaskQueue {
         responseCharacters: response.length,
         progressPosts,
       });
+      if (task.instructions.length && !task.cancelled) this.queue.push(task);
     } catch (error) {
-      if (this.closed) {
+      if (this.closed || task.cancelled || error?.code === "TASK_CANCELLED") {
         await this.#markCancelled(taskSurface, task);
       } else {
         this.#log("power_task_failed", {
@@ -665,6 +786,11 @@ export class DiscordVoiceTaskQueue {
           }),
         ).catch(() => undefined);
       }
+    } finally {
+      removeShutdownAbort();
+      task.executing = false;
+      task.controller = undefined;
+      task.additionalInstruction = undefined;
     }
   }
 
@@ -712,6 +838,7 @@ export class DiscordVoiceMeetingSession {
     synthesize,
     playAudio,
     enqueueTask = () => false,
+    controlTask = () => false,
     ownerUserId,
     tasksEnabled = false,
     logger = console,
@@ -732,6 +859,7 @@ export class DiscordVoiceMeetingSession {
       synthesize,
       playAudio,
       enqueueTask,
+      controlTask,
     };
     this.logger = logger;
     this.ownerUserId = ownerUserId;
@@ -807,6 +935,13 @@ export class DiscordVoiceMeetingSession {
       const tasks = this.tasksEnabled
         ? authorizeMeetingTasks(observation.tasks, statements, this.ownerUserId)
         : [];
+      const taskControls = this.tasksEnabled
+        ? authorizeMeetingTaskControls(
+            observation.taskControls,
+            statements,
+            this.ownerUserId,
+          )
+        : [];
       await withTimeout(
         (signal) =>
           this.dependencies.upsertMinutes(
@@ -826,9 +961,25 @@ export class DiscordVoiceMeetingSession {
       this.failedTranscriptions = 0;
       this.#queueLiveUpdate();
 
+      let rejectedControls = 0;
+      for (const control of taskControls) {
+        if (!this.dependencies.controlTask(control)) rejectedControls += 1;
+      }
       let rejectedTasks = 0;
       for (const task of tasks) {
         if (!this.dependencies.enqueueTask(task)) rejectedTasks += 1;
+      }
+      if (rejectedControls) {
+        await withTimeout(
+          (signal) =>
+            this.dependencies.postText(
+              "⚠️ 操作対象のCodexタスクが見つかりませんでした。",
+              { signal },
+            ),
+          this.stageTimeouts.posting,
+          "posting task control status",
+          this.shutdownController.signal,
+        );
       }
       if (rejectedTasks) {
         await withTimeout(

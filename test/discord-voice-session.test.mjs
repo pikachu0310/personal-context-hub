@@ -4,6 +4,7 @@ import {
   DiscordVoiceMeetingSession,
   DiscordVoiceSession,
   DiscordVoiceTaskQueue,
+  authorizeMeetingTaskControls,
   authorizeMeetingTasks,
   boundText,
   formatElapsedTime,
@@ -491,7 +492,13 @@ test("meeting transcript formatting preserves speaker order and observation JSON
     parseMeetingObservation(
       '```json\n{"minutes":"更新済み","shouldReply":true,"reply":"回答"}\n```',
     ),
-    { minutes: "更新済み", shouldReply: true, reply: "回答", tasks: [] },
+    {
+      minutes: "更新済み",
+      shouldReply: true,
+      reply: "回答",
+      tasks: [],
+      taskControls: [],
+    },
   );
   assert.equal(
     parseMeetingObservation(
@@ -540,6 +547,25 @@ test("meeting tasks require source statements from the configured owner", () => 
   assert.equal(authorized[0].request, "repositoryを調べて修正して");
   assert.match(authorized[0].context, /Guest/);
   assert.doesNotMatch(authorized[0].request, /秘密/);
+});
+
+test("meeting task controls accept only attributed owner speech", () => {
+  const statements = [
+    { sequence: 1, userId: "owner-id", text: "そのタスクを止めて" },
+    { sequence: 2, userId: "guest-id", text: "別の内容に変えて" },
+  ];
+  assert.deepEqual(
+    authorizeMeetingTaskControls(
+      [
+        { type: "stop", sourceSequences: [1] },
+        { type: "instruction", sourceSequences: [2] },
+        { type: "instruction", sourceSequences: [1, 2] },
+      ],
+      statements,
+      "owner-id",
+    ),
+    [{ type: "stop", instruction: "そのタスクを止めて" }],
+  );
 });
 
 test("power task queue runs work separately and posts bounded lifecycle updates", async () => {
@@ -626,6 +652,119 @@ test("stopping the task queue marks an active Discord task as cancelled", async 
   await eventually(() => states.includes("running"));
   await queue.stop();
   assert.ok(threadPosts.some((content) => content.includes("タスク中止")));
+});
+
+test("owner thread messages continue the same power task and can cancel it", async () => {
+  const runs = [];
+  const states = [];
+  let releaseFirst;
+  const firstRun = new Promise((resolve) => (releaseFirst = resolve));
+  const queue = new DiscordVoiceTaskQueue({
+    runTask: async (task, { signal }) => {
+      runs.push({ task, instruction: task.additionalInstruction });
+      if (runs.length === 1) await firstRun;
+      if (runs.length === 3) {
+        await new Promise((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          }),
+        );
+      }
+      return "完了";
+    },
+    postText: async () => undefined,
+    createTaskThread: async () => ({
+      threadId: "task-thread",
+      post: async () => undefined,
+      update: async ({ state }) => states.push(state),
+    }),
+    logger: { info: () => undefined },
+  });
+  assert.equal(queue.enqueue({ title: "継続", request: "開始" }), true);
+  await eventually(() => runs.length === 1);
+  assert.equal(
+    queue.handleThreadMessage({
+      threadId: "task-thread",
+      userId: "guest",
+      ownerUserId: "owner",
+      content: "これは無視",
+    }),
+    false,
+  );
+  assert.equal(
+    queue.handleThreadMessage({
+      threadId: "task-thread",
+      userId: "owner",
+      ownerUserId: "owner",
+      content: "テストも追加して",
+    }),
+    "instruction",
+  );
+  releaseFirst();
+  await eventually(() => runs.length === 2 && states.includes("completed"));
+  assert.equal(runs[1].task, runs[0].task);
+  assert.equal(runs[1].instruction, "テストも追加して");
+
+  assert.equal(
+    queue.handleThreadMessage({
+      threadId: "task-thread",
+      userId: "owner",
+      ownerUserId: "owner",
+      content: "もう一度確認して",
+    }),
+    "instruction",
+  );
+  await eventually(() => runs.length === 3);
+  assert.equal(
+    queue.handleThreadMessage({
+      threadId: "task-thread",
+      userId: "owner",
+      ownerUserId: "owner",
+      content: "キャンセル",
+    }),
+    "cancelled",
+  );
+  await eventually(() => states.includes("cancelled"));
+  await queue.stop();
+});
+
+test("owner voice controls change and stop the latest power task", async () => {
+  const instructions = [];
+  let releaseFirst;
+  const queue = new DiscordVoiceTaskQueue({
+    runTask: async (task, { signal }) => {
+      instructions.push(task.additionalInstruction);
+      if (instructions.length === 1)
+        await new Promise((resolve) => (releaseFirst = resolve));
+      else
+        await new Promise((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          }),
+        );
+      return "完了";
+    },
+    postText: async () => undefined,
+    createTaskThread: async () => ({
+      threadId: "voice-task-thread",
+      post: async () => undefined,
+      update: async () => undefined,
+    }),
+  });
+  queue.enqueue({ title: "音声操作", request: "開始" });
+  await eventually(() => instructions.length === 1);
+  assert.equal(
+    queue.handleVoiceControl({
+      type: "instruction",
+      instruction: "テスト対象を変更して",
+    }),
+    "instruction",
+  );
+  releaseFirst();
+  await eventually(() => instructions.length === 2);
+  assert.equal(instructions[1], "テスト対象を変更して");
+  assert.equal(queue.handleVoiceControl({ type: "stop" }), "cancelled");
+  await queue.stop();
 });
 
 test("meeting mode dispatches only owner-authorized background tasks", async () => {

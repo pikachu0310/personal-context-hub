@@ -333,7 +333,12 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
 export async function startDiscordVoiceCodex({
   config = loadDiscordVoiceConfig(),
   client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildVoiceStates,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
   }),
   logger = console,
   dependencies = {},
@@ -412,6 +417,25 @@ export async function startDiscordVoiceCodex({
           taskTimeoutMs: config.stageTimeouts.running_codex,
         })
       : undefined;
+    if (taskQueue) {
+      client.on?.(Events.MessageCreate, (message) => {
+        if (message.author?.bot || message.guildId !== config.guildId) return;
+        const action = taskQueue.handleThreadMessage({
+          threadId: message.channelId,
+          userId: message.author?.id,
+          ownerUserId: config.allowedUserId,
+          content: message.content,
+        });
+        if (!action) return;
+        const response =
+          action === "cancelled"
+            ? "⏹️ 停止要求を受け付けました。"
+            : "➕ 追加指示を受け付けました。このタスクの同じCodexセッションで続けます。";
+        void message.channel
+          .send(createDiscordMessagePayload(response, messageOptions))
+          .catch(() => undefined);
+      });
+    }
     const session =
       config.voiceMode === "meeting"
         ? new DiscordVoiceMeetingSession({
@@ -424,6 +448,8 @@ export async function startDiscordVoiceCodex({
             synthesize: audio.synthesize,
             playAudio,
             enqueueTask: (task) => taskQueue?.enqueue(task) ?? false,
+            controlTask: (control) =>
+              taskQueue?.handleVoiceControl(control) ?? false,
             ownerUserId: config.allowedUserId,
             tasksEnabled: config.powerMode,
             logger,

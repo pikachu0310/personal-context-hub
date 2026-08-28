@@ -16,6 +16,8 @@
 - 会議観測モードでは既定で文字起こし完了後に未観測の発話を時系列で一括観測し、累積議事録を更新する。即時観測を無効にした場合は既定60秒ごとに観測する。未解決の質問・依頼などがある場合だけTextとTTSで応答する。
 - 会議観測中に到着した発話は次回分として保持し、CodexやTTSの処理中でも短い発話ごとの混雑通知を送らない。
 - Powerモードでは本人allowlistの発言だけから作業依頼を抽出し、会議観測とは別のCodex threadへqueueする。他参加者の発言は文脈には使うが操作権限には使わない。
+- PowerタスクのDiscordスレッドでは本人allowlistのテキストだけを追加指示として受け付け、同じCodex threadで継続する。`停止`、`中止`、`キャンセル`、`stop`、`cancel`だけの投稿はそのタスクだけを中止する。他ユーザー、Bot、既知でないスレッドの投稿は無視する。
+- 本人の会議音声が直近の既存タスクの停止・変更・追加指示を明確に指す場合、会議観測が新規taskと区別し、そのタスクの同じCodex threadへ適用する。他参加者の音声はtask操作に使わない。
 - Power taskは`danger-full-access`、network有効、live Web検索、`approvalPolicy: never`で最大2件を並列実行する。taskをqueueした時点でTextチャンネルに状態カードと専用Discordスレッドを作る。カードはスレッドへのリンクを常に表示し、`待機中 → 実行中 → 完了・失敗・中止`へ更新する。依頼内容、Codex SDKの要約済み進捗、結果、所要時間はスレッドへ投稿する。
 - Botの新規メッセージは既定でDiscordの`SUPPRESS_NOTIFICATIONS` flagを付け、親チャンネルとtaskスレッドのpush・desktop通知を抑制する。メッセージと未読状態は通常どおり残す。通常通知が必要な場合だけ`PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES=false`にする。
 - STT、Codex、TTS、再生、Discord投稿には個別の上限時間を設け、外部サービスが応答しないターンもqueueを永久に塞がない。
