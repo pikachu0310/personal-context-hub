@@ -26,6 +26,24 @@ function integer(env, name, fallback, minimum, maximum) {
   return value;
 }
 
+function number(env, name, fallback, minimum, maximum) {
+  const value = env[name] === undefined ? fallback : Number(env[name]);
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Error(
+      `${name} must be a number from ${minimum} through ${maximum}.`,
+    );
+  }
+  return value;
+}
+
+function boolean(env, name, fallback) {
+  if (env[name] === undefined) return fallback;
+  const value = env[name].trim().toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false.`);
+}
+
 function absolutePath(value, name) {
   if (!isAbsolute(value)) throw new Error(`${name} must be an absolute path.`);
   return resolve(value);
@@ -68,11 +86,17 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_TEXT_CHANNEL_ID",
     ),
     allowedUserId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_USER_ID"),
+    listenToEveryone: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE",
+      false,
+    ),
     workingDirectory,
     statePath,
     sttModel: env.PERSONAL_CONTEXT_VOICE_STT_MODEL?.trim() || "gpt-transcribe",
     ttsModel: env.PERSONAL_CONTEXT_VOICE_TTS_MODEL?.trim() || "gpt-4o-mini-tts",
     ttsVoice: env.PERSONAL_CONTEXT_VOICE_TTS_VOICE?.trim() || "marin",
+    ttsSpeed: number(env, "PERSONAL_CONTEXT_VOICE_TTS_SPEED", 1, 0.25, 4),
     codexModel: env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined,
     codexHome: env.PERSONAL_CONTEXT_VOICE_CODEX_HOME?.trim()
       ? absolutePath(
@@ -157,11 +181,13 @@ export function describeDiscordVoiceConfig(config) {
     voiceChannelId: config.voiceChannelId,
     textChannelId: config.textChannelId,
     allowedUserId: config.allowedUserId,
+    listenToEveryone: config.listenToEveryone,
     workingDirectory: config.workingDirectory,
     statePath: config.statePath,
     sttModel: config.sttModel,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
+    ttsSpeed: config.ttsSpeed,
     codexModel: config.codexModel ?? "Codex configured default",
     codexHomeConfigured: Boolean(config.codexHome),
     isolatedCodexHomeConfigured: Boolean(config.isolatedCodexHome),

@@ -170,6 +170,7 @@ test("OpenAI audio adapter uses bounded Japanese STT and PCM TTS contracts", asy
       sttModel: "gpt-transcribe",
       ttsModel: "gpt-4o-mini-tts",
       ttsVoice: "marin",
+      ttsSpeed: 2,
     },
     { client },
   );
@@ -180,6 +181,7 @@ test("OpenAI audio adapter uses bounded Japanese STT and PCM TTS contracts", asy
   assert.ok(calls[0][1].keywords.includes("Codex"));
   assert.equal(calls[0][2].body, undefined);
   assert.equal(calls[1][1].response_format, "pcm");
+  assert.equal(calls[1][1].speed, 2);
 });
 
 test("Codex voice runner persists and resumes the same local thread", async () => {

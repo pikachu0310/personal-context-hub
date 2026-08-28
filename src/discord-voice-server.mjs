@@ -107,7 +107,11 @@ export function subscribeToAllowedSpeaker({
       .then(() => postText(content))
       .catch(() => undefined);
   connection.receiver.speaking.on("start", (userId) => {
-    if (userId !== config.allowedUserId || active.has(userId)) return;
+    if (
+      (!config.listenToEveryone && userId !== config.allowedUserId) ||
+      active.has(userId)
+    )
+      return;
     active.add(userId);
     const opusStream = connection.receiver.subscribe(userId, {
       end: {
@@ -261,7 +265,9 @@ export async function startDiscordVoiceCodex({
       createDecoder: dependencies.createDecoder,
     });
     await postText(
-      "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
+      config.listenToEveryone
+        ? "🔊 Discord音声Codexを起動しました。ボイスチャンネル内の全参加者の発話を処理します。返答音声はAI生成です。"
+        : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
     );
     logInfoQuietly(logger, {
       component: "discord-voice",

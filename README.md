@@ -139,10 +139,13 @@ point. The Windows Codex App `config.toml` is never loaded, so an unrelated or
 incompatible local MCP entry cannot prevent the bridge from starting.
 
 The Bot must have View Channel, Connect, Speak, Send Messages, and Read Message
-History only in those two channels. It does not use a Discord user token. The
-MVP accepts audio only from the configured owner ID, serializes turns, posts the
-transcript and full response to the configured Text channel, and speaks an
-AI-generated excerpt. Audio bytes are not persisted. See
+History only in those two channels. It does not use a Discord user token. By
+default, the bridge accepts audio only from the configured owner ID. Set
+`PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE=true` to accept every speaker in the
+configured Voice channel, and tune playback with
+`PERSONAL_CONTEXT_VOICE_TTS_SPEED` from `0.25` through `4`. Turns are serialized,
+the transcript and full response are posted to the configured Text channel, and
+an AI-generated excerpt is spoken. Audio bytes are not persisted. See
 [the Voice MVP specification](docs/discord-voice-codex.md) for limits and trust
 boundaries.
 

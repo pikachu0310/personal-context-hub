@@ -231,6 +231,7 @@ export function createOpenAIAudioAdapter(config, { client } = {}) {
           input: text,
           instructions:
             "日本語で、落ち着いた共同開発者として簡潔かつ自然に話してください。",
+          speed: config.ttsSpeed,
           response_format: "pcm",
         },
         { signal },

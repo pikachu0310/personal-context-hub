@@ -29,8 +29,8 @@
 
 1. `npm run inspect:discord:voice`で`serviceReady: true`を確認する。
 2. `npm run start:discord:voice`を限定環境で起動する。
-3. 起動通知、ownerだけの音声購読、文字起こし、Codex応答、AI生成音声を確認する。
-4. owner以外が発話してもSTT／Codex／Text投稿が発生しないことを確認する。
+3. 起動通知、設定した話者モード、文字起こし、Codex応答、AI生成音声を確認する。
+4. 全参加者モードではowner以外の発話でもSTT／Codex／Text投稿が発生することを確認する。
 5. `Ctrl+C`で停止し、Voice切断とBot client cleanupを確認する。
 6. token、API key、音声原本、raw errorをログや共有画面へ出していないことを確認する。
 

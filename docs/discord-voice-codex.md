@@ -6,8 +6,8 @@
 
 ## MVPの境界
 
-- 1 Guild、1 Voiceチャンネル、1 Textチャンネル、1本人ユーザーを環境変数でallowlistする。
-- Botは起動時に指定Voiceチャンネルへ参加する。本人以外の音声は購読しない。
+- 1 Guild、1 Voiceチャンネル、1 Textチャンネル、1本人ユーザーを環境変数でallowlistする。開発用には明示設定でVoice内の全参加者を対象にできる。
+- Botは起動時に指定Voiceチャンネルへ参加する。既定では本人だけ、全参加者モードではBot以外の発話者を購読する。
 - 発話終了後に音声を一つのWAVへ変換し、OpenAI Transcriptions APIの`gpt-transcribe`へ送る。
 - 確定した文字起こしを同じTextチャンネルへ記録してから、`@openai/codex-sdk`の同一ローカルthreadへ渡す。
 - Codexの最終応答をTextチャンネルへ分割投稿し、`gpt-4o-mini-tts`で生成したPCMをVoiceへ返す。
@@ -19,7 +19,7 @@
 
 ## 信頼境界
 
-- Discord上の発話は外部入力である。発話者IDが本人allowlistと一致する場合だけCodex入力として扱う。
+- Discord上の発話は外部入力である。既定では発話者IDが本人allowlistと一致する場合だけCodex入力として扱い、全参加者モードではVoice内の各発話者を同じqueueへ入れる。
 - Bot tokenとOpenAI認証情報はリポジトリ外に保持し、ログへ出さない。
 - Codex子プロセスへ渡す環境変数は実行・locale・Codex認証pathに必要な名前だけをallowlistし、OpenAI音声API keyや他サービスのsecretを継承しない。
 - 認証元と隔離先が同一、隔離先がsymlink、`auth.json`が想定外のfile、または`config.toml`が空でない場合は既存fileを上書きせず起動を中止する。Windows Codex App側の`config.toml`、MCP、plugin、skillは隔離先へcopyもsymlinkもしない。
@@ -40,7 +40,7 @@
 
 - Discord受信: Opus 48kHz stereoをPCMへdecodeし、無音1,000msを発話終端とする。
 - STT入力: PCMを16-bit 48kHz stereo WAVへ包み、最大90秒・25MB未満に制限する。短すぎる発話は破棄する。
-- TTS出力: 24kHz mono signed 16-bit little-endian PCMを48kHz stereoへ決定的に変換し、Discordへ再生する。
+- TTS出力: 指定速度（0.25〜4倍、既定1倍）の24kHz mono signed 16-bit little-endian PCMを48kHz stereoへ決定的に変換し、Discordへ再生する。
 - Discord client、Voice connection、受信stream、再生playerの`error`はプロセスへ伝播させず、秘密を含まないerror種別だけを構造化ログへ残す。
 - Decode後のPCMが不完全なsample frameでもプロセスを落とさず、その発話だけを破棄して固定文で再入力を案内する。
 - 応答本文が長い場合、Textには全文を分割投稿し、音声は先頭1,200文字までを自然な区切りで読む。
@@ -48,7 +48,7 @@
 
 ## 受入条件
 
-1. allowlist外ユーザーの音声はSTTにもCodexにも渡らない。
+1. 既定モードではallowlist外ユーザーの音声を無視し、全参加者モードでは別ユーザーの音声もSTTとCodexへ渡る。
 2. 無音・短音声・90秒超過・queue過多を安全に処理し、常駐プロセスが落ちない。
 3. 同じsession内の連続発話が同じCodex threadへ渡る。
 4. 文字起こし、Codex応答、TTSが順番どおりに一度ずつ呼ばれる。

@@ -9,11 +9,13 @@ const config = Object.freeze({
   voiceChannelId: "22222222222222222",
   textChannelId: "33333333333333333",
   allowedUserId: "44444444444444444",
+  listenToEveryone: true,
   workingDirectory: "/tmp/mock-workspace",
   statePath: "/tmp/mock-state.json",
   sttModel: "gpt-transcribe",
   ttsModel: "gpt-4o-mini-tts",
   ttsVoice: "marin",
+  ttsSpeed: 2,
   codexModel: undefined,
   codexHome: undefined,
   isolatedCodexHome: "/tmp/mock-codex-home",
@@ -41,7 +43,7 @@ async function eventually(check, timeoutMs = 1_000) {
   assert.fail("mock voice vertical did not complete");
 }
 
-test("synthetic owner PCM crosses receive, STT, Codex, Text, TTS, and playback", async () => {
+test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and playback", async () => {
   const turnEvents = [];
   const posts = [];
   const speaking = new EventEmitter();
@@ -58,7 +60,7 @@ test("synthetic owner PCM crosses receive, STT, Codex, Text, TTS, and playback",
   connection.receiver = {
     speaking,
     subscribe: (userId) => {
-      assert.equal(userId, config.allowedUserId);
+      assert.equal(userId, "55555555555555555");
       return opusStream;
     },
   };
@@ -172,7 +174,7 @@ test("synthetic owner PCM crosses receive, STT, Codex, Text, TTS, and playback",
     },
   });
 
-  speaking.emit("start", config.allowedUserId);
+  speaking.emit("start", "55555555555555555");
   decoder.emit("data", Buffer.alloc(48_000));
   decoder.emit("end");
   await eventually(
@@ -193,7 +195,7 @@ test("synthetic owner PCM crosses receive, STT, Codex, Text, TTS, and playback",
     "playback",
   ]);
   assert.equal(posts.length, 3);
-  assert.match(posts[0].content, /本人allowlist/);
+  assert.match(posts[0].content, /全参加者/);
   assert.match(posts[1].content, /モック発話/);
   assert.equal(posts[2].content, "モック応答");
   assert.ok(

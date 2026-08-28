@@ -14,11 +14,13 @@ function makeVoiceConfig(overrides = {}) {
     voiceChannelId: "22222222222222222",
     textChannelId: "33333333333333333",
     allowedUserId: "44444444444444444",
+    listenToEveryone: false,
     workingDirectory: "/tmp/workspace",
     statePath: "/tmp/state",
     sttModel: "gpt-transcribe",
     ttsModel: "gpt-4o-mini-tts",
     ttsVoice: "marin",
+    ttsSpeed: 1,
     codexModel: undefined,
     codexHome: undefined,
     isolatedCodexHome: "/tmp/isolated-codex-home",
@@ -116,6 +118,41 @@ test("voice receiver subscribes only to the configured owner", () => {
   speaking.emit("start", "44444444444444444");
   speaking.emit("start", "44444444444444444");
   assert.equal(subscriptions, 1);
+});
+
+test("voice receiver subscribes to another participant in all-speaker mode", () => {
+  const speaking = new EventEmitter();
+  const decoder = new EventEmitter();
+  decoder.destroy = () => decoder.emit("close");
+  const subscriptions = [];
+  const connection = {
+    receiver: {
+      speaking,
+      subscribe: (userId) => {
+        subscriptions.push(userId);
+        const stream = new EventEmitter();
+        stream.pipe = () => decoder;
+        stream.destroy = () => undefined;
+        return stream;
+      },
+    },
+  };
+  subscribeToAllowedSpeaker({
+    connection,
+    config: {
+      allowedUserId: "44444444444444444",
+      listenToEveryone: true,
+      silenceMs: 1_000,
+      minimumAudioMs: 250,
+      maximumAudioSeconds: 90,
+    },
+    session: { enqueue: () => true },
+    postText: async () => undefined,
+    logger: { error: () => undefined },
+    createDecoder: () => decoder,
+  });
+  speaking.emit("start", "55555555555555555");
+  assert.deepEqual(subscriptions, ["55555555555555555"]);
 });
 
 test("a Discord receive stream error is contained without exposing details", async () => {
