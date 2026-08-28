@@ -594,6 +594,7 @@ export class DiscordVoiceMeetingSession {
     tasksEnabled = false,
     logger = console,
     observationIntervalMs = 60_000,
+    immediateReactions = false,
     transcriptionConcurrency = 4,
     maximumPendingTranscriptions = 60,
     stageTimeouts = {},
@@ -616,6 +617,7 @@ export class DiscordVoiceMeetingSession {
     this.stageTimeouts = { ...DEFAULT_STAGE_TIMEOUTS, ...stageTimeouts };
     this.transcriptionConcurrency = transcriptionConcurrency;
     this.maximumPendingTranscriptions = maximumPendingTranscriptions;
+    this.immediateReactions = immediateReactions;
     this.cancelInterval = cancelInterval;
     this.audioQueue = [];
     this.activeTranscriptions = 0;
@@ -623,6 +625,8 @@ export class DiscordVoiceMeetingSession {
     this.sequence = 0;
     this.minutes = "";
     this.observing = false;
+    this.immediateObservationRequested = false;
+    this.immediateObservationScheduled = false;
     this.closed = false;
     this.droppedAudio = 0;
     this.failedTranscriptions = 0;
@@ -759,6 +763,7 @@ export class DiscordVoiceMeetingSession {
       return false;
     } finally {
       this.observing = false;
+      this.#scheduleImmediateObservation();
     }
   }
 
@@ -793,6 +798,7 @@ export class DiscordVoiceMeetingSession {
 
   async #transcribeItem(item) {
     const startedAt = Date.now();
+    let accepted = false;
     try {
       const text = boundText(
         await withTimeout(
@@ -824,6 +830,7 @@ export class DiscordVoiceMeetingSession {
         elapsedMs: Date.now() - startedAt,
         transcriptCharacters: text.length,
       });
+      accepted = true;
     } catch (error) {
       if (!this.closed) {
         this.failedTranscriptions += 1;
@@ -835,6 +842,10 @@ export class DiscordVoiceMeetingSession {
       }
     } finally {
       this.#queueLiveUpdate();
+      if (accepted && this.immediateReactions) {
+        this.immediateObservationRequested = true;
+        this.liveUpdate.finally(() => this.#scheduleImmediateObservation());
+      }
     }
   }
 
@@ -864,6 +875,24 @@ export class DiscordVoiceMeetingSession {
             errorCode: voiceErrorCode(error),
           });
       });
+  }
+
+  #scheduleImmediateObservation() {
+    if (
+      this.closed ||
+      this.observing ||
+      !this.immediateObservationRequested ||
+      this.immediateObservationScheduled
+    )
+      return;
+    this.immediateObservationScheduled = true;
+    queueMicrotask(async () => {
+      this.immediateObservationScheduled = false;
+      if (this.closed || this.observing) return;
+      this.immediateObservationRequested = false;
+      await this.observeNow();
+      this.#scheduleImmediateObservation();
+    });
   }
 
   #log(event, detail) {

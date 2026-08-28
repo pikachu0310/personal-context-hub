@@ -22,6 +22,7 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
   assert.equal(config.listenToEveryone, false);
   assert.equal(config.powerMode, false);
   assert.equal(config.voiceMode, "turn");
+  assert.equal(config.immediateReactions, true);
   assert.equal(config.ttsSpeed, 1);
   assert.equal(config.observationIntervalMs, 60_000);
   assert.equal(config.transcriptionConcurrency, 4);
@@ -49,6 +50,7 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
     ...valid,
     PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE: "true",
     PERSONAL_CONTEXT_VOICE_MODE: "meeting",
+    PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS: "false",
     PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS: "45000",
     PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY: "6",
     PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TRANSCRIPTIONS: "80",
@@ -60,6 +62,7 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   });
   assert.equal(config.listenToEveryone, true);
   assert.equal(config.voiceMode, "meeting");
+  assert.equal(config.immediateReactions, false);
   assert.equal(config.ttsSpeed, 2);
   assert.equal(config.observationIntervalMs, 45_000);
   assert.equal(config.transcriptionConcurrency, 6);

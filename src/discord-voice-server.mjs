@@ -304,6 +304,7 @@ export async function startDiscordVoiceCodex({
             tasksEnabled: config.powerMode,
             logger,
             observationIntervalMs: config.observationIntervalMs,
+            immediateReactions: config.immediateReactions,
             transcriptionConcurrency: config.transcriptionConcurrency,
             maximumPendingTranscriptions: config.maximumPendingTranscriptions,
             stageTimeouts: config.stageTimeouts,
@@ -334,7 +335,7 @@ export async function startDiscordVoiceCodex({
     });
     await postText(
       config.voiceMode === "meeting"
-        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の文字起こしと議事録を更新し、${Math.round(config.observationIntervalMs / 1_000)}秒ごとに必要な場合だけ応答します。${config.powerMode ? "本人の作業依頼は高権限Codexタスクとしてバックグラウンド実行します。" : ""}返答音声はAI生成です。`
+        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の文字起こしと議事録を更新し、${config.immediateReactions ? "発話後すぐに" : `${Math.round(config.observationIntervalMs / 1_000)}秒ごとに`}必要な場合だけ応答します。${config.powerMode ? "本人の作業依頼は高権限Codexタスクとしてバックグラウンド実行します。" : ""}返答音声はAI生成です。`
         : config.listenToEveryone
           ? "🔊 Discord音声Codexを起動しました。ボイスチャンネル内の全参加者の発話を処理します。返答音声はAI生成です。"
           : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",

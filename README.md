@@ -151,10 +151,11 @@ boundaries.
 
 For group development sessions, set `PERSONAL_CONTEXT_VOICE_MODE=meeting`.
 Meeting mode transcribes speakers in parallel, edits one live transcript message,
-and observes the accumulated conversation every
-`PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS` milliseconds. Each observation
-updates one cumulative minutes message. Codex posts and speaks only when the full
-interval contains an unresolved question, request, correction, or another useful
+and, by default, observes accumulated speech immediately after transcription.
+Set `PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS=false` to use only the periodic
+`PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS` fallback. Each observation
+updates one cumulative minutes message. Codex posts and speaks only when the
+accumulated speech contains an unresolved question, request, correction, or another useful
 reason to intervene; ordinary conversation and acknowledgements update the
 minutes without producing a reply.
 

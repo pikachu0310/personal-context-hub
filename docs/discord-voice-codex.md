@@ -37,7 +37,7 @@
 
 通常ターンは`idle → receiving → transcribing → posting_transcript → running_codex → posting_response → synthesizing → speaking → idle`で処理する。
 
-会議観測モードは`receiving → parallel_transcribing → editing_live_transcript`を継続し、定期的に`observing → updating_minutes → optional_posting_response → optional_synthesizing → optional_speaking`を実行する。Power taskは`queued → running_in_separate_thread → posting_result`として独立に進む。
+会議観測モードは`receiving → parallel_transcribing → editing_live_transcript`を継続し、既定では文字起こし完了直後（無効時は定期的）に`observing → updating_minutes → optional_posting_response → optional_synthesizing → optional_speaking`を実行する。重なった発話は次の観測へまとめ、定期観測は取りこぼし防止として残す。Power taskは`queued → running_in_separate_thread → posting_result`として独立に進む。
 
 各発話は一意なturn IDを持つ。状態遷移、処理時間、失敗段階だけを構造化ログへ残し、音声バイト列や認証情報は残さない。Codex thread IDはローカル状態ファイルへ保存し、再起動後にresumeする。明示的なreset時だけ新規threadを開始する。
 

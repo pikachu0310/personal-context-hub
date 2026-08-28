@@ -428,6 +428,48 @@ test("meeting observation updates minutes without replying to ordinary conversat
   session.stop();
 });
 
+test("meeting mode reacts immediately after a transcript and coalesces concurrent speech", async () => {
+  const observations = [];
+  const posts = [];
+  let releaseFirstObservation;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async (wav) => wav.toString(),
+    observe: async ({ statements }) => {
+      observations.push(statements.map(({ text }) => text));
+      if (observations.length === 1) {
+        await new Promise((resolve) => {
+          releaseFirstObservation = resolve;
+        });
+      }
+      return JSON.stringify({
+        minutes: "- 即時観測済み",
+        shouldReply: true,
+        reply: "すぐ反応しました。",
+        tasks: [],
+      });
+    },
+    upsertLiveTranscript: async () => undefined,
+    upsertMinutes: async () => undefined,
+    postText: async (content) => posts.push(content),
+    synthesize: async () => Buffer.from("pcm"),
+    playAudio: async () => undefined,
+    immediateReactions: true,
+    transcriptionConcurrency: 2,
+    logger: { info: () => undefined },
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+  session.enqueue(Buffer.from("即時反応して"), { speakerName: "Owner" });
+  await eventually(() => typeof releaseFirstObservation === "function");
+  session.enqueue(Buffer.from("続きも拾って"), { speakerName: "Owner" });
+  await eventually(() => session.statements.length === 2);
+  releaseFirstObservation();
+  await eventually(() => posts.length === 2);
+  assert.deepEqual(observations, [["即時反応して"], ["続きも拾って"]]);
+  assert.equal(session.statements.length, 0);
+  session.stop();
+});
+
 test("meeting transcript formatting preserves speaker order and observation JSON is strict", () => {
   const statements = [
     { sequence: 2, startedAt: 2, speakerName: "Bob", text: "二番目" },
