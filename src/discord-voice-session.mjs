@@ -2307,6 +2307,7 @@ export class DiscordVoiceMeetingSession {
   async #observeNow() {
     if (this.closed || this.resetting || this.observing) return false;
     this.observing = true;
+    if (this.liveUpdatePending) this.#queueLiveUpdate();
     const startedAt = Date.now();
     try {
       await this.#dispatchPendingControls();
@@ -2858,7 +2859,11 @@ export class DiscordVoiceMeetingSession {
           this.shutdownController.signal,
         ),
       )
+      .then(() => {
+        this.liveUpdatePending = false;
+      })
       .catch((error) => {
+        this.liveUpdatePending = true;
         if (!this.closed)
           this.#log("meeting_live_update_failed", {
             errorCode: voiceErrorCode(error),

@@ -976,6 +976,36 @@ test("meeting mode coalesces overload into the editable status instead of postin
   session.stop();
 });
 
+test("an idle observation recovers a failed live view update without running Codex or requiring another utterance", async (t) => {
+  let offline = true;
+  let updates = 0;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => undefined,
+    observe: async () => assert.fail("idle recovery must not invoke Codex"),
+    upsertLiveTranscript: async () => {
+      if (offline) throw new Error("temporary Discord outage");
+      updates += 1;
+    },
+    upsertMinutes: async () => undefined,
+    postText: async () =>
+      assert.fail("live view recovery must not post a response"),
+    synthesize: async () => undefined,
+    playAudio: async () => undefined,
+    logger: {},
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+  });
+  t.after(() => session.stop());
+  await session.liveUpdate;
+  offline = false;
+  assert.equal(await session.observeNow(), false);
+  await session.liveUpdate;
+  assert.equal(updates, 1);
+  await session.observeNow();
+  await session.liveUpdate;
+  assert.equal(updates, 1);
+});
+
 test("meeting mode retains statements when an observation is invalid and retries later", async () => {
   let attempts = 0;
   const minutesEdits = [];

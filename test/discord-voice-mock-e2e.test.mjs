@@ -3,10 +3,40 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { ChannelType, MessageFlags } from "discord.js";
 import {
+  createEditableDiscordPost,
   formatDiscordTaskAction,
   formatDiscordTaskCard,
   startDiscordVoiceCodex,
 } from "../src/discord-voice-server.mjs";
+
+test("live post updates retain the original message on a transient failure and replace only a deleted message", async () => {
+  const sent = [];
+  const edited = [];
+  let editError;
+  const message = {
+    async edit(payload) {
+      if (editError) throw editError;
+      edited.push(payload.content);
+      return this;
+    },
+  };
+  const update = createEditableDiscordPost({
+    async send(payload) {
+      sent.push(payload.content);
+      return message;
+    },
+  });
+  await update("initial conversation");
+  editError = Object.assign(new Error("temporary outage"), { status: 503 });
+  await assert.rejects(update("processing"), /temporary outage/);
+  assert.deepEqual(sent, ["initial conversation"]);
+  editError = undefined;
+  await update("response complete");
+  assert.deepEqual(edited, ["response complete"]);
+  editError = Object.assign(new Error("Unknown Message"), { code: 10008 });
+  await update("new conversation");
+  assert.deepEqual(sent, ["initial conversation", "new conversation"]);
+});
 
 const config = Object.freeze({
   guildId: "11111111111111111",

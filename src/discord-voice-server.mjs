@@ -21,6 +21,7 @@ import {
   Events,
   GatewayIntentBits,
   MessageFlags,
+  RESTJSONErrorCodes,
 } from "discord.js";
 import prism from "prism-media";
 import { MeetingStateStore, meetingScope } from "./discord-voice-state.mjs";
@@ -312,7 +313,8 @@ export function createEditableDiscordPost(textChannel, { silent = true } = {}) {
         content,
         allowedMentions: { parse: [] },
       });
-    } catch {
+    } catch (error) {
+      if (error?.code !== RESTJSONErrorCodes.UnknownMessage) throw error;
       message = await textChannel.send(payload);
     }
     return message;
