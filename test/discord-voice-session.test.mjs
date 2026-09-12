@@ -977,6 +977,49 @@ test("meeting mode coalesces overload into the editable status instead of postin
   session.stop();
 });
 
+test("a slow live view skips superseded updates while retaining every utterance in the archive", async (t) => {
+  const posted = [],
+    archived = [];
+  let releaseFirstPost;
+  const firstPost = new Promise((resolve) => {
+    releaseFirstPost = resolve;
+  });
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => undefined,
+    observe: async () =>
+      assert.fail("publishing the live view cannot invoke Codex"),
+    upsertLiveTranscript: async (content) => {
+      posted.push(content);
+      if (posted.length === 1) await firstPost;
+    },
+    archiveTranscript: async (statement) => archived.push(statement.text),
+    upsertMinutes: async () => undefined,
+    postText: async () => assert.fail("the live view must not send answers"),
+    synthesize: async () => undefined,
+    playAudio: async () => undefined,
+    logger: {},
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+  });
+  t.after(async () => {
+    releaseFirstPost();
+    await session.stop();
+  });
+  await eventually(() => posted.length === 1);
+  for (let i = 0; i < 20; i++)
+    await session.addText(`発言${i}`, {
+      userId: "member",
+      speakerName: "Alice",
+    });
+  assert.equal(posted.length, 1);
+  releaseFirstPost();
+  await session.liveUpdate;
+  assert.equal(posted.length, 2);
+  assert.match(posted[1], /発言19/);
+  assert.equal(archived.length, 20);
+  assert.equal(session.statements.length, 20);
+});
+
 test("an idle observation recovers a failed live view update without running Codex or requiring another utterance", async (t) => {
   let offline = true;
   let updates = 0;

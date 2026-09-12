@@ -3070,6 +3070,7 @@ export class DiscordVoiceMeetingSession {
   }
 
   #queueLiveUpdate() {
+    if (this.closed) return;
     const statements = this.statements.filter(
       (statement) => !statement.observed,
     );
@@ -3099,26 +3100,35 @@ export class DiscordVoiceMeetingSession {
           MAX_DISCORD_MESSAGE - status.length,
         ),
       ) + status;
-    this.liveUpdate = this.liveUpdate
-      .then(() =>
-        withTimeout(
+    this.pendingLiveContent = content;
+    if (this.liveUpdateRunning) return;
+    this.liveUpdateRunning = true;
+    this.liveUpdate = this.#flushLiveUpdates();
+  }
+
+  async #flushLiveUpdates() {
+    try {
+      while (this.pendingLiveContent !== undefined && !this.closed) {
+        const content = this.pendingLiveContent;
+        this.pendingLiveContent = undefined;
+        await withTimeout(
           (signal) =>
             this.dependencies.upsertLiveTranscript(content, { signal }),
           this.stageTimeouts.posting,
           "updating live transcript",
           this.shutdownController.signal,
-        ),
-      )
-      .then(() => {
+        );
         this.liveUpdatePending = false;
-      })
-      .catch((error) => {
-        this.liveUpdatePending = true;
-        if (!this.closed)
-          this.#log("meeting_live_update_failed", {
-            errorCode: voiceErrorCode(error),
-          });
-      });
+      }
+    } catch (error) {
+      this.liveUpdatePending = true;
+      if (!this.closed)
+        this.#log("meeting_live_update_failed", {
+          errorCode: voiceErrorCode(error),
+        });
+    } finally {
+      this.liveUpdateRunning = false;
+    }
   }
 
   #archiveStatement(statement) {
