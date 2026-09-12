@@ -166,3 +166,38 @@ test("a failed observer reset retains the old meeting and releases incoming text
   assert.equal(session.minutes, "old summary");
   assert.equal(session.statements.at(-1).text, "keep this correction");
 });
+
+test("a result saved across a meeting switch is reported as belonging to the previous meeting", async (t) => {
+  let release;
+  const posts = [];
+  const session = meeting({
+    initialState: { meetingId: "old" },
+    checkpoint: async (state) => {
+      if (state.meetingId === "old" && state.results.length)
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+    },
+    postText: async (content) => posts.push(content),
+  });
+  t.after(async () => {
+    release?.();
+    await session.stop();
+  });
+  const delivery = session.addTaskResult({
+    id: "task01",
+    title: "previous task",
+    result: "old result detail",
+    meetingId: "old",
+    threadId: "thread01",
+  });
+  await eventually(() => release);
+  assert.equal(await session.newMeeting(), true);
+  release();
+  await delivery;
+  assert.deepEqual(session.results, []);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], /以前の会議/);
+  assert.match(posts[0], /thread01/);
+  assert.doesNotMatch(posts[0], /old result detail/);
+});

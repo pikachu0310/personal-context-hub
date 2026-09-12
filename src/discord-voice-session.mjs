@@ -2460,23 +2460,35 @@ export class DiscordVoiceMeetingSession {
         "Meeting is closed",
         "会議を停止しています。",
       );
-    if (result.meetingId && result.meetingId !== this.meetingId) {
+    const meetingId = result.meetingId ?? this.meetingId;
+    if (meetingId === this.meetingId) {
+      this.results = this.results.filter(
+        (previous) => previous.id !== result.id,
+      );
+      this.results.push({
+        ...result,
+        result: boundText(result.result, 4000),
+        resultWasTruncated: String(result.result ?? "").length > 4000,
+      });
+      this.results = this.results.slice(-20);
+      await this.persist();
+    }
+    while (this.resetting) await this.meetingBoundary;
+    if (this.closed)
+      throw new VoiceServiceError(
+        "SERVICE_STOPPED",
+        "Meeting closed before result notification",
+        "会議を停止しています。",
+      );
+    if (meetingId !== this.meetingId) {
       await this.dependencies.postText(
         "📦 以前の会議のタスクが完了しました: " +
-          result.title +
+          escapeDiscordMarkdown(result.title) +
           (result.threadId ? " <#" + result.threadId + ">" : ""),
         options,
       );
       return;
     }
-    this.results = this.results.filter((previous) => previous.id !== result.id);
-    this.results.push({
-      ...result,
-      result: boundText(result.result, 4000),
-      resultWasTruncated: String(result.result ?? "").length > 4000,
-    });
-    this.results = this.results.slice(-20);
-    await this.persist();
     await this.dependencies.postText(
       "📦 **" +
         escapeDiscordMarkdown(result.title) +
