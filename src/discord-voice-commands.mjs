@@ -12,6 +12,7 @@ export const IDOBATA_HELP = [
   "`/ido benchmark 比較内容` · `/ido test 検証内容`",
   "`/ido status ページ番号` 作業一覧 · `/ido stop タスクID`",
   "`/ido result タスクID` 保存済みの結果と検証記録",
+  "`/ido quiet` 読み上げ停止",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
   "`/ido apply タスクID 実行版` 確認した差分を作業場所へ反映",
   "作業・中断・新規会議は設定済みの操作担当者が使えます。",
@@ -328,6 +329,16 @@ export function createIdobataMessageHandler({
       return reply(
         "作業の起動・操作は設定済みの操作担当者に依頼してください。会話と質問には参加できます。",
       );
+    if (command === "quiet") {
+      const result = await session.silenceSpeech?.();
+      return reply(
+        !result
+          ? "このモードでは読み上げを操作できません。"
+          : result.persisted === false
+            ? "読み上げを停止しました。停止の記録は保存を再試行しています。"
+            : "読み上げを停止しました。次の質問には通常どおり応答します。",
+      );
+    }
     if (command === "new") {
       if (!(await session.newMeeting?.(resetMeeting)))
         return reply(

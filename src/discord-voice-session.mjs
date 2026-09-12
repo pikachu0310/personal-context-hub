@@ -4,6 +4,7 @@ import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
 import {
   parseImmediateTaskStop,
   isImmediateTaskStatus,
+  isImmediateSpeechStop,
 } from "./discord-voice-intents.mjs";
 import {
   VoiceServiceError,
@@ -1789,6 +1790,9 @@ export class DiscordVoiceMeetingSession {
     this.liveUpdate = Promise.resolve();
     this.speechQueue = Promise.resolve();
     this.pendingSpeechCount = 0;
+    this.speechController = new AbortController();
+    this.silencedThroughSequence = initialState.silencedThroughSequence ?? null;
+    this.speechStopSavePending = false;
     this.interval = scheduleInterval(
       () => void this.observeNow(),
       observationIntervalMs,
@@ -1833,6 +1837,7 @@ export class DiscordVoiceMeetingSession {
   }
 
   async persist() {
+    const silencedThroughSequence = this.silencedThroughSequence;
     await this.checkpoint({
       meetingId: this.meetingId,
       revision: this.revision,
@@ -1843,7 +1848,10 @@ export class DiscordVoiceMeetingSession {
       pendingTasks: structuredClone(this.pendingTasks),
       pendingControls: structuredClone(this.pendingControls),
       speechTurns: this.speechTurns.snapshot(),
+      silencedThroughSequence,
     });
+    if (this.silencedThroughSequence === silencedThroughSequence)
+      this.speechStopSavePending = false;
   }
 
   addText(text, metadata = {}) {
@@ -2044,6 +2052,8 @@ export class DiscordVoiceMeetingSession {
   }
 
   #tryImmediateTaskAction(statement) {
+    if (isImmediateSpeechStop(statement.text))
+      return this.#tryImmediateSpeechStop(statement);
     return isImmediateTaskStatus(statement.text, {
       explicitlyAsked: statement.requestReply === true,
     })
@@ -2089,6 +2099,60 @@ export class DiscordVoiceMeetingSession {
       spokenNotification: `確認した時点では、${summary}${attention}`,
     };
     return this.#saveImmediateReply(statement, control, { type: "status" });
+  }
+
+  silenceSpeech() {
+    if (this.closed) return Promise.resolve(undefined);
+    const count = this.pendingSpeechCount;
+    this.silencedThroughSequence = this.sequence;
+    this.speechStopSavePending = true;
+    for (const control of this.pendingControls) control.spokenNotification = "";
+    this.speechController.abort(
+      new VoiceServiceError(
+        "SPEECH_STOPPED",
+        "Speech stopped by an operator",
+        "読み上げを停止しました。",
+      ),
+    );
+    this.speechController = new AbortController();
+    return this.#trackOperation(
+      this.persist()
+        .then(() => ({ count, persisted: true }))
+        .catch(() => {
+          this.speechStopSavePending = true;
+          return { count, persisted: false };
+        }),
+    );
+  }
+
+  async #tryImmediateSpeechStop(statement) {
+    if (
+      statement.taskEligible === false ||
+      !this.ownerUserId ||
+      !(
+        statement.userId === this.ownerUserId ||
+        this.operatorUserIds.includes(statement.userId)
+      )
+    )
+      return false;
+    statement.taskEligible = false;
+    statement.handledAction = { type: "speech_stop" };
+    const result = await this.silenceSpeech();
+    return this.#saveImmediateReply(
+      statement,
+      {
+        type: "reply",
+        meetingId: this.meetingId,
+        requestKey: `${this.meetingId}:speech-stop:${statement.sequence}`,
+        sourceSequences: [statement.sequence],
+        spokenNotification: "",
+        notification:
+          result?.persisted === false
+            ? "読み上げを停止しました。停止の記録は保存を再試行しています。"
+            : "読み上げを停止しました。次の質問には通常どおり応答します。",
+      },
+      { type: "speech_stop" },
+    );
   }
 
   async #saveImmediateReply(statement, control, handledAction) {
@@ -2328,6 +2392,7 @@ export class DiscordVoiceMeetingSession {
       results: this.results,
       sequence: this.sequence,
       revision: this.revision,
+      silencedThroughSequence: this.silencedThroughSequence,
     };
     try {
       await this.#archivePendingStatements();
@@ -2344,6 +2409,7 @@ export class DiscordVoiceMeetingSession {
       this.statements = [];
       this.results = [];
       this.sequence = 0;
+      this.silencedThroughSequence = null;
       this.revision = 0;
       await this.persist();
       this.#queueLiveUpdate();
@@ -2387,6 +2453,7 @@ export class DiscordVoiceMeetingSession {
     if (this.liveUpdatePending) this.#queueLiveUpdate();
     const startedAt = Date.now();
     try {
+      if (this.speechStopSavePending) await this.persist();
       await this.#dispatchPendingControls();
       await this.#archivePendingStatements();
       this.statements = this.statements.filter(
@@ -2521,8 +2588,15 @@ export class DiscordVoiceMeetingSession {
           type: "reply",
           meetingId: this.meetingId,
           requestKey: `${this.meetingId}:reply:${this.revision}`,
+          sourceSequences: statements.map((statement) => statement.sequence),
           notification: conversationReply,
-          spokenNotification: speechExcerpt(conversationReply),
+          spokenNotification: this.#canSpeakFor(
+            statements
+              .filter((statement) => !statement.handledAction)
+              .map((statement) => statement.sequence),
+          )
+            ? speechExcerpt(conversationReply)
+            : "",
         });
       for (const statement of statements) statement.observed = true;
       this.statements = this.statements.filter(
@@ -2548,7 +2622,13 @@ export class DiscordVoiceMeetingSession {
             this.shutdownController.signal,
           );
         }
-        await this.#queueMeetingSpeech(speechExcerpt(reply));
+        await this.#queueMeetingSpeech(
+          this.#canSpeakFor(
+            acceptedTasks.flatMap((task) => task.sourceSequences ?? []),
+          )
+            ? speechExcerpt(reply)
+            : "",
+        );
       }
       await this.speechQueue;
       this.#log("meeting_observation_completed", {
@@ -2659,7 +2739,9 @@ export class DiscordVoiceMeetingSession {
         const spoken =
           excerpt && replyContext ? `${replyContext}です。${excerpt}` : excerpt;
         // Text delivery must not wait for an earlier spoken response.
-        void this.#queueMeetingSpeech(spoken);
+        void this.#queueMeetingSpeech(
+          this.#canSpeakFor(control.sourceSequences) ? spoken : "",
+        );
       } catch (error) {
         this.#log("meeting_control_dispatch_pending", {
           requestKey: control.requestKey,
@@ -2669,8 +2751,21 @@ export class DiscordVoiceMeetingSession {
     }
   }
 
+  #canSpeakFor(sequences) {
+    return (
+      this.silencedThroughSequence === null ||
+      (sequences ?? []).some(
+        (sequence) => sequence > this.silencedThroughSequence,
+      )
+    );
+  }
+
   #queueMeetingSpeech(spoken) {
     if (!spoken || this.closed) return Promise.resolve();
+    const speechSignal = AbortSignal.any([
+      this.shutdownController.signal,
+      this.speechController.signal,
+    ]);
     this.pendingSpeechCount++;
     this.speechQueue = this.speechQueue
       .then(async () => {
@@ -2678,17 +2773,17 @@ export class DiscordVoiceMeetingSession {
           (signal) => this.dependencies.synthesize(spoken, { signal }),
           this.stageTimeouts.synthesizing,
           "synthesizing meeting response",
-          this.shutdownController.signal,
+          speechSignal,
         );
         await withTimeout(
           (signal) => this.dependencies.playAudio(audio, { signal }),
           this.stageTimeouts.speaking,
           "speaking meeting response",
-          this.shutdownController.signal,
+          speechSignal,
         );
       })
       .catch((error) => {
-        if (!this.closed)
+        if (!this.closed && error?.code !== "SPEECH_STOPPED")
           this.#log("meeting_speech_failed", {
             errorCode: voiceErrorCode(error),
           });

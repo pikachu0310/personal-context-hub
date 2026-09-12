@@ -33,3 +33,16 @@ export function isImmediateTaskStatus(text, { explicitlyAsked = false } = {}) {
     body,
   );
 }
+
+const speechStop = new RegExp(
+  `^(?:今の|現在の)?(?:読み上げ|読みあげ)\\s*(?:を)?\\s*${stopVerb}$`,
+  "iu",
+);
+export function isImmediateSpeechStop(text) {
+  const addressed = String(text ?? "")
+    .trim()
+    .match(
+      /^(?:井戸(?:bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,：:\s]*([\s\S]+)$/iu,
+    );
+  return Boolean(addressed && speechStop.test(addressed[1]));
+}

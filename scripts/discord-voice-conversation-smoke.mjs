@@ -181,6 +181,42 @@ async function check(name, action) {
   await action();
   report.checks[name] = "passed";
 }
+async function speakIntoMeeting(text) {
+  const sequence = session.sequence;
+  const generated = await audio.synthesize(text, {
+    signal: AbortSignal.timeout(30_000),
+  });
+  const speaking = new EventEmitter(),
+    decoder = new EventEmitter(),
+    opus = new EventEmitter();
+  decoder.destroy = noop;
+  opus.destroy = noop;
+  opus.pipe = () => decoder;
+  subscribeToAllowedSpeaker({
+    connection: { receiver: { speaking, subscribe: () => opus } },
+    config: {
+      voiceMode: "meeting",
+      allowedUserId: "operator",
+      minimumAudioMs: 250,
+      maximumAudioSeconds: 90,
+      silenceMs: 1000,
+    },
+    session,
+    postText,
+    logger: {},
+    createDecoder: () => decoder,
+  });
+  speaking.emit("start", "operator");
+  decoder.emit("data", ttsPcm24kMonoToDiscordRaw(generated));
+  decoder.emit("end");
+  await until(
+    () =>
+      session.activeTranscriptions === 0 &&
+      session.statements.some((statement) => statement.sequence > sequence),
+    45_000,
+  );
+  return session.statements.find((statement) => statement.sequence > sequence);
+}
 try {
   await store.acquire();
   await store.load();
@@ -191,39 +227,10 @@ try {
     { userId: "operator", taskEligible: false },
   );
   await check("speechToAuthorizedTask", async () => {
-    const generated = await audio.synthesize(
+    const statement = await speakIntoMeeting(
       "いどぼっと、計算のバグを修正して、既存のテストを実行してください。",
-      { signal: AbortSignal.timeout(30_000) },
     );
-    const speaking = new EventEmitter(),
-      decoder = new EventEmitter(),
-      opus = new EventEmitter();
-    decoder.destroy = noop;
-    opus.destroy = noop;
-    opus.pipe = () => decoder;
-    subscribeToAllowedSpeaker({
-      connection: { receiver: { speaking, subscribe: () => opus } },
-      config: {
-        voiceMode: "meeting",
-        allowedUserId: "operator",
-        minimumAudioMs: 250,
-        maximumAudioSeconds: 90,
-        silenceMs: 1000,
-      },
-      session,
-      postText,
-      logger: {},
-      createDecoder: () => decoder,
-    });
-    speaking.emit("start", "operator");
-    decoder.emit("data", ttsPcm24kMonoToDiscordRaw(generated));
-    decoder.emit("end");
-    await until(
-      () =>
-        session.activeTranscriptions === 0 && session.statements.length === 2,
-      45_000,
-    );
-    report.recognizedRequest = session.statements[1].text;
+    report.recognizedRequest = statement.text;
     assert.equal(tasks.list().length, 0);
     assert.equal(await session.observeNow(), true);
     assert.equal(tasks.list().length, 1);
@@ -256,6 +263,16 @@ try {
     assert.equal(artifactPosts.length, 1);
     assert.equal(artifactPosts[0].files.length, 2);
     assert.equal(artifactPosts[0].enforceNonce, true);
+  });
+  await check("speechStopWithoutTaskCancellation", async () => {
+    const observations = report.observationElapsedMs.length;
+    const statement = await speakIntoMeeting(
+      "いどぼっと、読み上げを止めてください。",
+    );
+    report.recognizedSpeechStop = statement.text;
+    assert.equal(statement.handledAction?.type, "speech_stop");
+    assert.equal(report.observationElapsedMs.length, observations);
+    assert.equal(tasks.list()[0].state, "completed");
   });
   await check("resultQuestionAndReplyRecovery", async () => {
     await session.addText(
