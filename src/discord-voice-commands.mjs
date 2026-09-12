@@ -208,11 +208,10 @@ export function createIdobataMessageHandler({
         "作業の起動・操作は設定済みの操作担当者に依頼してください。会話と質問には参加できます。",
       );
     if (command === "new") {
-      if (!(await session.newMeeting?.()))
+      if (!(await session.newMeeting?.(resetMeeting)))
         return reply(
-          "音声認識・観測中です。処理が落ち着いてから `/ido new` を実行してください。",
+          "会議を切り替えられませんでした。現在の会話は保持しています。処理・保存状態を確認して `/ido new` を再試行してください。",
         );
-      await resetMeeting();
       return reply(
         "新しい会議を開始しました。以前の会話ログとタスクの成果は保存されています。",
       );

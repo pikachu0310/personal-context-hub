@@ -1284,6 +1284,9 @@ export class DiscordVoiceMeetingSession {
     this.results = initialState.results ?? [];
     this.pendingTasks = initialState.pendingTasks ?? [];
     this.revision = initialState.revision ?? 0;
+    this.resetting = false;
+    this.meetingBoundary = Promise.resolve();
+    this.activeTextInputs = 0;
     this.observing = false;
     this.immediateObservationRequested = false;
     this.immediateObservationScheduled = false;
@@ -1313,7 +1316,7 @@ export class DiscordVoiceMeetingSession {
     }
     this.audioQueue.push({
       id: randomUUID(),
-      sequence: (this.sequence += 1),
+      sequence: this.resetting ? undefined : (this.sequence += 1),
       wav,
       metadata,
       queuedAt: Date.now(),
@@ -1335,29 +1338,36 @@ export class DiscordVoiceMeetingSession {
   }
 
   async addText(text, metadata = {}) {
+    const receivedAt = metadata.startedAt ?? Date.now();
+    while (this.resetting) await this.meetingBoundary;
     if (this.closed || !String(text).trim()) return false;
-    const statement = {
-      id: randomUUID(),
-      meetingId: this.meetingId,
-      sequence: ++this.sequence,
-      userId: metadata.userId,
-      speakerName: metadata.speakerName,
-      taskEligible: metadata.taskEligible !== false,
-      requestReply: metadata.requestReply === true,
-      startedAt: metadata.startedAt ?? Date.now(),
-      text: boundText(text, MAX_TRANSCRIPT_CHARACTERS),
-      observed: false,
-      archived: false,
-    };
-    this.statements.push(statement);
-    await this.#archiveStatement(statement);
-    await this.persist();
-    this.#queueLiveUpdate();
-    if (this.immediateReactions || statement.requestReply) {
-      this.immediateObservationRequested = true;
-      this.#scheduleImmediateObservation();
+    this.activeTextInputs++;
+    try {
+      const statement = {
+        id: randomUUID(),
+        meetingId: this.meetingId,
+        sequence: ++this.sequence,
+        userId: metadata.userId,
+        speakerName: metadata.speakerName,
+        taskEligible: metadata.taskEligible !== false,
+        requestReply: metadata.requestReply === true,
+        startedAt: receivedAt,
+        text: boundText(text, MAX_TRANSCRIPT_CHARACTERS),
+        observed: false,
+        archived: false,
+      };
+      this.statements.push(statement);
+      await this.#archiveStatement(statement);
+      await this.persist();
+      this.#queueLiveUpdate();
+      if (this.immediateReactions || statement.requestReply) {
+        this.immediateObservationRequested = true;
+        this.#scheduleImmediateObservation();
+      }
+      return true;
+    } finally {
+      this.activeTextInputs--;
     }
-    return true;
   }
 
   getContextSnapshot() {
@@ -1397,6 +1407,13 @@ export class DiscordVoiceMeetingSession {
   }
 
   async addTaskResult(result) {
+    while (this.resetting) await this.meetingBoundary;
+    if (this.closed)
+      throw new VoiceServiceError(
+        "SERVICE_STOPPED",
+        "Meeting is closed",
+        "会議を停止しています。",
+      );
     if (result.meetingId && result.meetingId !== this.meetingId) {
       await this.dependencies.postText(
         "📦 以前の会議のタスクが完了しました: " +
@@ -1421,24 +1438,65 @@ export class DiscordVoiceMeetingSession {
     );
   }
 
-  async newMeeting() {
-    if (this.observing || this.activeTranscriptions || this.audioQueue.length)
+  async newMeeting(resetObserver = async () => undefined) {
+    if (
+      this.closed ||
+      this.resetting ||
+      this.observing ||
+      this.activeTextInputs ||
+      this.activeTranscriptions ||
+      this.audioQueue.length
+    )
       return false;
-    await this.#archivePendingStatements();
-    if (this.statements.some((statement) => !statement.archived)) return false;
-    this.meetingId = randomUUID();
-    this.minutes = "";
-    this.statements = [];
-    this.results = [];
-    this.sequence = 0;
-    this.revision = 0;
-    await this.persist();
-    this.#queueLiveUpdate();
-    return true;
+    this.resetting = true;
+    let release;
+    this.meetingBoundary = new Promise((resolve) => {
+      release = resolve;
+    });
+    const previous = {
+      meetingId: this.meetingId,
+      minutes: this.minutes,
+      statements: this.statements,
+      results: this.results,
+      sequence: this.sequence,
+      revision: this.revision,
+    };
+    try {
+      await this.#archivePendingStatements();
+      if (this.statements.some((statement) => !statement.archived))
+        return false;
+      await withTimeout(
+        resetObserver,
+        this.stageTimeouts.posting,
+        "resetting meeting observer",
+        this.shutdownController.signal,
+      );
+      this.meetingId = randomUUID();
+      this.minutes = "";
+      this.statements = [];
+      this.results = [];
+      this.sequence = 0;
+      this.revision = 0;
+      await this.persist();
+      this.#queueLiveUpdate();
+      return true;
+    } catch (error) {
+      Object.assign(this, previous);
+      await this.persist().catch(() => undefined);
+      this.#log("meeting_reset_failed", { errorCode: voiceErrorCode(error) });
+      return false;
+    } finally {
+      for (const item of this.audioQueue)
+        if (item.sequence === undefined) item.sequence = ++this.sequence;
+      this.resetting = false;
+      release();
+      this.#drainTranscriptions();
+      this.#scheduleImmediateObservation();
+    }
   }
 
   async observeNow() {
-    if (this.closed || this.observing) return false;
+    if (this.closed || this.resetting || this.observing) return false;
     this.observing = true;
     const startedAt = Date.now();
     try {
@@ -1468,6 +1526,7 @@ export class DiscordVoiceMeetingSession {
         (signal) =>
           this.dependencies.observe(
             {
+              meetingId: this.meetingId,
               minutes: this.minutes,
               transcript,
               statements,
@@ -1690,6 +1749,7 @@ export class DiscordVoiceMeetingSession {
         "音声サービスを停止しました。",
       ),
     );
+    await this.meetingBoundary;
     await Promise.allSettled([...this.activeTranscriptionJobs]);
     await this.#archivePendingStatements();
     await this.persist();
@@ -1699,6 +1759,7 @@ export class DiscordVoiceMeetingSession {
   #drainTranscriptions() {
     while (
       !this.closed &&
+      !this.resetting &&
       this.activeTranscriptions < this.transcriptionConcurrency &&
       this.audioQueue.length
     ) {

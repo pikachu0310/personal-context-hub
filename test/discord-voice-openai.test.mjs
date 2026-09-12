@@ -377,6 +377,48 @@ test("Codex voice runner enforces structured meeting observations", async () => 
   });
 });
 
+test("observer threads resume only inside the same meeting, including after restart", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-meeting-scope-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = {
+    statePath: join(root, "state.json"),
+    workingDirectory: root,
+    voiceMode: "meeting",
+  };
+  const starts = [],
+    resumes = [];
+  const makeThread = (id) => ({
+    id,
+    run: async () => ({
+      finalResponse: JSON.stringify({ minutes: "summary", shouldReply: false }),
+    }),
+  });
+  const codex = {
+    startThread: () => {
+      const id = `thread-${starts.length + 1}`;
+      starts.push(id);
+      return makeThread(id);
+    },
+    resumeThread: (id) => {
+      resumes.push(id);
+      return makeThread(id);
+    },
+  };
+  await new CodexVoiceRunner(config, { codex }).observeMeeting({
+    meetingId: "first",
+    statements: [],
+  });
+  const restored = new CodexVoiceRunner(config, { codex });
+  await restored.observeMeeting({ meetingId: "first", statements: [] });
+  assert.deepEqual(resumes, ["thread-1"]);
+  await restored.observeMeeting({ meetingId: "second", statements: [] });
+  assert.deepEqual(starts, ["thread-1", "thread-2"]);
+  assert.equal(
+    JSON.parse(await readFile(config.statePath, "utf8")).meetingId,
+    "second",
+  );
+});
+
 test("power tasks run in a separate workspace-bound networked thread", async () => {
   let threadOptions;
   let prompt;

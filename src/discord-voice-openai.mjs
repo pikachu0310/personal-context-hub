@@ -521,6 +521,7 @@ export class CodexVoiceRunner {
       {
         signal,
         outputSchema: MEETING_OBSERVATION_SCHEMA,
+        meetingId: observation.meetingId,
       },
     );
   }
@@ -641,13 +642,14 @@ export class CodexVoiceRunner {
     }
   }
 
-  async #runPrompt(prompt, { signal, outputSchema } = {}) {
-    await this.#ensureThread();
+  async #runPrompt(prompt, { signal, outputSchema, meetingId } = {}) {
+    await this.#ensureThread(meetingId);
     const response = await this.#runOnThread(this.thread, prompt, {
       signal,
       outputSchema,
     });
-    if (this.thread.id) await this.#writeState(this.thread.id);
+    if (signal?.aborted) throw signal.reason;
+    if (this.thread.id) await this.#writeState(this.thread.id, meetingId);
     return response;
   }
 
@@ -682,10 +684,11 @@ export class CodexVoiceRunner {
     throw error;
   }
 
-  async #ensureThread() {
+  async #ensureThread(meetingId) {
     await this.prepare();
-    if (this.thread) return;
-    const threadId = await this.#readThreadId();
+    if (this.thread && this.observerMeetingId === meetingId) return;
+    const threadId = await this.#readThreadId(meetingId);
+    this.observerMeetingId = meetingId;
     const directPower = Boolean(
       this.config.powerMode && this.config.voiceMode !== "meeting",
     );
@@ -709,9 +712,10 @@ export class CodexVoiceRunner {
       : this.codex.startThread(options);
   }
 
-  async #readThreadId() {
+  async #readThreadId(meetingId) {
     try {
       const state = JSON.parse(await readFile(this.config.statePath, "utf8"));
+      if (meetingId && state.meetingId !== meetingId) return undefined;
       return typeof state.threadId === "string" && state.threadId
         ? state.threadId
         : undefined;
@@ -723,12 +727,12 @@ export class CodexVoiceRunner {
     }
   }
 
-  async #writeState(threadId) {
+  async #writeState(threadId, meetingId) {
     await mkdir(dirname(this.config.statePath), { recursive: true });
     const temporaryPath = `${this.config.statePath}.${process.pid}.tmp`;
     await writeFile(
       temporaryPath,
-      `${JSON.stringify({ threadId, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+      `${JSON.stringify({ threadId, meetingId, updatedAt: new Date().toISOString() }, null, 2)}\n`,
       { mode: 0o600 },
     );
     await rename(temporaryPath, this.config.statePath);
