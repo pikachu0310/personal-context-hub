@@ -751,6 +751,7 @@ export async function startDiscordVoiceCodex({
             controlTask: (control) =>
               taskQueue?.handleVoiceControlDurable(control) ?? false,
             getTaskReceipt: (requestKey) => taskQueue?.getReceipt(requestKey),
+            getTaskResult: (taskId) => taskQueue?.getTaskResult(taskId),
             ownerUserId: config.allowedUserId,
             tasksEnabled: config.powerMode,
             operatorUserIds: config.operatorUserIds,

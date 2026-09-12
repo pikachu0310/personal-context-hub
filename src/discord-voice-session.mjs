@@ -716,6 +716,7 @@ export class DiscordVoiceTaskQueue {
       threadId: task.surface?.threadId ?? task.threadId,
       starterId: task.surface?.starterId ?? task.starterId,
       result: task.result,
+      resultMetadata: structuredClone(task.resultMetadata),
       artifacts: structuredClone(task.artifacts),
       profile: structuredClone(task.profile),
       evidence: structuredClone(task.evidence),
@@ -819,6 +820,25 @@ export class DiscordVoiceTaskQueue {
       (entry) => entry.requestKey === requestKey,
     );
     return task ? { id: task.id, state: task.state } : undefined;
+  }
+
+  getTaskResult(taskId) {
+    const task = this.tasks.get(taskId);
+    if (!task) return undefined;
+    return {
+      id: task.id,
+      title: task.title,
+      result: task.result,
+      runRevision: task.resultMetadata?.runRevision,
+      completedAt: task.resultMetadata?.completedAt,
+      verification:
+        task.resultMetadata?.verification ??
+        "検証記録: この結果に対応する実行版は未確認",
+      currentState: task.state,
+      currentRunRevision: task.runRevision,
+      threadId: task.surface?.threadId ?? task.threadId,
+      meetingId: task.meetingId,
+    };
   }
 
   handleTaskMessage({ taskId, ...message }) {
@@ -1037,6 +1057,7 @@ export class DiscordVoiceTaskQueue {
               state: delivery.state,
               result: delivery.result,
               verification: formatVerificationEvidence(delivery.evidence),
+              runRevision: delivery.evidence?.runRevision,
               threadId: surface?.threadId ?? task.threadId,
               artifacts: delivery.artifacts,
               meetingId: task.meetingId,
@@ -1382,12 +1403,20 @@ export class DiscordVoiceTaskQueue {
         MAX_CODEX_RESPONSE_CHARACTERS,
       );
       task.result = response;
+      task.resultMetadata = {
+        runRevision: task.runRevision,
+        completedAt: Date.now(),
+        verification: formatVerificationEvidence(task.evidence),
+      };
       workerSucceeded = true;
       task.additionalInstruction = undefined;
       await this.#waitForInstructionReceipts(task);
       const pendingInstructions = task.instructions.length;
-      task.state =
-        pendingInstructions && !task.cancelled ? "queued" : "completed";
+      task.state = task.cancelled
+        ? "cancelled"
+        : pendingInstructions
+          ? "queued"
+          : "completed";
       task.resultDeliveries ??= [];
       task.resultDeliveries.push({
         result: response,
@@ -1553,6 +1582,7 @@ export class DiscordVoiceMeetingSession {
     enqueueTask = () => false,
     controlTask = () => false,
     getTaskReceipt = () => undefined,
+    getTaskResult = () => undefined,
     ownerUserId,
     tasksEnabled = false,
     operatorUserIds = [],
@@ -1582,6 +1612,7 @@ export class DiscordVoiceMeetingSession {
       enqueueTask,
       controlTask,
       getTaskReceipt,
+      getTaskResult,
     };
     this.logger = logger;
     this.ownerUserId = ownerUserId;
@@ -1740,6 +1771,44 @@ export class DiscordVoiceMeetingSession {
     };
   }
 
+  getObservationResults(statements) {
+    const text = statements
+      .map((statement) => statement.text)
+      .join("\n")
+      .toLowerCase();
+    const named = this.getActiveTasks()
+      .filter((task) => task.id && text.includes(String(task.id).toLowerCase()))
+      .slice(0, 3)
+      .map((task) => this.dependencies.getTaskResult(task.id))
+      .filter(Boolean);
+    const results = [
+      ...new Map(
+        [
+          ...this.results.slice(-5).map((result) => ({
+            ...result,
+            ...this.dependencies.getTaskResult(result.id),
+          })),
+          ...named,
+        ].map((result) => [result.id, result]),
+      ).values(),
+    ];
+    return results.map((result) => ({
+      id: result.id,
+      title: boundText(result.title, 160),
+      state: result.state,
+      currentState: result.currentState,
+      runRevision: result.runRevision,
+      currentRunRevision: result.currentRunRevision,
+      result: boundText(result.result, 4000),
+      verification: result.verification,
+      threadId: result.threadId,
+      meetingId: result.meetingId,
+      resultWasTruncated:
+        result.resultWasTruncated === true ||
+        String(result.result ?? "").length > 4000,
+    }));
+  }
+
   cancelPendingTask(taskId) {
     if (!taskId) return Promise.resolve(false);
     const task = this.pendingTasks.find(
@@ -1868,16 +1937,12 @@ export class DiscordVoiceMeetingSession {
       formatMeetingObservationTranscript(recent),
       "直近の作業結果（詳細は各タスク）:",
       JSON.stringify(
-        this.results
-          .slice(-5)
-          .map(({ id, title, state, result, threadId, verification }) => ({
-            id,
-            title: boundText(title, 120),
-            state,
-            result: boundText(result, 1000),
-            threadId,
-            verification,
-          })),
+        this.getObservationResults([]).map((result) => ({
+          ...result,
+          result: boundText(result.result, 1000),
+          resultWasTruncated:
+            result.resultWasTruncated || result.result.length > 1000,
+        })),
       ),
     ].join("\n\n");
   }
@@ -1899,7 +1964,11 @@ export class DiscordVoiceMeetingSession {
       return;
     }
     this.results = this.results.filter((previous) => previous.id !== result.id);
-    this.results.push({ ...result, result: boundText(result.result, 4000) });
+    this.results.push({
+      ...result,
+      result: boundText(result.result, 4000),
+      resultWasTruncated: String(result.result ?? "").length > 4000,
+    });
     this.results = this.results.slice(-20);
     await this.persist();
     await this.dependencies.postText(
@@ -2030,7 +2099,7 @@ export class DiscordVoiceMeetingSession {
               transcript,
               statements,
               ...this.getObservationTaskContext(statements),
-              results: this.results,
+              results: this.getObservationResults(statements),
             },
             { signal },
           ),

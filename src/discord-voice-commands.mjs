@@ -11,11 +11,24 @@ export const IDOBATA_HELP = [
   "`/ido task 依頼` 実装 · `/ido research 調査内容`",
   "`/ido benchmark 比較内容` · `/ido test 検証内容`",
   "`/ido status ページ番号` 作業一覧 · `/ido stop タスクID`",
+  "`/ido result タスクID` 保存済みの結果と検証記録",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
   "`/ido apply タスクID 実行版` 確認した差分を作業場所へ反映",
   "作業・中断・新規会議は設定済みの操作担当者が使えます。",
   "作業結果は専用スレッドとこの会話へ戻ります。",
 ].join("\n");
+
+const displayTaskState = (state) =>
+  ({
+    queued: "待機中",
+    running: "実行中",
+    interrupted: "中断・再開待ち",
+    failed: "失敗",
+    completed: "完了",
+    cancelled: "中止",
+  })[state] ??
+  state ??
+  "不明";
 
 function taskStatus(tasks, session, argument) {
   if (argument && !/^[1-9][0-9]{0,5}$/.test(argument))
@@ -54,7 +67,7 @@ function taskStatus(tasks, session, argument) {
     ),
     ...ordered.map(
       (task) =>
-        `\`${task.id}\` ${task.state} · ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 100))}${task.threadId ? ` <#${task.threadId}>` : ""}`,
+        `\`${task.id}\` ${displayTaskState(task.state)} · ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 100))}${task.threadId ? ` <#${task.threadId}>` : ""}`,
     ),
   ];
   if (!rows.length)
@@ -259,6 +272,34 @@ export function createIdobataMessageHandler({
     if (command === "help") return reply(IDOBATA_HELP);
     if (command === "status") {
       return reply(taskStatus(taskQueue?.list() ?? [], session, argument));
+    }
+    if (command === "result") {
+      if (!/^[a-zA-Z0-9_-]+$/.test(argument))
+        return reply(
+          "`/ido result タスクID` と入力してください。IDは `/ido status` で確認できます。",
+        );
+      const result = taskQueue?.getTaskResult?.(argument);
+      if (!result)
+        return reply(
+          "そのタスクは見つかりません。`/ido status` でIDを確認してください。",
+        );
+      const current = `現在: ${displayTaskState(result.currentState)}${result.currentRunRevision ? ` · 実行版 ${result.currentRunRevision}` : ""}`;
+      if (!result.result)
+        return reply(
+          `\`${result.id}\` ${current}\n保存済みの完了結果はまだありません。`,
+        );
+      const text = [
+        `📦 **保存済みの結果** \`${result.id}\` ${result.runRevision ? `実行版 ${result.runRevision}` : "実行版は未確認"}`,
+        escapeDiscordMarkdown(boundText(result.title, 160)),
+        current,
+        result.verification,
+        result.threadId ? `詳細: <#${result.threadId}>` : "",
+        result.result,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      for (const chunk of splitDiscordText(text)) await reply(chunk);
+      return true;
     }
     if (command === "context") {
       for (const chunk of splitDiscordText(
