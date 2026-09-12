@@ -13,6 +13,7 @@ export const IDOBATA_HELP = [
   "`/ido status ページ番号` 通話状態・作業一覧 · `/ido stop タスクID`",
   "`/ido result タスクID` 保存済みの結果と検証記録",
   "`/ido quiet` 読み上げ停止",
+  "`/ido reconnect` 通話へ再接続",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
   "`/ido apply タスクID 実行版` 確認した差分を作業場所へ反映",
   "作業・中断・新規会議は設定済みの操作担当者が使えます。",
@@ -224,6 +225,7 @@ export function createIdobataMessageHandler({
   taskQueue,
   resetMeeting = async () => undefined,
   getVoiceStatus = () => "",
+  reconnectVoice,
 }) {
   const seen = new Set();
   return async (message) => {
@@ -337,6 +339,23 @@ export function createIdobataMessageHandler({
       return reply(
         "作業の起動・操作は設定済みの操作担当者に依頼してください。会話と質問には参加できます。",
       );
+    if (command === "reconnect") {
+      if (!reconnectVoice)
+        return reply("この接続では通話の再接続を操作できません。");
+      await reply("通話の接続を確認しています。作業はそのまま続行します。");
+      const result = await reconnectVoice();
+      return reply(
+        result === "connected"
+          ? "通話に接続しました。"
+          : result === "busy"
+            ? "通話の再接続は進行中です。`/ido status` で確認できます。"
+            : result === "stopped"
+              ? "Botを停止しているため再接続しませんでした。"
+              : result === "unavailable"
+                ? "通話接続が終了しているため再利用できません。Botを再起動してください。"
+                : "通話へ再接続できませんでした。Botの通話権限と接続状態を確認して、もう一度 `/ido reconnect` を実行してください。",
+      );
+    }
     if (command === "quiet") {
       const result = await session.silenceSpeech?.();
       return reply(

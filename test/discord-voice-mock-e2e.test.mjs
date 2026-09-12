@@ -283,15 +283,21 @@ test("text status reports voice reconnection failure and later recovery without 
   connection.state = { status: VoiceConnectionStatus.Ready };
   connection.receiver = { speaking: new EventEmitter() };
   connection.destroy = async () => {};
+  let rejoinCalls = 0;
+  let disconnected = false;
   connection.rejoin = () => {
-    connection.state = { status: VoiceConnectionStatus.Connecting };
+    rejoinCalls += 1;
+    connection.state = {
+      status: disconnected
+        ? VoiceConnectionStatus.Connecting
+        : VoiceConnectionStatus.Ready,
+    };
     return true;
   };
   let releaseRecovery;
   const recovery = new Promise((resolve) => {
     releaseRecovery = resolve;
   });
-  let disconnected = false;
   const service = await startDiscordVoiceCodex({
     config: { ...config, powerMode: false },
     client,
@@ -319,16 +325,18 @@ test("text status reports voice reconnection failure and later recovery without 
     return service.stop();
   });
   let sequence = 0;
-  const readStatus = async () => {
-    const before = posts.length;
+  const sendCommand = (content, userId = config.allowedUserId) =>
     client.emit("messageCreate", {
-      id: `status-${++sequence}`,
-      author: { id: config.allowedUserId },
+      id: `command-${++sequence}`,
+      author: { id: userId },
       guildId: config.guildId,
       channelId: config.textChannelId,
       channel,
-      content: "!ido status",
+      content,
     });
+  const readStatus = async () => {
+    const before = posts.length;
+    sendCommand("!ido status");
     await eventually(() =>
       posts.slice(before).some((text) => text.startsWith("通話:")),
     );
@@ -339,14 +347,28 @@ test("text status reports voice reconnection failure and later recovery without 
   connection.state = { status: VoiceConnectionStatus.Disconnected };
   connection.emit(VoiceConnectionStatus.Disconnected);
   assert.match(await readStatus(), /通話: 再接続中/);
+  sendCommand("!ido reconnect", "visitor");
+  await eventually(() => posts.some((text) => /操作担当者に依頼/.test(text)));
+  sendCommand("!ido reconnect");
+  await eventually(() => posts.some((text) => /再接続は進行中/.test(text)));
+  assert.equal(rejoinCalls, 0);
   releaseRecovery();
   await eventually(() =>
     posts.some((text) => /再接続できませんでした/.test(text)),
   );
   assert.equal(connection.state.status, VoiceConnectionStatus.Connecting);
   assert.match(await readStatus(), /通話: 切断.*音声は受信していません/);
-  connection.state = { status: VoiceConnectionStatus.Ready };
+  assert.equal(rejoinCalls, 1);
+  disconnected = false;
+  sendCommand("!ido reconnect");
+  await eventually(() => posts.some((text) => text === "通話に接続しました。"));
+  assert.equal(rejoinCalls, 2);
   assert.match(await readStatus(), /通話: 接続済み/);
+  sendCommand("!ido reconnect");
+  await eventually(
+    () => posts.filter((text) => text === "通話に接続しました。").length === 2,
+  );
+  assert.equal(rejoinCalls, 2);
 });
 
 test("Discord task cards expose a stable log link and readable state", () => {

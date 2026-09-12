@@ -759,7 +759,7 @@ export async function startDiscordVoiceCodex({
             if (serviceClosing) return;
             voiceRecoveryFailed = true;
             await postText(
-              "⚠️ 通話との接続が切れ、再接続できませんでした。音声は受信していません。テキストで作業を続けられます。通話を復旧するにはBotを再起動してください。",
+              "⚠️ 通話との接続が切れ、再接続できませんでした。音声は受信していません。テキストで作業を続けられます。操作担当者は `/ido reconnect` で再接続を試せます。",
             ).catch(() => undefined);
           }
         } finally {
@@ -898,13 +898,39 @@ export async function startDiscordVoiceCodex({
         if (state === VoiceConnectionStatus.Ready) return "通話: 接続済み";
         if (reconnecting) return "通話: 再接続中（音声受信は中断）";
         if (voiceRecoveryFailed || state === VoiceConnectionStatus.Disconnected)
-          return "通話: 切断（音声は受信していません）。復旧にはBotを再起動してください。";
+          return "通話: 切断（音声は受信していません）。`/ido reconnect` で再接続を試せます。";
         if (
           state === VoiceConnectionStatus.Connecting ||
           state === VoiceConnectionStatus.Signalling
         )
           return "通話: 接続準備中";
         return "通話: 接続状態は未確認";
+      },
+      reconnectVoice: async () => {
+        if (serviceClosing) return "stopped";
+        if (connection.state?.status === VoiceConnectionStatus.Destroyed)
+          return "unavailable";
+        if (connection.state?.status === VoiceConnectionStatus.Ready)
+          return "connected";
+        if (reconnecting) return "busy";
+        reconnecting = true;
+        voiceRecoveryFailed = false;
+        try {
+          if (!connection.rejoin?.())
+            throw new Error("Voice rejoin unavailable");
+          await (dependencies.entersState ?? entersState)(
+            connection,
+            VoiceConnectionStatus.Ready,
+            20_000,
+          );
+          return serviceClosing ? "stopped" : "connected";
+        } catch {
+          if (serviceClosing) return "stopped";
+          voiceRecoveryFailed = true;
+          return "failed";
+        } finally {
+          reconnecting = false;
+        }
       },
     });
     const handleInteraction = createIdobataInteractionHandler({
