@@ -331,6 +331,8 @@ export function describeDiscordVoiceConfig(config) {
     listenToEveryone: config.listenToEveryone,
     powerMode: config.powerMode,
     voiceMode: config.voiceMode,
+    operatorUserCount: config.operatorUserIds?.length ?? 0,
+    requireWakeWord: config.requireWakeWord,
     immediateReactions: config.immediateReactions,
     silentMessages: config.silentMessages,
     workingDirectory: config.workingDirectory,
