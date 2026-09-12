@@ -2430,6 +2430,20 @@ export class DiscordVoiceMeetingSession {
         )
           this.pendingControls.push(control);
       }
+      const conversationReply =
+        !observation.tasks.length &&
+        !observation.taskControls.length &&
+        observation.shouldReply &&
+        statements.some((statement) => !statement.handledAction)
+          ? observation.reply
+          : "";
+      if (conversationReply)
+        this.pendingControls.push({
+          type: "reply",
+          requestKey: `${this.meetingId}:reply:${this.revision}`,
+          notification: conversationReply,
+          spokenNotification: speechExcerpt(conversationReply),
+        });
       for (const statement of statements) statement.observed = true;
       this.statements = this.statements.filter(
         (statement) => !statement.observed || !statement.archived,
@@ -2444,12 +2458,7 @@ export class DiscordVoiceMeetingSession {
 
       const reply = acceptedTasks.length
         ? `タスクを追加しました：${acceptedTasks.map((task) => task.title).join("、")}`
-        : !observation.tasks.length &&
-            !observation.taskControls.length &&
-            observation.shouldReply &&
-            statements.some((statement) => !statement.handledAction)
-          ? observation.reply
-          : "";
+        : "";
       if (reply) {
         for (const chunk of splitDiscordText(reply)) {
           await withTimeout(
@@ -2478,7 +2487,7 @@ export class DiscordVoiceMeetingSession {
       this.#log("meeting_observation_completed", {
         elapsedMs: Date.now() - startedAt,
         statements: statements.length,
-        replied: Boolean(reply),
+        replied: Boolean(reply || conversationReply),
         tasks: acceptedTasks.length,
       });
       if (
@@ -2543,23 +2552,29 @@ export class DiscordVoiceMeetingSession {
           await this.persist();
         }
         this.controlsAttempted.add(control);
-        await withTimeout(
-          (signal) =>
-            this.dependencies.postText(control.notification, { signal }),
-          this.stageTimeouts.posting,
-          "posting saved control receipt",
-          this.shutdownController.signal,
-        );
+        const chunks = splitDiscordText(control.notification);
+        for (
+          let index = control.deliveredChunks ?? 0;
+          index < chunks.length;
+          index += 1
+        ) {
+          await withTimeout(
+            (signal) => this.dependencies.postText(chunks[index], { signal }),
+            this.stageTimeouts.posting,
+            "posting saved meeting notification",
+            this.shutdownController.signal,
+          );
+          control.deliveredChunks = index + 1;
+          await this.persist();
+        }
         this.pendingControls = this.pendingControls.filter(
           (pending) => pending !== control,
         );
         await this.persist();
+        const spoken = control.spokenNotification ?? control.notification;
+        if (!spoken) continue;
         const audio = await withTimeout(
-          (signal) =>
-            this.dependencies.synthesize(
-              control.spokenNotification ?? control.notification,
-              { signal },
-            ),
+          (signal) => this.dependencies.synthesize(spoken, { signal }),
           this.stageTimeouts.synthesizing,
           "speaking control receipt",
           this.shutdownController.signal,

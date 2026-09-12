@@ -64,7 +64,9 @@ function taskStatus(tasks, session, argument) {
     ...(session.pendingControls ?? []).map((control) =>
       control.type === "status"
         ? "作業状況の返信を再試行中"
-        : `操作の保存・通知を再試行中 · ${control.taskId ?? "対象確認待ち"}`,
+        : control.type === "reply"
+          ? "会話への回答を再送待ち"
+          : `操作の保存・通知を再試行中 · ${control.taskId ?? "対象確認待ち"}`,
     ),
     ...ordered.map(
       (task) =>
