@@ -25,6 +25,70 @@ function queue(options = {}) {
     ...options,
   });
 }
+
+for (const initialState of ["cancelled", "failed"]) {
+  test(`a stalled ${initialState} notice does not hold a worker slot or overwrite a resumed task`, async (t) => {
+    let releaseNotice,
+      cancelNoticeStarted = false,
+      runCount = 0;
+    const notice = new Promise((resolve) => {
+      releaseNotice = resolve;
+    });
+    const cards = [];
+    const tasks = queue({
+      concurrency: 1,
+      createTaskThread: async (task) => ({
+        threadId: task.id,
+        post: async (content) => {
+          if (
+            content.includes(
+              initialState === "cancelled"
+                ? "Codexタスク中止"
+                : "Codexタスク失敗",
+            )
+          ) {
+            cancelNoticeStarted = true;
+            await notice;
+          }
+        },
+        update: async ({ state }) => cards.push(state),
+      }),
+      runTask: async (_task, { signal }) => {
+        if (++runCount === 1) {
+          if (initialState === "failed") throw new Error("synthetic failure");
+          await new Promise((_resolve, reject) =>
+            signal.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            }),
+          );
+        }
+        return "resumed result";
+      },
+    });
+    t.after(async () => {
+      releaseNotice();
+      await tasks.stop();
+    });
+    await tasks.enqueueDurable({ title: "work" });
+    await eventually(() => runCount === 1);
+    const id = tasks.list()[0].id;
+    if (initialState === "cancelled")
+      await tasks.handleVoiceControlDurable({ type: "stop", taskId: id });
+    await eventually(() => cancelNoticeStarted);
+    await eventually(() => !tasks.tasks.get(id).executing);
+    await tasks.handleVoiceControlDurable({
+      type: "instruction",
+      taskId: id,
+      instruction: "continue",
+    });
+    await eventually(
+      () => runCount === 2 && tasks.list()[0].state === "completed",
+    );
+    releaseNotice();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cards.at(-1), "completed");
+  });
+}
 const instruction = (taskId, content, requestKey) => ({
   taskId,
   content,

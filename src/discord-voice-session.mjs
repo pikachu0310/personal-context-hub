@@ -609,6 +609,7 @@ export class DiscordVoiceTaskQueue {
     this.taskTimeoutMs = taskTimeoutMs;
     this.queue = [];
     this.running = new Set();
+    this.notifications = new Set();
     this.tasksByThreadId = new Map();
     this.active = 0;
     this.closed = false;
@@ -1372,7 +1373,10 @@ export class DiscordVoiceTaskQueue {
         task.controlPersistence,
         ...(task.controlPersistenceByKey?.values() ?? []),
       ]),
-    ]).then(() => this.persist({ strict: true }));
+    ]).then(async () => {
+      await Promise.allSettled([...this.notifications]);
+      return this.persist({ strict: true });
+    });
     return this.stopping;
   }
 
@@ -1476,7 +1480,7 @@ export class DiscordVoiceTaskQueue {
           }),
         DEFAULT_STAGE_TIMEOUTS.posting,
         "updating task status",
-        this.shutdownController.signal,
+        task.controller.signal,
       );
       await withTimeout(
         (signal) =>
@@ -1488,7 +1492,7 @@ export class DiscordVoiceTaskQueue {
           ),
         DEFAULT_STAGE_TIMEOUTS.posting,
         "posting task start",
-        this.shutdownController.signal,
+        task.controller.signal,
       );
       let progressPosts = 0;
       let lastProgress = "";
@@ -1628,15 +1632,12 @@ export class DiscordVoiceTaskQueue {
           elapsedMs: Date.now() - startedAt,
           errorCode: voiceErrorCode(error),
         });
-        await (postTaskText ?? this.postText)(
+        this.#queueTaskNotification(
+          task,
+          taskSurface,
+          "failed",
           `⚠️ **Codexタスク失敗** \`${task.id}\`\n${voiceErrorMessage(error)}`,
-        ).catch(() => undefined);
-        await Promise.resolve(
-          taskSurface?.update?.({
-            state: "failed",
-            elapsedMs: Date.now() - task.createdAt,
-          }),
-        ).catch(() => undefined);
+        );
       }
     } finally {
       await task.workerSettlement;
@@ -1660,18 +1661,60 @@ export class DiscordVoiceTaskQueue {
     task.state = "cancelled";
     await this.persist();
     if (!surface) return;
-    const post = typeof surface === "function" ? surface : surface.post;
-    await Promise.resolve(
-      post?.(
-        `⏹️ **Codexタスク中止** \`${task.id}\`${task.cancelledInstructionCount ? `\n未処理の追加指示 ${task.cancelledInstructionCount}件も破棄しました。` : ""}`,
-      ),
-    ).catch(() => undefined);
-    await Promise.resolve(
-      surface?.update?.({
-        state: "cancelled",
-        elapsedMs: Date.now() - task.createdAt,
-      }),
-    ).catch(() => undefined);
+    this.#queueTaskNotification(
+      task,
+      surface,
+      "cancelled",
+      `⏹️ **Codexタスク中止** \`${task.id}\`${task.cancelledInstructionCount ? `\n未処理の追加指示 ${task.cancelledInstructionCount}件も破棄しました。` : ""}`,
+    );
+  }
+
+  #queueTaskNotification(task, surface, state, content) {
+    const version = task.controlVersion ?? 0;
+    const revision = task.runRevision;
+    const current = () =>
+      task.state === state &&
+      (task.controlVersion ?? 0) === version &&
+      task.runRevision === revision;
+    const post =
+      typeof surface === "function"
+        ? surface
+        : (surface?.post ?? this.postText);
+    const notification = withTimeout(
+      async (signal) => {
+        signal.throwIfAborted();
+        if (!current()) return;
+        try {
+          await post(content, { signal });
+        } catch (error) {
+          if (!signal.aborted)
+            this.#log("task_notification_post_failed", {
+              taskId: task.id,
+              errorCode: voiceErrorCode(error),
+            });
+        }
+        signal.throwIfAborted();
+        if (current())
+          await surface?.update?.({
+            state,
+            elapsedMs: Date.now() - task.createdAt,
+            signal,
+            isCurrent: current,
+          });
+      },
+      DEFAULT_STAGE_TIMEOUTS.posting,
+      "posting task notification",
+      this.shutdownController.signal,
+    )
+      .catch((error) => {
+        if (!this.closed)
+          this.#log("task_notification_failed", {
+            taskId: task.id,
+            errorCode: voiceErrorCode(error),
+          });
+      })
+      .finally(() => this.notifications.delete(notification));
+    this.notifications.add(notification);
   }
 
   async #markInterrupted(surface, task) {

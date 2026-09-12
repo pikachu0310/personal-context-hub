@@ -429,8 +429,10 @@ export function createDiscordTaskCardUpdater(
   let updating = Promise.resolve();
   const update = (options = {}) => {
     const next = updating.then(async () => {
-      const { state, elapsedMs, pendingInstructions, signal } = options;
+      const { state, elapsedMs, pendingInstructions, signal, isCurrent } =
+        options;
       signal?.throwIfAborted();
+      if (isCurrent && !isCurrent()) return starter;
       const payload = {
         content: formatDiscordTaskCard(task, {
           state,
@@ -458,6 +460,8 @@ export function createDiscordTaskCardUpdater(
           if (error?.code !== RESTJSONErrorCodes.UnknownMessage) throw error;
         }
       }
+      signal?.throwIfAborted();
+      if (isCurrent && !isCurrent()) return starter;
       starter = await textChannel.send({
         ...createDiscordMessagePayload(payload.content, {
           silent,

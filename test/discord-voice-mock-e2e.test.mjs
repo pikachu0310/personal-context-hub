@@ -136,6 +136,58 @@ test("task cards retry transient edits and serialize replacement of a deleted ca
   assert.equal(card.starterId, "replacement");
 });
 
+test("a queued card update rechecks whether its cancellation is still current before editing Discord", async () => {
+  const edits = [];
+  let releaseFirst;
+  const firstEdit = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const starter = {
+    id: "card",
+    edit: async (payload) => {
+      edits.push(payload.content);
+      if (edits.length === 1) await firstEdit;
+      return starter;
+    },
+  };
+  const card = createDiscordTaskCardUpdater(
+    {},
+    { id: "task01", title: "work" },
+    "thread",
+    starter,
+  );
+  const running = card.update({ state: "running" });
+  let cancelled = true;
+  const old = card.update({ state: "cancelled", isCurrent: () => cancelled });
+  cancelled = false;
+  const completed = card.update({ state: "completed" });
+  releaseFirst();
+  await Promise.all([running, old, completed]);
+  assert.equal(edits.length, 2);
+  assert.ok(edits.every((content) => !content.includes("状態: **中止**")));
+  assert.match(edits.at(-1), /状態: \*\*完了\*\*/);
+  let stillCurrent = true;
+  const disappearing = createDiscordTaskCardUpdater(
+    {
+      send: async () =>
+        assert.fail("stale cancellation must not recreate a card"),
+    },
+    { id: "task01" },
+    "thread",
+    {
+      id: "deleted-card",
+      edit: async () => {
+        stillCurrent = false;
+        throw Object.assign(new Error("deleted"), { code: 10008 });
+      },
+    },
+  );
+  await disappearing.update({
+    state: "cancelled",
+    isCurrent: () => stillCurrent,
+  });
+});
+
 test("a missing restored card keeps the task thread and reuses its replacement identity after a lost acknowledgement", async () => {
   const task = {
     id: "task01",

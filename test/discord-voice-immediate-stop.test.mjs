@@ -104,6 +104,46 @@ test("stopping a task releases a worker waiting on a stalled progress notificati
   assert.equal(tasks.list()[0].state, "cancelled");
 });
 
+for (const stage of ["status", "start"]) {
+  test(`a stop during the initial ${stage} notification prevents the worker from starting`, async (t) => {
+    let release, blockedSignal;
+    const blocked = new Promise((resolve) => {
+      release = resolve;
+    });
+    const tasks = new DiscordVoiceTaskQueue({
+      logger: {},
+      postText: noop,
+      createTaskThread: async () => ({
+        update: async ({ state, signal }) => {
+          if (stage === "status" && state === "running") {
+            blockedSignal = signal;
+            await blocked;
+          }
+        },
+        post: async (content, { signal } = {}) => {
+          if (stage === "start" && content.includes("Codexタスク開始")) {
+            blockedSignal = signal;
+            await blocked;
+          }
+        },
+      }),
+      runTask: async () =>
+        assert.fail("a task stopped before startup cannot invoke a worker"),
+    });
+    t.after(async () => {
+      release();
+      await tasks.stop();
+    });
+    await tasks.enqueueDurable({ title: "work" });
+    await eventually(() => blockedSignal);
+    const id = tasks.list()[0].id;
+    await tasks.handleVoiceControlDurable({ type: "stop", taskId: id });
+    await eventually(() => !tasks.tasks.get(id).executing);
+    assert.equal(blockedSignal.aborted, true);
+    assert.equal(tasks.list()[0].state, "cancelled");
+  });
+}
+
 test("a completed authorized stop bypasses an occupied observer and invalidates its older instruction", async (t) => {
   let workerSignal,
     releaseObservation,
