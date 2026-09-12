@@ -2572,7 +2572,12 @@ export class DiscordVoiceMeetingSession {
                 replyContext
                   ? `↩️ **${replyContext}**\n${chunks[index]}`
                   : chunks[index],
-                { signal },
+                {
+                  signal,
+                  idempotencyKey: control.requestKey
+                    ? `${control.requestKey}:text:${index}`
+                    : undefined,
+                },
               ),
             this.stageTimeouts.posting,
             "posting saved meeting notification",

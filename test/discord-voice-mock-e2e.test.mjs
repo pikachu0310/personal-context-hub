@@ -363,6 +363,11 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
     ),
   );
 
+  await service.session.dependencies.postText("delivery identity check", {
+    idempotencyKey: "synthetic-reply:chunk:0",
+  });
+  assert.equal(posts.at(-1).enforceNonce, true);
+  assert.match(posts.at(-1).nonce, /^[a-f0-9]{24}$/);
   await service.stop();
   await service.stop();
   assert.equal(connectionDestroyCalls, 1);

@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
@@ -292,11 +292,23 @@ export function subscribeToAllowedSpeaker({
   });
 }
 
-export function createDiscordMessagePayload(content, { silent = true } = {}) {
+export function createDiscordMessagePayload(
+  content,
+  { silent = true, idempotencyKey } = {},
+) {
   return {
     content,
     allowedMentions: { parse: [] },
     ...(silent ? { flags: MessageFlags.SuppressNotifications } : {}),
+    ...(idempotencyKey
+      ? {
+          nonce: createHash("sha256")
+            .update(String(idempotencyKey))
+            .digest("hex")
+            .slice(0, 24),
+          enforceNonce: true,
+        }
+      : {}),
   };
 }
 
@@ -617,8 +629,13 @@ export async function startDiscordVoiceCodex({
       throw new Error("Configured text channel cannot receive Bot messages.");
     }
     const messageOptions = { silent: config.silentMessages !== false };
-    const postText = (content) =>
-      textChannel.send(createDiscordMessagePayload(content, messageOptions));
+    const postText = (content, { idempotencyKey } = {}) =>
+      textChannel.send(
+        createDiscordMessagePayload(content, {
+          ...messageOptions,
+          idempotencyKey,
+        }),
+      );
     const createTaskThread = createDiscordTaskThread(
       textChannel,
       messageOptions,

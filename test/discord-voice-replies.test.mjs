@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createDiscordMessagePayload } from "../src/discord-voice-server.mjs";
 import {
   DiscordVoiceMeetingSession,
   splitDiscordText,
@@ -21,6 +22,54 @@ const meeting = (options = {}) =>
     ...options,
   });
 
+test("a reply accepted by Discord but missing its acknowledgement reuses its delivery identity after restart", async (t) => {
+  let saved;
+  const received = new Map();
+  const attempts = [];
+  const postText = async (text, options) => {
+    const payload = createDiscordMessagePayload(text, options);
+    assert.equal(payload.enforceNonce, true);
+    assert.match(payload.nonce, /^[a-f0-9]{24}$/);
+    attempts.push(payload.nonce);
+    if (received.has(payload.nonce)) return received.get(payload.nonce);
+    received.set(payload.nonce, { id: "accepted-message", content: text });
+    throw new Error("acknowledgement lost after Discord accepted the message");
+  };
+  const original = meeting({
+    checkpoint: async (value) => {
+      saved = structuredClone(value);
+    },
+    observe: async () =>
+      JSON.stringify({
+        minutes: "answer ready",
+        shouldReply: true,
+        reply: "保存する回答",
+      }),
+    postText,
+  });
+  t.after(() => original.stop());
+  await original.addText("質問です", { userId: "member" });
+  await original.observeNow();
+  const restored = meeting({
+    initialState: saved,
+    postText,
+    observe: async () => assert.fail("delivery retry cannot invoke Codex"),
+  });
+  t.after(() => restored.stop());
+  await restored.observeNow();
+  assert.equal(received.size, 1);
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0], attempts[1]);
+  assert.equal(restored.pendingControls.length, 0);
+  assert.notEqual(
+    createDiscordMessagePayload("another answer", {
+      idempotencyKey: "different-request",
+    }).nonce,
+    attempts[0],
+  );
+  assert.equal(createDiscordMessagePayload("ordinary post").nonce, undefined);
+});
+
 test("a partially delivered conversation answer resumes after restart without repeating analysis or sent chunks", async (t) => {
   let saved;
   let attempts = 0;
@@ -31,6 +80,7 @@ test("a partially delivered conversation answer resumes after restart without re
   const chunks = splitDiscordText(answer);
   assert.ok(chunks.length > 1);
   const delivered = [];
+  const deliveryKeys = [];
   const original = meeting({
     checkpoint: async (value) => {
       saved = structuredClone(value);
@@ -41,7 +91,8 @@ test("a partially delivered conversation answer resumes after restart without re
         shouldReply: true,
         reply: answer,
       }),
-    postText: async (text) => {
+    postText: async (text, { idempotencyKey }) => {
+      deliveryKeys.push(idempotencyKey);
       if (++attempts === 2) throw new Error("temporary Discord outage");
       delivered.push(text);
     },
@@ -55,12 +106,17 @@ test("a partially delivered conversation answer resumes after restart without re
     observe: async () => assert.fail("saved answer must not be regenerated"),
     controlTask: async () =>
       assert.fail("an answer cannot execute a task control"),
-    postText: async (text) => delivered.push(text),
+    postText: async (text, { idempotencyKey }) => {
+      deliveryKeys.push(idempotencyKey);
+      delivered.push(text);
+    },
   });
   t.after(() => restored.stop());
   await restored.observeNow();
   await restored.observeNow();
   assert.deepEqual(delivered, chunks);
+  assert.notEqual(deliveryKeys[0], deliveryKeys[1]);
+  assert.equal(deliveryKeys[1], deliveryKeys[2]);
   assert.equal(restored.pendingControls.length, 0);
 });
 
