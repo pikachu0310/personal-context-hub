@@ -18,6 +18,7 @@ import {
   selectTaskProfile,
 } from "./discord-voice-workspace.mjs";
 import { VoiceServiceError } from "./discord-voice-errors.mjs";
+import { identifyVerificationCommand } from "./discord-voice-evidence.mjs";
 
 const CODEX_ENVIRONMENT_ALLOWLIST = Object.freeze([
   "HOME",
@@ -219,7 +220,9 @@ export function describePowerTaskEvent(event) {
     case "web_search":
       return "🔎 Web検索を完了しました。";
     case "command_execution":
-      return item.status === "failed" || item.exit_code > 0
+      if (!Number.isInteger(item.exit_code))
+        return "⚙️ コマンドの終了通知を受信しましたが、終了コードは不明です。";
+      return item.status === "failed" || item.exit_code !== 0
         ? `⚠️ コマンドが失敗しました（終了コード: ${item.exit_code ?? "不明"}）。`
         : `⚙️ コマンドを実行しました（終了コード: ${item.exit_code ?? 0}）。`;
     case "file_change": {
@@ -539,10 +542,17 @@ export class CodexVoiceRunner {
       ? await this.workspaces.prepare(task)
       : this.config.workingDirectory;
     task.runRevision = (task.runRevision ?? 0) + 1;
-    await task.checkpoint?.();
     const profile = selectTaskProfile(task, this.config);
     task.profile = profile;
-    task.evidence ??= { commands: 0, failedCommands: 0, tests: [], files: [] };
+    task.evidence = {
+      runRevision: task.runRevision,
+      commands: 0,
+      failedCommands: 0,
+      unknownCommands: 0,
+      tests: [],
+      files: [],
+    };
+    await task.checkpoint?.();
     const taskOptions = {
       workingDirectory,
       ...profile,
@@ -590,15 +600,15 @@ export class CodexVoiceRunner {
           event.item?.type === "command_execution"
         ) {
           task.evidence.commands += 1;
-          if (event.item.exit_code !== 0) task.evidence.failedCommands += 1;
-          const testKind = String(event.item.command ?? "").match(
-            /(?:node\s+--test|npm\s+(?:run\s+)?(?:test|check|lint|verify)|pytest|go\s+test|cargo\s+test)/,
-          )?.[0];
-          if (testKind)
-            task.evidence.tests.push({
-              command: testKind,
-              exitCode: event.item.exit_code ?? null,
-            });
+          if (!Number.isInteger(event.item.exit_code))
+            task.evidence.unknownCommands += 1;
+          else if (event.item.exit_code !== 0)
+            task.evidence.failedCommands += 1;
+          const verification = identifyVerificationCommand(
+            event.item.command,
+            event.item.exit_code,
+          );
+          if (verification) task.evidence.tests.push(verification);
         }
         if (
           event.type === "item.completed" &&

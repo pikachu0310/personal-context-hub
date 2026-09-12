@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import { randomUUID } from "node:crypto";
+import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -335,6 +336,7 @@ export function formatDiscordTaskCard(
     task.artifacts?.runRevision
       ? `実行版: **${task.artifacts.runRevision}**${task.appliedRevision === task.artifacts.runRevision ? " · 反映済み" : ""}`
       : "",
+    state === "completed" ? formatVerificationEvidence(task.evidence) : "",
   ].join("\n");
 }
 

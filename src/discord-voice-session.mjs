@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SpeechTurnAssembler } from "./discord-voice-utterances.mjs";
+import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
 import {
   VoiceServiceError,
   voiceErrorCode,
@@ -940,7 +941,11 @@ export class DiscordVoiceTaskQueue {
         const post = typeof surface === "function" ? surface : surface?.post;
         if (!post) throw new Error("Task result surface is unavailable");
         const stages = [
-          () => post("📦 **実行結果**"),
+          () =>
+            post(
+              "📦 **実行結果**\n" +
+                formatVerificationEvidence(delivery.evidence),
+            ),
           ...splitDiscordText(delivery.result).map(
             (chunk) => () => post(chunk),
           ),
@@ -993,6 +998,7 @@ export class DiscordVoiceTaskQueue {
               title: task.title,
               state: delivery.state,
               result: delivery.result,
+              verification: formatVerificationEvidence(delivery.evidence),
               threadId: surface?.threadId ?? task.threadId,
               artifacts: delivery.artifacts,
               meetingId: task.meetingId,
@@ -1726,12 +1732,13 @@ export class DiscordVoiceMeetingSession {
       JSON.stringify(
         this.results
           .slice(-5)
-          .map(({ id, title, state, result, threadId }) => ({
+          .map(({ id, title, state, result, threadId, verification }) => ({
             id,
             title: boundText(title, 120),
             state,
             result: boundText(result, 1000),
             threadId,
+            verification,
           })),
       ),
     ].join("\n\n");
@@ -1763,6 +1770,7 @@ export class DiscordVoiceMeetingSession {
         "** `" +
         result.id +
         "`\n" +
+        (result.verification ? result.verification + "\n" : "") +
         boundText(result.result, 900) +
         "\n" +
         (result.threadId ? "詳細: <#" + result.threadId + ">" : ""),
