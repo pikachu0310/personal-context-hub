@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -31,6 +32,7 @@ import {
 import { readDiscordTokenStore } from "./discord-config.mjs";
 import {
   PcmTurnBuffer,
+  PcmSegmentBuffer,
   ttsPcm24kMonoToDiscordRaw,
   wrapPcmAsWav,
 } from "./discord-voice-audio.mjs";
@@ -152,13 +154,52 @@ export function subscribeToAllowedSpeaker({
       channels: 2,
       frameSize: 960,
     });
-    const turnBuffer = new PcmTurnBuffer(config);
+    const segmented =
+      config.voiceMode === "meeting" &&
+      typeof session.finishUtterance === "function";
+    const turnBuffer = segmented
+      ? new PcmSegmentBuffer(config)
+      : new PcmTurnBuffer(config);
+    const utteranceId = randomUUID();
+    if (segmented)
+      session.beginUtterance?.(utteranceId, {
+        userId,
+        speakerName: resolveSpeakerName(userId),
+        startedAt,
+      });
+    let segmentIndex = 0;
+    let segmentedBytes = 0;
+    let utteranceFinished = false;
+    const enqueueSegment = (pcm) => {
+      const accepted = session.enqueue(wrapPcmAsWav(pcm), {
+        userId,
+        speakerName: resolveSpeakerName(userId),
+        startedAt: startedAt + Math.floor(segmentedBytes / 192),
+        utteranceId,
+        segmentIndex: segmentIndex++,
+      });
+      segmentedBytes += pcm.length;
+      return accepted;
+    };
+    const finishUtterance = (incomplete = false) => {
+      if (!segmented || utteranceFinished) return;
+      utteranceFinished = true;
+      void session
+        .finishUtterance(utteranceId, segmentIndex, { incomplete })
+        .catch((error) =>
+          logAudioFailure(logger, "utterance_finalize_failed", error),
+        );
+    };
     let discardedTurn = false;
     let finalized = false;
 
     decoder.on("data", (chunk) => {
       if (discardedTurn) return;
       try {
+        if (segmented) {
+          for (const pcm of turnBuffer.push(chunk)) enqueueSegment(pcm);
+          return;
+        }
         if (turnBuffer.push(chunk)) return;
         discardedTurn = true;
         active.delete(userId);
@@ -169,6 +210,7 @@ export function subscribeToAllowedSpeaker({
         );
       } catch (error) {
         discardedTurn = true;
+        finishUtterance(true);
         active.delete(userId);
         opusStream.destroy();
         decoder.destroy();
@@ -180,16 +222,21 @@ export function subscribeToAllowedSpeaker({
     opusStream.once("error", (error) => {
       discardedTurn = true;
       finalized = true;
+      finishUtterance(true);
       release();
       decoder.destroy();
       logAudioFailure(logger, "receive_failed", error);
       void notify(AUDIO_RETRY_MESSAGE);
     });
     opusStream.once("close", release);
-    decoder.once("close", release);
+    decoder.once("close", () => {
+      release();
+      if (!finalized) finishUtterance(true);
+    });
     decoder.once("error", (error) => {
       discardedTurn = true;
       finalized = true;
+      finishUtterance(true);
       release();
       opusStream.destroy();
       logAudioFailure(logger, "decode_failed", error);
@@ -201,6 +248,12 @@ export function subscribeToAllowedSpeaker({
       release();
       if (discardedTurn) return;
       try {
+        if (segmented) {
+          const remaining = turnBuffer.finish();
+          if (remaining) enqueueSegment(remaining);
+          finishUtterance();
+          return;
+        }
         const completed = turnBuffer.finish();
         if (completed.status !== "accepted") return;
         if (
@@ -215,6 +268,7 @@ export function subscribeToAllowedSpeaker({
           );
         }
       } catch (error) {
+        finishUtterance(true);
         logAudioFailure(logger, "receive_finalize_failed", error);
         void notify(AUDIO_RETRY_MESSAGE);
       }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { SpeechTurnAssembler } from "./discord-voice-utterances.mjs";
 import {
   VoiceServiceError,
   voiceErrorCode,
@@ -1551,6 +1552,7 @@ export class DiscordVoiceMeetingSession {
     this.activeTranscriptions = 0;
     this.activeTranscriptionJobs = new Set();
     this.activeOperations = new Set();
+    this.archiveOperations = new WeakMap();
     this.meetingId = initialState.meetingId ?? randomUUID();
     this.statements = initialState.statements ?? [];
     this.sequence = initialState.sequence ?? 0;
@@ -1558,6 +1560,9 @@ export class DiscordVoiceMeetingSession {
     this.results = initialState.results ?? [];
     this.pendingTasks = initialState.pendingTasks ?? [];
     this.pendingControls = initialState.pendingControls ?? [];
+    this.speechTurns = new SpeechTurnAssembler(initialState.speechTurns ?? []);
+    this.speechTurns.interrupt();
+    this.statements.push(...this.speechTurns.drain());
     this.revision = initialState.revision ?? 0;
     this.resetting = false;
     this.meetingBoundary = Promise.resolve();
@@ -1582,8 +1587,21 @@ export class DiscordVoiceMeetingSession {
   enqueue(wav, metadata = {}) {
     if (!Buffer.isBuffer(wav)) throw new TypeError("wav must be a Buffer");
     if (this.closed) return false;
+    const turn = metadata.utteranceId
+      ? this.speechTurns.register(metadata.utteranceId, metadata.segmentIndex, {
+          meetingId: this.meetingId,
+          sequence:
+            this.speechTurns.turns.get(metadata.utteranceId)?.sequence ??
+            (this.resetting ? undefined : ++this.sequence),
+          userId: metadata.userId,
+          speakerName: metadata.speakerName,
+          startedAt: metadata.startedAt ?? Date.now(),
+        })
+      : undefined;
     const pending = this.audioQueue.length + this.activeTranscriptions;
     if (pending >= this.maximumPendingTranscriptions) {
+      if (turn)
+        this.speechTurns.settle(turn.id, metadata.segmentIndex, undefined);
       this.droppedAudio += 1;
       this.#log("meeting_audio_dropped", { pending });
       this.#queueLiveUpdate();
@@ -1591,7 +1609,8 @@ export class DiscordVoiceMeetingSession {
     }
     this.audioQueue.push({
       id: randomUUID(),
-      sequence: this.resetting ? undefined : (this.sequence += 1),
+      sequence:
+        turn?.sequence ?? (this.resetting ? undefined : (this.sequence += 1)),
       wav,
       metadata,
       queuedAt: Date.now(),
@@ -1610,12 +1629,43 @@ export class DiscordVoiceMeetingSession {
       results: this.results,
       pendingTasks: structuredClone(this.pendingTasks),
       pendingControls: structuredClone(this.pendingControls),
+      speechTurns: this.speechTurns.snapshot(),
     });
   }
 
   addText(text, metadata = {}) {
     if (this.closed) return Promise.resolve(false);
     return this.#trackOperation(this.#addText(text, metadata));
+  }
+
+  finishUtterance(id, count, { incomplete = false } = {}) {
+    if (this.closed) return Promise.resolve(false);
+    this.speechTurns.finish(id, count, incomplete);
+    return this.#trackOperation(this.#flushSpeechTurns());
+  }
+
+  beginUtterance(id, metadata = {}) {
+    if (this.closed) return false;
+    this.speechTurns.register(id, 0, {
+      meetingId: this.meetingId,
+      sequence: this.resetting ? undefined : ++this.sequence,
+      userId: metadata.userId,
+      speakerName: metadata.speakerName,
+      startedAt: metadata.startedAt ?? Date.now(),
+    });
+    return true;
+  }
+
+  async #flushSpeechTurns() {
+    const completed = this.speechTurns.drain();
+    this.statements.push(...completed);
+    for (const statement of completed) await this.#archiveStatement(statement);
+    await this.persist();
+    this.#queueLiveUpdate();
+    if (completed.length && this.immediateReactions) {
+      this.immediateObservationRequested = true;
+      this.#scheduleImmediateObservation();
+    }
   }
 
   async #addText(text, metadata = {}) {
@@ -1726,7 +1776,8 @@ export class DiscordVoiceMeetingSession {
       this.observing ||
       this.activeTextInputs ||
       this.activeTranscriptions ||
-      this.audioQueue.length
+      this.audioQueue.length ||
+      this.speechTurns.turns.size
     )
       return false;
     this.resetting = true;
@@ -1767,8 +1818,21 @@ export class DiscordVoiceMeetingSession {
       this.#log("meeting_reset_failed", { errorCode: voiceErrorCode(error) });
       return false;
     } finally {
+      for (const turn of this.speechTurns.turns.values()) {
+        if (turn.sequence === undefined) {
+          turn.sequence = ++this.sequence;
+          turn.meetingId = this.meetingId;
+        }
+      }
       for (const item of this.audioQueue)
-        if (item.sequence === undefined) item.sequence = ++this.sequence;
+        if (item.sequence === undefined) {
+          const turn = this.speechTurns.turns.get(item.metadata.utteranceId);
+          if (turn) {
+            turn.sequence ??= ++this.sequence;
+            turn.meetingId = this.meetingId;
+            item.sequence = turn.sequence;
+          } else item.sequence = ++this.sequence;
+        }
       this.resetting = false;
       release();
       this.#drainTranscriptions();
@@ -2103,6 +2167,8 @@ export class DiscordVoiceMeetingSession {
       ]);
       await this.liveUpdate;
       try {
+        this.speechTurns.interrupt();
+        await this.#flushSpeechTurns();
         await this.#archivePendingStatements();
         await this.persist();
       } finally {
@@ -2142,6 +2208,7 @@ export class DiscordVoiceMeetingSession {
   async #transcribeItem(item) {
     const startedAt = Date.now();
     let accepted = false;
+    let segmentSettled = false;
     try {
       const text = boundText(
         await withTimeout(
@@ -2153,6 +2220,15 @@ export class DiscordVoiceMeetingSession {
         MAX_TRANSCRIPT_CHARACTERS,
       );
       if (!text) {
+        if (item.metadata.utteranceId) {
+          this.speechTurns.settle(
+            item.metadata.utteranceId,
+            item.metadata.segmentIndex,
+            { text: "", archived: true },
+          );
+          segmentSettled = true;
+          await this.#flushSpeechTurns();
+        }
         this.#log("meeting_transcript_discarded", {
           sequence: item.sequence,
           elapsedMs: Date.now() - startedAt,
@@ -2171,9 +2247,22 @@ export class DiscordVoiceMeetingSession {
         observed: false,
         archived: false,
       };
-      this.statements.push(statement);
-      await this.#archiveStatement(statement);
-      await this.persist();
+      if (item.metadata.utteranceId) {
+        statement.utteranceId = item.metadata.utteranceId;
+        statement.segmentIndex = item.metadata.segmentIndex;
+        await this.#archiveStatement(statement);
+        this.speechTurns.settle(
+          item.metadata.utteranceId,
+          item.metadata.segmentIndex,
+          statement,
+        );
+        segmentSettled = true;
+        await this.#flushSpeechTurns();
+      } else {
+        this.statements.push(statement);
+        await this.#archiveStatement(statement);
+        await this.persist();
+      }
       this.#log("meeting_transcript_completed", {
         sequence: item.sequence,
         elapsedMs: Date.now() - startedAt,
@@ -2190,6 +2279,14 @@ export class DiscordVoiceMeetingSession {
         });
       }
     } finally {
+      if (item.metadata.utteranceId && !segmentSettled) {
+        this.speechTurns.settle(
+          item.metadata.utteranceId,
+          item.metadata.segmentIndex,
+          undefined,
+        );
+        await this.#flushSpeechTurns().catch(() => undefined);
+      }
       this.#queueLiveUpdate();
       if (accepted && this.immediateReactions) {
         this.immediateObservationRequested = true;
@@ -2204,6 +2301,10 @@ export class DiscordVoiceMeetingSession {
     );
     let content = formatMeetingTranscript(statements);
     const notices = [];
+    if (this.speechTurns.turns.size)
+      notices.push(
+        `${this.speechTurns.turns.size}件の発話を認識中。話し終わってから依頼を処理します`,
+      );
     if (this.droppedAudio) notices.push(`未処理音声 ${this.droppedAudio} 件`);
     if (this.failedTranscriptions)
       notices.push(`認識失敗 ${this.failedTranscriptions} 件`);
@@ -2228,8 +2329,28 @@ export class DiscordVoiceMeetingSession {
       });
   }
 
-  async #archiveStatement(statement) {
-    if (statement.archived) return true;
+  #archiveStatement(statement) {
+    if (statement.archived) return Promise.resolve(true);
+    if (this.archiveOperations.has(statement))
+      return this.archiveOperations.get(statement);
+    const operation = this.#writeArchiveStatement(statement);
+    this.archiveOperations.set(statement, operation);
+    void operation
+      .finally(() => this.archiveOperations.delete(statement))
+      .catch(() => undefined);
+    return operation;
+  }
+
+  async #writeArchiveStatement(statement) {
+    if (statement.archiveParts) {
+      for (const part of statement.archiveParts)
+        await this.#archiveStatement(part);
+      statement.archived = statement.archiveParts.every(
+        (part) => part.archived,
+      );
+      if (statement.archived) delete statement.archiveParts;
+      return statement.archived;
+    }
     try {
       await this.dependencies.archiveTranscript(statement);
       statement.archived = true;

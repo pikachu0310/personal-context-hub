@@ -90,3 +90,71 @@ export class PcmTurnBuffer {
     return { status: "accepted", pcm };
   }
 }
+
+// Keep continuous meeting audio bounded without discarding an entire long turn.
+// Prefer a quiet 100 ms window near the limit; every PCM frame is retained once.
+export class PcmSegmentBuffer {
+  constructor({ minimumAudioMs = 250, maximumAudioSeconds = 90 }) {
+    this.minimumAudioMs = minimumAudioMs;
+    this.maximumBytes =
+      Math.floor((Math.min(maximumAudioSeconds, 90) * 192_000) / 4) * 4;
+    if (this.maximumBytes < 4)
+      throw new RangeError("audio segment limit is too small");
+    this.chunks = [];
+    this.byteLength = 0;
+    this.segmentCount = 0;
+  }
+
+  push(chunk) {
+    if (!Buffer.isBuffer(chunk) || chunk.length % 4)
+      throw new TypeError("PCM chunk must contain complete stereo frames");
+    const complete = [];
+    let offset = 0;
+    while (offset < chunk.length) {
+      const bytes = Math.min(
+        chunk.length - offset,
+        this.maximumBytes - this.byteLength,
+      );
+      this.chunks.push(chunk.subarray(offset, offset + bytes));
+      this.byteLength += bytes;
+      offset += bytes;
+      if (this.byteLength !== this.maximumBytes) continue;
+      const pcm = Buffer.concat(this.chunks, this.byteLength);
+      const window = Math.min(19_200, Math.floor(pcm.length / 8) * 4);
+      let boundary = pcm.length;
+      for (
+        let end = pcm.length;
+        window && end >= Math.max(window, pcm.length - 192_000);
+        end -= window
+      ) {
+        let peak = 0;
+        for (let sample = end - window; sample < end; sample += 2)
+          peak = Math.max(peak, Math.abs(pcm.readInt16LE(sample)));
+        if (peak < 160) {
+          boundary = end;
+          break;
+        }
+      }
+      complete.push(pcm.subarray(0, boundary));
+      this.chunks =
+        boundary < pcm.length ? [Buffer.from(pcm.subarray(boundary))] : [];
+      this.byteLength = pcm.length - boundary;
+      this.segmentCount++;
+    }
+    return complete;
+  }
+
+  finish() {
+    const pcm = Buffer.concat(this.chunks, this.byteLength);
+    this.chunks = [];
+    this.byteLength = 0;
+    if (
+      !pcm.length ||
+      (!this.segmentCount &&
+        pcmDurationSeconds(pcm) * 1000 < this.minimumAudioMs)
+    )
+      return undefined;
+    this.segmentCount++;
+    return pcm;
+  }
+}

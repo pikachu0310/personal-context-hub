@@ -61,6 +61,8 @@ export function createLocalTranscriptArchive({
       recordedAt: new Date().toISOString(),
       startedAt: new Date(startedAt).toISOString(),
       sequence: statement.sequence,
+      utteranceId: statement.utteranceId,
+      segmentIndex: statement.segmentIndex,
       guildId,
       voiceChannelId,
       textChannelId,
