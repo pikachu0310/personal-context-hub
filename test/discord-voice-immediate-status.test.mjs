@@ -111,3 +111,84 @@ test("failed status delivery replays the saved answer once after restart without
   assert.match(posts[0], /確認時点/);
   assert.equal(restored.pendingControls.length, 0);
 });
+
+test("status text arrives during an earlier spoken answer while speech remains in order", async (t) => {
+  let release,
+    played = 0;
+  const posts = [],
+    spoken = [];
+  const session = meeting({
+    getTasks: () => [{ id: "active01", state: "running" }],
+    observe: async () =>
+      JSON.stringify({
+        minutes: "context",
+        shouldReply: true,
+        reply: "最初の回答です。",
+      }),
+    postText: async (text) => posts.push(text),
+    synthesize: async (text) => {
+      spoken.push(text);
+      return Buffer.alloc(2);
+    },
+    playAudio: async () => {
+      if (++played === 1)
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+    },
+  });
+  t.after(async () => {
+    release?.();
+    await session.stop();
+  });
+  await session.addText("案について説明して", { userId: "member" });
+  const observation = session.observeNow();
+  while (!release) await new Promise((resolve) => setImmediate(resolve));
+  const status = session.addText("井戸Bot、進捗を教えて", { userId: "member" });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(
+    posts.some((text) => text.includes("実行中1件")),
+    "text status cannot wait for the previous audio to finish",
+  );
+  assert.deepEqual(spoken, ["最初の回答です。"]);
+  release();
+  await Promise.all([observation, status]);
+  await session.speechQueue;
+  assert.equal(played, 2);
+  assert.match(spoken[1], /実行中1件/);
+});
+
+test("shutdown cancels queued speech without delaying delivered status text or carrying speech into a new meeting", async (t) => {
+  let speaking = false,
+    synthesized = 0;
+  const posts = [];
+  const session = meeting({
+    getTasks: () => [{ id: "active01", state: "running" }],
+    observe: async () => assert.fail("direct status must not invoke Codex"),
+    postText: async (text) => posts.push(text),
+    synthesize: async () => {
+      synthesized++;
+      return Buffer.alloc(2);
+    },
+    playAudio: async (_audio, { signal }) =>
+      new Promise((_resolve, reject) => {
+        speaking = true;
+        if (signal.aborted) reject(signal.reason);
+        else
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+      }),
+  });
+  t.after(() => session.stop());
+  await session.addText("井戸Bot、進捗を教えて", { userId: "member" });
+  while (!speaking) await new Promise((resolve) => setImmediate(resolve));
+  await session.addText("井戸Bot、進捗を教えて", { userId: "member" });
+  assert.equal(posts.length, 2);
+  assert.equal(synthesized, 1);
+  assert.equal(session.observing, false);
+  assert.equal(await session.newMeeting(), false);
+  await session.stop();
+  assert.equal(synthesized, 1);
+  assert.equal(session.pendingSpeechCount, 0);
+});

@@ -1787,6 +1787,8 @@ export class DiscordVoiceMeetingSession {
     this.archiveFailures = 0;
     this.shutdownController = new AbortController();
     this.liveUpdate = Promise.resolve();
+    this.speechQueue = Promise.resolve();
+    this.pendingSpeechCount = 0;
     this.interval = scheduleInterval(
       () => void this.observeNow(),
       observationIntervalMs,
@@ -2307,6 +2309,7 @@ export class DiscordVoiceMeetingSession {
       this.closed ||
       this.resetting ||
       this.observing ||
+      this.pendingSpeechCount ||
       this.activeTextInputs ||
       this.activeTranscriptions ||
       this.audioQueue.length ||
@@ -2406,6 +2409,7 @@ export class DiscordVoiceMeetingSession {
       }
       if (!statements.length) {
         await this.#dispatchPendingTasks();
+        await this.speechQueue;
         return false;
       }
       const transcript = formatMeetingObservationTranscript(statements);
@@ -2544,22 +2548,9 @@ export class DiscordVoiceMeetingSession {
             this.shutdownController.signal,
           );
         }
-        const spoken = speechExcerpt(reply);
-        if (spoken) {
-          const audio = await withTimeout(
-            (signal) => this.dependencies.synthesize(spoken, { signal }),
-            this.stageTimeouts.synthesizing,
-            "synthesizing meeting response",
-            this.shutdownController.signal,
-          );
-          await withTimeout(
-            (signal) => this.dependencies.playAudio(audio, { signal }),
-            this.stageTimeouts.speaking,
-            "speaking meeting response",
-            this.shutdownController.signal,
-          );
-        }
+        await this.#queueMeetingSpeech(speechExcerpt(reply));
       }
+      await this.speechQueue;
       this.#log("meeting_observation_completed", {
         elapsedMs: Date.now() - startedAt,
         statements: statements.length,
@@ -2667,19 +2658,8 @@ export class DiscordVoiceMeetingSession {
         const excerpt = control.spokenNotification ?? control.notification;
         const spoken =
           excerpt && replyContext ? `${replyContext}です。${excerpt}` : excerpt;
-        if (!spoken) continue;
-        const audio = await withTimeout(
-          (signal) => this.dependencies.synthesize(spoken, { signal }),
-          this.stageTimeouts.synthesizing,
-          "speaking control receipt",
-          this.shutdownController.signal,
-        );
-        await withTimeout(
-          (signal) => this.dependencies.playAudio(audio, { signal }),
-          this.stageTimeouts.speaking,
-          "playing control receipt",
-          this.shutdownController.signal,
-        );
+        // Text delivery must not wait for an earlier spoken response.
+        void this.#queueMeetingSpeech(spoken);
       } catch (error) {
         this.#log("meeting_control_dispatch_pending", {
           requestKey: control.requestKey,
@@ -2687,6 +2667,36 @@ export class DiscordVoiceMeetingSession {
         });
       }
     }
+  }
+
+  #queueMeetingSpeech(spoken) {
+    if (!spoken || this.closed) return Promise.resolve();
+    this.pendingSpeechCount++;
+    this.speechQueue = this.speechQueue
+      .then(async () => {
+        const audio = await withTimeout(
+          (signal) => this.dependencies.synthesize(spoken, { signal }),
+          this.stageTimeouts.synthesizing,
+          "synthesizing meeting response",
+          this.shutdownController.signal,
+        );
+        await withTimeout(
+          (signal) => this.dependencies.playAudio(audio, { signal }),
+          this.stageTimeouts.speaking,
+          "speaking meeting response",
+          this.shutdownController.signal,
+        );
+      })
+      .catch((error) => {
+        if (!this.closed)
+          this.#log("meeting_speech_failed", {
+            errorCode: voiceErrorCode(error),
+          });
+      })
+      .finally(() => {
+        this.pendingSpeechCount--;
+      });
+    return this.#trackOperation(this.speechQueue);
   }
 
   async #dispatchPendingTasks() {
