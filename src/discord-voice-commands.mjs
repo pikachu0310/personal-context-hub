@@ -177,7 +177,9 @@ export function createIdobataMessageHandler({
     }
     if (command === "context") {
       for (const chunk of splitDiscordText(
-        session.minutes || "会話の前提・決定事項をこれから記録します。",
+        session.getContextSnapshot?.() ??
+          session.minutes ??
+          "会話の前提・決定事項をこれから記録します。",
       ))
         await reply(chunk);
       return true;
@@ -186,10 +188,11 @@ export function createIdobataMessageHandler({
       if (!argument) return reply("`/ido ask 質問内容` と入力してください。");
       // Explicit questions are context, not authorization for background work.
       await session.addText?.(argument, {
-        userId: "question",
+        userId: message.author.id,
         speakerName: message.member?.displayName ?? message.author.username,
+        taskEligible: false,
+        requestReply: true,
       });
-      void session.observeNow?.();
       return true;
     }
     if (!authorized)
@@ -228,7 +231,9 @@ export function createIdobataMessageHandler({
       const accepted = taskQueue.enqueue({
         title: argument.slice(0, 100),
         request: argument,
-        context: session.minutes + "\n" + JSON.stringify(session.results ?? []),
+        context:
+          session.getContextSnapshot?.() ??
+          session.minutes + "\n" + JSON.stringify(session.results ?? []),
         meetingId: session.meetingId,
         kind: command === "task" ? "implementation" : command,
         complexity: "routine",

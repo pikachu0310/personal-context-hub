@@ -462,6 +462,37 @@ test("power tasks run in a separate workspace-bound networked thread", async () 
   ]);
 });
 
+test("task streams require a completed turn and a nonempty response", async () => {
+  for (const events of [
+    [
+      {
+        type: "item.completed",
+        item: { type: "agent_message", text: "途中の報告" },
+      },
+    ],
+    [{ type: "turn.completed" }],
+  ]) {
+    const runner = new CodexVoiceRunner(
+      { workingDirectory: "/tmp", powerMode: true },
+      {
+        codex: {
+          startThread: () => ({
+            runStreamed: async () => ({
+              events: (async function* () {
+                yield* events;
+              })(),
+            }),
+          }),
+        },
+      },
+    );
+    await assert.rejects(
+      runner.runTask({ request: "work" }),
+      (error) => error.code === "CODEX_TASK_INCOMPLETE",
+    );
+  }
+});
+
 test("power task progress describes outcomes without raw command output", () => {
   const message = describePowerTaskEvent({
     type: "item.completed",

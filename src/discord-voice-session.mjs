@@ -453,7 +453,10 @@ export function authorizeMeetingTaskControls(
       !control.type ||
       !sources.length ||
       sources.length !== control.sourceSequences.length ||
-      sources.some((statement) => statement.userId !== ownerUserId)
+      sources.some(
+        (statement) =>
+          statement.userId !== ownerUserId || statement.taskEligible === false,
+      )
     )
       return [];
     const instruction = sources
@@ -487,7 +490,10 @@ export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
     if (
       !sources.length ||
       sources.length !== task.sourceSequences.length ||
-      sources.some((statement) => statement.userId !== ownerUserId)
+      sources.some(
+        (statement) =>
+          statement.userId !== ownerUserId || statement.taskEligible === false,
+      )
     ) {
       return [];
     }
@@ -1239,6 +1245,8 @@ export class DiscordVoiceMeetingSession {
       sequence: ++this.sequence,
       userId: metadata.userId,
       speakerName: metadata.speakerName,
+      taskEligible: metadata.taskEligible !== false,
+      requestReply: metadata.requestReply === true,
       startedAt: metadata.startedAt ?? Date.now(),
       text: boundText(text, MAX_TRANSCRIPT_CHARACTERS),
       observed: false,
@@ -1248,11 +1256,47 @@ export class DiscordVoiceMeetingSession {
     await this.#archiveStatement(statement);
     await this.persist();
     this.#queueLiveUpdate();
-    if (this.immediateReactions) {
+    if (this.immediateReactions || statement.requestReply) {
       this.immediateObservationRequested = true;
       this.#scheduleImmediateObservation();
     }
     return true;
+  }
+
+  getContextSnapshot() {
+    const pending = this.statements
+      .filter((statement) => !statement.observed)
+      .sort((a, b) => a.sequence - b.sequence);
+    const recent = [];
+    let used = 0;
+    for (let index = pending.length - 1; index >= 0; index -= 1) {
+      const statement = pending[index];
+      const size = statement.text.length + speakerLabel(statement).length + 4;
+      if (used + size > MAX_MEETING_TRANSCRIPT_CHARACTERS) break;
+      recent.unshift(statement);
+      used += size;
+    }
+    return [
+      `会議 ${this.meetingId} · 議事録 rev ${this.revision}`,
+      this.minutes,
+      "議事録へ未反映の発言（訂正を含む）:",
+      pending.length > recent.length
+        ? `古い未反映発言 ${pending.length - recent.length} 件を省略。以下の最新発言を優先。`
+        : "",
+      formatMeetingObservationTranscript(recent),
+      "直近の作業結果（詳細は各タスク）:",
+      JSON.stringify(
+        this.results
+          .slice(-5)
+          .map(({ id, title, state, result, threadId }) => ({
+            id,
+            title: boundText(title, 120),
+            state,
+            result: boundText(result, 1000),
+            threadId,
+          })),
+      ),
+    ].join("\n\n");
   }
 
   async addTaskResult(result) {
@@ -1379,12 +1423,7 @@ export class DiscordVoiceMeetingSession {
       this.revision += 1;
       for (const task of tasks) {
         task.meetingId = this.meetingId;
-        task.context =
-          this.minutes +
-          "\n\n" +
-          task.context +
-          "\n\n作業結果:\n" +
-          JSON.stringify(this.results);
+        task.context = this.getContextSnapshot();
       }
       for (const statement of statements) statement.observed = true;
       this.statements = this.statements.filter(
@@ -1467,8 +1506,11 @@ export class DiscordVoiceMeetingSession {
         tasks: tasks.length - rejectedTasks,
       });
       if (
-        this.immediateReactions &&
-        this.statements.some((statement) => !statement.observed)
+        this.statements.some(
+          (statement) =>
+            !statement.observed &&
+            (this.immediateReactions || statement.requestReply),
+        )
       )
         this.immediateObservationRequested = true;
       return true;

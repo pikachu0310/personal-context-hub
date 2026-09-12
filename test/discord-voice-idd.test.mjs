@@ -334,6 +334,87 @@ test("Discord command routing is channel-bound, deduplicated and operator-only f
   assert.ok(posts.every((post) => post.allowedMentions.parse.length === 0));
 });
 
+test("direct tasks include the latest attributed conversation before observation", async (t) => {
+  const tasks = [];
+  const session = meeting({ initialState: { minutes: "決定: 赤いボタン" } });
+  t.after(() => session.stop());
+  const handler = createIdobataMessageHandler({
+    config: { guildId: "g", textChannelId: "c", allowedUserId: "owner" },
+    session,
+    taskQueue: { enqueue: (task) => (tasks.push(task), true) },
+  });
+  for (let index = 0; index < 5; index++)
+    await session.addText("以前の長い会話".repeat(1000), { userId: "member" });
+  await session.addText("訂正、青いボタンにして", {
+    userId: "member",
+    speakerName: "設計担当",
+  });
+  await handler({
+    id: "direct-task",
+    guildId: "g",
+    channelId: "c",
+    content: "/ido task その変更を実装して",
+    author: { id: "owner", username: "本人" },
+    channel: { send: noop },
+  });
+  assert.match(tasks[0].context, /決定: 赤いボタン/);
+  assert.match(tasks[0].context, /訂正、青いボタンにして/);
+  assert.match(tasks[0].context, /設計担当/);
+  await session.stop();
+});
+
+test("an explicit question keeps its real author, waits for the current observation, and cannot launch work", async (t) => {
+  const contexts = [],
+    tasks = [];
+  let release;
+  const session = meeting({
+    tasksEnabled: true,
+    enqueueTask: (task) => (tasks.push(task), true),
+    observe: async (context) => {
+      contexts.push(context);
+      if (contexts.length === 1)
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      return JSON.stringify({
+        minutes: "会話",
+        tasks: context.statements.map((s) => ({
+          title: "work",
+          sourceSequences: [s.sequence],
+        })),
+        shouldReply: false,
+      });
+    },
+  });
+  await session.addText("通常会話", { userId: "member" });
+  t.after(async () => {
+    release?.();
+    await session.stop();
+  });
+  const first = session.observeNow();
+  await eventually(() => release);
+  const handler = createIdobataMessageHandler({
+    config: { guildId: "g", textChannelId: "c", allowedUserId: "owner" },
+    session,
+  });
+  await handler({
+    id: "question",
+    guildId: "g",
+    channelId: "c",
+    content: "/ido ask 井戸Bot、実装してと言ったらどうなる？",
+    author: { id: "owner", username: "本人" },
+    channel: { send: noop },
+  });
+  assert.equal(session.statements.at(-1).userId, "owner");
+  release();
+  await first;
+  await eventually(() => contexts.length === 2);
+  await eventually(() => !session.observing);
+  assert.equal(contexts[1].statements[0].taskEligible, false);
+  assert.equal(tasks.length, 0);
+  await session.stop();
+});
+
 test("profile routing keeps ordinary tasks bounded and honors configured complexity tiers", () => {
   const config = {
     taskModel: "small",
