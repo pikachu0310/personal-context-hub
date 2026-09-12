@@ -81,11 +81,15 @@ npm run smoke:discord:voice:idd
 
 # 合成音声だけでTTS→STTを実API検証。録音・Discord投稿なし
 npm run smoke:discord:voice:audio
+
+# 合成音声の依頼→実装・検証→結果への質問→回答の復旧→差分反映
+npm run smoke:discord:voice:conversation
 ```
 
 実Codexのsmokeは、一時repo内で「加算バグの修正とテスト」と「Array.includes / Set.hasの比較」を並行実行します。
 修正後のテストをBot外から再実行し、元repoが変わっていないことを検査します。投稿失敗を模擬して状態を復元し、Codexを再実行せず本文・添付を返せることも確認します。その後、差分を反映して同じCodexセッションへ追加指示を渡し、以前の差分が保たれること、2回目の差分反映と反映先でのテストを検査します。検証用workspaceとJSONレポートの場所を出力します。
 音声APIのsmokeは有料APIを呼びます。通常のunit/integration testは外部接続しません。
+`conversation` は一時repoだけを変更し、既存テストと元repoが保たれることを検査します。実際のCodex・音声認識・音声合成を使い、回答の送信完了が不明になったケースから会議セッションを復元して再送します。Discordへの接続とスピーカーからの再生は模擬です。結果は表示される一時ディレクトリの `report.json` で確認できます。
 
 2026-09-12のローカル実機検証では、実Codexの並行作業と独立したテスト、合成音声のTTS→STTが通過しました。
 Discordの実通話・実投稿・ボタン操作は別の実機確認が必要です。mockの成功をDiscord接続の成功として扱いません。
