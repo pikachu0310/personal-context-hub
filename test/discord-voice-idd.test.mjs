@@ -521,8 +521,70 @@ test("Discord task controls enforce operator identity before opening a modal or 
   );
   assert.equal(
     taskControls("task1", "completed")[0].components[2].disabled,
+    true,
+  );
+  assert.equal(
+    taskControls("task1", "completed", 1, false, true)[0].components[2]
+      .disabled,
     false,
   );
+  assert.equal(
+    taskControls("task1", "completed", 1, false, false)[0].components[2].label,
+    "差分なし",
+  );
+  assert.equal(
+    taskControls("task1", "completed", 1, false, false)[0].components[2]
+      .disabled,
+    true,
+  );
+  assert.equal(
+    taskControls("task1", "completed", 1, true, true)[0].components[2].label,
+    "反映済み",
+  );
+});
+
+test("empty result revisions explain that nothing needs applying for both text and button requests", async () => {
+  const config = { guildId: "g", textChannelId: "c", allowedUserId: "owner" };
+  const posts = [];
+  const taskQueue = {
+    tasks: new Map([
+      [
+        "empty",
+        {
+          state: "completed",
+          artifacts: { runRevision: 2, hasChanges: false },
+        },
+      ],
+    ]),
+    applyTask: async () =>
+      assert.fail("an empty result must not invoke file application"),
+  };
+  const messageHandler = createIdobataMessageHandler({
+    config,
+    taskQueue,
+    session: {},
+  });
+  await messageHandler({
+    id: "empty-apply",
+    guildId: "g",
+    channelId: "c",
+    author: { id: "owner" },
+    content: "!ido apply empty 2",
+    channel: { send: async ({ content }) => posts.push(content) },
+  });
+  const interactionHandler = createIdobataInteractionHandler({
+    config,
+    taskQueue,
+  });
+  await interactionHandler({
+    guildId: "g",
+    user: { id: "owner" },
+    customId: "ido:apply:empty:2",
+    deferReply: noop,
+    editReply: async (content) => posts.push(content),
+  });
+  assert.equal(posts.length, 2);
+  assert.ok(posts.every((content) => /反映する差分はありません/.test(content)));
 });
 
 test("a result delivery failure preserves completed work for recovery instead of rerunning it", async () => {

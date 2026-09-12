@@ -52,6 +52,19 @@ test("artifact retries retain their Discord identity while a new result revision
     payloads[2].files[0].attachment.toString(),
     "+synthetic change\n",
   );
+  await writeFile(patchPath, "");
+  await post(
+    { patchPath, runRevision: 3, hasChanges: false },
+    { tests: [{ outcome: "passed" }] },
+    { idempotencyKey: "result-three:artifacts" },
+  );
+  assert.match(payloads[3].content, /変更差分はありません/);
+  assert.doesNotMatch(payloads[3].content, /ido apply/);
+  assert.equal(payloads[3].files.length, 1);
+  assert.equal(payloads[3].files[0].name, "task01-r3-verification.json");
+  assert.deepEqual(JSON.parse(payloads[3].files[0].attachment), {
+    tests: [{ outcome: "passed" }],
+  });
 });
 
 test("a task result keeps its delivery identities across a lost acknowledgement and restart", async (t) => {

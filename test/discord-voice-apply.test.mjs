@@ -51,6 +51,10 @@ test("apply, continue, and apply again preserves a new file across development i
   assert.equal(await readFile(join(repo, "app.txt"), "utf8"), "second\n");
   assert.equal(await readFile(join(repo, "new.txt"), "utf8"), "new second\n");
   assert.equal(await manager.apply(task), false);
+  task.runRevision = 3;
+  task.artifacts = await manager.collect(task);
+  assert.equal(task.artifacts.hasChanges, false);
+  assert.equal(await readFile(task.artifacts.patchPath, "utf8"), "");
 });
 
 test("a modified saved patch cannot be applied as the reviewed artifact", async (t) => {

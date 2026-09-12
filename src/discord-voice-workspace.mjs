@@ -204,6 +204,7 @@ export class TaskWorkspaceManager {
       patchPath,
       runRevision,
       patchHash: digest(diff),
+      hasChanges: Boolean(diff),
       fromTree,
       resultTree,
       status,

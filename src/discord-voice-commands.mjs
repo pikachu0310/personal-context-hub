@@ -99,7 +99,28 @@ function taskStatus(tasks, session, argument) {
   return `作業一覧 · ${byId.size}件 · ${page}/${pages.length}ページ\n${pages[page - 1]}${page < pages.length ? `\n次へ: /ido status ${page + 1}` : ""}${page > 1 ? `\n前へ: /ido status ${page - 1}` : ""}`;
 }
 
-export function taskControls(taskId, state, revision, applied = false) {
+export function hasTaskChanges(artifacts) {
+  if (typeof artifacts?.hasChanges === "boolean") return artifacts.hasChanges;
+  if (typeof artifacts?.status === "string")
+    return Boolean(artifacts.status.trim());
+  return undefined;
+}
+
+function isEmptyTaskRevision(task, revision) {
+  return (
+    task?.state === "completed" &&
+    Number(revision) === task.artifacts?.runRevision &&
+    hasTaskChanges(task.artifacts) === false
+  );
+}
+
+export function taskControls(
+  taskId,
+  state,
+  revision,
+  applied = false,
+  hasChanges,
+) {
   return [
     {
       type: 1,
@@ -120,9 +141,18 @@ export function taskControls(taskId, state, revision, applied = false) {
         {
           type: 2,
           style: 1,
-          label: "差分を反映",
+          label: applied
+            ? "反映済み"
+            : state === "completed" && hasChanges === false
+              ? "差分なし"
+              : "差分を反映",
           custom_id: `ido:apply:${taskId}${revision ? `:${revision}` : ""}`,
-          disabled: state !== "completed" || applied,
+          disabled:
+            state !== "completed" ||
+            applied ||
+            !Number.isSafeInteger(revision) ||
+            revision < 1 ||
+            hasChanges !== true,
         },
       ],
     },
@@ -168,6 +198,10 @@ export function createIdobataInteractionHandler({ config, taskQueue }) {
       });
     if (action === "apply") {
       await interaction.deferReply({ flags: 64 });
+      if (isEmptyTaskRevision(taskQueue.tasks.get(taskId), revision))
+        return interaction.editReply(
+          "この実行版に反映する差分はありません。検証記録を確認してください。",
+        );
       try {
         return interaction.editReply(
           (await taskQueue.applyTask(
@@ -384,6 +418,10 @@ export function createIdobataMessageHandler({
       if (extra || (revision && !/^[1-9][0-9]*$/.test(revision)))
         return reply(
           "`/ido apply タスクID 実行版` と入力してください。実行版は最新の添付に記載されています。",
+        );
+      if (isEmptyTaskRevision(taskQueue.tasks?.get(taskId), revision))
+        return reply(
+          "この実行版に反映する差分はありません。検証記録を確認してください。",
         );
       try {
         return reply(

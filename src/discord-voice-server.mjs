@@ -30,6 +30,7 @@ import {
   createIdobataMessageHandler,
   createIdobataInteractionHandler,
   taskControls,
+  hasTaskChanges,
   IDOBATA_HELP,
 } from "./discord-voice-commands.mjs";
 import { readDiscordTokenStore } from "./discord-config.mjs";
@@ -364,6 +365,9 @@ export function formatDiscordTaskCard(
     task.artifacts?.runRevision
       ? `実行版: **${task.artifacts.runRevision}**${task.appliedRevision === task.artifacts.runRevision ? " · 反映済み" : ""}`
       : "",
+    state === "completed" && hasTaskChanges(task.artifacts) === false
+      ? "差分: なし（検証記録を確認できます）"
+      : "",
     state === "completed" ? formatVerificationEvidence(task.evidence) : "",
   ].join("\n");
 }
@@ -392,16 +396,20 @@ export function createDiscordArtifactPoster(
     }
     await thread.send({
       ...createDiscordMessagePayload(
-        `📎 実行版 ${artifacts.runRevision ?? 1} の差分と検証記録。前回反映した時点（未反映なら開始時点）からの変更です。確認後 \`/ido apply ${task.id} ${artifacts.runRevision ?? 1}\` で反映できます。`,
+        patch.length
+          ? `📎 実行版 ${artifacts.runRevision ?? 1} の差分と検証記録。前回反映した時点（未反映なら開始時点）からの変更です。確認後 \`/ido apply ${task.id} ${artifacts.runRevision ?? 1}\` で反映できます。`
+          : `📎 実行版 ${artifacts.runRevision ?? 1} の検証記録。変更差分はありません。`,
         { silent, idempotencyKey },
       ),
       files: [
-        {
-          attachment: patch.length
-            ? patch
-            : Buffer.from("# No tracked-file diff\n"),
-          name: `${task.id}-r${artifacts.runRevision ?? 1}.patch`,
-        },
+        ...(patch.length
+          ? [
+              {
+                attachment: patch,
+                name: `${task.id}-r${artifacts.runRevision ?? 1}.patch`,
+              },
+            ]
+          : []),
         {
           attachment: Buffer.from(JSON.stringify(evidence ?? {}, null, 2)),
           name: `${task.id}-r${artifacts.runRevision ?? 1}-verification.json`,
@@ -439,6 +447,7 @@ export function createDiscordTaskCardUpdater(
             task.appliedRevision &&
             task.appliedRevision === task.artifacts?.runRevision,
           ),
+          hasTaskChanges(task.artifacts),
         ),
       };
       if (starter) {
