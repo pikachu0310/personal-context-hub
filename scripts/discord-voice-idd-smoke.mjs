@@ -203,14 +203,43 @@ await runner.applyTask(implementation);
 await exec(process.execPath, ["--test", "math.test.mjs"], { cwd: repository });
 const resumedRunner = new CodexVoiceRunner(runnerConfig);
 const firstPatch = await readFile(implementation.artifacts.patchPath, "utf8");
-const continuation = {
-  ...implementation,
-  additionalInstruction:
+let continuationRuns = 0;
+const followQueue = new DiscordVoiceTaskQueue({
+  logger: {},
+  postText: async () => undefined,
+  checkpoint: (tasks) => store.save({ tasks }),
+  runTask: (task, options) => {
+    continuationRuns++;
+    return resumedRunner.runTask(task, options);
+  },
+});
+await followQueue.restore([implementation], async (task) => ({
+  threadId: task.id,
+  post: async () => undefined,
+  update: async () => undefined,
+}));
+const follow = {
+  taskId: implementation.id,
+  userId: "operator",
+  ownerUserId: "operator",
+  requestKey: "smoke:follow",
+  content:
     "負数同士の加算（-2と-3が-5）をmath.test.mjsへ追加し、node --test math.test.mjsで確認してください。既存のテストを残してください。",
 };
-await resumedRunner.runTask(continuation, {
-  signal: AbortSignal.timeout(120_000),
-});
+await followQueue.handleTaskMessageDurable(follow);
+await followQueue.handleTaskMessageDurable(follow);
+const continuationDeadline = Date.now() + 120_000;
+while (
+  Date.now() < continuationDeadline &&
+  (followQueue.active ||
+    followQueue.list().some((task) => task.state === "queued"))
+)
+  await new Promise((resolve) => setTimeout(resolve, 200));
+const continuation = followQueue.snapshot()[0];
+await followQueue.stop();
+assert.equal(continuation.state, "completed");
+assert.equal(continuationRuns, 1);
+assert.ok((await store.load()).tasks[0].controlReceipts["smoke:follow"]);
 assert.equal(continuation.codexThreadId, implementation.codexThreadId);
 assert.notEqual(
   continuation.artifacts.patchPath,
@@ -243,6 +272,7 @@ const report = {
   resultReplayAfterRestart: "passed",
   revisionArtifactsPreserved: "passed",
   durableReceiptDeduplication: "passed",
+  durableFollowupDeduplication: "passed",
 };
 const reportPath = join(root, "report.json");
 await writeFile(reportPath, JSON.stringify(report, null, 2), { mode: 0o600 });
@@ -260,6 +290,7 @@ console.log(
       resultReplayAfterRestart: "passed",
       revisionArtifactsPreserved: "passed",
       durableReceiptDeduplication: "passed",
+      durableFollowupDeduplication: "passed",
       benchmark: numbers,
       reportPath,
     },

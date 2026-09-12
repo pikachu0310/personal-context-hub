@@ -97,23 +97,38 @@ export function createIdobataInteractionHandler({ config, taskQueue }) {
         );
       }
     }
-    const result = taskQueue.handleTaskMessage({
+    const message = {
       taskId,
+      requestKey: interaction.id
+        ? `discord-interaction:${interaction.id}`
+        : undefined,
       userId,
       ownerUserId: userId,
       content:
         action === "stop"
           ? "停止"
           : interaction.fields.getTextInputValue("instruction"),
-    });
-    return reply(
-      !result
-        ? "操作できませんでした。作業一覧を確認してください。"
-        : result.type === "full"
-          ? "追加指示の待機枠がいっぱいです。"
-          : action === "stop"
-            ? "タスクを停止しました。"
-            : "追加指示を受け付けました。同じ作業に続けて反映します。",
+    };
+    await interaction.deferReply({ flags: 64 });
+    let result;
+    try {
+      result = await (taskQueue.handleTaskMessageDurable?.(message) ??
+        taskQueue.handleTaskMessage(message));
+    } catch {
+      return interaction.editReply(
+        "追加指示を保存できなかったため受け付けていません。保存先を確認して再試行してください。",
+      );
+    }
+    return interaction.editReply(
+      result?.persisted === false
+        ? "停止しましたが、停止状態を保存できませんでした。再起動後は作業一覧を確認してください。"
+        : !result
+          ? "操作できませんでした。作業一覧を確認してください。"
+          : result.type === "full"
+            ? "追加指示の待機枠がいっぱいです。"
+            : action === "stop"
+              ? "タスクを停止しました。"
+              : "追加指示を受け付けました。同じ作業に続けて反映します。",
     );
   };
 }
@@ -135,16 +150,25 @@ export function createIdobataMessageHandler({
       seen.add(message.id);
       if (seen.size > 1000) seen.delete(seen.values().next().value);
     }
+    const requestKey = message.id
+      ? `discord:${message.guildId}:${message.channelId}:${message.id}`
+      : undefined;
     if (message.channelId !== config.textChannelId) {
       if (!authorized) return false;
-      return (
-        taskQueue?.handleThreadMessage({
-          threadId: message.channelId,
-          userId: message.author.id,
-          ownerUserId: message.author.id,
-          content: message.content,
-        }) ?? false
-      );
+      const instruction = {
+        threadId: message.channelId,
+        requestKey,
+        userId: message.author.id,
+        ownerUserId: message.author.id,
+        content: message.content,
+      };
+      try {
+        return await (taskQueue?.handleThreadMessageDurable?.(instruction) ??
+          taskQueue?.handleThreadMessage(instruction) ??
+          false);
+      } catch {
+        return { type: "save_failed" };
+      }
     }
     const content = String(message.content ?? "").trim();
     const match = content.match(/^[!/]ido(?:\s+(\w+))?(?:\s+([\s\S]*))?$/i);
@@ -170,6 +194,12 @@ export function createIdobataMessageHandler({
       const pending = (session.pendingTasks ?? []).map(
         (task) =>
           `${task.rejectionReason ? "受付不可・通知を再試行中" : "受付保存を再試行中"} · ${task.title}`,
+      );
+      pending.push(
+        ...(session.pendingControls ?? []).map(
+          (control) =>
+            `操作の保存・通知を再試行中 · ${control.taskId ?? "対象確認待ち"}`,
+        ),
       );
       return reply(
         tasks.length || pending.length
@@ -246,9 +276,7 @@ export function createIdobataMessageHandler({
       const task = {
         title: argument.slice(0, 100),
         request: argument,
-        requestKey: message.id
-          ? `discord:${message.guildId}:${message.channelId}:${message.id}`
-          : undefined,
+        requestKey,
         context:
           session.getContextSnapshot?.() ??
           session.minutes + "\n" + JSON.stringify(session.results ?? []),
@@ -277,12 +305,26 @@ export function createIdobataMessageHandler({
         return reply(
           "タスクIDを指定してください。追加指示はIDの後に続けます。",
         );
-      const action = taskQueue.handleTaskMessage({
+      const instruction = {
         taskId,
+        requestKey,
         userId: message.author.id,
         ownerUserId: message.author.id,
         content: command === "stop" ? "停止" : words.join(" "),
-      });
+      };
+      let action;
+      try {
+        action = await (taskQueue.handleTaskMessageDurable?.(instruction) ??
+          taskQueue.handleTaskMessage(instruction));
+      } catch {
+        return reply(
+          "追加指示を保存できなかったため受け付けていません。保存先を確認して再試行してください。",
+        );
+      }
+      if (action?.persisted === false)
+        return reply(
+          "停止しましたが、停止状態を保存できませんでした。再起動後は作業一覧を確認してください。",
+        );
       if (action?.type === "full")
         return reply(
           "追加指示・作業枠がいっぱいです。少し待ってから再送してください。",

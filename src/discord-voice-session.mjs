@@ -468,6 +468,7 @@ export function authorizeMeetingTaskControls(
           {
             type: control.type,
             instruction,
+            sourceSequences: [...control.sourceSequences],
             ...(control.taskId ? { taskId: control.taskId } : {}),
           },
         ]
@@ -534,6 +535,7 @@ export class DiscordVoiceTaskQueue {
     checkpointTimeoutMs = DEFAULT_STAGE_TIMEOUTS.posting,
   }) {
     this.checkpoint = checkpoint;
+    this.stateWriting = Promise.resolve();
     this.onResult = onResult;
     this.applyTaskChanges = applyTask;
     this.progressIntervalMs = progressIntervalMs;
@@ -623,7 +625,7 @@ export class DiscordVoiceTaskQueue {
     return queuedTask;
   }
 
-  snapshot() {
+  snapshot({ includeInstruction, receiptTask, receiptKey } = {}) {
     return [...this.tasks.values()].map((task) => ({
       id: task.id,
       title: task.title,
@@ -636,7 +638,28 @@ export class DiscordVoiceTaskQueue {
       createdAt: task.createdAt,
       meetingId: task.meetingId,
       state: task.state,
-      instructions: [...task.instructions],
+      instructions: structuredClone(
+        task.instructions
+          .filter((entry) => !entry?.pending || entry === includeInstruction)
+          .map((entry) =>
+            typeof entry === "string"
+              ? entry
+              : {
+                  id: entry.id,
+                  text: entry.text,
+                  requestKey: entry.requestKey,
+                },
+          ),
+      ),
+      controlReceipts: structuredClone(
+        Object.fromEntries(
+          Object.entries(task.controlReceipts ?? {}).filter(
+            ([key]) =>
+              !task.pendingControlReceipts?.has(key) ||
+              (task === receiptTask && key === receiptKey),
+          ),
+        ),
+      ),
       cancelled: task.cancelled,
       codexThreadId: task.codexThreadId ?? task.codexThread?.id,
       workingDirectory: task.workingDirectory,
@@ -659,25 +682,31 @@ export class DiscordVoiceTaskQueue {
     }));
   }
 
-  async persist({ strict = false } = {}) {
-    try {
-      await withTimeout(
-        () => this.checkpoint(this.snapshot()),
-        this.checkpointTimeoutMs,
-        "saving task state",
-      );
-      return true;
-    } catch (error) {
-      this.#log("task_checkpoint_failed", {});
-      if (strict)
-        throw new VoiceServiceError(
-          "TASK_STATE_SAVE_FAILED",
-          "Task receipt could not be saved",
-          "依頼を保存できなかったため作業を開始していません。保存先を確認して再試行してください。",
-          { cause: error },
+  persist({ strict = false, onSaved, onFailure, ...snapshotOptions } = {}) {
+    const operation = this.stateWriting.then(async () => {
+      try {
+        await withTimeout(
+          () => this.checkpoint(this.snapshot(snapshotOptions)),
+          this.checkpointTimeoutMs,
+          "saving task state",
         );
-      return false;
-    }
+        onSaved?.();
+        return true;
+      } catch (error) {
+        onFailure?.();
+        this.#log("task_checkpoint_failed", {});
+        if (strict)
+          throw new VoiceServiceError(
+            "TASK_STATE_SAVE_FAILED",
+            "Task receipt could not be saved",
+            "依頼を保存できなかったため作業を開始していません。保存先を確認して再試行してください。",
+            { cause: error },
+          );
+        return false;
+      }
+    });
+    this.stateWriting = operation.catch(() => undefined);
+    return operation;
   }
 
   async restore(records, restoreSurface) {
@@ -688,6 +717,20 @@ export class DiscordVoiceTaskQueue {
         instructions: record.instructions ?? [],
         executing: false,
       };
+      if (
+        ["running", "queued"].includes(task.state) &&
+        task.additionalInstruction
+      ) {
+        const prefix =
+          "再起動前の追加指示は完了未確認です。履歴と作業場所を確認し、実行済みの外部操作を繰り返さず、未完了分だけ続けてください。\n";
+        task.instructions.unshift({
+          id: randomUUID(),
+          text: task.additionalInstruction.startsWith(prefix)
+            ? task.additionalInstruction
+            : prefix + task.additionalInstruction,
+        });
+        task.additionalInstruction = undefined;
+      }
       if (["running", "queued"].includes(task.state))
         task.state = "interrupted";
       task.resultDeliveries ??= [];
@@ -734,6 +777,107 @@ export class DiscordVoiceTaskQueue {
   handleTaskMessage({ taskId, ...message }) {
     const task = this.tasks.get(taskId);
     return this.#handleTaskInstruction(task, message);
+  }
+
+  async handleTaskMessageDurable({ taskId, ...message }) {
+    const task = this.tasks.get(taskId);
+    return this.#awaitControl(
+      task,
+      this.#handleTaskInstruction(task, message),
+      message.requestKey,
+    );
+  }
+
+  async handleThreadMessageDurable({ threadId, ...message }) {
+    const task = this.tasksByThreadId.get(String(threadId));
+    return this.#awaitControl(
+      task,
+      this.#handleTaskInstruction(task, message),
+      message.requestKey,
+    );
+  }
+
+  async #awaitControl(task, result, requestKey) {
+    if (!result || result.type === "full") return result;
+    if (
+      result.type === "cancelled" &&
+      result.persisted === false &&
+      !task.controlPersistenceByKey?.has(requestKey)
+    ) {
+      delete result.persisted;
+      void this.#persistControl(task, result, { requestKey }).catch(
+        () => undefined,
+      );
+    }
+    try {
+      await (requestKey
+        ? task.controlPersistenceByKey?.get(requestKey)
+        : task.controlPersistence);
+      return result;
+    } catch (error) {
+      if (result.type === "cancelled") return { ...result, persisted: false };
+      throw error;
+    }
+  }
+
+  #persistControl(
+    task,
+    result,
+    { requestKey, entry, previousState, previousCancelled } = {},
+  ) {
+    task.controlReceipts ??= {};
+    if (entry) entry.pending = true;
+    if (requestKey) {
+      task.controlReceipts[requestKey] = result;
+      task.pendingControlReceipts ??= new Set();
+      task.pendingControlReceipts.add(requestKey);
+    }
+    const saved = this.persist({
+      strict: true,
+      includeInstruction: entry,
+      receiptTask: task,
+      receiptKey: requestKey,
+      onSaved: () => {
+        if (entry) delete entry.pending;
+        task.pendingControlReceipts?.delete(requestKey);
+      },
+      onFailure: () => {
+        task.pendingControlReceipts?.delete(requestKey);
+        if (entry) {
+          task.instructions = task.instructions.filter(
+            (candidate) => candidate !== entry,
+          );
+          if (requestKey) delete task.controlReceipts[requestKey];
+          if (
+            !task.executing &&
+            !this.queue.includes(task) &&
+            !task.instructions.length
+          ) {
+            task.state = previousState;
+            task.cancelled = previousCancelled;
+          }
+        } else result.persisted = false;
+        void this.persist();
+      },
+    });
+    task.controlPersistence = saved;
+    task.instructionBarrier = saved.catch(() => undefined);
+    if (requestKey) {
+      task.controlPersistenceByKey ??= new Map();
+      task.controlPersistenceByKey.set(requestKey, saved);
+      void saved
+        .finally(() => task.controlPersistenceByKey.delete(requestKey))
+        .catch(() => undefined);
+    }
+    return saved;
+  }
+
+  async #waitForInstructionReceipts(task) {
+    let current;
+    do {
+      current = task.instructionBarrier;
+      await current;
+    } while (current !== task.instructionBarrier);
   }
 
   async applyTask(taskId, expectedRevision) {
@@ -870,15 +1014,17 @@ export class DiscordVoiceTaskQueue {
     }
   }
 
-  handleThreadMessage({ threadId, userId, ownerUserId, content }) {
+  handleThreadMessage({ threadId, ...message }) {
     const task = this.tasksByThreadId.get(String(threadId));
-    return this.#handleTaskInstruction(task, { userId, ownerUserId, content });
+    return this.#handleTaskInstruction(task, message);
   }
 
-  #handleTaskInstruction(task, { userId, ownerUserId, content }) {
+  #handleTaskInstruction(task, { userId, ownerUserId, content, requestKey }) {
     if (this.closed || userId !== ownerUserId) return false;
     const instruction = boundText(content, MAX_DISCORD_MESSAGE);
     if (!task || !instruction) return false;
+    if (requestKey && Object.hasOwn(task.controlReceipts ?? {}, requestKey))
+      return task.controlReceipts[requestKey];
     if (
       /^(?:停止|中止|キャンセル|stop|cancel)[!！。\s]*$/iu.test(instruction)
     ) {
@@ -895,9 +1041,12 @@ export class DiscordVoiceTaskQueue {
           "本人の操作によりタスクを中止しました。",
         ),
       );
-      void this.persist();
+      const result = { type: "cancelled", discardedInstructions };
+      void this.#persistControl(task, result, { requestKey }).catch(
+        () => undefined,
+      );
       if (!task.executing) void this.#markCancelled(task.surface, task);
-      return { type: "cancelled", discardedInstructions };
+      return result;
     }
     if (
       !task.executing &&
@@ -908,30 +1057,77 @@ export class DiscordVoiceTaskQueue {
     const disposition =
       task.executing || this.queue.includes(task) ? "queued" : "resumed";
     if (task.instructions.length >= 10) return { type: "full" };
-    task.instructions.push(instruction);
-    if (task.executing && task.controller?.signal.aborted)
-      task.resumeAfterAbort = true;
+    const previousState = task.state;
+    const previousCancelled = task.cancelled;
+    const entry = { id: randomUUID(), text: instruction, requestKey };
+    task.instructions.push(entry);
     task.state = task.executing ? "running" : "queued";
-    void this.persist();
     task.cancelled = false;
-    if (disposition === "resumed") {
-      if (!task.surface) task.surfacePromise = undefined;
-      this.queue.push(task);
-      this.#drain();
-    } else {
-      void Promise.resolve(
-        task.surface?.update?.({
-          state: task.executing ? "running" : "queued",
-          pendingInstructions: task.instructions.length,
-        }),
-      ).catch(() => undefined);
-    }
-    const pendingInstructions = task.instructions.length;
-    return { type: "instruction", disposition, pendingInstructions };
+    const result = {
+      type: "instruction",
+      disposition,
+      pendingInstructions: task.instructions.length,
+    };
+    void this.#persistControl(task, result, {
+      requestKey,
+      entry,
+      previousState,
+      previousCancelled,
+    })
+      .then(() => {
+        if (this.closed || task.cancelled || !task.instructions.includes(entry))
+          return;
+        if (task.executing && task.controller?.signal.aborted)
+          task.resumeAfterAbort = true;
+        if (!task.executing && !this.queue.includes(task)) {
+          if (!task.surface) task.surfacePromise = undefined;
+          this.queue.push(task);
+          this.#drain();
+        } else {
+          void Promise.resolve(
+            task.surface?.update?.({
+              state: task.executing ? "running" : "queued",
+              pendingInstructions: task.instructions.length,
+            }),
+          ).catch(() => undefined);
+        }
+      })
+      .catch(() => undefined);
+    return result;
   }
 
   handleVoiceControl(control) {
-    let candidates = [...this.tasksByThreadId.values()];
+    const task = this.#voiceControlTask(control);
+    return this.#handleTaskInstruction(task, {
+      userId: "voice-owner",
+      ownerUserId: "voice-owner",
+      requestKey: control.requestKey,
+      content: control.type === "stop" ? "停止" : control.instruction,
+    });
+  }
+
+  async handleVoiceControlDurable(control) {
+    const task = this.#voiceControlTask(control);
+    return this.#awaitControl(
+      task,
+      this.#handleTaskInstruction(task, {
+        userId: "voice-owner",
+        ownerUserId: "voice-owner",
+        requestKey: control.requestKey,
+        content: control.type === "stop" ? "停止" : control.instruction,
+      }),
+      control.requestKey,
+    );
+  }
+
+  #voiceControlTask(control) {
+    let candidates = [...this.tasks.values()];
+    if (control?.requestKey) {
+      const previous = candidates.find((task) =>
+        Object.hasOwn(task.controlReceipts ?? {}, control.requestKey),
+      );
+      if (previous) return previous;
+    }
     if (control?.taskId)
       candidates = candidates.filter((task) => task.id === control.taskId);
     else
@@ -939,14 +1135,7 @@ export class DiscordVoiceTaskQueue {
         (task) =>
           !task.cancelled && (task.executing || this.queue.includes(task)),
       );
-    if (candidates.length !== 1) return false;
-    const task = candidates[0];
-    return this.handleThreadMessage({
-      threadId: task.surface?.threadId,
-      userId: "voice-owner",
-      ownerUserId: "voice-owner",
-      content: control.type === "stop" ? "停止" : control.instruction,
-    });
+    return candidates.length === 1 ? candidates[0] : undefined;
   }
 
   stop() {
@@ -962,13 +1151,17 @@ export class DiscordVoiceTaskQueue {
       ),
     );
     const cancellations = queued.map((task) =>
-      task.surfacePromise
+      Promise.resolve(task.surfacePromise)
         .then((surface) => this.#markCancelled(surface, task))
         .catch(() => undefined),
     );
     this.stopping = Promise.allSettled([
       ...this.running,
       ...cancellations,
+      ...[...this.tasks.values()].flatMap((task) => [
+        task.controlPersistence,
+        ...(task.controlPersistenceByKey?.values() ?? []),
+      ]),
     ]).then(() => undefined);
     return this.stopping;
   }
@@ -998,6 +1191,8 @@ export class DiscordVoiceTaskQueue {
     let taskSurface;
     let postTaskText;
     let workerSucceeded = false;
+    let workerInvoked = false;
+    let consumedInstruction;
     let removeShutdownAbort = () => undefined;
     try {
       if (!task.surfacePromise) {
@@ -1043,8 +1238,13 @@ export class DiscordVoiceTaskQueue {
         typeof taskSurface === "function"
           ? async () => undefined
           : (state) => taskSurface.update(state);
-      task.additionalInstruction = task.instructions.shift();
-      await this.persist();
+      await this.#waitForInstructionReceipts(task);
+      consumedInstruction = task.instructions.shift();
+      task.additionalInstruction =
+        typeof consumedInstruction === "string"
+          ? consumedInstruction
+          : consumedInstruction?.text;
+      await this.persist({ strict: true });
       const isContinuation = Boolean(task.additionalInstruction);
       await withTimeout(
         (signal) =>
@@ -1074,8 +1274,9 @@ export class DiscordVoiceTaskQueue {
       let lastProgressAt = 0;
       const response = boundText(
         await withTimeout(
-          (signal) =>
-            this.runTask(task, {
+          (signal) => {
+            workerInvoked = true;
+            return this.runTask(task, {
               signal,
               onProgress: async (progress) => {
                 const content = boundText(progress, MAX_DISCORD_MESSAGE);
@@ -1102,7 +1303,8 @@ export class DiscordVoiceTaskQueue {
                   });
                 });
               },
-            }),
+            });
+          },
           this.taskTimeoutMs,
           "running power task",
           task.controller.signal,
@@ -1111,6 +1313,8 @@ export class DiscordVoiceTaskQueue {
       );
       task.result = response;
       workerSucceeded = true;
+      task.additionalInstruction = undefined;
+      await this.#waitForInstructionReceipts(task);
       const pendingInstructions = task.instructions.length;
       task.state =
         pendingInstructions && !task.cancelled ? "queued" : "completed";
@@ -1139,8 +1343,22 @@ export class DiscordVoiceTaskQueue {
           pendingInstructions,
         },
       );
-      if (task.instructions.length && !task.cancelled) this.queue.push(task);
+      await this.#waitForInstructionReceipts(task);
+      if (task.instructions.length && !task.cancelled) {
+        task.state = "queued";
+        this.queue.push(task);
+      } else if (!task.cancelled) task.state = "completed";
+      await this.persist();
     } catch (error) {
+      if (
+        !workerInvoked &&
+        consumedInstruction &&
+        !task.cancelled &&
+        !this.closed &&
+        error?.code !== "TASK_CANCELLED"
+      ) {
+        task.instructions.unshift(consumedInstruction);
+      }
       if (this.closed || task.cancelled || error?.code === "TASK_CANCELLED") {
         await this.#markCancelled(taskSurface, task);
       } else if (workerSucceeded) {
@@ -1283,6 +1501,7 @@ export class DiscordVoiceMeetingSession {
     this.minutes = initialState.minutes ?? "";
     this.results = initialState.results ?? [];
     this.pendingTasks = initialState.pendingTasks ?? [];
+    this.pendingControls = initialState.pendingControls ?? [];
     this.revision = initialState.revision ?? 0;
     this.resetting = false;
     this.meetingBoundary = Promise.resolve();
@@ -1334,6 +1553,7 @@ export class DiscordVoiceMeetingSession {
       statements: this.statements,
       results: this.results,
       pendingTasks: structuredClone(this.pendingTasks),
+      pendingControls: structuredClone(this.pendingControls),
     });
   }
 
@@ -1501,6 +1721,7 @@ export class DiscordVoiceMeetingSession {
     const startedAt = Date.now();
     try {
       await this.#dispatchPendingTasks();
+      await this.#dispatchPendingControls();
       await this.#archivePendingStatements();
       this.statements = this.statements.filter(
         (statement) => !statement.observed || !statement.archived,
@@ -1589,6 +1810,24 @@ export class DiscordVoiceMeetingSession {
         )
           this.pendingTasks.push(task);
       }
+      for (const control of taskControls) {
+        control.requestKey = `${this.meetingId}:control:${control.type}:${[...control.sourceSequences].sort((a, b) => a - b).join(",")}`;
+        if (!control.taskId) {
+          const active = this.getTasks().filter((task) =>
+            ["queued", "running"].includes(task.state),
+          );
+          if (active.length === 1) control.taskId = active[0].id;
+          else
+            control.notification =
+              "操作対象を一つに特定できません。タスクIDか対象スレッドを指定して再度依頼してください。";
+        }
+        if (
+          !this.pendingControls.some(
+            (pending) => pending.requestKey === control.requestKey,
+          )
+        )
+          this.pendingControls.push(control);
+      }
       for (const statement of statements) statement.observed = true;
       this.statements = this.statements.filter(
         (statement) => !statement.observed || !statement.archived,
@@ -1598,27 +1837,12 @@ export class DiscordVoiceMeetingSession {
       this.failedTranscriptions = 0;
       this.#queueLiveUpdate();
 
-      let rejectedControls = 0;
-      for (const control of taskControls) {
-        if (!this.dependencies.controlTask(control)) rejectedControls += 1;
-      }
+      await this.#dispatchPendingControls();
       const { accepted: acceptedTasks } = await this.#dispatchPendingTasks();
-      if (rejectedControls) {
-        await withTimeout(
-          (signal) =>
-            this.dependencies.postText(
-              "⚠️ 操作対象を一つに特定できません。タスクIDを指定するか、対象スレッドで指示してください。",
-              { signal },
-            ),
-          this.stageTimeouts.posting,
-          "posting task control status",
-          this.shutdownController.signal,
-        );
-      }
 
       const reply = acceptedTasks.length
         ? `タスクを追加しました：${acceptedTasks.map((task) => task.title).join("、")}`
-        : !tasks.length && observation.shouldReply
+        : !tasks.length && !taskControls.length && observation.shouldReply
           ? observation.reply
           : "";
       if (reply) {
@@ -1672,6 +1896,62 @@ export class DiscordVoiceMeetingSession {
     } finally {
       this.observing = false;
       this.#scheduleImmediateObservation();
+    }
+  }
+
+  async #dispatchPendingControls() {
+    if (this.pendingControls.length) await this.persist();
+    for (const control of [...this.pendingControls]) {
+      if (this.closed) break;
+      try {
+        if (!control.notification) {
+          const result = await withTimeout(
+            () => this.dependencies.controlTask(control),
+            this.stageTimeouts.posting,
+            "saving task control",
+            this.shutdownController.signal,
+          );
+          if (result?.persisted === false)
+            throw new Error("Control state save pending");
+          control.notification = !result
+            ? "操作対象が見つかりません。タスクIDと作業一覧を確認して再度依頼してください。"
+            : result.type === "full"
+              ? "追加指示の枠が満杯のため、今回の指示は受け付けていません。空きができたら再度依頼してください。"
+              : control.type === "stop"
+                ? `タスク ${control.taskId} を停止しました。`
+                : `タスク ${control.taskId} への追加指示を保存しました。`;
+          await this.persist();
+        }
+        await withTimeout(
+          (signal) =>
+            this.dependencies.postText(control.notification, { signal }),
+          this.stageTimeouts.posting,
+          "posting saved control receipt",
+          this.shutdownController.signal,
+        );
+        this.pendingControls = this.pendingControls.filter(
+          (pending) => pending !== control,
+        );
+        await this.persist();
+        const audio = await withTimeout(
+          (signal) =>
+            this.dependencies.synthesize(control.notification, { signal }),
+          this.stageTimeouts.synthesizing,
+          "speaking control receipt",
+          this.shutdownController.signal,
+        );
+        await withTimeout(
+          (signal) => this.dependencies.playAudio(audio, { signal }),
+          this.stageTimeouts.speaking,
+          "playing control receipt",
+          this.shutdownController.signal,
+        );
+      } catch (error) {
+        this.#log("meeting_control_dispatch_pending", {
+          requestKey: control.requestKey,
+          errorCode: voiceErrorCode(error),
+        });
+      }
     }
   }
 

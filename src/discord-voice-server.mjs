@@ -427,6 +427,12 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
 }
 
 export function formatDiscordTaskAction(action) {
+  if (action?.persisted === false)
+    return "停止しましたが、停止状態を保存できませんでした。再起動後は作業一覧を確認してください。";
+  if (action?.type === "save_failed")
+    return "追加指示を保存できなかったため受け付けていません。保存先を確認して再試行してください。";
+  if (action?.type === "full")
+    return "追加指示の枠がいっぱいです。少し待ってから再送してください。";
   if (action?.type === "cancelled") {
     return action.discardedInstructions
       ? `⏹️ タスクを停止し、未処理の追加指示${action.discardedInstructions}件も破棄しました。`
@@ -644,7 +650,7 @@ export async function startDiscordVoiceCodex({
             playAudio,
             enqueueTask: (task) => taskQueue?.enqueueDurable(task) ?? false,
             controlTask: (control) =>
-              taskQueue?.handleVoiceControl(control) ?? false,
+              taskQueue?.handleVoiceControlDurable(control) ?? false,
             ownerUserId: config.allowedUserId,
             tasksEnabled: config.powerMode,
             operatorUserIds: config.operatorUserIds,

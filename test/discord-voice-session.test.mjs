@@ -613,7 +613,7 @@ test("meeting task controls accept only attributed owner speech", () => {
       statements,
       "owner-id",
     ),
-    [{ type: "stop", instruction: "そのタスクを止めて" }],
+    [{ type: "stop", instruction: "そのタスクを止めて", sourceSequences: [1] }],
   );
 });
 
