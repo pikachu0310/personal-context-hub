@@ -688,7 +688,8 @@ export class DiscordVoiceTaskQueue {
       title: task.title,
       request: task.request,
       requestKey: task.requestKey,
-      receiptFailed: task.receiptFailed,
+      receiptFailed:
+        task === receiptTask && includeInstruction ? false : task.receiptFailed,
       context: task.context,
       kind: task.kind,
       complexity: task.complexity,
@@ -955,7 +956,11 @@ export class DiscordVoiceTaskQueue {
       receiptTask: task,
       receiptKey: requestKey,
       onSaved: () => {
-        if (entry) delete entry.pending;
+        if (entry) {
+          delete entry.pending;
+          task.receiptFailed = false;
+          task.acceptancePromise = Promise.resolve();
+        }
         task.pendingControlReceipts?.delete(requestKey);
       },
       onFailure: () => {

@@ -140,6 +140,49 @@ test("failed receipts retain their ID on retry and cannot overwrite another requ
   );
 });
 
+test("resuming a failed receipt acknowledges the original request without replaying its initial work", async (t) => {
+  let fail = true;
+  const runs = [],
+    saved = [];
+  const tasks = queue({
+    checkpoint: async (records) => {
+      if (fail) throw new Error("disk full");
+      saved.push(structuredClone(records));
+    },
+    runTask: async (task) => {
+      runs.push(task.additionalInstruction ?? "initial");
+      return "done";
+    },
+  });
+  t.after(() => tasks.stop());
+  const request = {
+    id: "resume01",
+    title: "work",
+    requestKey: "voice:receipt-resume",
+  };
+  await assert.rejects(tasks.enqueueDurable(request));
+  await eventually(() => tasks.active === 0);
+  fail = false;
+  await tasks.handleVoiceControlDurable({
+    type: "instruction",
+    taskId: request.id,
+    instruction: "resume saved request",
+    requestKey: "resume",
+  });
+  await eventually(() => tasks.active === 0);
+  await tasks.enqueueDurable(request);
+  await eventually(() => tasks.active === 0);
+  assert.deepEqual(runs, ["resume saved request"]);
+  const receipt = saved.find((records) => records[0].controlReceipts?.resume);
+  assert.equal(receipt[0].receiptFailed, false);
+  const restored = queue({
+    runTask: async () => assert.fail("must not replay acknowledged work"),
+  });
+  t.after(() => restored.stop());
+  await restored.restore(receipt, async () => ({ post: noop, update: noop }));
+  assert.equal(await restored.enqueueDurable(request), true);
+});
+
 test("voice cancellation is resolved before replaying a pending receipt", async (t) => {
   let runs = 0,
     fail = true,
