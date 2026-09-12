@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { SpeechTurnAssembler } from "./discord-voice-utterances.mjs";
 import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
+import { parseImmediateTaskStop } from "./discord-voice-intents.mjs";
 import {
   VoiceServiceError,
   voiceErrorCode,
@@ -13,6 +14,18 @@ const MAX_CODEX_RESPONSE_CHARACTERS = 12_000;
 const TRUNCATION_SUFFIX = " …（長さ上限で省略）";
 const UNCONFIRMED_INSTRUCTION_PREFIX =
   "中断前の追加指示は完了未確認です。履歴と作業場所を確認し、実行済みの外部操作を繰り返さず、未完了分だけ続けてください。\n";
+
+function controlReceiptText(control, result) {
+  if (!result)
+    return "操作対象が見つかりません。タスクIDと作業一覧を確認して再度依頼してください。";
+  if (result.type === "superseded")
+    return `タスク ${control.taskId} は後から停止されたため、停止前の追加指示は実行していません。`;
+  if (result.type === "full")
+    return "追加指示の枠が満杯のため、今回の指示は受け付けていません。空きができたら再度依頼してください。";
+  return control.type === "stop"
+    ? `タスク ${control.taskId} を停止しました。`
+    : `タスク ${control.taskId} への追加指示を保存しました。`;
+}
 function retainInterruptedInstruction(task, entry, uncertain = true) {
   const text = typeof entry === "string" ? entry : entry?.text;
   if (!text) return;
@@ -705,6 +718,7 @@ export class DiscordVoiceTaskQueue {
         ),
       ),
       cancelled: task.cancelled,
+      controlVersion: task.controlVersion ?? 0,
       codexThreadId: task.codexThreadId ?? task.codexThread?.id,
       workingDirectory: task.workingDirectory,
       baseCommit: task.baseCommit,
@@ -838,11 +852,12 @@ export class DiscordVoiceTaskQueue {
 
   list() {
     return [...this.tasks.values()].map(
-      ({ id, title, state, surface, threadId, createdAt }) => ({
+      ({ id, title, state, surface, threadId, createdAt, controlVersion }) => ({
         id,
         title,
         state,
         createdAt,
+        controlVersion: controlVersion ?? 0,
         threadId: surface?.threadId ?? threadId,
       }),
     );
@@ -899,7 +914,7 @@ export class DiscordVoiceTaskQueue {
   }
 
   async #awaitControl(task, result, requestKey) {
-    if (!result || result.type === "full") return result;
+    if (!result || ["full", "superseded"].includes(result.type)) return result;
     if (
       result.type === "cancelled" &&
       result.persisted === false &&
@@ -1135,7 +1150,10 @@ export class DiscordVoiceTaskQueue {
     return this.#handleTaskInstruction(task, message);
   }
 
-  #handleTaskInstruction(task, { userId, ownerUserId, content, requestKey }) {
+  #handleTaskInstruction(
+    task,
+    { userId, ownerUserId, content, requestKey, expectedControlVersion },
+  ) {
     if (this.closed || userId !== ownerUserId) return false;
     const instruction = boundText(content, MAX_DISCORD_MESSAGE);
     if (!task || !instruction) return false;
@@ -1145,6 +1163,7 @@ export class DiscordVoiceTaskQueue {
       /^(?:停止|中止|キャンセル|stop|cancel)[!！。\s]*$/iu.test(instruction)
     ) {
       const discardedInstructions = task.instructions.length;
+      task.controlVersion = (task.controlVersion ?? 0) + 1;
       task.cancelled = true;
       task.state = "cancelled";
       task.instructions.length = 0;
@@ -1164,6 +1183,11 @@ export class DiscordVoiceTaskQueue {
       if (!task.executing) void this.#markCancelled(task.surface, task);
       return result;
     }
+    if (
+      expectedControlVersion !== undefined &&
+      expectedControlVersion !== (task.controlVersion ?? 0)
+    )
+      return { type: "superseded" };
     if (
       !task.executing &&
       !this.queue.includes(task) &&
@@ -1221,6 +1245,7 @@ export class DiscordVoiceTaskQueue {
       userId: "voice-owner",
       ownerUserId: "voice-owner",
       requestKey: control.requestKey,
+      expectedControlVersion: control.expectedControlVersion,
       content: control.type === "stop" ? "停止" : control.instruction,
     });
   }
@@ -1233,6 +1258,7 @@ export class DiscordVoiceTaskQueue {
         userId: "voice-owner",
         ownerUserId: "voice-owner",
         requestKey: control.requestKey,
+        expectedControlVersion: control.expectedControlVersion,
         content: control.type === "stop" ? "停止" : control.instruction,
       }),
       control.requestKey,
@@ -1916,10 +1942,16 @@ export class DiscordVoiceMeetingSession {
   async #flushSpeechTurns() {
     const completed = this.speechTurns.drain();
     this.statements.push(...completed);
-    for (const statement of completed) await this.#archiveStatement(statement);
+    for (const statement of completed) {
+      await this.#tryImmediateStop(statement);
+      await this.#archiveStatement(statement);
+    }
     await this.persist();
     this.#queueLiveUpdate();
-    if (completed.length && this.immediateReactions) {
+    if (
+      completed.some((statement) => !statement.handledAction) &&
+      this.immediateReactions
+    ) {
       this.immediateObservationRequested = true;
       this.#scheduleImmediateObservation();
     }
@@ -1945,10 +1977,14 @@ export class DiscordVoiceMeetingSession {
         archived: false,
       };
       this.statements.push(statement);
+      await this.#tryImmediateStop(statement);
       await this.#archiveStatement(statement);
       await this.persist();
       this.#queueLiveUpdate();
-      if (this.immediateReactions || statement.requestReply) {
+      if (
+        (this.immediateReactions && !statement.handledAction) ||
+        statement.requestReply
+      ) {
         this.immediateObservationRequested = true;
         this.#scheduleImmediateObservation();
       }
@@ -1956,6 +1992,75 @@ export class DiscordVoiceMeetingSession {
     } finally {
       this.activeTextInputs--;
     }
+  }
+
+  async #tryImmediateStop(statement) {
+    if (
+      !this.tasksEnabled ||
+      statement.taskEligible === false ||
+      !this.ownerUserId ||
+      !(
+        statement.userId === this.ownerUserId ||
+        this.operatorUserIds.includes(statement.userId)
+      )
+    )
+      return false;
+    const parsed = parseImmediateTaskStop(statement.text);
+    if (!parsed) return false;
+    const all = this.getActiveTasks();
+    const active = all.filter((task) =>
+      ["queued", "running", "awaiting_receipt"].includes(task.state),
+    );
+    const taskId = parsed.taskId
+      ? all.find(
+          (task) =>
+            String(task.id).toLowerCase() === parsed.taskId.toLowerCase(),
+        )?.id
+      : active.length === 1
+        ? active[0].id
+        : undefined;
+    if (!taskId) return false;
+    const control = {
+      type: "stop",
+      taskId,
+      sourceSequences: [statement.sequence],
+      requestKey: `${this.meetingId}:control:stop:${statement.sequence}`,
+    };
+    statement.taskEligible = false;
+    statement.handledAction = { type: "stop", taskId };
+    this.pendingControls.push(control);
+    try {
+      const result = await withTimeout(
+        () => this.#applyMeetingControl(control),
+        this.stageTimeouts.posting,
+        "saving immediate stop",
+        this.shutdownController.signal,
+      );
+      if (result?.persisted !== false)
+        control.notification = controlReceiptText(control, result);
+      else
+        await withTimeout(
+          (signal) =>
+            this.dependencies.postText(
+              `タスク ${taskId} は停止しましたが、停止状態の保存を再試行しています。`,
+              { signal },
+            ),
+          this.stageTimeouts.posting,
+          "posting pending stop status",
+          this.shutdownController.signal,
+        );
+      await this.persist();
+      await this.#dispatchPendingControls();
+      // A dispatcher already posting another receipt may have taken its snapshot before this stop.
+      if (this.pendingControls.includes(control) && control.notification)
+        await this.#dispatchPendingControls();
+    } catch (error) {
+      this.#log("immediate_stop_receipt_pending", {
+        taskId,
+        errorCode: voiceErrorCode(error),
+      });
+    }
+    return true;
   }
 
   getContextSnapshot() {
@@ -2146,6 +2251,12 @@ export class DiscordVoiceMeetingSession {
         return false;
       }
       const transcript = formatMeetingObservationTranscript(statements);
+      const taskVersions = new Map(
+        this.getActiveTasks().map((task) => [
+          task.id,
+          task.controlVersion ?? 0,
+        ]),
+      );
       const raw = await withTimeout(
         (signal) =>
           this.dependencies.observe(
@@ -2225,6 +2336,8 @@ export class DiscordVoiceMeetingSession {
             control.notification =
               "操作対象を一つに特定できません。タスクIDか対象スレッドを指定して再度依頼してください。";
         }
+        if (control.type === "instruction")
+          control.expectedControlVersion = taskVersions.get(control.taskId);
         if (
           !this.pendingControls.some(
             (pending) => pending.requestKey === control.requestKey,
@@ -2286,7 +2399,8 @@ export class DiscordVoiceMeetingSession {
         this.statements.some(
           (statement) =>
             !statement.observed &&
-            (this.immediateReactions || statement.requestReply),
+            ((this.immediateReactions && !statement.handledAction) ||
+              statement.requestReply),
         )
       )
         this.immediateObservationRequested = true;
@@ -2305,30 +2419,37 @@ export class DiscordVoiceMeetingSession {
     }
   }
 
-  async #dispatchPendingControls() {
+  async #applyMeetingControl(control) {
+    return (
+      (control.type === "stop" &&
+        (await this.cancelPendingTask(control.taskId))) ||
+      this.dependencies.controlTask(control)
+    );
+  }
+
+  #dispatchPendingControls() {
+    if (!this.controlsDispatching)
+      this.controlsDispatching = this.#flushPendingControls().finally(() => {
+        this.controlsDispatching = undefined;
+      });
+    return this.controlsDispatching;
+  }
+
+  async #flushPendingControls() {
     if (this.pendingControls.length) await this.persist();
     for (const control of [...this.pendingControls]) {
       if (this.closed) break;
       try {
         if (!control.notification) {
           const result = await withTimeout(
-            async () =>
-              (control.type === "stop" &&
-                (await this.cancelPendingTask(control.taskId))) ||
-              this.dependencies.controlTask(control),
+            () => this.#applyMeetingControl(control),
             this.stageTimeouts.posting,
             "saving task control",
             this.shutdownController.signal,
           );
           if (result?.persisted === false)
             throw new Error("Control state save pending");
-          control.notification = !result
-            ? "操作対象が見つかりません。タスクIDと作業一覧を確認して再度依頼してください。"
-            : result.type === "full"
-              ? "追加指示の枠が満杯のため、今回の指示は受け付けていません。空きができたら再度依頼してください。"
-              : control.type === "stop"
-                ? `タスク ${control.taskId} を停止しました。`
-                : `タスク ${control.taskId} への追加指示を保存しました。`;
+          control.notification = controlReceiptText(control, result);
           await this.persist();
         }
         await withTimeout(
@@ -2558,6 +2679,7 @@ export class DiscordVoiceMeetingSession {
         await this.#flushSpeechTurns();
       } else {
         this.statements.push(statement);
+        await this.#tryImmediateStop(statement);
         await this.#archiveStatement(statement);
         await this.persist();
       }
@@ -2586,7 +2708,13 @@ export class DiscordVoiceMeetingSession {
         await this.#flushSpeechTurns().catch(() => undefined);
       }
       this.#queueLiveUpdate();
-      if (accepted && this.immediateReactions) {
+      if (
+        accepted &&
+        this.immediateReactions &&
+        this.statements.some(
+          (statement) => !statement.observed && !statement.handledAction,
+        )
+      ) {
         this.immediateObservationRequested = true;
         this.liveUpdate.finally(() => this.#scheduleImmediateObservation());
       }

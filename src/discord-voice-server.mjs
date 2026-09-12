@@ -91,6 +91,19 @@ async function destroyQuietly(resource) {
   }
 }
 
+export function serializeAudioPlayback(play) {
+  let pending = Promise.resolve();
+  return (audio, options = {}) => {
+    if (options.signal?.aborted) return Promise.reject(options.signal.reason);
+    const next = pending.then(() => {
+      if (options.signal?.aborted) throw options.signal.reason;
+      return play(audio, options);
+    });
+    pending = next.catch(() => undefined);
+    return next;
+  };
+}
+
 export function createDiscordPlayer(connection, logger = console) {
   const player = createAudioPlayer({
     behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
@@ -99,7 +112,7 @@ export function createDiscordPlayer(connection, logger = console) {
     logAudioFailure(logger, "playback_failed", error);
   });
   connection.subscribe(player);
-  return async (ttsPcm, { signal } = {}) => {
+  return serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
     if (signal?.aborted) throw signal.reason;
     const stopOnAbort = () => player.stop(true);
     signal?.addEventListener("abort", stopOnAbort, { once: true });
@@ -119,7 +132,7 @@ export function createDiscordPlayer(connection, logger = console) {
     } finally {
       signal?.removeEventListener("abort", stopOnAbort);
     }
-  };
+  });
 }
 
 export function subscribeToAllowedSpeaker({
