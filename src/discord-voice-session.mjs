@@ -388,7 +388,7 @@ export function formatMeetingTranscript(
     (statement) =>
       `**${escapeDiscordMarkdown(speakerLabel(statement))}**: ${statement.text}`,
   );
-  const header = "🎙️ **会話中（次回の定期観測まで）**";
+  const header = "🎙️ **会話ログ・処理状況**";
   const kept = [];
   let used = header.length;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -399,7 +399,7 @@ export function formatMeetingTranscript(
   }
   const omitted = lines.length - kept.length;
   const body = kept.length ? kept.join("\n") : "_発話を待っています。_";
-  return `${header}\n${omitted ? `_古い発話 ${omitted} 件は会話ログへ保存しました。_\n` : ""}${body}`;
+  return `${header}\n${omitted ? `_表示を省略した発話 ${omitted} 件があります。_\n` : ""}${body}`;
 }
 
 export function formatMeetingObservationTranscript(statements) {
@@ -1745,6 +1745,7 @@ export class DiscordVoiceMeetingSession {
     this.meetingBoundary = Promise.resolve();
     this.activeTextInputs = 0;
     this.observing = false;
+    this.processingConversation = false;
     this.immediateObservationRequested = false;
     this.immediateObservationScheduled = false;
     this.closed = false;
@@ -2339,6 +2340,8 @@ export class DiscordVoiceMeetingSession {
           task.controlVersion ?? 0,
         ]),
       );
+      this.processingConversation = true;
+      this.#queueLiveUpdate();
       const raw = await withTimeout(
         (signal) =>
           this.dependencies.observe(
@@ -2498,6 +2501,10 @@ export class DiscordVoiceMeetingSession {
       return false;
     } finally {
       this.observing = false;
+      if (this.processingConversation) {
+        this.processingConversation = false;
+        this.#queueLiveUpdate();
+      }
       this.#scheduleImmediateObservation();
     }
   }
@@ -2814,6 +2821,8 @@ export class DiscordVoiceMeetingSession {
     );
     let content = formatMeetingTranscript(statements);
     const notices = [];
+    if (this.processingConversation)
+      notices.push("会話を処理中。続けて話せます");
     if (this.speechTurns.turns.size)
       notices.push(
         `${this.speechTurns.turns.size}件の発話を認識中。話し終わってから依頼を処理します`,
