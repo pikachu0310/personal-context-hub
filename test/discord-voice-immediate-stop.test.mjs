@@ -136,7 +136,7 @@ test("a completed authorized stop bypasses an occupied observer and invalidates 
   assert.equal(tasks.list()[0].state, "cancelled");
 });
 
-test("unauthorized, incomplete, or ambiguous stop requests do not take the immediate path", async (t) => {
+test("unauthorized, incomplete, or ambiguous stop requests cannot stop a task", async (t) => {
   const controls = [];
   const session = new DiscordVoiceMeetingSession({
     transcribe: noop,
@@ -176,6 +176,100 @@ test("unauthorized, incomplete, or ambiguous stop requests do not take the immed
   assert.equal(controls.length, 1);
   assert.equal(controls[0].taskId, "active01");
   assert.equal(session.statements.at(-1).taskEligible, false);
+});
+
+test("an ambiguous, unknown, or empty stop target receives an immediate explanation without observing or controlling work", async (t) => {
+  let current = [
+    { id: "active01", title: "実装", state: "running" },
+    { id: "active02", title: "比較", state: "queued" },
+  ];
+  const posts = [];
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: noop,
+    observe: async () =>
+      assert.fail("target clarification must not wait for Codex"),
+    upsertLiveTranscript: noop,
+    upsertMinutes: noop,
+    postText: async (text) => posts.push(text),
+    synthesize: noop,
+    playAudio: noop,
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+    logger: {},
+    ownerUserId: "owner",
+    tasksEnabled: true,
+    immediateReactions: true,
+    getTasks: () => current,
+    controlTask: async () =>
+      assert.fail("ambiguous target cannot control work"),
+  });
+  t.after(() => session.stop());
+  await session.addText("井戸Bot、今の作業を止めて", { userId: "owner" });
+  assert.match(posts[0], /active01[\s\S]*active02/);
+  assert.equal(session.statements.at(-1).handledAction.reason, "ambiguous");
+  await session.addText("井戸Bot、タスク absent01 を停止して", {
+    userId: "owner",
+  });
+  assert.match(posts[1], /absent01.*見つからなかった/);
+  assert.equal(session.statements.at(-1).handledAction.reason, "not_found");
+  current = [];
+  await session.addText("井戸Bot、停止してください", { userId: "owner" });
+  assert.equal(session.statements.at(-1).handledAction.reason, "none_active");
+  assert.ok(posts.every((text) => text.includes("停止操作はしていません")));
+  assert.ok(
+    session.statements.every(
+      (statement) =>
+        !statement.taskEligible && statement.handledAction.applied === false,
+    ),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
+test("a saved stop clarification never becomes an operation after restart when only one task remains", async (t) => {
+  let saved;
+  const base = {
+    transcribe: noop,
+    observe: async () =>
+      JSON.stringify({ minutes: "対象の確認待ち", shouldReply: false }),
+    upsertLiveTranscript: noop,
+    upsertMinutes: noop,
+    synthesize: noop,
+    playAudio: noop,
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+    logger: {},
+    ownerUserId: "owner",
+    tasksEnabled: true,
+    controlTask: async () =>
+      assert.fail("a saved clarification cannot become a stop operation"),
+  };
+  const original = new DiscordVoiceMeetingSession({
+    ...base,
+    getTasks: () => [
+      { id: "one", state: "running" },
+      { id: "two", state: "queued" },
+    ],
+    checkpoint: async (value) => {
+      saved = structuredClone(value);
+    },
+    postText: async () => {
+      throw new Error("offline");
+    },
+  });
+  t.after(() => original.stop());
+  await original.addText("井戸Bot、今の作業を止めて", { userId: "owner" });
+  const posts = [];
+  const restored = new DiscordVoiceMeetingSession({
+    ...base,
+    initialState: saved,
+    getTasks: () => [{ id: "one", state: "running" }],
+    postText: async (text) => posts.push(text),
+  });
+  t.after(() => restored.stop());
+  await restored.observeNow();
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], /受付時点.*作業が2件.*停止操作はしていません/);
+  assert.equal(restored.pendingControls.length, 0);
 });
 
 test("a saved stop rejects old observation controls after restart but allows a new explicit continuation", async (t) => {

@@ -2086,8 +2086,12 @@ export class DiscordVoiceMeetingSession {
       ].join("\n"),
       spokenNotification: `確認した時点では、${summary}${attention}`,
     };
+    return this.#saveImmediateReply(statement, control, { type: "status" });
+  }
+
+  async #saveImmediateReply(statement, control, handledAction) {
     statement.taskEligible = false;
-    statement.handledAction = { type: "status" };
+    statement.handledAction = handledAction;
     // This is a notification-only receipt. Replaying it never invokes a worker or control.
     this.pendingControls.push(control);
     try {
@@ -2099,7 +2103,7 @@ export class DiscordVoiceMeetingSession {
       )
         await this.#dispatchPendingControls();
     } catch (error) {
-      this.#log("immediate_status_reply_pending", {
+      this.#log("immediate_reply_pending", {
         errorCode: voiceErrorCode(error),
       });
     }
@@ -2131,7 +2135,42 @@ export class DiscordVoiceMeetingSession {
       : active.length === 1
         ? active[0].id
         : undefined;
-    if (!taskId) return false;
+    if (!taskId) {
+      const reason = parsed.taskId
+        ? "not_found"
+        : active.length
+          ? "ambiguous"
+          : "none_active";
+      const explanation = parsed.taskId
+        ? `受付時点の履歴にタスク ${parsed.taskId} が見つからなかったため、停止操作はしていません。`
+        : active.length
+          ? `受付時点で作業が${active.length}件あり、対象を一つに特定できなかったため、停止操作はしていません。`
+          : "受付時点で実行中・待機中の作業はありませんでした。停止操作はしていません。";
+      return this.#saveImmediateReply(
+        statement,
+        {
+          type: "reply",
+          meetingId: this.meetingId,
+          sourceSequences: [statement.sequence],
+          requestKey: `${this.meetingId}:stop-target:${statement.sequence}`,
+          notification: [
+            explanation,
+            ...active
+              .slice(0, 3)
+              .map(
+                (task) =>
+                  `\`${task.id}\` ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 80))}`,
+              ),
+            "IDは /ido status で確認し、/ido stop タスクID で停止できます。",
+          ].join("\n"),
+          spokenNotification:
+            reason === "ambiguous"
+              ? "作業が複数あるため、停止していません。止めるタスクのIDを指定してください。"
+              : `${explanation}必要ならテキストの作業一覧を確認してください。`,
+        },
+        { type: "stop", applied: false, reason },
+      );
+    }
     const control = {
       type: "stop",
       taskId,
