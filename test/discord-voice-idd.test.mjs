@@ -107,6 +107,18 @@ test("parallel workspaces include tracked local context and never overwrite the 
       await readFile(artifacts.patchPath, "utf8"),
       /\+uncommitted context/,
     );
+    a.runRevision = 2;
+    await writeFile(
+      join(a.workingDirectory, "app.txt"),
+      "result A follow-up\n",
+    );
+    const followUp = await manager.collect(a);
+    assert.notEqual(followUp.patchPath, artifacts.patchPath);
+    assert.doesNotMatch(
+      await readFile(artifacts.patchPath, "utf8"),
+      /follow-up/,
+    );
+    assert.match(await readFile(followUp.patchPath, "utf8"), /follow-up/);
     a.artifacts = artifacts;
     assert.equal(await manager.apply(a), true);
     assert.equal(await readFile(join(repo, "app.txt"), "utf8"), "result A\n");

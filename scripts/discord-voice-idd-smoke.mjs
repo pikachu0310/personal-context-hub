@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
+import { createDiscordArtifactPoster } from "../src/discord-voice-server.mjs";
 import {
   DiscordVoiceTaskQueue,
   authorizeMeetingTasks,
@@ -95,7 +96,10 @@ const queue = new DiscordVoiceTaskQueue({
   postText: async () => undefined,
   createTaskThread: async (task) => ({
     threadId: task.id,
-    post: async () => undefined,
+    post: async (content) => {
+      if (content.includes("実行結果"))
+        throw new Error("Synthetic Discord outage");
+    },
     update: async () => undefined,
   }),
   runTask: (task, options) => runner.runTask(task, options),
@@ -118,7 +122,8 @@ queue.enqueue({
 const deadline = Date.now() + 250_000;
 while (
   Date.now() < deadline &&
-  queue.list().some((task) => ["queued", "running"].includes(task.state))
+  (queue.list().some((task) => ["queued", "running"].includes(task.state)) ||
+    queue.active)
 ) {
   await new Promise((resolve) => setTimeout(resolve, 200));
 }
@@ -129,6 +134,34 @@ assert.ok(
   snapshot.every((task) => task.state === "completed"),
   JSON.stringify(snapshot.map(({ title, state }) => ({ title, state }))),
 );
+assert.ok(snapshot.every((task) => task.resultDeliveryPending));
+const delivered = [];
+const recovered = new DiscordVoiceTaskQueue({
+  logger: {},
+  postText: async () => undefined,
+  createTaskThread: async () => undefined,
+  runTask: async () => {
+    throw new Error("Result replay must never rerun Codex");
+  },
+  onResult: async (result) => reports.push(result),
+});
+await recovered.restore(snapshot, async (task) => {
+  const thread = { send: async (payload) => delivered.push(payload) };
+  return {
+    threadId: task.threadId,
+    post: async (content) => delivered.push({ content }),
+    update: async () => undefined,
+    postArtifacts: createDiscordArtifactPoster(thread, task),
+  };
+});
+await recovered.retryResultDelivery();
+assert.equal(reports.length, 2);
+assert.equal(
+  delivered.filter((message) => message.files?.length === 2).length,
+  2,
+);
+assert.ok(recovered.snapshot().every((task) => !task.resultDeliveryPending));
+await recovered.stop();
 const implementation = snapshot.find((task) => task.kind === "implementation");
 const benchmark = snapshot.find((task) => task.kind === "benchmark");
 const verification = await exec(process.execPath, ["--test", "math.test.mjs"], {
@@ -144,6 +177,7 @@ assert.equal(
   "export const add = (a, b) => a - b;\n",
 );
 const resumedRunner = new CodexVoiceRunner(runnerConfig);
+const firstPatch = await readFile(implementation.artifacts.patchPath, "utf8");
 const continuation = {
   ...implementation,
   additionalInstruction:
@@ -153,6 +187,14 @@ await resumedRunner.runTask(continuation, {
   signal: AbortSignal.timeout(120_000),
 });
 assert.equal(continuation.codexThreadId, implementation.codexThreadId);
+assert.notEqual(
+  continuation.artifacts.patchPath,
+  implementation.artifacts.patchPath,
+);
+assert.equal(
+  await readFile(implementation.artifacts.patchPath, "utf8"),
+  firstPatch,
+);
 const resumedVerification = await exec(
   process.execPath,
   ["--test", "math.test.mjs"],
@@ -172,6 +214,8 @@ const report = {
   benchmark: numbers,
   independentTestOutput: verification.stdout,
   resultFeedbackCount: reports.length,
+  resultReplayAfterRestart: "passed",
+  revisionArtifactsPreserved: "passed",
 };
 const reportPath = join(root, "report.json");
 await writeFile(reportPath, JSON.stringify(report, null, 2), { mode: 0o600 });
@@ -185,6 +229,8 @@ console.log(
       sameThreadResume: "passed",
       explicitApply: "passed",
       independentTests: "passed",
+      resultReplayAfterRestart: "passed",
+      revisionArtifactsPreserved: "passed",
       benchmark: numbers,
       reportPath,
     },

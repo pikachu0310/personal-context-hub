@@ -537,6 +537,8 @@ export class CodexVoiceRunner {
     const workingDirectory = this.workspaces
       ? await this.workspaces.prepare(task)
       : this.config.workingDirectory;
+    task.runRevision = (task.runRevision ?? 0) + 1;
+    await task.checkpoint?.();
     const profile = selectTaskProfile(task, this.config);
     task.profile = profile;
     task.evidence ??= { commands: 0, failedCommands: 0, tests: [], files: [] };

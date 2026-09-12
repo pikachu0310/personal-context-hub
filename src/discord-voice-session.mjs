@@ -610,11 +610,13 @@ export class DiscordVoiceTaskQueue {
       threadId: task.surface?.threadId ?? task.threadId,
       starterId: task.surface?.starterId ?? task.starterId,
       result: task.result,
-      artifacts: task.artifacts,
-      profile: task.profile,
-      evidence: task.evidence,
+      artifacts: structuredClone(task.artifacts),
+      profile: structuredClone(task.profile),
+      evidence: structuredClone(task.evidence),
       additionalInstruction: task.additionalInstruction,
       resultDeliveryPending: task.resultDeliveryPending,
+      resultDeliveries: structuredClone(task.resultDeliveries ?? []),
+      runRevision: task.runRevision,
     }));
   }
 
@@ -636,6 +638,22 @@ export class DiscordVoiceTaskQueue {
       };
       if (["running", "queued"].includes(task.state))
         task.state = "interrupted";
+      task.resultDeliveries ??= [];
+      if (
+        task.resultDeliveryPending &&
+        !task.resultDeliveries.length &&
+        task.result
+      ) {
+        task.resultDeliveries.push({
+          result: task.result,
+          artifacts: task.artifacts,
+          evidence: task.evidence,
+          state: task.state,
+          elapsedMs: Date.now() - task.createdAt,
+          pendingInstructions: task.instructions.length,
+          nextStep: 0,
+        });
+      }
       task.cancelled = true;
       task.checkpoint = () => this.persist();
       this.tasks.set(task.id, task);
@@ -690,25 +708,110 @@ export class DiscordVoiceTaskQueue {
     this.deliveringResults = true;
     try {
       for (const task of this.tasks.values()) {
-        if (!task.resultDeliveryPending) continue;
-        try {
-          await this.onResult({
-            id: task.id,
-            title: task.title,
-            state: task.state,
-            result: task.result,
-            threadId: task.surface?.threadId ?? task.threadId,
-            artifacts: task.artifacts,
-            meetingId: task.meetingId,
-          });
-          task.resultDeliveryPending = false;
-          await this.persist();
-        } catch {
-          /* Keep the result pending for the next reconnect or interval. */
-        }
+        if (task.resultDeliveryPending) await this.#deliverTaskResults(task);
       }
     } finally {
       this.deliveringResults = false;
+    }
+  }
+
+  #deliverTaskResults(task) {
+    if (!task.deliveryPromise) {
+      task.deliveryPromise = this.#flushTaskResults(task).finally(() => {
+        task.deliveryPromise = undefined;
+      });
+    }
+    return task.deliveryPromise;
+  }
+
+  async #flushTaskResults(task) {
+    try {
+      while (task.resultDeliveries?.length && !this.closed) {
+        const delivery = task.resultDeliveries[0];
+        const surface = task.surface;
+        const post = typeof surface === "function" ? surface : surface?.post;
+        if (!post) throw new Error("Task result surface is unavailable");
+        const stages = [
+          () => post("📦 **実行結果**"),
+          ...splitDiscordText(delivery.result).map(
+            (chunk) => () => post(chunk),
+          ),
+        ];
+        if (delivery.artifacts) {
+          stages.push(() =>
+            post(
+              "🔬 **確認用の成果**\n" +
+                "workspace: " +
+                delivery.artifacts.workingDirectory +
+                "\n" +
+                "patch: " +
+                delivery.artifacts.patchPath +
+                "\n" +
+                "変更状態:\n" +
+                boundText(delivery.artifacts.status || "差分なし", 900) +
+                "\n元の作業場所へは自動反映しません。",
+            ),
+          );
+          // Production surfaces (including restored ones) attach the exact saved revision.
+          stages.push(() =>
+            surface?.postArtifacts?.(delivery.artifacts, delivery.evidence),
+          );
+        }
+        stages.push(
+          () =>
+            post(
+              delivery.pendingInstructions
+                ? "⏭️ **追加指示へ続行** " +
+                    task.id +
+                    "\n残り: " +
+                    delivery.pendingInstructions +
+                    "件"
+                : "✅ **Codexタスク完了** " +
+                    task.id +
+                    "\n" +
+                    escapeDiscordMarkdown(task.title) +
+                    "\n所要時間: " +
+                    formatElapsedTime(delivery.elapsedMs),
+            ),
+          () =>
+            surface?.update?.({
+              state: task.state,
+              elapsedMs: delivery.elapsedMs,
+              pendingInstructions: task.instructions.length,
+            }),
+          () =>
+            this.onResult({
+              id: task.id,
+              title: task.title,
+              state: delivery.state,
+              result: delivery.result,
+              threadId: surface?.threadId ?? task.threadId,
+              artifacts: delivery.artifacts,
+              meetingId: task.meetingId,
+            }),
+        );
+        for (
+          let index = delivery.nextStep ?? 0;
+          index < stages.length;
+          index++
+        ) {
+          await withTimeout(
+            stages[index],
+            DEFAULT_STAGE_TIMEOUTS.posting,
+            "delivering saved task result",
+            this.shutdownController.signal,
+          );
+          delivery.nextStep = index + 1;
+          await this.persist();
+        }
+        task.resultDeliveries.shift();
+        task.resultDeliveryPending = Boolean(task.resultDeliveries.length);
+        await this.persist();
+      }
+    } catch {
+      task.resultDeliveryPending = true;
+      await this.persist();
+      this.#log("task_result_delivery_failed", { taskId: task.id });
     }
   }
 
@@ -929,130 +1032,43 @@ export class DiscordVoiceTaskQueue {
       );
       task.result = response;
       workerSucceeded = true;
-      await this.persist();
-      const chunks = splitDiscordText(
-        response || "タスクは完了しましたが、結果メッセージは空でした。",
-      );
-      await withTimeout(
-        (signal) => postTaskText("📦 **実行結果**", { signal }),
-        DEFAULT_STAGE_TIMEOUTS.posting,
-        "posting task result header",
-        this.shutdownController.signal,
-      );
-      for (const chunk of chunks) {
-        await withTimeout(
-          (signal) => postTaskText(chunk, { signal }),
-          DEFAULT_STAGE_TIMEOUTS.posting,
-          "posting task result",
-          this.shutdownController.signal,
-        );
-      }
-      if (task.artifacts)
-        await postTaskText(
-          "🔬 **確認用の成果**\n" +
-            "workspace: `" +
-            task.artifacts.workingDirectory +
-            "`\n" +
-            "patch: `" +
-            task.artifacts.patchPath +
-            "`\n" +
-            "変更状態:\n" +
-            boundText(task.artifacts.status || "差分なし", 900) +
-            "\n元の作業場所へは自動反映しません。",
-        );
-      if (task.artifacts && taskSurface?.postArtifacts) {
-        await withTimeout(
-          () => taskSurface.postArtifacts(task.artifacts, task.evidence),
-          DEFAULT_STAGE_TIMEOUTS.posting,
-          "posting task artifacts",
-          this.shutdownController.signal,
-        ).catch(() =>
-          this.#log("task_artifact_post_failed", { taskId: task.id }),
-        );
-      }
-      const elapsedMs = Date.now() - task.createdAt;
       const pendingInstructions = task.instructions.length;
-      if (pendingInstructions && !task.cancelled) {
-        await withTimeout(
-          (signal) =>
-            postTaskText(
-              `⏭️ **追加指示へ続行** \`${task.id}\`\n残り: ${pendingInstructions}件`,
-              { signal },
-            ),
-          DEFAULT_STAGE_TIMEOUTS.posting,
-          "posting task continuation",
-          this.shutdownController.signal,
-        );
-        await withTimeout(
-          (signal) =>
-            updateTask({
-              state: "queued",
-              pendingInstructions,
-              elapsedMs,
-              signal,
-            }),
-          DEFAULT_STAGE_TIMEOUTS.posting,
-          "updating task continuation",
-          this.shutdownController.signal,
-        );
-      } else {
-        await withTimeout(
-          (signal) =>
-            postTaskText(
-              `✅ **Codexタスク完了** \`${task.id}\`\n${title}\n所要時間: ${formatElapsedTime(elapsedMs)}`,
-              { signal },
-            ),
-          DEFAULT_STAGE_TIMEOUTS.posting,
-          "posting task completion",
-          this.shutdownController.signal,
-        );
-        await withTimeout(
-          (signal) => updateTask({ state: "completed", elapsedMs, signal }),
-          DEFAULT_STAGE_TIMEOUTS.posting,
-          "updating task completion",
-          this.shutdownController.signal,
-        );
-      }
+      task.state =
+        pendingInstructions && !task.cancelled ? "queued" : "completed";
+      task.resultDeliveries ??= [];
+      task.resultDeliveries.push({
+        result: response,
+        artifacts: structuredClone(task.artifacts),
+        evidence: structuredClone(task.evidence),
+        state: task.state,
+        pendingInstructions,
+        elapsedMs: Date.now() - task.createdAt,
+        nextStep: 0,
+      });
+      task.resultDeliveryPending = true;
+      await this.persist();
+      await this.#deliverTaskResults(task);
       this.#log(
         pendingInstructions
           ? "power_task_continuation_queued"
           : "power_task_completed",
         {
           taskId: task.id,
-          elapsedMs,
-          queueWaitMs: startedAt - task.createdAt,
+          elapsedMs: Date.now() - startedAt,
           responseCharacters: response.length,
           progressPosts,
           pendingInstructions,
         },
       );
-      task.state =
-        task.instructions.length && !task.cancelled ? "queued" : "completed";
-      await this.persist();
-      try {
-        await this.onResult({
-          id: task.id,
-          title: task.title,
-          state: task.state,
-          result: response,
-          threadId: taskSurface?.threadId,
-          artifacts: task.artifacts,
-          meetingId: task.meetingId,
-        });
-        task.resultDeliveryPending = false;
-      } catch {
-        task.resultDeliveryPending = true;
-        this.#log("task_result_delivery_failed", { taskId: task.id });
-      }
-      await this.persist();
       if (task.instructions.length && !task.cancelled) this.queue.push(task);
     } catch (error) {
       if (this.closed || task.cancelled || error?.code === "TASK_CANCELLED") {
         await this.#markCancelled(taskSurface, task);
       } else if (workerSucceeded) {
-        task.state = "completed";
+        task.state = task.instructions.length ? "queued" : "completed";
         task.resultDeliveryPending = true;
         await this.persist();
+        if (task.instructions.length) this.queue.push(task);
         this.#log("task_result_delivery_failed", { taskId: task.id });
       } else {
         task.state = "failed";

@@ -98,12 +98,17 @@ export class TaskWorkspaceManager {
       ])
     ).stdout;
     const status = (await git(target, ["status", "--short"])).stdout.trim();
-    const patchPath = join(this.directory, `${task.id}-result.patch`);
+    const runRevision = task.runRevision ?? 1;
+    const patchPath = join(
+      this.directory,
+      `${task.id}-result-${runRevision}.patch`,
+    );
     await writeFile(patchPath, diff, { mode: 0o600 });
     return {
       workingDirectory: target,
       baseCommit: task.baseCommit,
       patchPath,
+      runRevision,
       status,
       note: "Patch is relative to the task's starting snapshot. Review before applying.",
     };

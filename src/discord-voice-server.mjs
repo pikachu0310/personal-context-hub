@@ -281,6 +281,48 @@ export function formatDiscordTaskCard(
   ].join("\n");
 }
 
+export function createDiscordArtifactPoster(
+  thread,
+  task,
+  { silent = true } = {},
+) {
+  return async (artifacts, evidence) => {
+    const patch = await readFile(artifacts.patchPath);
+    if (
+      patch.length > 1_000_000 ||
+      /(?:BEGIN (?:RSA |OPENSSH )?PRIVATE KEY|sk-[A-Za-z0-9_-]{24,})/.test(
+        patch.toString(),
+      )
+    ) {
+      await thread.send(
+        createDiscordMessagePayload(
+          "差分はローカルworkspaceに保存しました。サイズまたは秘密値の検査により自動添付を省略しました。",
+          { silent },
+        ),
+      );
+      return;
+    }
+    await thread.send({
+      ...createDiscordMessagePayload(
+        "📎 開始時点からの変更差分と検証記録。確認後 `/ido apply タスクID` で元の作業場所へ反映できます。",
+        { silent },
+      ),
+      files: [
+        {
+          attachment: patch.length
+            ? patch
+            : Buffer.from("# No tracked-file diff\n"),
+          name: `${task.id}-r${artifacts.runRevision ?? 1}.patch`,
+        },
+        {
+          attachment: Buffer.from(JSON.stringify(evidence ?? {}, null, 2)),
+          name: `${task.id}-r${artifacts.runRevision ?? 1}-verification.json`,
+        },
+      ],
+    });
+  };
+}
+
 export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
   return async (task) => {
     const title = String(task.title ?? "Codexタスク")
@@ -358,38 +400,7 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       await update({ state: "failed" }).catch(() => undefined);
       throw error;
     }
-    const postArtifacts = async (artifacts, evidence) => {
-      const patch = await readFile(artifacts.patchPath);
-      if (
-        patch.length > 1_000_000 ||
-        /(?:BEGIN (?:RSA |OPENSSH )?PRIVATE KEY|sk-[A-Za-z0-9_-]{24,})/.test(
-          patch.toString(),
-        )
-      ) {
-        await post(
-          "差分はローカルworkspaceに保存しました。サイズまたは秘密値の検査により自動添付を省略しました。",
-        );
-        return;
-      }
-      await thread.send({
-        ...createDiscordMessagePayload(
-          "📎 開始時点からの変更差分と検証記録。確認後 `/ido apply タスクID` で元の作業場所へ反映できます。",
-          { silent },
-        ),
-        files: [
-          {
-            attachment: patch.length
-              ? patch
-              : Buffer.from("# No tracked-file diff\n"),
-            name: `${task.id}.patch`,
-          },
-          {
-            attachment: Buffer.from(JSON.stringify(evidence ?? {}, null, 2)),
-            name: `${task.id}-verification.json`,
-          },
-        ],
-      });
-    };
+    const postArtifacts = createDiscordArtifactPoster(thread, task, { silent });
     return { post, update, postArtifacts, threadId, starterId: starter.id };
   };
 }
@@ -569,6 +580,11 @@ export async function startDiscordVoiceCodex({
         return {
           threadId: task.threadId,
           starterId: task.starterId,
+          postArtifacts: createDiscordArtifactPoster(
+            thread,
+            task,
+            messageOptions,
+          ),
           post: (content) =>
             thread.send(createDiscordMessagePayload(content, messageOptions)),
           update: (state) =>
