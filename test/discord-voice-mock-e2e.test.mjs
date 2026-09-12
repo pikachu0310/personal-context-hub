@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import { ChannelType, MessageFlags } from "discord.js";
+import { VoiceConnectionStatus } from "@discordjs/voice";
 import {
   createEditableDiscordPost,
   createDiscordTaskCardUpdater,
@@ -252,6 +253,101 @@ async function eventually(check, timeoutMs = 1_000) {
   }
   assert.fail("mock voice vertical did not complete");
 }
+
+test("text status reports voice reconnection failure and later recovery without invoking Codex", async (t) => {
+  const posts = [];
+  const channel = {
+    isTextBased: () => true,
+    send: async ({ content }) => {
+      posts.push(content);
+      return { edit: async () => {} };
+    },
+  };
+  const client = new EventEmitter();
+  client.login = async () => {};
+  client.isReady = () => true;
+  client.destroy = async () => {};
+  client.guilds = {
+    fetch: async () => ({
+      id: config.guildId,
+      voiceAdapterCreator: {},
+      channels: {
+        fetch: async (id) =>
+          id === config.voiceChannelId
+            ? { id, type: ChannelType.GuildVoice }
+            : channel,
+      },
+    }),
+  };
+  const connection = new EventEmitter();
+  connection.state = { status: VoiceConnectionStatus.Ready };
+  connection.receiver = { speaking: new EventEmitter() };
+  connection.destroy = async () => {};
+  connection.rejoin = () => {
+    connection.state = { status: VoiceConnectionStatus.Connecting };
+    return true;
+  };
+  let releaseRecovery;
+  const recovery = new Promise((resolve) => {
+    releaseRecovery = resolve;
+  });
+  let disconnected = false;
+  const service = await startDiscordVoiceCodex({
+    config: { ...config, powerMode: false },
+    client,
+    logger: {},
+    dependencies: {
+      audioAdapter: {},
+      codexRunner: {
+        observeMeeting: async () => assert.fail("status must not invoke Codex"),
+      },
+      readCredential: async () => ({ token: "mock-only" }),
+      joinVoiceChannel: () => connection,
+      entersState: async (resource) => {
+        if (!disconnected) return resource;
+        await recovery;
+        throw new Error("voice transport timeout");
+      },
+      playAudio: async () => assert.fail("text status must not play audio"),
+      transcriptArchive: { append: async () => {}, stop: async () => {} },
+      scheduleInterval: () => 0,
+      cancelInterval: () => {},
+    },
+  });
+  t.after(() => {
+    releaseRecovery();
+    return service.stop();
+  });
+  let sequence = 0;
+  const readStatus = async () => {
+    const before = posts.length;
+    client.emit("messageCreate", {
+      id: `status-${++sequence}`,
+      author: { id: config.allowedUserId },
+      guildId: config.guildId,
+      channelId: config.textChannelId,
+      channel,
+      content: "!ido status",
+    });
+    await eventually(() =>
+      posts.slice(before).some((text) => text.startsWith("通話:")),
+    );
+    return posts.slice(before).find((text) => text.startsWith("通話:"));
+  };
+  assert.match(await readStatus(), /通話: 接続済み/);
+  disconnected = true;
+  connection.state = { status: VoiceConnectionStatus.Disconnected };
+  connection.emit(VoiceConnectionStatus.Disconnected);
+  assert.match(await readStatus(), /通話: 再接続中/);
+  releaseRecovery();
+  await eventually(() =>
+    posts.some((text) => /再接続できませんでした/.test(text)),
+  );
+  assert.equal(connection.state.status, VoiceConnectionStatus.Connecting);
+  assert.match(await readStatus(), /通話: 切断.*音声は受信していません/);
+  connection.state = { status: VoiceConnectionStatus.Ready };
+  assert.match(await readStatus(), /通話: 接続済み/);
+});
 
 test("Discord task cards expose a stable log link and readable state", () => {
   const content = formatDiscordTaskCard(

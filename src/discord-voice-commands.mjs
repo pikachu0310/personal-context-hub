@@ -10,7 +10,7 @@ export const IDOBATA_HELP = [
   "`/ido ask 質問` 即答 · `/ido context` 議事録",
   "`/ido task 依頼` 実装 · `/ido research 調査内容`",
   "`/ido benchmark 比較内容` · `/ido test 検証内容`",
-  "`/ido status ページ番号` 作業一覧 · `/ido stop タスクID`",
+  "`/ido status ページ番号` 通話状態・作業一覧 · `/ido stop タスクID`",
   "`/ido result タスクID` 保存済みの結果と検証記録",
   "`/ido quiet` 読み上げ停止",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
@@ -223,6 +223,7 @@ export function createIdobataMessageHandler({
   session,
   taskQueue,
   resetMeeting = async () => undefined,
+  getVoiceStatus = () => "",
 }) {
   const seen = new Set();
   return async (message) => {
@@ -275,7 +276,14 @@ export function createIdobataMessageHandler({
     const argument = (match[2] ?? "").trim();
     if (command === "help") return reply(IDOBATA_HELP);
     if (command === "status") {
-      return reply(taskStatus(taskQueue?.list() ?? [], session, argument));
+      return reply(
+        [
+          getVoiceStatus(),
+          taskStatus(taskQueue?.list() ?? [], session, argument),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      );
     }
     if (command === "result") {
       if (!/^[a-zA-Z0-9_-]+$/.test(argument))

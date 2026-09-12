@@ -619,6 +619,7 @@ export async function startDiscordVoiceCodex({
   let loginAttempted = false;
   let serviceClosing = false;
   let reconnecting = false;
+  let voiceRecoveryFailed = false;
   let stopping;
   const pendingOperations = new Set();
   const trackOperation = (operation) => {
@@ -739,6 +740,7 @@ export async function startDiscordVoiceCodex({
     connection.on?.(VoiceConnectionStatus.Disconnected, () => {
       if (serviceClosing || reconnecting) return;
       reconnecting = true;
+      voiceRecoveryFailed = false;
       const waitForState = dependencies.entersState ?? entersState;
       void (async () => {
         try {
@@ -754,6 +756,8 @@ export async function startDiscordVoiceCodex({
               throw new Error("Voice rejoin unavailable");
             await waitForState(connection, VoiceConnectionStatus.Ready, 20_000);
           } catch {
+            if (serviceClosing) return;
+            voiceRecoveryFailed = true;
             await postText(
               "⚠️ 通話との接続が切れ、再接続できませんでした。音声は受信していません。テキストで作業を続けられます。通話を復旧するにはBotを再起動してください。",
             ).catch(() => undefined);
@@ -887,6 +891,21 @@ export async function startDiscordVoiceCodex({
       session,
       taskQueue,
       resetMeeting: () => codex.resetMeeting?.(),
+      getVoiceStatus: () => {
+        const state = connection.state?.status;
+        if (serviceClosing || state === VoiceConnectionStatus.Destroyed)
+          return "通話: 停止（音声は受信していません）";
+        if (state === VoiceConnectionStatus.Ready) return "通話: 接続済み";
+        if (reconnecting) return "通話: 再接続中（音声受信は中断）";
+        if (voiceRecoveryFailed || state === VoiceConnectionStatus.Disconnected)
+          return "通話: 切断（音声は受信していません）。復旧にはBotを再起動してください。";
+        if (
+          state === VoiceConnectionStatus.Connecting ||
+          state === VoiceConnectionStatus.Signalling
+        )
+          return "通話: 接続準備中";
+        return "通話: 接続状態は未確認";
+      },
     });
     const handleInteraction = createIdobataInteractionHandler({
       config,
