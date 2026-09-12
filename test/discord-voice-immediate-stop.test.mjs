@@ -60,6 +60,50 @@ test("a stop acknowledgement queues behind existing speech and cancelling it can
   assert.deepEqual(started, ["first", "next acknowledgement"]);
 });
 
+test("stopping a task releases a worker waiting on a stalled progress notification", async (t) => {
+  let progressSignal, releaseProgress;
+  let workerSettled = false;
+  const progress = new Promise((resolve) => {
+    releaseProgress = resolve;
+  });
+  const tasks = new DiscordVoiceTaskQueue({
+    logger: {},
+    postText: noop,
+    createTaskThread: async () => ({
+      update: noop,
+      post: async (content, { signal } = {}) => {
+        if (content === "stalled progress") {
+          progressSignal = signal;
+          await progress;
+        }
+      },
+    }),
+    runTask: async (_task, { signal, onProgress }) => {
+      try {
+        await onProgress("stalled progress");
+        signal.throwIfAborted();
+        return "unexpected completion";
+      } finally {
+        workerSettled = true;
+      }
+    },
+  });
+  t.after(async () => {
+    releaseProgress();
+    await tasks.stop();
+  });
+  await tasks.enqueueDurable({ title: "work" });
+  await eventually(() => progressSignal);
+  const stopped = tasks.handleVoiceControlDurable({
+    type: "stop",
+    taskId: tasks.list()[0].id,
+  });
+  await eventually(() => workerSettled);
+  await stopped;
+  assert.equal(progressSignal.aborted, true);
+  assert.equal(tasks.list()[0].state, "cancelled");
+});
+
 test("a completed authorized stop bypasses an occupied observer and invalidates its older instruction", async (t) => {
   let workerSignal,
     releaseObservation,

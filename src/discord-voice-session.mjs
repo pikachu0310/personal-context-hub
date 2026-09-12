@@ -1519,8 +1519,9 @@ export class DiscordVoiceTaskQueue {
                       postTaskText(content, { signal: postSignal }),
                     DEFAULT_STAGE_TIMEOUTS.posting,
                     "posting task progress",
-                    this.shutdownController.signal,
+                    signal,
                   ).catch((error) => {
+                    if (signal.aborted) return;
                     this.#log("power_task_progress_post_failed", {
                       taskId: task.id,
                       errorCode: voiceErrorCode(error),
