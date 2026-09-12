@@ -687,7 +687,7 @@ export class DiscordVoiceTaskQueue {
         },
         DEFAULT_STAGE_TIMEOUTS.posting,
         "creating task thread",
-        undefined,
+        this.shutdownController.signal,
       ),
     );
     void queuedTask.surfacePromise
@@ -695,6 +695,8 @@ export class DiscordVoiceTaskQueue {
         queuedTask.surface = surface;
         if (surface?.threadId)
           this.tasksByThreadId.set(String(surface.threadId), queuedTask);
+        if (!this.closed && queuedTask.cancelled && !queuedTask.executing)
+          void this.#markCancelled(surface, queuedTask);
         void this.persist();
       })
       .catch(() => undefined);
@@ -883,6 +885,8 @@ export class DiscordVoiceTaskQueue {
           task.surface = surface;
           if (surface.threadId)
             this.tasksByThreadId.set(String(surface.threadId), task);
+          if (!this.closed && task.state === "cancelled" && !task.executing)
+            void this.#markCancelled(surface, task);
           return surface;
         })
         .finally(() => {
@@ -1443,7 +1447,14 @@ export class DiscordVoiceTaskQueue {
     let workerSucceeded = false;
     let workerInvoked = false;
     let consumedInstruction;
-    let removeShutdownAbort = () => undefined;
+    task.controller = new AbortController();
+    const abortTask = () =>
+      task.controller?.abort(this.shutdownController.signal.reason);
+    this.shutdownController.signal.addEventListener("abort", abortTask, {
+      once: true,
+    });
+    const removeShutdownAbort = () =>
+      this.shutdownController.signal.removeEventListener("abort", abortTask);
     try {
       if (!task.surfacePromise) {
         task.surfacePromise = this.persist({ strict: true }).then(() =>
@@ -1473,7 +1484,12 @@ export class DiscordVoiceTaskQueue {
           ),
         );
       }
-      taskSurface = await task.surfacePromise;
+      taskSurface = await withTimeout(
+        () => task.surfacePromise,
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "waiting for task thread",
+        task.controller.signal,
+      );
       task.surface = taskSurface;
       if (taskSurface?.threadId)
         this.tasksByThreadId.set(String(taskSurface.threadId), task);
@@ -1484,14 +1500,6 @@ export class DiscordVoiceTaskQueue {
       }
       task.executing = true;
       task.state = "running";
-      task.controller = new AbortController();
-      const abortTask = () =>
-        task.controller?.abort(this.shutdownController.signal.reason);
-      this.shutdownController.signal.addEventListener("abort", abortTask, {
-        once: true,
-      });
-      removeShutdownAbort = () =>
-        this.shutdownController.signal.removeEventListener("abort", abortTask);
       await this.persist();
       postTaskText =
         typeof taskSurface === "function" ? taskSurface : taskSurface.post;

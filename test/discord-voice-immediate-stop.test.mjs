@@ -104,6 +104,113 @@ test("stopping a task releases a worker waiting on a stalled progress notificati
   assert.equal(tasks.list()[0].state, "cancelled");
 });
 
+test("stopping while Discord creates a thread frees the next task before creation returns", async (t) => {
+  let release, creating;
+  const runs = [],
+    updates = [];
+  const tasks = new DiscordVoiceTaskQueue({
+    logger: {},
+    concurrency: 1,
+    postText: noop,
+    createTaskThread: async (task) => {
+      if (task.id === "first") {
+        creating = true;
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      }
+      return {
+        threadId: task.id,
+        post: noop,
+        update: async ({ state }) => updates.push([task.id, state]),
+      };
+    },
+    runTask: async (task) => {
+      runs.push(task.id);
+      return "done";
+    },
+  });
+  t.after(async () => {
+    release?.();
+    await tasks.stop();
+  });
+  await tasks.enqueueDurable({ id: "first", title: "first" });
+  await eventually(() => creating);
+  await tasks.enqueueDurable({ id: "second", title: "second" });
+  await tasks.handleVoiceControlDurable({ type: "stop", taskId: "first" });
+  await eventually(() => runs.includes("second") && tasks.active === 0);
+  assert.deepEqual(runs, ["second"]);
+  release();
+  await eventually(() =>
+    updates.some(([id, state]) => id === "first" && state === "cancelled"),
+  );
+  assert.equal(tasks.tasks.get("first").state, "cancelled");
+  assert.deepEqual(runs, ["second"]);
+});
+
+test("a stop and new instruction during thread recovery reuse that thread and run only the new instruction", async (t) => {
+  let release;
+  const runs = [],
+    updates = [];
+  let recoveries = 0;
+  const tasks = new DiscordVoiceTaskQueue({
+    logger: {},
+    postText: noop,
+    createTaskThread: async () =>
+      assert.fail("recovery must reuse the saved thread"),
+    runTask: async (task) => {
+      runs.push(task.additionalInstruction);
+      return "done";
+    },
+  });
+  t.after(async () => {
+    release?.();
+    await tasks.stop();
+  });
+  await tasks.restore(
+    [
+      {
+        id: "restored",
+        title: "restored",
+        state: "completed",
+        threadId: "existing",
+      },
+    ],
+    async () => {
+      recoveries++;
+      await new Promise((resolve) => {
+        release = resolve;
+      });
+      return {
+        threadId: "existing",
+        post: noop,
+        update: async ({ state }) => updates.push(state),
+      };
+    },
+  );
+  await tasks.handleVoiceControlDurable({
+    type: "instruction",
+    taskId: "restored",
+    instruction: "discard this instruction",
+  });
+  await eventually(() => release);
+  await tasks.handleVoiceControlDurable({ type: "stop", taskId: "restored" });
+  await tasks.handleVoiceControlDurable({
+    type: "instruction",
+    taskId: "restored",
+    instruction: "run this instruction",
+  });
+  release();
+  await eventually(
+    () =>
+      runs.length === 1 && tasks.active === 0 && tasks.deliveries.size === 0,
+  );
+  assert.deepEqual(runs, ["run this instruction"]);
+  assert.equal(recoveries, 1);
+  assert.equal(tasks.tasks.get("restored").state, "completed");
+  assert.equal(updates.at(-1), "completed");
+});
+
 for (const stage of ["status", "start"]) {
   test(`a stop during the initial ${stage} notification prevents the worker from starting`, async (t) => {
     let release, blockedSignal;
