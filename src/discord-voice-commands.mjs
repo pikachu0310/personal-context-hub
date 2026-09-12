@@ -61,9 +61,10 @@ function taskStatus(tasks, session, argument) {
       (b.createdAt ?? b.index ?? 0) - (a.createdAt ?? a.index ?? 0),
   );
   const rows = [
-    ...(session.pendingControls ?? []).map(
-      (control) =>
-        `操作の保存・通知を再試行中 · ${control.taskId ?? "対象確認待ち"}`,
+    ...(session.pendingControls ?? []).map((control) =>
+      control.type === "status"
+        ? "作業状況の返信を再試行中"
+        : `操作の保存・通知を再試行中 · ${control.taskId ?? "対象確認待ち"}`,
     ),
     ...ordered.map(
       (task) =>

@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { SpeechTurnAssembler } from "./discord-voice-utterances.mjs";
 import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
-import { parseImmediateTaskStop } from "./discord-voice-intents.mjs";
+import {
+  parseImmediateTaskStop,
+  isImmediateTaskStatus,
+} from "./discord-voice-intents.mjs";
 import {
   VoiceServiceError,
   voiceErrorCode,
@@ -1733,6 +1736,7 @@ export class DiscordVoiceMeetingSession {
       }),
     );
     this.pendingControls = initialState.pendingControls ?? [];
+    this.controlsAttempted = new WeakSet();
     this.speechTurns = new SpeechTurnAssembler(initialState.speechTurns ?? []);
     this.speechTurns.interrupt();
     this.statements.push(...this.speechTurns.drain());
@@ -1818,7 +1822,11 @@ export class DiscordVoiceMeetingSession {
         tasks.set(task.id, {
           id: task.id,
           title: task.title,
-          state: task.cancelled ? "cancelled" : "awaiting_receipt",
+          state: task.cancelled
+            ? "cancelled"
+            : task.rejectionReason
+              ? "rejected"
+              : "awaiting_receipt",
         });
     }
     return [...tasks.values()];
@@ -1948,7 +1956,7 @@ export class DiscordVoiceMeetingSession {
     const completed = this.speechTurns.drain();
     this.statements.push(...completed);
     for (const statement of completed) {
-      await this.#tryImmediateStop(statement);
+      await this.#tryImmediateTaskAction(statement);
       await this.#archiveStatement(statement);
     }
     await this.persist();
@@ -1982,13 +1990,13 @@ export class DiscordVoiceMeetingSession {
         archived: false,
       };
       this.statements.push(statement);
-      await this.#tryImmediateStop(statement);
+      await this.#tryImmediateTaskAction(statement);
       await this.#archiveStatement(statement);
       await this.persist();
       this.#queueLiveUpdate();
       if (
-        (this.immediateReactions && !statement.handledAction) ||
-        statement.requestReply
+        !statement.handledAction &&
+        (this.immediateReactions || statement.requestReply)
       ) {
         this.immediateObservationRequested = true;
         this.#scheduleImmediateObservation();
@@ -1997,6 +2005,71 @@ export class DiscordVoiceMeetingSession {
     } finally {
       this.activeTextInputs--;
     }
+  }
+
+  #tryImmediateTaskAction(statement) {
+    return isImmediateTaskStatus(statement.text, {
+      explicitlyAsked: statement.requestReply === true,
+    })
+      ? this.#tryImmediateStatus(statement)
+      : this.#tryImmediateStop(statement);
+  }
+
+  async #tryImmediateStatus(statement) {
+    if (
+      !statement.userId ||
+      statement.handledAction ||
+      (statement.taskEligible === false && !statement.requestReply)
+    )
+      return false;
+    const tasks = this.getActiveTasks();
+    const count = (state) =>
+      tasks.filter((task) => task.state === state).length;
+    const summary = `実行中${count("running")}件、待機${count("queued")}件、受付中${count("awaiting_receipt")}件です。`;
+    const attention = `失敗${count("failed")}件、中断・再開待ち${count("interrupted")}件です。`;
+    const active = tasks.filter((task) =>
+      ["running", "queued", "awaiting_receipt"].includes(task.state),
+    );
+    const at = new Date().toLocaleString("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      hour12: false,
+    });
+    const control = {
+      type: "status",
+      sourceSequences: [statement.sequence],
+      requestKey: `${this.meetingId}:status:${statement.sequence}`,
+      notification: [
+        `作業状況（${at} JST 確認時点）`,
+        summary,
+        attention,
+        ...active
+          .slice(0, 3)
+          .map(
+            (task) =>
+              `\`${task.id}\` ${escapeDiscordMarkdown(boundText(task.title, 80))}`,
+          ),
+        `履歴は${tasks.length}件です。全件とIDは /ido status で確認できます。`,
+      ].join("\n"),
+      spokenNotification: `確認した時点では、${summary}${attention}`,
+    };
+    statement.taskEligible = false;
+    statement.handledAction = { type: "status" };
+    // This is a notification-only receipt. Replaying it never invokes a worker or control.
+    this.pendingControls.push(control);
+    try {
+      await this.persist();
+      await this.#dispatchPendingControls();
+      if (
+        this.pendingControls.includes(control) &&
+        !this.controlsAttempted.has(control)
+      )
+        await this.#dispatchPendingControls();
+    } catch (error) {
+      this.#log("immediate_status_reply_pending", {
+        errorCode: voiceErrorCode(error),
+      });
+    }
+    return true;
   }
 
   async #tryImmediateStop(statement) {
@@ -2057,7 +2130,11 @@ export class DiscordVoiceMeetingSession {
       await this.persist();
       await this.#dispatchPendingControls();
       // A dispatcher already posting another receipt may have taken its snapshot before this stop.
-      if (this.pendingControls.includes(control) && control.notification)
+      if (
+        this.pendingControls.includes(control) &&
+        control.notification &&
+        !this.controlsAttempted.has(control)
+      )
         await this.#dispatchPendingControls();
     } catch (error) {
       this.#log("immediate_stop_receipt_pending", {
@@ -2366,7 +2443,8 @@ export class DiscordVoiceMeetingSession {
         ? `タスクを追加しました：${acceptedTasks.map((task) => task.title).join("、")}`
         : !observation.tasks.length &&
             !observation.taskControls.length &&
-            observation.shouldReply
+            observation.shouldReply &&
+            statements.some((statement) => !statement.handledAction)
           ? observation.reply
           : "";
       if (reply) {
@@ -2404,8 +2482,8 @@ export class DiscordVoiceMeetingSession {
         this.statements.some(
           (statement) =>
             !statement.observed &&
-            ((this.immediateReactions && !statement.handledAction) ||
-              statement.requestReply),
+            !statement.handledAction &&
+            (this.immediateReactions || statement.requestReply),
         )
       )
         this.immediateObservationRequested = true;
@@ -2457,6 +2535,7 @@ export class DiscordVoiceMeetingSession {
           control.notification = controlReceiptText(control, result);
           await this.persist();
         }
+        this.controlsAttempted.add(control);
         await withTimeout(
           (signal) =>
             this.dependencies.postText(control.notification, { signal }),
@@ -2470,7 +2549,10 @@ export class DiscordVoiceMeetingSession {
         await this.persist();
         const audio = await withTimeout(
           (signal) =>
-            this.dependencies.synthesize(control.notification, { signal }),
+            this.dependencies.synthesize(
+              control.spokenNotification ?? control.notification,
+              { signal },
+            ),
           this.stageTimeouts.synthesizing,
           "speaking control receipt",
           this.shutdownController.signal,
@@ -2684,7 +2766,7 @@ export class DiscordVoiceMeetingSession {
         await this.#flushSpeechTurns();
       } else {
         this.statements.push(statement);
-        await this.#tryImmediateStop(statement);
+        await this.#tryImmediateTaskAction(statement);
         await this.#archiveStatement(statement);
         await this.persist();
       }
