@@ -551,6 +551,7 @@ export class CodexVoiceRunner {
       skipGitRepoCheck: false,
       additionalDirectories: [],
     };
+    const resuming = Boolean(task.codexThread ?? task.codexThreadId);
     const thread =
       task.codexThread ??
       (task.codexThreadId
@@ -559,6 +560,7 @@ export class CodexVoiceRunner {
     task.codexThread = thread;
     const prompt = task.additionalInstruction
       ? [
+          resuming ? "" : buildPowerTaskPrompt(task),
           "Discordの本人専用タスクスレッドから追加指示が届きました。",
           "この指示だけが今回追加された操作権限です。元のタスクの成果と現在のworkspace状態を引き継いで対応してください。",
           "公開・送信・削除・購入・deploy・release・権限変更・資格情報変更は、追加指示に対象と操作が明示されている場合だけ実行してください。",

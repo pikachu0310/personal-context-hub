@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
 import { createDiscordArtifactPoster } from "../src/discord-voice-server.mjs";
+import { MeetingStateStore } from "../src/discord-voice-state.mjs";
 import {
   DiscordVoiceTaskQueue,
   authorizeMeetingTasks,
@@ -89,11 +90,17 @@ assert.equal(
 );
 assert.deepEqual(authorized[0].sourceSequences, [2]);
 const reports = [];
+const store = new MeetingStateStore(
+  join(root, "meeting.json"),
+  `synthetic:${root}`,
+);
+await store.load();
 const queue = new DiscordVoiceTaskQueue({
   concurrency: 2,
   taskTimeoutMs: 240_000,
   logger: {},
   postText: async () => undefined,
+  checkpoint: (tasks) => store.save({ tasks }),
   createTaskThread: async (task) => ({
     threadId: task.id,
     post: async (content) => {
@@ -105,14 +112,16 @@ const queue = new DiscordVoiceTaskQueue({
   runTask: (task, options) => runner.runTask(task, options),
   onResult: async (result) => reports.push(result),
 });
-queue.enqueue({
+await queue.enqueueDurable({
+  requestKey: "smoke:implementation",
   title: "加算バグを実装・テスト",
   kind: "implementation",
   request:
     "math.mjsのaddが減算になっています。加算へ修正し、node --test math.test.mjsを実行して実際の結果を報告してください。外部通信やcommitは不要です。",
   context: "合意: 2+3=5、-2+3=1。既存テストを変更して通すのは禁止。",
 });
-queue.enqueue({
+await queue.enqueueDurable({
+  requestKey: "smoke:benchmark",
   title: "配列検索とSet検索を計測",
   kind: "benchmark",
   request:
@@ -129,6 +138,11 @@ while (
 }
 const snapshot = queue.snapshot();
 await queue.stop();
+const savedTasks = (await store.load()).tasks;
+assert.deepEqual(
+  savedTasks.map((task) => task.requestKey),
+  ["smoke:implementation", "smoke:benchmark"],
+);
 assert.equal(snapshot.length, 2);
 assert.ok(
   snapshot.every((task) => task.state === "completed"),
@@ -144,8 +158,9 @@ const recovered = new DiscordVoiceTaskQueue({
     throw new Error("Result replay must never rerun Codex");
   },
   onResult: async (result) => reports.push(result),
+  checkpoint: (tasks) => store.save({ tasks }),
 });
-await recovered.restore(snapshot, async (task) => {
+await recovered.restore(savedTasks, async (task) => {
   const thread = { send: async (payload) => delivered.push(payload) };
   return {
     threadId: task.threadId,
@@ -154,6 +169,14 @@ await recovered.restore(snapshot, async (task) => {
     postArtifacts: createDiscordArtifactPoster(thread, task),
   };
 });
+assert.equal(
+  await recovered.enqueueDurable({
+    requestKey: "smoke:implementation",
+    title: "duplicate must not execute",
+  }),
+  true,
+);
+assert.equal(recovered.snapshot().length, 2);
 await recovered.retryResultDelivery();
 assert.equal(reports.length, 2);
 assert.equal(
@@ -219,6 +242,7 @@ const report = {
   resultFeedbackCount: reports.length,
   resultReplayAfterRestart: "passed",
   revisionArtifactsPreserved: "passed",
+  durableReceiptDeduplication: "passed",
 };
 const reportPath = join(root, "report.json");
 await writeFile(reportPath, JSON.stringify(report, null, 2), { mode: 0o600 });
@@ -235,6 +259,7 @@ console.log(
       independentTests: "passed",
       resultReplayAfterRestart: "passed",
       revisionArtifactsPreserved: "passed",
+      durableReceiptDeduplication: "passed",
       benchmark: numbers,
       reportPath,
     },

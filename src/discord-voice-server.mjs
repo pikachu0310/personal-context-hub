@@ -642,7 +642,7 @@ export async function startDiscordVoiceCodex({
             postText,
             synthesize: audio.synthesize,
             playAudio,
-            enqueueTask: (task) => taskQueue?.enqueue(task) ?? false,
+            enqueueTask: (task) => taskQueue?.enqueueDurable(task) ?? false,
             controlTask: (control) =>
               taskQueue?.handleVoiceControl(control) ?? false,
             ownerUserId: config.allowedUserId,

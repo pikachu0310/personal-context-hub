@@ -167,14 +167,19 @@ export function createIdobataMessageHandler({
     if (command === "help") return reply(IDOBATA_HELP);
     if (command === "status") {
       const tasks = taskQueue?.list() ?? [];
+      const pending = (session.pendingTasks ?? []).map(
+        (task) =>
+          `${task.rejectionReason ? "受付不可・通知を再試行中" : "受付保存を再試行中"} · ${task.title}`,
+      );
       return reply(
-        tasks.length
-          ? tasks
-              .map(
+        tasks.length || pending.length
+          ? [
+              ...tasks.map(
                 (task) =>
                   `\`${task.id}\` ${task.state} · ${task.title}${task.threadId ? ` <#${task.threadId}>` : ""}`,
-              )
-              .join("\n")
+              ),
+              ...pending,
+            ].join("\n")
           : "まだ作業はありません。`/ido task 依頼` で開始できます。",
       );
     }
@@ -239,16 +244,28 @@ export function createIdobataMessageHandler({
     }
     if (["task", "research", "benchmark", "test"].includes(command)) {
       if (!argument) return reply("コマンドの後に依頼内容を入れてください。");
-      const accepted = taskQueue.enqueue({
+      const task = {
         title: argument.slice(0, 100),
         request: argument,
+        requestKey: message.id
+          ? `discord:${message.guildId}:${message.channelId}:${message.id}`
+          : undefined,
         context:
           session.getContextSnapshot?.() ??
           session.minutes + "\n" + JSON.stringify(session.results ?? []),
         meetingId: session.meetingId,
         kind: command === "task" ? "implementation" : command,
         complexity: "routine",
-      });
+      };
+      let accepted;
+      try {
+        accepted = await (taskQueue.enqueueDurable?.(task) ??
+          taskQueue.enqueue(task));
+      } catch {
+        return reply(
+          "依頼を保存できなかったため作業を開始していません。保存先を確認して再試行してください。",
+        );
+      }
       return reply(
         accepted
           ? "🧰 作業を受け付けました。専用スレッドへ進捗と結果を返します。"
