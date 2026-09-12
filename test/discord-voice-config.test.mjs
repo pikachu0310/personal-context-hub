@@ -24,6 +24,12 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
   assert.equal(config.voiceMode, "turn");
   assert.equal(config.immediateReactions, true);
   assert.equal(config.silentMessages, true);
+  assert.equal(config.transcriptArchiveDiscord, true);
+  assert.equal(config.transcriptArchiveFlushIntervalMs, 60_000);
+  assert.match(
+    config.transcriptArchiveDirectory,
+    /personal-context-hub\/discord-voice-transcripts$/,
+  );
   assert.equal(config.ttsSpeed, 1);
   assert.equal(config.observationIntervalMs, 60_000);
   assert.equal(config.transcriptionConcurrency, 4);
@@ -54,6 +60,9 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
     PERSONAL_CONTEXT_VOICE_MODE: "meeting",
     PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS: "false",
     PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES: "false",
+    PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DISCORD: "false",
+    PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR: "/tmp/voice-transcripts",
+    PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_FLUSH_INTERVAL_MS: "45000",
     PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS: "45000",
     PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY: "6",
     PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TRANSCRIPTIONS: "80",
@@ -69,6 +78,9 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   assert.equal(config.voiceMode, "meeting");
   assert.equal(config.immediateReactions, false);
   assert.equal(config.silentMessages, false);
+  assert.equal(config.transcriptArchiveDiscord, false);
+  assert.equal(config.transcriptArchiveDirectory, "/tmp/voice-transcripts");
+  assert.equal(config.transcriptArchiveFlushIntervalMs, 45_000);
   assert.equal(config.ttsSpeed, 2);
   assert.equal(config.observationIntervalMs, 45_000);
   assert.equal(config.transcriptionConcurrency, 6);
@@ -84,6 +96,8 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   assert.equal(description.voiceMode, "meeting");
   assert.equal(description.powerMode, true);
   assert.equal(description.silentMessages, false);
+  assert.equal(description.transcriptArchiveDiscord, false);
+  assert.equal(description.transcriptArchiveFlushIntervalMs, 45_000);
   assert.equal(description.ttsSpeed, 2);
   assert.equal(description.codexModel, "gpt-5.6-sol");
   assert.equal(description.codexReasoningEffort, "high");

@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   AudioPlayerStatus,
@@ -20,6 +21,13 @@ import {
   MessageFlags,
 } from "discord.js";
 import prism from "prism-media";
+import { MeetingStateStore, meetingScope } from "./discord-voice-state.mjs";
+import {
+  createIdobataMessageHandler,
+  createIdobataInteractionHandler,
+  taskControls,
+  IDOBATA_HELP,
+} from "./discord-voice-commands.mjs";
 import { readDiscordTokenStore } from "./discord-config.mjs";
 import {
   PcmTurnBuffer,
@@ -42,6 +50,11 @@ import {
   escapeDiscordMarkdown,
   formatElapsedTime,
 } from "./discord-voice-session.mjs";
+import {
+  createDiscordTranscriptPublisher,
+  createLocalTranscriptArchive,
+  createMeetingTranscriptArchive,
+} from "./discord-voice-transcript-archive.mjs";
 
 const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
 const AUDIO_RETRY_MESSAGE =
@@ -244,6 +257,7 @@ const DISCORD_TASK_STATES = Object.freeze({
   completed: ["✅", "完了"],
   failed: ["⚠️", "失敗"],
   cancelled: ["⏹️", "中止"],
+  interrupted: ["⏸️", "再起動で中断・追加指示で再開"],
 });
 
 export function formatDiscordTaskCard(
@@ -260,6 +274,9 @@ export function formatDiscordTaskCard(
     `${icon} **Codexタスク** \`${id || "unknown"}\``,
     `**${title}**`,
     `状態: **${label}**${Number.isFinite(elapsedMs) ? ` · ${formatElapsedTime(elapsedMs)}` : ""}${pendingInstructions > 0 ? ` · 追加指示 **${pendingInstructions}件待機**` : ""}`,
+    task.profile
+      ? `担当: ${task.profile.kind} · ${task.profile.model ?? "default"} / ${task.profile.modelReasoningEffort}`
+      : `担当: ${task.kind ?? "implementation"}`,
     threadId ? `ログ: <#${threadId}>` : "ログスレッドを準備しています…",
   ].join("\n");
 }
@@ -308,6 +325,7 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
           pendingInstructions,
         }),
         allowedMentions: { parse: [] },
+        components: taskControls(task.id, state),
       };
       try {
         starter = await starter.edit(payload);
@@ -340,7 +358,39 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       await update({ state: "failed" }).catch(() => undefined);
       throw error;
     }
-    return { post, update, threadId };
+    const postArtifacts = async (artifacts, evidence) => {
+      const patch = await readFile(artifacts.patchPath);
+      if (
+        patch.length > 1_000_000 ||
+        /(?:BEGIN (?:RSA |OPENSSH )?PRIVATE KEY|sk-[A-Za-z0-9_-]{24,})/.test(
+          patch.toString(),
+        )
+      ) {
+        await post(
+          "差分はローカルworkspaceに保存しました。サイズまたは秘密値の検査により自動添付を省略しました。",
+        );
+        return;
+      }
+      await thread.send({
+        ...createDiscordMessagePayload(
+          "📎 開始時点からの変更差分と検証記録。確認後 `/ido apply タスクID` で元の作業場所へ反映できます。",
+          { silent },
+        ),
+        files: [
+          {
+            attachment: patch.length
+              ? patch
+              : Buffer.from("# No tracked-file diff\n"),
+            name: `${task.id}.patch`,
+          },
+          {
+            attachment: Buffer.from(JSON.stringify(evidence ?? {}, null, 2)),
+            name: `${task.id}-verification.json`,
+          },
+        ],
+      });
+    };
+    return { post, update, postArtifacts, threadId, starterId: starter.id };
   };
 }
 
@@ -371,6 +421,10 @@ export async function startDiscordVoiceCodex({
   logger = console,
   dependencies = {},
 } = {}) {
+  const store = config.meetingStatePath
+    ? new MeetingStateStore(config.meetingStatePath, meetingScope(config))
+    : undefined;
+  let saved = await store?.load();
   // Build local adapters before Discord login so unsafe Codex configuration
   // fails closed without joining or sending to a channel.
   const audio = dependencies.audioAdapter ?? createOpenAIAudioAdapter(config);
@@ -380,8 +434,16 @@ export async function startDiscordVoiceCodex({
     dependencies.readCredential ?? readDiscordTokenStore
   )();
   let connection;
+  let transcriptArchive;
+  let session;
+  let taskQueue;
+  let deliveryInterval;
   let loginAttempted = false;
+  let serviceClosing = false;
+  let reconnecting = false;
   try {
+    await store?.acquire();
+    saved = await store?.load();
     client.on?.(Events.Error, (error) => {
       logAudioFailure(logger, "discord_client_failed", error);
     });
@@ -417,6 +479,29 @@ export async function startDiscordVoiceCodex({
       textChannel,
       messageOptions,
     );
+    transcriptArchive =
+      config.voiceMode === "meeting"
+        ? (dependencies.transcriptArchive ??
+          createMeetingTranscriptArchive({
+            localArchive: createLocalTranscriptArchive({
+              directory: config.transcriptArchiveDirectory,
+              guildId: config.guildId,
+              voiceChannelId: config.voiceChannelId,
+              textChannelId: config.textChannelId,
+            }),
+            discordPublisher: config.transcriptArchiveDiscord
+              ? createDiscordTranscriptPublisher({
+                  textChannel,
+                  createMessagePayload: (content) =>
+                    createDiscordMessagePayload(content, messageOptions),
+                  flushIntervalMs: config.transcriptArchiveFlushIntervalMs,
+                  scheduleInterval: dependencies.scheduleInterval,
+                  cancelInterval: dependencies.cancelInterval,
+                  logger,
+                })
+              : undefined,
+          }))
+        : undefined;
     connection = (dependencies.joinVoiceChannel ?? joinVoiceChannel)({
       channelId: voiceChannel.id,
       guildId: guild.id,
@@ -427,6 +512,33 @@ export async function startDiscordVoiceCodex({
     connection.on?.("error", (error) => {
       logAudioFailure(logger, "voice_connection_failed", error);
     });
+    connection.on?.(VoiceConnectionStatus.Disconnected, () => {
+      if (serviceClosing || reconnecting) return;
+      reconnecting = true;
+      const waitForState = dependencies.entersState ?? entersState;
+      void (async () => {
+        try {
+          await Promise.race([
+            waitForState(connection, VoiceConnectionStatus.Signalling, 5_000),
+            waitForState(connection, VoiceConnectionStatus.Connecting, 5_000),
+          ]);
+          await waitForState(connection, VoiceConnectionStatus.Ready, 20_000);
+        } catch {
+          if (serviceClosing) return;
+          try {
+            if (!connection.rejoin?.())
+              throw new Error("Voice rejoin unavailable");
+            await waitForState(connection, VoiceConnectionStatus.Ready, 20_000);
+          } catch {
+            await postText(
+              "⚠️ 通話との接続が切れ、再接続できませんでした。音声は受信していません。テキストで作業を続けられます。通話を復旧するにはBotを再起動してください。",
+            ).catch(() => undefined);
+          }
+        } finally {
+          reconnecting = false;
+        }
+      })();
+    });
     await (dependencies.entersState ?? entersState)(
       connection,
       VoiceConnectionStatus.Ready,
@@ -434,7 +546,7 @@ export async function startDiscordVoiceCodex({
     );
     const playAudio =
       dependencies.playAudio ?? createDiscordPlayer(connection, logger);
-    const taskQueue = config.powerMode
+    taskQueue = config.powerMode
       ? new DiscordVoiceTaskQueue({
           runTask: (task, options) => codex.runTask(task, options),
           postText,
@@ -443,26 +555,35 @@ export async function startDiscordVoiceCodex({
           concurrency: config.taskConcurrency,
           maximumPendingTasks: config.maximumPendingTasks,
           taskTimeoutMs: config.stageTimeouts.running_codex,
+          checkpoint: (tasks) => store?.save({ tasks }),
+          onResult: (result) => session?.addTaskResult?.(result),
+          applyTask: (task) => codex.applyTask(task),
         })
       : undefined;
-    if (taskQueue) {
-      client.on?.(Events.MessageCreate, (message) => {
-        if (message.author?.bot || message.guildId !== config.guildId) return;
-        const action = taskQueue.handleThreadMessage({
-          threadId: message.channelId,
-          userId: message.author?.id,
-          ownerUserId: config.allowedUserId,
-          content: message.content,
-        });
-        if (!action) return;
-        const response = formatDiscordTaskAction(action);
-        if (!response) return;
-        void message.channel
-          .send(createDiscordMessagePayload(response, messageOptions))
-          .catch(() => undefined);
+    if (taskQueue && saved?.tasks?.length) {
+      await taskQueue.restore(saved.tasks, async (task) => {
+        if (!task.threadId || !task.starterId)
+          throw new Error("Task has no Discord surface");
+        const thread = await guild.channels.fetch(task.threadId);
+        const starter = await textChannel.messages.fetch(task.starterId);
+        return {
+          threadId: task.threadId,
+          starterId: task.starterId,
+          post: (content) =>
+            thread.send(createDiscordMessagePayload(content, messageOptions)),
+          update: (state) =>
+            starter.edit({
+              content: formatDiscordTaskCard(task, {
+                ...state,
+                threadId: task.threadId,
+              }),
+              allowedMentions: { parse: [] },
+              components: taskControls(task.id, state.state),
+            }),
+        };
       });
     }
-    const session =
+    session =
       config.voiceMode === "meeting"
         ? new DiscordVoiceMeetingSession({
             transcribe: audio.transcribe,
@@ -470,6 +591,9 @@ export async function startDiscordVoiceCodex({
               codex.observeMeeting(observation, options),
             upsertLiveTranscript,
             upsertMinutes,
+            archiveTranscript: (statement) =>
+              transcriptArchive.append(statement),
+            closeTranscriptArchive: () => transcriptArchive.stop(),
             postText,
             synthesize: audio.synthesize,
             playAudio,
@@ -478,6 +602,11 @@ export async function startDiscordVoiceCodex({
               taskQueue?.handleVoiceControl(control) ?? false,
             ownerUserId: config.allowedUserId,
             tasksEnabled: config.powerMode,
+            operatorUserIds: config.operatorUserIds,
+            requireWakeWord: config.requireWakeWord,
+            initialState: saved?.meeting,
+            checkpoint: (meeting) => store?.save({ meeting }),
+            getTasks: () => taskQueue?.list() ?? [],
             logger,
             observationIntervalMs: config.observationIntervalMs,
             immediateReactions: config.immediateReactions,
@@ -497,6 +626,40 @@ export async function startDiscordVoiceCodex({
             maximumQueuedTurns: config.maximumQueuedTurns,
             stageTimeouts: config.stageTimeouts,
           });
+    const handleMessage = createIdobataMessageHandler({
+      config,
+      session,
+      taskQueue,
+      resetMeeting: () => codex.resetMeeting?.(),
+    });
+    const handleInteraction = createIdobataInteractionHandler({
+      config,
+      taskQueue,
+    });
+    client.on?.(Events.InteractionCreate, (interaction) => {
+      void handleInteraction(interaction).catch((error) =>
+        logAudioFailure(logger, "task_interaction_failed", error),
+      );
+    });
+    deliveryInterval = setInterval(
+      () => void taskQueue?.retryResultDelivery(),
+      30_000,
+    );
+    deliveryInterval.unref?.();
+    void taskQueue?.retryResultDelivery();
+    client.on?.(Events.MessageCreate, (message) => {
+      void handleMessage(message)
+        .then((action) => {
+          const response = formatDiscordTaskAction(action);
+          if (response)
+            return message.channel.send(
+              createDiscordMessagePayload(response, messageOptions),
+            );
+        })
+        .catch((error) =>
+          logAudioFailure(logger, "message_handling_failed", error),
+        );
+    });
     subscribeToAllowedSpeaker({
       connection,
       config,
@@ -511,11 +674,12 @@ export async function startDiscordVoiceCodex({
     });
     await postText(
       config.voiceMode === "meeting"
-        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の文字起こしと議事録を更新し、${config.immediateReactions ? "発話後すぐに" : `${Math.round(config.observationIntervalMs / 1_000)}秒ごとに`}必要な場合だけ応答します。${config.powerMode ? "本人の作業依頼は高権限Codexタスクとしてバックグラウンド実行します。" : ""}返答音声はAI生成です。`
+        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の認識テキストは日付別の会話ログへ保存し、議事録を更新します。${config.immediateReactions ? "発話後すぐに" : `${Math.round(config.observationIntervalMs / 1_000)}秒ごとに`}必要な場合だけ応答します。${config.powerMode ? "操作担当者の作業依頼は、分離した作業場所でバックグラウンド実行します。" : ""}生の音声ファイルは保存しません。返答音声はAI生成です。`
         : config.listenToEveryone
           ? "🔊 Discord音声Codexを起動しました。ボイスチャンネル内の全参加者の発話を処理します。返答音声はAI生成です。"
           : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
     );
+    if (config.voiceMode === "meeting") await postText(IDOBATA_HELP);
     logInfoQuietly(logger, {
       component: "discord-voice",
       event: "ready",
@@ -530,13 +694,22 @@ export async function startDiscordVoiceCodex({
       async stop() {
         if (stopped) return;
         stopped = true;
-        session.stop();
+        serviceClosing = true;
+        clearInterval(deliveryInterval);
+        await session.stop();
         await taskQueue?.stop?.();
+        await store?.release();
         await Promise.all([destroyQuietly(connection), destroyQuietly(client)]);
       },
     };
   } catch (error) {
-    await Promise.all([
+    serviceClosing = true;
+    clearInterval(deliveryInterval);
+    await Promise.allSettled([
+      session?.stop?.(),
+      taskQueue?.stop?.(),
+      transcriptArchive?.stop?.(),
+      store?.release(),
       destroyQuietly(connection),
       loginAttempted ? destroyQuietly(client) : Promise.resolve(),
     ]);

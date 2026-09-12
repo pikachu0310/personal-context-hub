@@ -339,6 +339,7 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
   const posts = [];
   const spoken = [];
   const observations = [];
+  const archived = [];
   const timer = { unref: () => undefined };
   const session = new DiscordVoiceMeetingSession({
     transcribe: async (wav) => {
@@ -358,6 +359,7 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
     },
     upsertLiveTranscript: async (content) => liveEdits.push(content),
     upsertMinutes: async (content) => minutesEdits.push(content),
+    archiveTranscript: async (statement) => archived.push({ ...statement }),
     postText: async (content) => posts.push(content),
     synthesize: async (content) => (
       spoken.push(content),
@@ -388,6 +390,15 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
   );
   assert.equal(peak, 2);
   assert.deepEqual(posts, []);
+  assert.deepEqual(
+    archived
+      .sort((left, right) => left.startedAt - right.startedAt)
+      .map(({ speakerName, text }) => ({ speakerName, text })),
+    [
+      { speakerName: "Alice", text: "最初の案です" },
+      { speakerName: "Bob", text: "確認してほしい" },
+    ],
+  );
 
   assert.equal(await session.observeNow(), true);
   assert.equal(observations.length, 1);
@@ -401,6 +412,44 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
   ]);
   assert.equal(session.statements.length, 0);
   session.stop();
+});
+
+test("meeting mode retains and retries a recognized statement until archival succeeds", async () => {
+  let archiveAttempts = 0;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => "失われてはいけない発言",
+    observe: async () =>
+      JSON.stringify({
+        minutes: "- 発言を保存済み",
+        shouldReply: false,
+        reply: "",
+      }),
+    upsertLiveTranscript: async () => undefined,
+    upsertMinutes: async () => undefined,
+    archiveTranscript: async () => {
+      archiveAttempts += 1;
+      if (archiveAttempts === 1) throw new Error("temporary disk error");
+    },
+    postText: async () => undefined,
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    logger: { info: () => undefined },
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+
+  session.enqueue(Buffer.from("wav"), {
+    userId: "alice-id",
+    speakerName: "Alice",
+  });
+  await eventually(
+    () => session.statements.length === 1 && session.archiveFailures === 1,
+  );
+  assert.equal(session.statements[0].archived, false);
+  assert.equal(await session.observeNow(), true);
+  assert.equal(archiveAttempts, 2);
+  assert.equal(session.statements.length, 0);
+  await session.stop();
 });
 
 test("meeting observation updates minutes without replying to ordinary conversation", async () => {

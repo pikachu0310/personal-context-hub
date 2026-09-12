@@ -1,22 +1,86 @@
-# personal-context-hub
+# 井戸Bot — 会話の中で、話す・作る・試す
 
-A local-first collection of Model Context Protocol servers for using bounded
-personal context in Codex without committing credentials or private source data.
+Discordの会話を共有コンテキストへ整理し、Codexの調査・実装・ベンチマークを会議と並行して進めるBotです。
+結果、検証記録、コード差分が会話に戻り、その場で追加指示・中断・差分反映まで行えます。
+現在の実装対象はDiscordです。Slack・VRChatの音声接続は未実装です。
 
-The repository includes:
+## 最初の5分
 
-- a traQ MCP with read, confirmed write, and BOT-management tools;
-- a read-only Discord desktop RPC reader using `rpc`, `identify`, and
-  `messages.read` OAuth scopes;
-- an optional Discord Bot MCP for Bot-visible history and confirmed actions;
-- an optional single-user Discord Voice bridge for speech-to-text, a persistent local Codex SDK thread, and AI-generated speech replies;
-- a read-only Thunderbird global-index MCP;
-- credential storage backed by Windows DPAPI CurrentUser, with a `0600` file
-  fallback for unsupported environments;
-- contract tests, linting, formatting, coverage thresholds, and CI.
+Node.js 22以降、Discord Bot、音声API用のOpenAI API key、Codexへのログインが必要です。
+`.env.voice.example` を参考に、対象サーバー・通話・テキストチャンネル・操作担当者・作業repoを指定します。
+実際の設定と認証情報はGit管理外へ置いてください。
 
-This is a control plane, not a personal-data database. It fetches context on
-demand and does not ship live accounts, messages, tokens, or private exports.
+```sh
+npm ci
+npm run doctor:discord:voice
+npm run inspect:discord:voice:instance -- YOUR_PROFILE
+npm run start:discord:voice:instance -- YOUR_PROFILE
+```
+
+グループ開発では `PERSONAL_CONTEXT_VOICE_MODE=meeting`、`PERSONAL_CONTEXT_VOICE_POWER_MODE=true`、`PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE=true` を設定します。
+Botには対象チャンネルでの閲覧・接続・発言・送信・履歴閲覧・公開スレッド作成・スレッド送信・ファイル添付を許可し、Developer PortalでMessage Content Intentを有効にします。
+起動すると通話に参加し、認識テキストの保存とAI音声の使用をチャンネルへ告知します。参加者へ保存範囲を説明してから利用してください。
+
+設定済みのテキストチャンネルで、次の流れを試せます。`!ido` はテキストコマンドです。`/ido` も同じ意味で受け付けます。
+
+1. 「決定: ボタンは青にする」と書くか話す。議事録・前提・決定事項・未解決点・TODOを更新します。
+2. `!ido task ボタンを青に変更してテストして`。専用スレッドと独立した作業場所を作ります。
+3. 会話を続けながら `!ido benchmark AとBを同じ条件で比較して`。既定では2件まで並行実行します。
+4. タスクカードの「追加指示」から変更を伝えます。「停止」はそのタスクだけを止めます。
+5. 結果と添付patch・検証記録を確認し、「差分を反映」で元の作業場所へ反映します。そのrepoの通常の起動コマンドで動作を試せます。
+
+声で依頼するときは「井戸Bot、〜して」または「Codex、〜して」と呼びかけます。
+既定では呼びかけを含む操作担当者の明確な依頼だけを作業候補にします。認識誤りがある場合はテキストコマンドを使えます。
+
+| 操作                      | 内容                                              |
+| ------------------------- | ------------------------------------------------- |
+| `!ido ask 質問`           | 会議の文脈で質問する                              |
+| `!ido context`            | 共有コンテキストの全文                            |
+| `!ido task 依頼`          | 実装・修正                                        |
+| `!ido research 調査内容`  | 調査                                              |
+| `!ido benchmark 比較内容` | ベンチマーク                                      |
+| `!ido test 検証内容`      | テスト・検証                                      |
+| `!ido status`             | ID付き作業一覧                                    |
+| `!ido follow ID 追加指示` | 同じCodexセッションへ追加。実行中は後続として待機 |
+| `!ido stop ID`            | 指定タスクを中断し、待機中の追加指示も破棄        |
+| `!ido apply ID`           | 確認した差分を元の作業場所へ反映                  |
+| `!ido new`                | 会議の境界を切り替える。過去ログ・作業は保持      |
+
+## 並行作業と復旧
+
+- 観測・即答は既定でSol low、作業はSol medium。別モデルは `PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL`、`PERSONAL_CONTEXT_VOICE_TASK_MODEL`、`PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL` で指定できます。
+- 作業ごとに対象repoからGit worktreeを作り、開始時の追跡済みローカル変更を引き継ぎます。未追跡ファイル・ignoredファイル・credentialsはコピーしません。未コミットの新しいソースを含めたい場合は、先に対象repoでレビューして追跡対象にしてください。
+- ワーカーは `workspace-write` sandboxで動きます。元のrepoや別タスクの作業場所を変更せず、ネットワークと公式資料の検索を利用できます。共有ホスト上のプロセスであり、秘密ファイルへの読み取りまで隔離するコンテナではありません。
+- patchは開始スナップショットからの差分です。反映時には元のHEADとローカル変更の一致を確認し、競合する場合は停止します。自動commit・push・merge・deployは行いません。
+- 操作担当者はowner IDと `PERSONAL_CONTEXT_VOICE_OPERATOR_IDS` のカンマ区切りallowlistです。他の参加者は文脈と質問を提供できます。引用・外部ページ・他者発言は操作権限になりません。
+- 会議ID、議事録のrevision、未処理の発言、作業結果、Discord/CodexのスレッドIDをprivateなローカル状態へ保存します。同じ設定の二重起動を防止します。
+- 再起動で実行中だった仕事は「中断」として復元します。勝手に再実行せず、対象スレッドへの追加指示で同じCodexセッションを再開します。
+- 背景タスクの結果は親チャンネルへ要約し、次の観測の文脈に加えます。親チャンネルへの配送失敗は再試行します。詳細ログは専用スレッド、進捗投稿は最大10秒に1回です。
+- 複数タスクがあるときの曖昧な音声中断は実行しません。IDか対象スレッドを指定してください。
+
+## 検証と再現
+
+```sh
+# 音声・会話・操作・復旧を外部接続なしで検証
+npm test
+npm run smoke:discord:voice:mock
+
+# 実際のCodexが2本の作業を実行。Discordには接続しない
+npm run smoke:discord:voice:idd
+
+# 合成音声だけでTTS→STTを実API検証。録音・Discord投稿なし
+npm run smoke:discord:voice:audio
+```
+
+実Codexのsmokeは、一時repo内で「加算バグの修正とテスト」と「Array.includes / Set.hasの比較」を並行実行します。
+修正後のテストをBot外から再実行し、元repoが変わっていないことを検査します。その後、同じCodexセッションへ追加指示を渡し、明示した差分反映と反映先でのテストも検査します。検証用workspaceとJSONレポートの場所を出力します。
+音声APIのsmokeは有料APIを呼びます。通常のunit/integration testは外部接続しません。
+
+2026-09-12のローカル実機検証では、実Codexの並行作業と独立したテスト、合成音声のTTS→STTが通過しました。
+Discordの実通話・実投稿・ボタン操作は別の実機確認が必要です。mockの成功をDiscord接続の成功として扱いません。
+Codex連携は[公式SDK](https://learn.chatgpt.com/docs/codex-sdk)、音声受信は[@discordjs/voice](https://discord.js.org/docs/packages/voice/0.19.2)を使用しています。Discordの音声受信にはライブラリ側のサポート上の制約があり、環境ごとの実通話確認が必要です。
+
+このrepoは旧personal-context-hubから分岐しており、以下に既存の連携・設定資料を保持しています。
 
 ## Requirements
 
@@ -137,9 +201,9 @@ WSL path of the signed-in Windows Codex App home (for example,
 copying credentials into the repository. The path is used only as the
 authentication source: before Discord login, the service creates a private,
 isolated Codex home beside its state file, symlinks only `auth.json`, and
-requires an empty `config.toml`. Set
+requires an empty `config.toml` or only Codex-generated trust records for the configured workspace. Set
 `PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME` only when that default location
-must be changed. An unexpected auth file, nonempty config, or unsafe directory
+must be changed. An unexpected auth file, unrelated configuration, or unsafe directory
 causes startup to fail without reading the Bot credential.
 
 The Codex child process receives only an allowlisted runtime environment, so the
@@ -175,11 +239,19 @@ accumulated speech contains an unresolved question, request, correction, or anot
 reason to intervene; ordinary conversation and acknowledgements update the
 minutes without producing a reply.
 
+Every non-empty recognized statement is also retained indefinitely as append-only
+JSONL outside Git under `PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR`, grouped
+by guild and local date. Records include the speaker, timestamps, source IDs, and
+the exact recognized text; raw audio is never stored. By default, the same records
+are batched every minute into a silent `会話ログ YYYY-MM-DD` Discord thread for
+convenient browsing. Set `PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DISCORD=false`
+to keep only the canonical local archive, or change
+`PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_FLUSH_INTERVAL_MS` to adjust the Discord
+batch interval. A Discord publishing failure does not remove the local record.
+
 Set `PERSONAL_CONTEXT_VOICE_POWER_MODE=true` to let the configured owner create
-background Codex tasks from meeting speech. Each task runs in a separate thread
-with `danger-full-access`, live web search, network access, and no interactive
-approval prompt. Other speakers remain meeting context and cannot authorize a
-task. Power tasks may run concurrently without blocking the next meeting
+background Codex tasks from meeting speech. Each task runs in a separate thread and Git worktree with a workspace-write
+sandbox, live web search, network access, and no interactive approval prompt. Only configured operators can authorize work; other speakers remain meeting context. Power tasks may run concurrently without blocking the next meeting
 observation. The configured Text channel receives one starter message per task;
 that message is updated from queued through completed, failed, or cancelled and
 always links to the task thread. The thread contains the request, curated Codex
@@ -189,7 +261,7 @@ These are persistent local Codex worker sessions, not new tasks in the Codex App
 sidebar. Apps, browser sessions, plugins, hooks, and MCP servers remain disabled
 unless separately integrated.
 
-The configured owner can post a follow-up instruction directly in a task
+The configured owner or operator can post a follow-up instruction directly in a task
 thread. The Bot queues it on the same Codex task session, including after a task
 has completed. Posting only `停止`, `中止`, `キャンセル`, `stop`, or `cancel`
 stops that task without stopping the Voice bridge. Enable the Discord
@@ -197,8 +269,7 @@ application's privileged Message Content intent; messages from other users and
 messages outside known task threads are ignored.
 
 In meeting mode, owner speech that clearly refers to the latest existing task
-is also classified as either a stop or a follow-up instruction. It is applied to
-that task's same Codex session instead of creating a duplicate task. Speech from
+is also classified as either a stop or a follow-up instruction. An unambiguous task ID is applied to that task's same Codex session instead of creating a duplicate task. Ambiguous controls are rejected. Speech from
 other participants can never control a task.
 
 After explicitly configuring power mode, verify its isolated temporary file and

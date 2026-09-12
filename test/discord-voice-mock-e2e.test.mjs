@@ -98,12 +98,14 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   const turnEvents = [];
   const posts = [];
   const taskThreadPosts = [];
+  const archivedStatements = [];
   const speaking = new EventEmitter();
   const opusStream = new EventEmitter();
   const decoder = new EventEmitter();
   const connection = new EventEmitter();
   let connectionDestroyCalls = 0;
   let clientDestroyCalls = 0;
+  let transcriptArchiveStopCalls = 0;
   let decoderOptions;
 
   decoder.destroy = () => decoder.emit("close");
@@ -254,6 +256,12 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
         turnEvents.push("playback");
         assert.equal(audio, synthesized);
       },
+      transcriptArchive: {
+        append: async (statement) => archivedStatements.push({ ...statement }),
+        stop: async () => {
+          transcriptArchiveStopCalls += 1;
+        },
+      },
       scheduleInterval: () => ({ unref: () => undefined }),
       cancelInterval: () => undefined,
     },
@@ -286,6 +294,10 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   assert.ok(posts.some(({ content }) => /会議観測モード/.test(content)));
   assert.ok(posts.some(({ content }) => /Owner.*モック発話/.test(content)));
   assert.ok(posts.some(({ content }) => /議事録/.test(content)));
+  assert.deepEqual(
+    archivedStatements.map(({ speakerName, text }) => ({ speakerName, text })),
+    [{ speakerName: "Owner", text: "モック発話" }],
+  );
   assert.ok(
     posts.some(({ content }) => content === "タスクを追加しました：モック作業"),
   );
@@ -325,6 +337,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   await service.stop();
   assert.equal(connectionDestroyCalls, 1);
   assert.equal(clientDestroyCalls, 1);
+  assert.equal(transcriptArchiveStopCalls, 1);
 
   console.log(
     JSON.stringify({

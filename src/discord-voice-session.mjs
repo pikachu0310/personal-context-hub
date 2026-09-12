@@ -314,7 +314,7 @@ export class DiscordVoiceSession {
   }
 }
 
-const MAX_MEETING_MINUTES_CHARACTERS = 1_600;
+const MAX_MEETING_MINUTES_CHARACTERS = 10_000;
 const MAX_MEETING_TRANSCRIPT_CHARACTERS = 16_000;
 const MAX_LIVE_TRANSCRIPT_CHARACTERS = 1_850;
 
@@ -356,7 +356,7 @@ export function formatMeetingTranscript(
   }
   const omitted = lines.length - kept.length;
   const body = kept.length ? kept.join("\n") : "_発話を待っています。_";
-  return `${header}\n${omitted ? `_古い発話 ${omitted} 件は議事録へ移動しました。_\n` : ""}${body}`;
+  return `${header}\n${omitted ? `_古い発話 ${omitted} 件は会話ログへ保存しました。_\n` : ""}${body}`;
 }
 
 export function formatMeetingObservationTranscript(statements) {
@@ -395,6 +395,8 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
   const tasks = Array.isArray(parsed?.tasks)
     ? parsed.tasks.slice(0, 3).map((task) => ({
         title: boundText(task?.title, 120, "…") || "Codexタスク",
+        kind: task?.kind ?? "implementation",
+        complexity: task?.complexity ?? "routine",
         sourceSequences: Array.isArray(task?.sourceSequences)
           ? [
               ...new Set(
@@ -408,6 +410,7 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
     : [];
   const taskControls = Array.isArray(parsed?.taskControls)
     ? parsed.taskControls.slice(0, 3).map((control) => ({
+        taskId: typeof control.taskId === "string" ? control.taskId : undefined,
         type:
           control?.type === "stop" || control?.type === "instruction"
             ? control.type
@@ -457,7 +460,15 @@ export function authorizeMeetingTaskControls(
       .map((statement) => statement.text)
       .join("\n")
       .trim();
-    return instruction ? [{ type: control.type, instruction }] : [];
+    return instruction
+      ? [
+          {
+            type: control.type,
+            instruction,
+            ...(control.taskId ? { taskId: control.taskId } : {}),
+          },
+        ]
+      : [];
   });
 }
 
@@ -491,6 +502,8 @@ export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
     return [
       {
         title: task.title,
+        kind: task.kind,
+        complexity: task.complexity,
         request,
         context,
         sourceSequences: [...task.sourceSequences],
@@ -508,7 +521,16 @@ export class DiscordVoiceTaskQueue {
     concurrency = 2,
     maximumPendingTasks = 10,
     taskTimeoutMs = 3_600_000,
+    checkpoint = async () => undefined,
+    onResult = async () => undefined,
+    applyTask,
+    progressIntervalMs = 10_000,
   }) {
+    this.checkpoint = checkpoint;
+    this.onResult = onResult;
+    this.applyTaskChanges = applyTask;
+    this.progressIntervalMs = progressIntervalMs;
+    this.tasks = new Map();
     this.runTask = runTask;
     this.postText = postText;
     this.createTaskThread = createTaskThread;
@@ -536,7 +558,11 @@ export class DiscordVoiceTaskQueue {
       instructions: [],
       cancelled: false,
       executing: false,
+      state: "queued",
     };
+    this.tasks.set(queuedTask.id, queuedTask);
+    queuedTask.checkpoint = () => this.persist();
+    void this.persist();
     queuedTask.surfacePromise = withTimeout(
       () => this.createTaskThread(queuedTask),
       DEFAULT_STAGE_TIMEOUTS.posting,
@@ -548,11 +574,136 @@ export class DiscordVoiceTaskQueue {
         queuedTask.surface = surface;
         if (surface?.threadId)
           this.tasksByThreadId.set(String(surface.threadId), queuedTask);
+        void this.persist();
       })
       .catch(() => undefined);
     this.queue.push(queuedTask);
     this.#drain();
     return true;
+  }
+
+  snapshot() {
+    return [...this.tasks.values()].map((task) => ({
+      id: task.id,
+      title: task.title,
+      request: task.request,
+      context: task.context,
+      kind: task.kind,
+      complexity: task.complexity,
+      createdAt: task.createdAt,
+      meetingId: task.meetingId,
+      state: task.state,
+      instructions: [...task.instructions],
+      cancelled: task.cancelled,
+      codexThreadId: task.codexThreadId ?? task.codexThread?.id,
+      workingDirectory: task.workingDirectory,
+      baseCommit: task.baseCommit,
+      baselineTree: task.baselineTree,
+      baselineFingerprint: task.baselineFingerprint,
+      applied: task.applied,
+      threadId: task.surface?.threadId ?? task.threadId,
+      starterId: task.surface?.starterId ?? task.starterId,
+      result: task.result,
+      artifacts: task.artifacts,
+      profile: task.profile,
+      evidence: task.evidence,
+      additionalInstruction: task.additionalInstruction,
+      resultDeliveryPending: task.resultDeliveryPending,
+    }));
+  }
+
+  async persist() {
+    try {
+      await this.checkpoint(this.snapshot());
+    } catch {
+      this.#log("task_checkpoint_failed", {});
+    }
+  }
+
+  async restore(records, restoreSurface) {
+    for (const record of records ?? []) {
+      if (!record?.id) continue;
+      const task = {
+        ...record,
+        instructions: record.instructions ?? [],
+        executing: false,
+      };
+      if (["running", "queued"].includes(task.state))
+        task.state = "interrupted";
+      task.cancelled = true;
+      task.checkpoint = () => this.persist();
+      this.tasks.set(task.id, task);
+      try {
+        task.surface = await restoreSurface(task);
+        task.surfacePromise = Promise.resolve(task.surface);
+        if (task.surface?.threadId)
+          this.tasksByThreadId.set(String(task.surface.threadId), task);
+        await task.surface?.update?.({ state: task.state });
+      } catch {
+        this.#log("task_surface_restore_failed", { taskId: task.id });
+      }
+    }
+    await this.persist();
+  }
+
+  list() {
+    return [...this.tasks.values()].map(({ id, title, state, surface }) => ({
+      id,
+      title,
+      state,
+      threadId: surface?.threadId,
+    }));
+  }
+
+  handleTaskMessage({ taskId, ...message }) {
+    const task = this.tasks.get(taskId);
+    if (!task?.surface?.threadId) return false;
+    return this.handleThreadMessage({
+      ...message,
+      threadId: task.surface.threadId,
+    });
+  }
+
+  async applyTask(taskId) {
+    const task = this.tasks.get(taskId);
+    if (
+      !task ||
+      task.state !== "completed" ||
+      task.executing ||
+      task.applied ||
+      !this.applyTaskChanges
+    )
+      return false;
+    await this.applyTaskChanges(task);
+    await this.persist();
+    return true;
+  }
+
+  async retryResultDelivery() {
+    if (this.deliveringResults || this.closed) return;
+    this.deliveringResults = true;
+    try {
+      for (const task of this.tasks.values()) {
+        if (!task.resultDeliveryPending) continue;
+        try {
+          await this.onResult({
+            id: task.id,
+            title: task.title,
+            state: task.state,
+            result: task.result,
+            threadId: task.surface?.threadId ?? task.threadId,
+            artifacts: task.artifacts,
+            meetingId: task.meetingId,
+          });
+          task.resultDeliveryPending = false;
+          await this.persist();
+        } catch {
+          /* Keep the result pending for the next reconnect or interval. */
+        }
+      }
+    } finally {
+      this.deliveringResults = false;
+    }
   }
 
   handleThreadMessage({ threadId, userId, ownerUserId, content }) {
@@ -565,6 +716,7 @@ export class DiscordVoiceTaskQueue {
     ) {
       const discardedInstructions = task.instructions.length;
       task.cancelled = true;
+      task.state = "cancelled";
       task.instructions.length = 0;
       task.cancelledInstructionCount = discardedInstructions;
       this.queue = this.queue.filter((queued) => queued !== task);
@@ -575,12 +727,24 @@ export class DiscordVoiceTaskQueue {
           "本人の操作によりタスクを中止しました。",
         ),
       );
+      void this.persist();
       if (!task.executing) void this.#markCancelled(task.surface, task);
       return { type: "cancelled", discardedInstructions };
     }
+    if (
+      !task.executing &&
+      !this.queue.includes(task) &&
+      this.queue.length + this.active >= this.maximumPendingTasks
+    )
+      return { type: "full" };
     const disposition =
       task.executing || this.queue.includes(task) ? "queued" : "resumed";
+    if (task.instructions.length >= 10) return { type: "full" };
     task.instructions.push(instruction);
+    if (task.executing && task.controller?.signal.aborted)
+      task.resumeAfterAbort = true;
+    task.state = task.executing ? "running" : "queued";
+    void this.persist();
     task.cancelled = false;
     if (disposition === "resumed") {
       this.queue.push(task);
@@ -598,15 +762,16 @@ export class DiscordVoiceTaskQueue {
   }
 
   handleVoiceControl(control) {
-    const candidates = [...this.tasksByThreadId.values()]
-      .filter((task) =>
-        control?.type === "stop"
-          ? !task.cancelled && (task.executing || this.queue.includes(task))
-          : !task.cancelled,
-      )
-      .sort((left, right) => right.createdAt - left.createdAt);
+    let candidates = [...this.tasksByThreadId.values()];
+    if (control?.taskId)
+      candidates = candidates.filter((task) => task.id === control.taskId);
+    else
+      candidates = candidates.filter(
+        (task) =>
+          !task.cancelled && (task.executing || this.queue.includes(task)),
+      );
+    if (candidates.length !== 1) return false;
     const task = candidates[0];
-    if (!task) return false;
     return this.handleThreadMessage({
       threadId: task.surface?.threadId,
       userId: "voice-owner",
@@ -662,13 +827,20 @@ export class DiscordVoiceTaskQueue {
     const title = escapeDiscordMarkdown(task.title);
     let taskSurface;
     let postTaskText;
+    let workerSucceeded = false;
     let removeShutdownAbort = () => undefined;
     try {
       taskSurface = await task.surfacePromise;
       task.surface = taskSurface;
       if (taskSurface?.threadId)
         this.tasksByThreadId.set(String(taskSurface.threadId), task);
+      if (task.cancelled || this.closed) {
+        await this.#markCancelled(taskSurface, task);
+        return;
+      }
       task.executing = true;
+      task.state = "running";
+      await this.persist();
       task.controller = new AbortController();
       const abortTask = () =>
         task.controller?.abort(this.shutdownController.signal.reason);
@@ -684,6 +856,7 @@ export class DiscordVoiceTaskQueue {
           ? async () => undefined
           : (state) => taskSurface.update(state);
       task.additionalInstruction = task.instructions.shift();
+      await this.persist();
       const isContinuation = Boolean(task.additionalInstruction);
       await withTimeout(
         (signal) =>
@@ -710,6 +883,7 @@ export class DiscordVoiceTaskQueue {
       );
       let progressPosts = 0;
       let lastProgress = "";
+      let lastProgressAt = 0;
       const response = boundText(
         await withTimeout(
           (signal) =>
@@ -720,11 +894,13 @@ export class DiscordVoiceTaskQueue {
                 if (
                   !content ||
                   content === lastProgress ||
-                  progressPosts >= 50
+                  progressPosts >= 50 ||
+                  Date.now() - lastProgressAt < this.progressIntervalMs
                 ) {
                   return;
                 }
                 lastProgress = content;
+                lastProgressAt = Date.now();
                 progressPosts += 1;
                 await withTimeout(
                   (postSignal) => postTaskText(content, { signal: postSignal }),
@@ -745,6 +921,9 @@ export class DiscordVoiceTaskQueue {
         ),
         MAX_CODEX_RESPONSE_CHARACTERS,
       );
+      task.result = response;
+      workerSucceeded = true;
+      await this.persist();
       const chunks = splitDiscordText(
         response || "タスクは完了しましたが、結果メッセージは空でした。",
       );
@@ -760,6 +939,29 @@ export class DiscordVoiceTaskQueue {
           DEFAULT_STAGE_TIMEOUTS.posting,
           "posting task result",
           this.shutdownController.signal,
+        );
+      }
+      if (task.artifacts)
+        await postTaskText(
+          "🔬 **確認用の成果**\n" +
+            "workspace: `" +
+            task.artifacts.workingDirectory +
+            "`\n" +
+            "patch: `" +
+            task.artifacts.patchPath +
+            "`\n" +
+            "変更状態:\n" +
+            boundText(task.artifacts.status || "差分なし", 900) +
+            "\n元の作業場所へは自動反映しません。",
+        );
+      if (task.artifacts && taskSurface?.postArtifacts) {
+        await withTimeout(
+          () => taskSurface.postArtifacts(task.artifacts, task.evidence),
+          DEFAULT_STAGE_TIMEOUTS.posting,
+          "posting task artifacts",
+          this.shutdownController.signal,
+        ).catch(() =>
+          this.#log("task_artifact_post_failed", { taskId: task.id }),
         );
       }
       const elapsedMs = Date.now() - task.createdAt;
@@ -818,11 +1020,37 @@ export class DiscordVoiceTaskQueue {
           pendingInstructions,
         },
       );
+      task.state =
+        task.instructions.length && !task.cancelled ? "queued" : "completed";
+      await this.persist();
+      try {
+        await this.onResult({
+          id: task.id,
+          title: task.title,
+          state: task.state,
+          result: response,
+          threadId: taskSurface?.threadId,
+          artifacts: task.artifacts,
+          meetingId: task.meetingId,
+        });
+        task.resultDeliveryPending = false;
+      } catch {
+        task.resultDeliveryPending = true;
+        this.#log("task_result_delivery_failed", { taskId: task.id });
+      }
+      await this.persist();
       if (task.instructions.length && !task.cancelled) this.queue.push(task);
     } catch (error) {
       if (this.closed || task.cancelled || error?.code === "TASK_CANCELLED") {
         await this.#markCancelled(taskSurface, task);
+      } else if (workerSucceeded) {
+        task.state = "completed";
+        task.resultDeliveryPending = true;
+        await this.persist();
+        this.#log("task_result_delivery_failed", { taskId: task.id });
       } else {
+        task.state = "failed";
+        await this.persist();
         this.#log("power_task_failed", {
           taskId: task.id,
           elapsedMs: Date.now() - startedAt,
@@ -843,10 +1071,19 @@ export class DiscordVoiceTaskQueue {
       task.executing = false;
       task.controller = undefined;
       task.additionalInstruction = undefined;
+      if (task.resumeAfterAbort && !this.closed && task.instructions.length) {
+        task.resumeAfterAbort = false;
+        task.cancelled = false;
+        task.state = "queued";
+        this.queue.push(task);
+        await this.persist();
+      }
     }
   }
 
   async #markCancelled(surface, task) {
+    task.state = "cancelled";
+    await this.persist();
     if (!surface) return;
     const post = typeof surface === "function" ? surface : surface.post;
     await Promise.resolve(
@@ -888,6 +1125,8 @@ export class DiscordVoiceMeetingSession {
     observe,
     upsertLiveTranscript,
     upsertMinutes,
+    archiveTranscript = async () => undefined,
+    closeTranscriptArchive = async () => undefined,
     postText,
     synthesize,
     playAudio,
@@ -895,6 +1134,11 @@ export class DiscordVoiceMeetingSession {
     controlTask = () => false,
     ownerUserId,
     tasksEnabled = false,
+    operatorUserIds = [],
+    requireWakeWord = false,
+    initialState = {},
+    checkpoint = async () => undefined,
+    getTasks = () => [],
     logger = console,
     observationIntervalMs = 60_000,
     immediateReactions = false,
@@ -909,6 +1153,8 @@ export class DiscordVoiceMeetingSession {
       observe,
       upsertLiveTranscript,
       upsertMinutes,
+      archiveTranscript,
+      closeTranscriptArchive,
       postText,
       synthesize,
       playAudio,
@@ -917,6 +1163,10 @@ export class DiscordVoiceMeetingSession {
     };
     this.logger = logger;
     this.ownerUserId = ownerUserId;
+    this.operatorUserIds = operatorUserIds;
+    this.requireWakeWord = requireWakeWord;
+    this.checkpoint = checkpoint;
+    this.getTasks = getTasks;
     this.tasksEnabled = tasksEnabled;
     this.stageTimeouts = { ...DEFAULT_STAGE_TIMEOUTS, ...stageTimeouts };
     this.transcriptionConcurrency = transcriptionConcurrency;
@@ -925,15 +1175,20 @@ export class DiscordVoiceMeetingSession {
     this.cancelInterval = cancelInterval;
     this.audioQueue = [];
     this.activeTranscriptions = 0;
-    this.statements = [];
-    this.sequence = 0;
-    this.minutes = "";
+    this.activeTranscriptionJobs = new Set();
+    this.meetingId = initialState.meetingId ?? randomUUID();
+    this.statements = initialState.statements ?? [];
+    this.sequence = initialState.sequence ?? 0;
+    this.minutes = initialState.minutes ?? "";
+    this.results = initialState.results ?? [];
+    this.revision = initialState.revision ?? 0;
     this.observing = false;
     this.immediateObservationRequested = false;
     this.immediateObservationScheduled = false;
     this.closed = false;
     this.droppedAudio = 0;
     this.failedTranscriptions = 0;
+    this.archiveFailures = 0;
     this.shutdownController = new AbortController();
     this.liveUpdate = Promise.resolve();
     this.interval = scheduleInterval(
@@ -965,20 +1220,118 @@ export class DiscordVoiceMeetingSession {
     return true;
   }
 
+  async persist() {
+    await this.checkpoint({
+      meetingId: this.meetingId,
+      revision: this.revision,
+      sequence: this.sequence,
+      minutes: this.minutes,
+      statements: this.statements,
+      results: this.results,
+    });
+  }
+
+  async addText(text, metadata = {}) {
+    if (this.closed || !String(text).trim()) return false;
+    const statement = {
+      id: randomUUID(),
+      meetingId: this.meetingId,
+      sequence: ++this.sequence,
+      userId: metadata.userId,
+      speakerName: metadata.speakerName,
+      startedAt: metadata.startedAt ?? Date.now(),
+      text: boundText(text, MAX_TRANSCRIPT_CHARACTERS),
+      observed: false,
+      archived: false,
+    };
+    this.statements.push(statement);
+    await this.#archiveStatement(statement);
+    await this.persist();
+    this.#queueLiveUpdate();
+    if (this.immediateReactions) {
+      this.immediateObservationRequested = true;
+      this.#scheduleImmediateObservation();
+    }
+    return true;
+  }
+
+  async addTaskResult(result) {
+    if (result.meetingId && result.meetingId !== this.meetingId) {
+      await this.dependencies.postText(
+        "📦 以前の会議のタスクが完了しました: " +
+          result.title +
+          (result.threadId ? " <#" + result.threadId + ">" : ""),
+      );
+      return;
+    }
+    this.results = this.results.filter((previous) => previous.id !== result.id);
+    this.results.push({ ...result, result: boundText(result.result, 4000) });
+    this.results = this.results.slice(-20);
+    await this.persist();
+    await this.dependencies.postText(
+      "📦 **" +
+        escapeDiscordMarkdown(result.title) +
+        "** `" +
+        result.id +
+        "`\n" +
+        boundText(result.result, 900) +
+        "\n" +
+        (result.threadId ? "詳細: <#" + result.threadId + ">" : ""),
+    );
+  }
+
+  async newMeeting() {
+    if (this.observing || this.activeTranscriptions || this.audioQueue.length)
+      return false;
+    await this.#archivePendingStatements();
+    if (this.statements.some((statement) => !statement.archived)) return false;
+    this.meetingId = randomUUID();
+    this.minutes = "";
+    this.statements = [];
+    this.results = [];
+    this.sequence = 0;
+    this.revision = 0;
+    await this.persist();
+    this.#queueLiveUpdate();
+    return true;
+  }
+
   async observeNow() {
     if (this.closed || this.observing) return false;
-    const statements = this.statements.filter(
-      (statement) => !statement.observed,
-    );
-    if (!statements.length) return false;
     this.observing = true;
     const startedAt = Date.now();
     try {
+      await this.#archivePendingStatements();
+      this.statements = this.statements.filter(
+        (statement) => !statement.observed || !statement.archived,
+      );
+      const statements = [];
+      let observationCharacters = 0;
+      for (const statement of this.statements.filter(
+        (item) => !item.observed,
+      )) {
+        if (
+          statements.length &&
+          (observationCharacters + statement.text.length >
+            MAX_MEETING_TRANSCRIPT_CHARACTERS ||
+            statements.length >= 20)
+        )
+          break;
+        statements.push(statement);
+        observationCharacters += statement.text.length;
+      }
+      if (!statements.length) return false;
       const transcript = formatMeetingObservationTranscript(statements);
       const raw = await withTimeout(
         (signal) =>
           this.dependencies.observe(
-            { minutes: this.minutes, transcript, statements },
+            {
+              minutes: this.minutes,
+              transcript,
+              statements,
+              activeTasks: this.getTasks(),
+              results: this.results,
+            },
             { signal },
           ),
         this.stageTimeouts.running_codex,
@@ -986,20 +1339,36 @@ export class DiscordVoiceMeetingSession {
         this.shutdownController.signal,
       );
       const observation = parseMeetingObservation(raw, this.minutes);
+      const authorizedStatements = statements.map((statement) => ({
+        ...statement,
+        userId:
+          (statement.userId === this.ownerUserId ||
+            this.operatorUserIds.includes(statement.userId)) &&
+          (!this.requireWakeWord ||
+            /(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)/iu.test(
+              statement.text,
+            ))
+            ? this.ownerUserId
+            : undefined,
+      }));
       const tasks = this.tasksEnabled
-        ? authorizeMeetingTasks(observation.tasks, statements, this.ownerUserId)
+        ? authorizeMeetingTasks(
+            observation.tasks,
+            authorizedStatements,
+            this.ownerUserId,
+          )
         : [];
       const taskControls = this.tasksEnabled
         ? authorizeMeetingTaskControls(
             observation.taskControls,
-            statements,
+            authorizedStatements,
             this.ownerUserId,
           )
         : [];
       await withTimeout(
         (signal) =>
           this.dependencies.upsertMinutes(
-            `📝 **議事録（自動更新）**\n${observation.minutes}`,
+            `📝 **議事録・共有コンテキスト（rev ${this.revision + 1}）**\n${boundText(observation.minutes, 1750)}\n全文: /ido context`,
             { signal },
           ),
         this.stageTimeouts.posting,
@@ -1007,10 +1376,21 @@ export class DiscordVoiceMeetingSession {
         this.shutdownController.signal,
       );
       this.minutes = observation.minutes;
+      this.revision += 1;
+      for (const task of tasks) {
+        task.meetingId = this.meetingId;
+        task.context =
+          this.minutes +
+          "\n\n" +
+          task.context +
+          "\n\n作業結果:\n" +
+          JSON.stringify(this.results);
+      }
       for (const statement of statements) statement.observed = true;
       this.statements = this.statements.filter(
-        (statement) => !statement.observed,
+        (statement) => !statement.observed || !statement.archived,
       );
+      await this.persist();
       this.droppedAudio = 0;
       this.failedTranscriptions = 0;
       this.#queueLiveUpdate();
@@ -1029,7 +1409,7 @@ export class DiscordVoiceMeetingSession {
         await withTimeout(
           (signal) =>
             this.dependencies.postText(
-              "⚠️ 操作対象のCodexタスクが見つかりませんでした。",
+              "⚠️ 操作対象を一つに特定できません。タスクIDを指定するか、対象スレッドで指示してください。",
               { signal },
             ),
           this.stageTimeouts.posting,
@@ -1086,6 +1466,11 @@ export class DiscordVoiceMeetingSession {
         replied: Boolean(reply),
         tasks: tasks.length - rejectedTasks,
       });
+      if (
+        this.immediateReactions &&
+        this.statements.some((statement) => !statement.observed)
+      )
+        this.immediateObservationRequested = true;
       return true;
     } catch (error) {
       if (!this.closed) {
@@ -1101,7 +1486,7 @@ export class DiscordVoiceMeetingSession {
     }
   }
 
-  stop() {
+  async stop() {
     if (this.closed) return;
     this.closed = true;
     this.cancelInterval(this.interval);
@@ -1113,6 +1498,10 @@ export class DiscordVoiceMeetingSession {
         "音声サービスを停止しました。",
       ),
     );
+    await Promise.allSettled([...this.activeTranscriptionJobs]);
+    await this.#archivePendingStatements();
+    await this.persist();
+    await this.dependencies.closeTranscriptArchive();
   }
 
   #drainTranscriptions() {
@@ -1123,7 +1512,10 @@ export class DiscordVoiceMeetingSession {
     ) {
       const item = this.audioQueue.shift();
       this.activeTranscriptions += 1;
-      void this.#transcribeItem(item).finally(() => {
+      const job = this.#transcribeItem(item);
+      this.activeTranscriptionJobs.add(job);
+      void job.finally(() => {
+        this.activeTranscriptionJobs.delete(job);
         this.activeTranscriptions -= 1;
         this.#drainTranscriptions();
       });
@@ -1151,14 +1543,20 @@ export class DiscordVoiceMeetingSession {
         });
         return;
       }
-      this.statements.push({
+      const statement = {
+        id: item.id,
+        meetingId: this.meetingId,
         sequence: item.sequence,
         userId: item.metadata.userId,
         speakerName: item.metadata.speakerName,
         startedAt: item.metadata.startedAt ?? item.queuedAt,
         text,
         observed: false,
-      });
+        archived: false,
+      };
+      this.statements.push(statement);
+      await this.#archiveStatement(statement);
+      await this.persist();
       this.#log("meeting_transcript_completed", {
         sequence: item.sequence,
         elapsedMs: Date.now() - startedAt,
@@ -1192,6 +1590,8 @@ export class DiscordVoiceMeetingSession {
     if (this.droppedAudio) notices.push(`未処理音声 ${this.droppedAudio} 件`);
     if (this.failedTranscriptions)
       notices.push(`認識失敗 ${this.failedTranscriptions} 件`);
+    if (this.archiveFailures)
+      notices.push(`保存再試行待ち ${this.archiveFailures} 件`);
     if (notices.length) content += `\n_状態: ${notices.join(" / ")}_`;
     this.liveUpdate = this.liveUpdate
       .then(() =>
@@ -1209,6 +1609,32 @@ export class DiscordVoiceMeetingSession {
             errorCode: voiceErrorCode(error),
           });
       });
+  }
+
+  async #archiveStatement(statement) {
+    if (statement.archived) return true;
+    try {
+      await this.dependencies.archiveTranscript(statement);
+      statement.archived = true;
+      this.archiveFailures = this.statements.filter(
+        (candidate) => !candidate.archived,
+      ).length;
+      return true;
+    } catch (error) {
+      this.archiveFailures = this.statements.filter(
+        (candidate) => !candidate.archived,
+      ).length;
+      this.#log("meeting_transcript_archive_failed", {
+        sequence: statement.sequence,
+        errorCode: voiceErrorCode(error),
+      });
+      return false;
+    }
+  }
+
+  async #archivePendingStatements() {
+    const pending = this.statements.filter((statement) => !statement.archived);
+    for (const statement of pending) await this.#archiveStatement(statement);
   }
 
   #scheduleImmediateObservation() {

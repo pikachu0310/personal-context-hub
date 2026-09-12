@@ -124,6 +124,32 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     powerMode,
     voiceMode,
+    operatorUserIds: (env.PERSONAL_CONTEXT_VOICE_OPERATOR_IDS ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => {
+        if (!snowflake.test(id))
+          throw new Error(
+            "PERSONAL_CONTEXT_VOICE_OPERATOR_IDS must contain Discord snowflakes.",
+          );
+        return id;
+      }),
+    requireWakeWord: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD",
+      true,
+    ),
+    meetingStatePath: `${statePath}.meeting.json`,
+    taskWorkspaceDirectory: `${statePath}.workspaces`,
+    observerModel:
+      env.PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL?.trim() || "gpt-5.6-sol",
+    observerReasoningEffort: "low",
+    taskModel: env.PERSONAL_CONTEXT_VOICE_TASK_MODEL?.trim() || "gpt-5.6-sol",
+    taskReasoningEffort: "medium",
+    complexTaskModel:
+      env.PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL?.trim() || "gpt-5.6-sol",
+    complexTaskReasoningEffort: "medium",
     immediateReactions: boolean(
       env,
       "PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS",
@@ -136,6 +162,25 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     workingDirectory,
     statePath,
+    transcriptArchiveDirectory:
+      env.PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR?.trim()
+        ? absolutePath(
+            env.PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR,
+            "PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR",
+          )
+        : join(dirname(statePath), "discord-voice-transcripts"),
+    transcriptArchiveDiscord: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DISCORD",
+      true,
+    ),
+    transcriptArchiveFlushIntervalMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_FLUSH_INTERVAL_MS",
+      60_000,
+      10_000,
+      3_600_000,
+    ),
     sttModel: env.PERSONAL_CONTEXT_VOICE_STT_MODEL?.trim() || "gpt-transcribe",
     ttsModel: env.PERSONAL_CONTEXT_VOICE_TTS_MODEL?.trim() || "gpt-4o-mini-tts",
     ttsVoice: env.PERSONAL_CONTEXT_VOICE_TTS_VOICE?.trim() || "marin",
@@ -267,6 +312,9 @@ export function describeDiscordVoiceConfig(config) {
     silentMessages: config.silentMessages,
     workingDirectory: config.workingDirectory,
     statePath: config.statePath,
+    transcriptArchiveDirectory: config.transcriptArchiveDirectory,
+    transcriptArchiveDiscord: config.transcriptArchiveDiscord,
+    transcriptArchiveFlushIntervalMs: config.transcriptArchiveFlushIntervalMs,
     sttModel: config.sttModel,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
