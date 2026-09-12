@@ -15,6 +15,182 @@ const eventually = async (check) => {
   assert.fail("condition not reached");
 };
 
+test("a stalled result upload releases the worker slot and retains both revisions across shutdown", async (t) => {
+  let releaseWorker, releaseUpload;
+  const runs = [],
+    posts = [],
+    reports = [],
+    uploaded = [],
+    cards = [];
+  let saved;
+  const queue = new DiscordVoiceTaskQueue({
+    logger: {},
+    concurrency: 1,
+    postText: noop,
+    checkpoint: async (value) => {
+      saved = structuredClone(value);
+    },
+    createTaskThread: async (task) => ({
+      threadId: task.id,
+      update: noop,
+      post: async (content) => posts.push(content),
+      postArtifacts: async () => {
+        if (task.id === "first")
+          await new Promise((resolve) => {
+            releaseUpload = resolve;
+          });
+      },
+    }),
+    runTask: async (task) => {
+      task.runRevision = (task.runRevision ?? 0) + 1;
+      runs.push(`${task.id}:${task.runRevision}`);
+      if (runs.length === 1)
+        await new Promise((resolve) => {
+          releaseWorker = resolve;
+        });
+      task.artifacts = {
+        runRevision: task.runRevision,
+        patchPath: `${task.id}-r${task.runRevision}.patch`,
+      };
+      task.evidence = { runRevision: task.runRevision };
+      return `${task.id} result r${task.runRevision}`;
+    },
+    onResult: async (result) => reports.push(result),
+  });
+  t.after(async () => {
+    releaseWorker?.();
+    releaseUpload?.();
+    await queue.stop();
+  });
+  queue.enqueue({ id: "first", title: "first" });
+  await eventually(() => releaseWorker);
+  queue.enqueue({ id: "second", title: "second" });
+  await queue.handleTaskMessageDurable({
+    taskId: "first",
+    userId: "owner",
+    ownerUserId: "owner",
+    content: "follow up",
+  });
+  releaseWorker();
+  await eventually(
+    () =>
+      releaseUpload &&
+      runs.length === 3 &&
+      queue.active === 0 &&
+      reports.length === 1,
+  );
+  assert.deepEqual(runs, ["first:1", "second:1", "first:2"]);
+  assert.equal(reports[0].id, "second");
+  assert.equal(queue.tasks.get("first").executing, false);
+  assert.deepEqual(
+    queue
+      .snapshot()[0]
+      .resultDeliveries.map((delivery) => delivery.artifacts.patchPath),
+    ["first-r1.patch", "first-r2.patch"],
+  );
+
+  // Shutdown aborts the delivery wait and checkpoints its unacknowledged stage.
+  await queue.stop();
+  assert.equal(queue.deliveries.size, 0);
+  assert.equal(saved[0].state, "completed");
+  assert.equal(saved[0].resultDeliveries[0].nextStep, 3);
+  const restored = new DiscordVoiceTaskQueue({
+    logger: {},
+    postText: noop,
+    createTaskThread: noop,
+    runTask: async () => assert.fail("retry must not run a worker"),
+    onResult: async (result) => reports.push(result),
+  });
+  t.after(() => restored.stop());
+  await restored.restore(saved, async () => ({
+    threadId: "first",
+    post: async (content) => posts.push(content),
+    update: async (options) => {
+      if (options.isCurrent) cards.push(options);
+    },
+    postArtifacts: async (artifacts, evidence) =>
+      uploaded.push({ artifacts, evidence }),
+  }));
+  await restored.retryResultDelivery();
+  assert.deepEqual(
+    uploaded.map(({ artifacts, evidence }) => [
+      artifacts.patchPath,
+      evidence.runRevision,
+    ]),
+    [
+      ["first-r1.patch", 1],
+      ["first-r2.patch", 2],
+    ],
+  );
+  assert.deepEqual(
+    reports.map((result) => [result.id, result.runRevision]),
+    [
+      ["second", 1],
+      ["first", 1],
+      ["first", 2],
+    ],
+  );
+  assert.equal(
+    posts.filter((content) => content === "first result r1").length,
+    1,
+  );
+  assert.equal(
+    cards.length,
+    1,
+    "the old delivery must not refresh the latest card",
+  );
+  assert.equal(cards[0].state, "completed");
+  assert.equal(cards[0].isCurrent(), true);
+  restored.tasks.get("first").state = "running";
+  assert.equal(
+    cards[0].isCurrent(),
+    false,
+    "a queued edit must expire when work resumes",
+  );
+  assert.equal(restored.snapshot()[0].resultDeliveryPending, false);
+});
+
+test("a stalled restored result cannot block another task's result retry", async (t) => {
+  let release;
+  const reports = [];
+  const queue = new DiscordVoiceTaskQueue({
+    logger: {},
+    postText: noop,
+    createTaskThread: noop,
+    runTask: noop,
+    onResult: async (result) => reports.push(result.id),
+  });
+  t.after(async () => {
+    release?.();
+    await queue.stop();
+  });
+  await queue.restore(
+    ["first", "second"].map((id) => ({
+      id,
+      title: id,
+      state: "completed",
+      result: id,
+      resultDeliveryPending: true,
+    })),
+    async (task) => ({
+      threadId: task.id,
+      update: noop,
+      post: async (content) => {
+        if (task.id === "first" && content.includes("実行結果"))
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+      },
+    }),
+  );
+  const retry = queue.retryResultDelivery();
+  await eventually(() => release && reports.includes("second"));
+  assert.deepEqual(reports, ["second"]);
+  release();
+  await retry;
+  assert.deepEqual(reports, ["second", "first"]);
+});
+
 test("artifact retries retain their Discord identity while a new result revision gets a distinct identity", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ido-artifact-identity-"));
   t.after(() => rm(root, { recursive: true, force: true }));

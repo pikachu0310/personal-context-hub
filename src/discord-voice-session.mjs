@@ -609,6 +609,7 @@ export class DiscordVoiceTaskQueue {
     this.taskTimeoutMs = taskTimeoutMs;
     this.queue = [];
     this.running = new Set();
+    this.deliveries = new Set();
     this.notifications = new Set();
     this.tasksByThreadId = new Map();
     this.active = 0;
@@ -1076,9 +1077,11 @@ export class DiscordVoiceTaskQueue {
     if (this.deliveringResults || this.closed) return;
     this.deliveringResults = true;
     try {
-      for (const task of this.tasks.values()) {
-        if (task.resultDeliveryPending) await this.#deliverTaskResults(task);
-      }
+      await Promise.all(
+        [...this.tasks.values()]
+          .filter((task) => task.resultDeliveryPending)
+          .map((task) => this.#deliverTaskResults(task)),
+      );
     } finally {
       this.deliveringResults = false;
     }
@@ -1086,9 +1089,12 @@ export class DiscordVoiceTaskQueue {
 
   #deliverTaskResults(task) {
     if (!task.deliveryPromise) {
-      task.deliveryPromise = this.#flushTaskResults(task).finally(() => {
+      const operation = this.#flushTaskResults(task).finally(() => {
         task.deliveryPromise = undefined;
+        this.deliveries.delete(operation);
       });
+      task.deliveryPromise = operation;
+      this.deliveries.add(operation);
     }
     return task.deliveryPromise;
   }
@@ -1097,6 +1103,11 @@ export class DiscordVoiceTaskQueue {
     try {
       while (task.resultDeliveries?.length && !this.closed) {
         const delivery = task.resultDeliveries[0];
+        const revision =
+          delivery.runRevision ??
+          delivery.evidence?.runRevision ??
+          delivery.artifacts?.runRevision;
+        const revisionLabel = revision ? ` (実行 r${revision})` : "";
         delivery.id ??= randomUUID();
         await this.persist({ strict: true });
         const surface = task.surface ?? (await this.#loadRestoredSurface(task));
@@ -1105,7 +1116,9 @@ export class DiscordVoiceTaskQueue {
         const stages = [
           (options) =>
             post(
-              "📦 **実行結果**\n" +
+              "📦 **実行結果**" +
+                revisionLabel +
+                "\n" +
                 formatVerificationEvidence(delivery.evidence),
               options,
             ),
@@ -1144,24 +1157,36 @@ export class DiscordVoiceTaskQueue {
               delivery.pendingInstructions
                 ? "⏭️ **追加指示へ続行** " +
                     task.id +
+                    revisionLabel +
                     "\n残り: " +
                     delivery.pendingInstructions +
                     "件"
                 : "✅ **Codexタスク完了** " +
                     task.id +
+                    revisionLabel +
                     "\n" +
                     escapeDiscordMarkdown(task.title) +
                     "\n所要時間: " +
                     formatElapsedTime(delivery.elapsedMs),
               options,
             ),
-          (options) =>
-            surface?.update?.({
+          (options) => {
+            const state = task.state;
+            const controlVersion = task.controlVersion ?? 0;
+            const isCurrent = () =>
+              task.runRevision === revision &&
+              task.state === state &&
+              task.state === delivery.state &&
+              (task.controlVersion ?? 0) === controlVersion;
+            if (!isCurrent()) return;
+            return surface?.update?.({
               signal: options.signal,
-              state: task.state,
+              state,
               elapsedMs: delivery.elapsedMs,
               pendingInstructions: task.instructions.length,
-            }),
+              isCurrent,
+            });
+          },
           (options) =>
             this.onResult(
               {
@@ -1170,7 +1195,7 @@ export class DiscordVoiceTaskQueue {
                 state: delivery.state,
                 result: delivery.result,
                 verification: formatVerificationEvidence(delivery.evidence),
-                runRevision: delivery.evidence?.runRevision,
+                runRevision: revision,
                 threadId: surface?.threadId ?? task.threadId,
                 artifacts: delivery.artifacts,
                 meetingId: task.meetingId,
@@ -1374,7 +1399,7 @@ export class DiscordVoiceTaskQueue {
         ...(task.controlPersistenceByKey?.values() ?? []),
       ]),
     ]).then(async () => {
-      await Promise.allSettled([...this.notifications]);
+      await Promise.allSettled([...this.notifications, ...this.deliveries]);
       return this.persist({ strict: true });
     });
     return this.stopping;
@@ -1563,6 +1588,7 @@ export class DiscordVoiceTaskQueue {
           : "completed";
       task.resultDeliveries ??= [];
       task.resultDeliveries.push({
+        runRevision: task.runRevision,
         result: response,
         artifacts: structuredClone(task.artifacts),
         evidence: structuredClone(task.evidence),
@@ -1573,7 +1599,7 @@ export class DiscordVoiceTaskQueue {
       });
       task.resultDeliveryPending = true;
       await this.persist();
-      await this.#deliverTaskResults(task);
+      void this.#deliverTaskResults(task);
       this.#log(
         pendingInstructions
           ? "power_task_continuation_queued"
