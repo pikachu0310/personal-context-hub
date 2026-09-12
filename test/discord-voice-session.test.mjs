@@ -1009,6 +1009,7 @@ test("an idle observation recovers a failed live view update without running Cod
 test("meeting mode retains statements when an observation is invalid and retries later", async () => {
   let attempts = 0;
   const minutesEdits = [];
+  const liveEdits = [];
   const session = new DiscordVoiceMeetingSession({
     transcribe: async () => "再試行対象",
     observe: async () => {
@@ -1021,8 +1022,11 @@ test("meeting mode retains statements when an observation is invalid and retries
             reply: "",
           });
     },
-    upsertLiveTranscript: async () => undefined,
-    upsertMinutes: async (content) => minutesEdits.push(content),
+    upsertLiveTranscript: async (content) => liveEdits.push(content),
+    upsertMinutes: async (content) => {
+      if (attempts === 2) throw new Error("temporary minutes outage");
+      minutesEdits.push(content);
+    },
     postText: async () => assert.fail("retry must not post a warning"),
     synthesize: async () => Buffer.alloc(2),
     playAudio: async () => undefined,
@@ -1034,8 +1038,25 @@ test("meeting mode retains statements when an observation is invalid and retries
   await eventually(() => session.statements.length === 1);
   assert.equal(await session.observeNow(), false);
   assert.equal(session.statements.length, 1);
+  await session.liveUpdate;
+  assert.match(liveEdits.at(-1), /再試行対象/);
+  assert.match(liveEdits.at(-1), /会話の確認に失敗。次の確認で再試行します/);
+  assert.doesNotMatch(liveEdits.at(-1), /会話を処理中/);
+  assert.equal(await session.observeNow(), false);
+  assert.equal(session.statements.length, 1);
+  await session.liveUpdate;
+  assert.match(liveEdits.at(-1), /次の確認で再試行/);
   assert.equal(await session.observeNow(), true);
   assert.equal(session.statements.length, 0);
+  await session.liveUpdate;
+  assert.doesNotMatch(liveEdits.at(-1), /会話の確認に失敗|会話を処理中/);
+  const processingEdits = liveEdits.filter((content) =>
+    /会話を処理中/.test(content),
+  );
+  assert.ok(processingEdits.length >= 3);
+  assert.ok(
+    processingEdits.every((content) => !/会話の確認に失敗/.test(content)),
+  );
   assert.match(minutesEdits[0], /再試行で回収済み/);
   session.stop();
 });

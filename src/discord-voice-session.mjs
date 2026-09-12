@@ -1780,6 +1780,7 @@ export class DiscordVoiceMeetingSession {
     this.activeTextInputs = 0;
     this.observing = false;
     this.processingConversation = false;
+    this.observationRetryPending = false;
     this.immediateObservationRequested = false;
     this.immediateObservationScheduled = false;
     this.closed = false;
@@ -2393,6 +2394,7 @@ export class DiscordVoiceMeetingSession {
       sequence: this.sequence,
       revision: this.revision,
       silencedThroughSequence: this.silencedThroughSequence,
+      observationRetryPending: this.observationRetryPending,
     };
     try {
       await this.#archivePendingStatements();
@@ -2411,6 +2413,7 @@ export class DiscordVoiceMeetingSession {
       this.sequence = 0;
       this.silencedThroughSequence = null;
       this.revision = 0;
+      this.observationRetryPending = false;
       await this.persist();
       this.#queueLiveUpdate();
       return true;
@@ -2452,6 +2455,7 @@ export class DiscordVoiceMeetingSession {
     this.observing = true;
     if (this.liveUpdatePending) this.#queueLiveUpdate();
     const startedAt = Date.now();
+    let analyzingConversation = false;
     try {
       if (this.speechStopSavePending) await this.persist();
       await this.#dispatchPendingControls();
@@ -2487,6 +2491,7 @@ export class DiscordVoiceMeetingSession {
         ]),
       );
       this.processingConversation = true;
+      analyzingConversation = true;
       this.#queueLiveUpdate();
       const raw = await withTimeout(
         (signal) =>
@@ -2542,6 +2547,8 @@ export class DiscordVoiceMeetingSession {
         "updating meeting minutes",
         this.shutdownController.signal,
       );
+      analyzingConversation = false;
+      this.observationRetryPending = false;
       this.minutes = observation.minutes;
       this.revision += 1;
       for (const task of tasks) {
@@ -2649,6 +2656,7 @@ export class DiscordVoiceMeetingSession {
       return true;
     } catch (error) {
       if (!this.closed) {
+        if (analyzingConversation) this.observationRetryPending = true;
         this.#log("meeting_observation_failed", {
           elapsedMs: Date.now() - startedAt,
           errorCode: voiceErrorCode(error),
@@ -3038,6 +3046,8 @@ export class DiscordVoiceMeetingSession {
     const notices = [];
     if (this.processingConversation)
       notices.push("会話を処理中。続けて話せます");
+    else if (this.observationRetryPending && statements.length)
+      notices.push("会話の確認に失敗。次の確認で再試行します");
     if (this.speechTurns.turns.size)
       notices.push(
         `${this.speechTurns.turns.size}件の発話を認識中。話し終わってから依頼を処理します`,
