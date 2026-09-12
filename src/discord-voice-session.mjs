@@ -788,13 +788,22 @@ export class DiscordVoiceTaskQueue {
       }
       task.cancelled = true;
       task.checkpoint = () => this.persist();
+      task.restoreSurface = restoreSurface;
       this.tasks.set(task.id, task);
+      if (task.threadId) this.tasksByThreadId.set(String(task.threadId), task);
+      if (
+        ["completed", "failed", "cancelled"].includes(task.state) &&
+        !task.resultDeliveryPending
+      )
+        continue;
       try {
-        task.surface = await restoreSurface(task);
-        task.surfacePromise = Promise.resolve(task.surface);
-        if (task.surface?.threadId)
-          this.tasksByThreadId.set(String(task.surface.threadId), task);
-        await task.surface?.update?.({ state: task.state });
+        const surface = await this.#loadRestoredSurface(task);
+        await withTimeout(
+          () => surface?.update?.({ state: task.state }),
+          DEFAULT_STAGE_TIMEOUTS.posting,
+          "refreshing restored task",
+          this.shutdownController.signal,
+        );
       } catch {
         this.#log("task_surface_restore_failed", { taskId: task.id });
       }
@@ -802,14 +811,39 @@ export class DiscordVoiceTaskQueue {
     await this.persist();
   }
 
+  #loadRestoredSurface(task) {
+    if (task.surface) return Promise.resolve(task.surface);
+    if (!task.restoreSurface)
+      return Promise.reject(new Error("No saved task surface"));
+    if (!task.restoringSurface) {
+      task.restoringSurface = withTimeout(
+        () => task.restoreSurface(task),
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "restoring task thread",
+        this.shutdownController.signal,
+      )
+        .then((surface) => {
+          if (!surface) throw new Error("Saved task surface unavailable");
+          task.surface = surface;
+          if (surface.threadId)
+            this.tasksByThreadId.set(String(surface.threadId), task);
+          return surface;
+        })
+        .finally(() => {
+          task.restoringSurface = undefined;
+        });
+    }
+    return task.restoringSurface;
+  }
+
   list() {
     return [...this.tasks.values()].map(
-      ({ id, title, state, surface, createdAt }) => ({
+      ({ id, title, state, surface, threadId, createdAt }) => ({
         id,
         title,
         state,
         createdAt,
-        threadId: surface?.threadId,
+        threadId: surface?.threadId ?? threadId,
       }),
     );
   }
@@ -964,9 +998,17 @@ export class DiscordVoiceTaskQueue {
       return false;
     if (!(await this.applyTaskChanges(task))) return false;
     await this.persist();
-    await Promise.resolve(task.surface?.update?.({ state: task.state })).catch(
-      () => undefined,
-    );
+    try {
+      const surface = task.surface ?? (await this.#loadRestoredSurface(task));
+      await withTimeout(
+        () => surface?.update?.({ state: task.state }),
+        DEFAULT_STAGE_TIMEOUTS.posting,
+        "refreshing applied task",
+        this.shutdownController.signal,
+      );
+    } catch {
+      this.#log("task_surface_refresh_failed", { taskId: task.id });
+    }
     return true;
   }
 
@@ -995,7 +1037,7 @@ export class DiscordVoiceTaskQueue {
     try {
       while (task.resultDeliveries?.length && !this.closed) {
         const delivery = task.resultDeliveries[0];
-        const surface = task.surface;
+        const surface = task.surface ?? (await this.#loadRestoredSurface(task));
         const post = typeof surface === "function" ? surface : surface?.post;
         if (!post) throw new Error("Task result surface is unavailable");
         const stages = [
@@ -1279,13 +1321,27 @@ export class DiscordVoiceTaskQueue {
       if (!task.surfacePromise) {
         task.surfacePromise = this.persist({ strict: true }).then(() =>
           withTimeout(
-            () => {
+            async (signal) => {
               if (this.closed || task.cancelled)
                 throw new VoiceServiceError(
                   "TASK_CANCELLED",
                   "Task cancelled before surface recovery",
                   "開始前に中止しました。",
                 );
+              if (task.restoreSurface) {
+                try {
+                  return await this.#loadRestoredSurface(task);
+                } catch {
+                  this.#log("task_surface_restore_failed", { taskId: task.id });
+                }
+              }
+              if (this.closed || task.cancelled)
+                throw new VoiceServiceError(
+                  "TASK_CANCELLED",
+                  "Task cancelled during surface recovery",
+                  "開始前に中止しました。",
+                );
+              signal.throwIfAborted();
               return this.createTaskThread(task);
             },
             DEFAULT_STAGE_TIMEOUTS.posting,
