@@ -352,6 +352,19 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   assert.ok(
     taskThreadPosts.some(({ content }) => content === "モックタスク完了"),
   );
+  assert.equal(
+    taskThreadPosts.find(({ content }) => content === "モックタスク完了")
+      .enforceNonce,
+    true,
+  );
+  await eventually(() =>
+    posts.some(({ content }) => content.startsWith("📦 **モック作業**")),
+  );
+  assert.equal(
+    posts.find(({ content }) => content.startsWith("📦 **モック作業**"))
+      .enforceNonce,
+    true,
+  );
   assert.ok(
     posts.every(({ content }) => !/Codexタスク(開始|完了)/.test(content)),
   );

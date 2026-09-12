@@ -1060,21 +1060,24 @@ export class DiscordVoiceTaskQueue {
     try {
       while (task.resultDeliveries?.length && !this.closed) {
         const delivery = task.resultDeliveries[0];
+        delivery.id ??= randomUUID();
+        await this.persist({ strict: true });
         const surface = task.surface ?? (await this.#loadRestoredSurface(task));
         const post = typeof surface === "function" ? surface : surface?.post;
         if (!post) throw new Error("Task result surface is unavailable");
         const stages = [
-          () =>
+          (options) =>
             post(
               "📦 **実行結果**\n" +
                 formatVerificationEvidence(delivery.evidence),
+              options,
             ),
           ...splitDiscordText(delivery.result).map(
-            (chunk) => () => post(chunk),
+            (chunk) => (options) => post(chunk, options),
           ),
         ];
         if (delivery.artifacts) {
-          stages.push(() =>
+          stages.push((options) =>
             post(
               "🔬 **確認用の成果**\n" +
                 "workspace: " +
@@ -1086,15 +1089,20 @@ export class DiscordVoiceTaskQueue {
                 "変更状態:\n" +
                 boundText(delivery.artifacts.status || "差分なし", 900) +
                 "\n元の作業場所へは自動反映しません。",
+              options,
             ),
           );
           // Production surfaces (including restored ones) attach the exact saved revision.
-          stages.push(() =>
-            surface?.postArtifacts?.(delivery.artifacts, delivery.evidence),
+          stages.push((options) =>
+            surface?.postArtifacts?.(
+              delivery.artifacts,
+              delivery.evidence,
+              options,
+            ),
           );
         }
         stages.push(
-          () =>
+          (options) =>
             post(
               delivery.pendingInstructions
                 ? "⏭️ **追加指示へ続行** " +
@@ -1108,25 +1116,30 @@ export class DiscordVoiceTaskQueue {
                     escapeDiscordMarkdown(task.title) +
                     "\n所要時間: " +
                     formatElapsedTime(delivery.elapsedMs),
+              options,
             ),
-          () =>
+          (options) =>
             surface?.update?.({
+              signal: options.signal,
               state: task.state,
               elapsedMs: delivery.elapsedMs,
               pendingInstructions: task.instructions.length,
             }),
-          () =>
-            this.onResult({
-              id: task.id,
-              title: task.title,
-              state: delivery.state,
-              result: delivery.result,
-              verification: formatVerificationEvidence(delivery.evidence),
-              runRevision: delivery.evidence?.runRevision,
-              threadId: surface?.threadId ?? task.threadId,
-              artifacts: delivery.artifacts,
-              meetingId: task.meetingId,
-            }),
+          (options) =>
+            this.onResult(
+              {
+                id: task.id,
+                title: task.title,
+                state: delivery.state,
+                result: delivery.result,
+                verification: formatVerificationEvidence(delivery.evidence),
+                runRevision: delivery.evidence?.runRevision,
+                threadId: surface?.threadId ?? task.threadId,
+                artifacts: delivery.artifacts,
+                meetingId: task.meetingId,
+              },
+              options,
+            ),
         );
         for (
           let index = delivery.nextStep ?? 0;
@@ -1134,7 +1147,11 @@ export class DiscordVoiceTaskQueue {
           index++
         ) {
           await withTimeout(
-            stages[index],
+            (signal) =>
+              stages[index]({
+                signal,
+                idempotencyKey: `task-result:${delivery.id}:${index}`,
+              }),
             DEFAULT_STAGE_TIMEOUTS.posting,
             "delivering saved task result",
             this.shutdownController.signal,
@@ -2191,7 +2208,7 @@ export class DiscordVoiceMeetingSession {
     ].join("\n\n");
   }
 
-  async addTaskResult(result) {
+  async addTaskResult(result, options = {}) {
     while (this.resetting) await this.meetingBoundary;
     if (this.closed)
       throw new VoiceServiceError(
@@ -2204,6 +2221,7 @@ export class DiscordVoiceMeetingSession {
         "📦 以前の会議のタスクが完了しました: " +
           result.title +
           (result.threadId ? " <#" + result.threadId + ">" : ""),
+        options,
       );
       return;
     }
@@ -2225,6 +2243,7 @@ export class DiscordVoiceMeetingSession {
         boundText(result.result, 900) +
         "\n" +
         (result.threadId ? "詳細: <#" + result.threadId + ">" : ""),
+      options,
     );
   }
 

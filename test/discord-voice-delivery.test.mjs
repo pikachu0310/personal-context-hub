@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
+import { createDiscordArtifactPoster } from "../src/discord-voice-server.mjs";
 
 const noop = async () => undefined;
 const eventually = async (check) => {
@@ -10,6 +14,106 @@ const eventually = async (check) => {
   }
   assert.fail("condition not reached");
 };
+
+test("artifact retries retain their Discord identity while a new result revision gets a distinct identity", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ido-artifact-identity-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const patchPath = join(root, "result.patch");
+  await writeFile(patchPath, "+synthetic change\n");
+  const payloads = [];
+  const post = createDiscordArtifactPoster(
+    { send: async (payload) => payloads.push(payload) },
+    { id: "task01" },
+  );
+  await post(
+    { patchPath, runRevision: 1 },
+    {},
+    { idempotencyKey: "result-one:artifacts" },
+  );
+  await post(
+    { patchPath, runRevision: 1 },
+    {},
+    { idempotencyKey: "result-one:artifacts" },
+  );
+  await post(
+    { patchPath, runRevision: 2 },
+    {},
+    { idempotencyKey: "result-two:artifacts" },
+  );
+  assert.equal(payloads[0].nonce, payloads[1].nonce);
+  assert.notEqual(payloads[0].nonce, payloads[2].nonce);
+  assert.ok(
+    payloads.every(
+      (payload) => payload.enforceNonce && payload.files.length === 2,
+    ),
+  );
+  assert.equal(payloads[2].files[0].name, "task01-r2.patch");
+  assert.equal(
+    payloads[2].files[0].attachment.toString(),
+    "+synthetic change\n",
+  );
+});
+
+test("a task result keeps its delivery identities across a lost acknowledgement and restart", async (t) => {
+  const accepted = new Map();
+  const attempts = [];
+  const post = async (content, { idempotencyKey } = {}) => {
+    if (!idempotencyKey) return;
+    attempts.push(idempotencyKey);
+    if (accepted.has(idempotencyKey)) return;
+    accepted.set(idempotencyKey, content);
+    if (content.includes("実行結果") && attempts.length === 1)
+      throw new Error("ack lost after server accepted result header");
+  };
+  const attachments = [],
+    reports = [];
+  const surface = () => ({
+    threadId: "thread",
+    post,
+    update: noop,
+    postArtifacts: async (_artifacts, _evidence, options) =>
+      attachments.push(options.idempotencyKey),
+  });
+  const queue = new DiscordVoiceTaskQueue({
+    logger: {},
+    postText: noop,
+    createTaskThread: surface,
+    runTask: async (task) => {
+      task.artifacts = { patchPath: "synthetic" };
+      return "saved result";
+    },
+  });
+  t.after(() => queue.stop());
+  queue.enqueue({ title: "work" });
+  await eventually(
+    () => queue.snapshot()[0].resultDeliveryPending && queue.active === 0,
+  );
+  const saved = queue.snapshot();
+  const deliveryId = saved[0].resultDeliveries[0].id;
+  assert.ok(deliveryId);
+  await queue.stop();
+  const restored = new DiscordVoiceTaskQueue({
+    logger: {},
+    postText: noop,
+    createTaskThread: surface,
+    runTask: async () => assert.fail("result retry must not run Codex"),
+    onResult: async (_result, options) => reports.push(options.idempotencyKey),
+  });
+  t.after(() => restored.stop());
+  await restored.restore(saved, surface);
+  await restored.retryResultDelivery();
+  assert.equal(attempts[0], attempts[1]);
+  assert.equal(
+    [...accepted.values()].filter((text) => text.includes("実行結果")).length,
+    1,
+  );
+  assert.equal(attachments.length, 1);
+  assert.equal(reports.length, 1);
+  const keys = [...accepted.keys(), ...attachments, ...reports];
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(keys.every((key) => key.includes(deliveryId)));
+  assert.equal(restored.snapshot()[0].resultDeliveryPending, false);
+});
 
 test("a Discord result outage cannot discard accepted follow-up instructions", async (t) => {
   let release;

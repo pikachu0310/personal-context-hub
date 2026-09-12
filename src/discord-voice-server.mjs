@@ -372,7 +372,8 @@ export function createDiscordArtifactPoster(
   task,
   { silent = true } = {},
 ) {
-  return async (artifacts, evidence) => {
+  return async (artifacts, evidence, { idempotencyKey, signal } = {}) => {
+    signal?.throwIfAborted();
     const patch = await readFile(artifacts.patchPath);
     if (
       patch.length > 1_000_000 ||
@@ -383,7 +384,7 @@ export function createDiscordArtifactPoster(
       await thread.send(
         createDiscordMessagePayload(
           "差分はローカルworkspaceに保存しました。サイズまたは秘密値の検査により自動添付を省略しました。",
-          { silent },
+          { silent, idempotencyKey },
         ),
       );
       return;
@@ -391,7 +392,7 @@ export function createDiscordArtifactPoster(
     await thread.send({
       ...createDiscordMessagePayload(
         `📎 実行版 ${artifacts.runRevision ?? 1} の差分と検証記録。前回反映した時点（未反映なら開始時点）からの変更です。確認後 \`/ido apply ${task.id} ${artifacts.runRevision ?? 1}\` で反映できます。`,
-        { silent },
+        { silent, idempotencyKey },
       ),
       files: [
         {
@@ -474,9 +475,11 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       }
       return starter;
     };
-    const post = (content, { signal } = {}) => {
+    const post = (content, { signal, idempotencyKey } = {}) => {
       if (signal?.aborted) return Promise.reject(signal.reason);
-      return thread.send(createDiscordMessagePayload(content, { silent }));
+      return thread.send(
+        createDiscordMessagePayload(content, { silent, idempotencyKey }),
+      );
     };
     try {
       await update({ state: "queued" });
@@ -725,7 +728,8 @@ export async function startDiscordVoiceCodex({
           maximumPendingTasks: config.maximumPendingTasks,
           taskTimeoutMs: config.stageTimeouts.running_codex,
           checkpoint: (tasks) => store?.save({ tasks }),
-          onResult: (result) => session?.addTaskResult?.(result),
+          onResult: (result, options) =>
+            session?.addTaskResult?.(result, options),
           applyTask: (task) => codex.applyTask(task),
         })
       : undefined;
@@ -743,8 +747,13 @@ export async function startDiscordVoiceCodex({
             task,
             messageOptions,
           ),
-          post: (content) =>
-            thread.send(createDiscordMessagePayload(content, messageOptions)),
+          post: (content, { idempotencyKey } = {}) =>
+            thread.send(
+              createDiscordMessagePayload(content, {
+                ...messageOptions,
+                idempotencyKey,
+              }),
+            ),
           update: (state) =>
             starter.edit({
               content: formatDiscordTaskCard(task, {
