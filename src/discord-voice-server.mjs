@@ -278,6 +278,9 @@ export function formatDiscordTaskCard(
       ? `担当: ${task.profile.kind} · ${task.profile.model ?? "default"} / ${task.profile.modelReasoningEffort}`
       : `担当: ${task.kind ?? "implementation"}`,
     threadId ? `ログ: <#${threadId}>` : "ログスレッドを準備しています…",
+    task.artifacts?.runRevision
+      ? `実行版: **${task.artifacts.runRevision}**${task.appliedRevision === task.artifacts.runRevision ? " · 反映済み" : ""}`
+      : "",
   ].join("\n");
 }
 
@@ -304,7 +307,7 @@ export function createDiscordArtifactPoster(
     }
     await thread.send({
       ...createDiscordMessagePayload(
-        "📎 開始時点からの変更差分と検証記録。確認後 `/ido apply タスクID` で元の作業場所へ反映できます。",
+        `📎 実行版 ${artifacts.runRevision ?? 1} の差分と検証記録。前回反映した時点（未反映なら開始時点）からの変更です。確認後 \`/ido apply ${task.id} ${artifacts.runRevision ?? 1}\` で反映できます。`,
         { silent },
       ),
       files: [
@@ -367,14 +370,24 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
           pendingInstructions,
         }),
         allowedMentions: { parse: [] },
-        components: taskControls(task.id, state),
+        components: taskControls(
+          task.id,
+          state,
+          task.artifacts?.runRevision,
+          Boolean(
+            task.appliedRevision &&
+            task.appliedRevision === task.artifacts?.runRevision,
+          ),
+        ),
       };
       try {
         starter = await starter.edit(payload);
       } catch {
-        starter = await textChannel.send(
-          createDiscordMessagePayload(payload.content, { silent }),
-        );
+        starter = await textChannel.send({
+          ...createDiscordMessagePayload(payload.content, { silent }),
+          components: payload.components,
+        });
+        await task.checkpoint?.();
       }
       return starter;
     };
@@ -401,7 +414,15 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       throw error;
     }
     const postArtifacts = createDiscordArtifactPoster(thread, task, { silent });
-    return { post, update, postArtifacts, threadId, starterId: starter.id };
+    return {
+      post,
+      update,
+      postArtifacts,
+      threadId,
+      get starterId() {
+        return starter.id;
+      },
+    };
   };
 }
 
@@ -594,7 +615,15 @@ export async function startDiscordVoiceCodex({
                 threadId: task.threadId,
               }),
               allowedMentions: { parse: [] },
-              components: taskControls(task.id, state.state),
+              components: taskControls(
+                task.id,
+                state.state,
+                task.artifacts?.runRevision,
+                Boolean(
+                  task.appliedRevision &&
+                  task.appliedRevision === task.artifacts?.runRevision,
+                ),
+              ),
             }),
         };
       });

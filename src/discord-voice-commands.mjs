@@ -8,12 +8,12 @@ export const IDOBATA_HELP = [
   "`/ido benchmark 比較内容` · `/ido test 検証内容`",
   "`/ido status` 作業一覧 · `/ido stop タスクID`",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
-  "`/ido apply タスクID` 確認した差分を作業場所へ反映",
+  "`/ido apply タスクID 実行版` 確認した差分を作業場所へ反映",
   "作業・中断・新規会議は設定済みの操作担当者が使えます。",
   "作業結果は専用スレッドとこの会話へ戻ります。",
 ].join("\n");
 
-export function taskControls(taskId, state) {
+export function taskControls(taskId, state, revision, applied = false) {
   return [
     {
       type: 1,
@@ -35,8 +35,8 @@ export function taskControls(taskId, state) {
           type: 2,
           style: 1,
           label: "差分を反映",
-          custom_id: `ido:apply:${taskId}`,
-          disabled: state !== "completed",
+          custom_id: `ido:apply:${taskId}${revision ? `:${revision}` : ""}`,
+          disabled: state !== "completed" || applied,
         },
       ],
     },
@@ -46,7 +46,7 @@ export function taskControls(taskId, state) {
 export function createIdobataInteractionHandler({ config, taskQueue }) {
   return async (interaction) => {
     const match = String(interaction.customId ?? "").match(
-      /^ido:(follow|instruction|stop|apply):([a-zA-Z0-9_-]+)$/,
+      /^ido:(follow|instruction|stop|apply):([a-zA-Z0-9_-]+)(?::([1-9][0-9]*))?$/,
     );
     if (!match || interaction.guildId !== config.guildId) return false;
     const reply = (content) =>
@@ -57,7 +57,7 @@ export function createIdobataInteractionHandler({ config, taskQueue }) {
       !(config.operatorUserIds ?? []).includes(userId)
     )
       return reply("この操作は設定済みの操作担当者だけが使えます。");
-    const [, action, taskId] = match;
+    const [, action, taskId, revision] = match;
     if (!taskQueue?.tasks.has(taskId))
       return reply("タスクが見つかりません。作業一覧を確認してください。");
     if (action === "follow")
@@ -84,9 +84,12 @@ export function createIdobataInteractionHandler({ config, taskQueue }) {
       await interaction.deferReply({ flags: 64 });
       try {
         return interaction.editReply(
-          (await taskQueue.applyTask(taskId))
+          (await taskQueue.applyTask(
+            taskId,
+            revision ? Number(revision) : undefined,
+          ))
             ? "差分を元の作業場所へ反映しました。動作確認に進めます。"
-            : "完了済み・未反映のタスクだけ反映できます。",
+            : "反映できません。完了済み・未反映の最新の実行版を、タスクカードで確認してください。",
         );
       } catch {
         return interaction.editReply(
@@ -214,11 +217,19 @@ export function createIdobataMessageHandler({
         "作業モードは未設定です。管理者が POWER_MODE を有効にしてください。",
       );
     if (command === "apply") {
+      const [taskId, revision, extra] = argument.split(/\s+/);
+      if (extra || (revision && !/^[1-9][0-9]*$/.test(revision)))
+        return reply(
+          "`/ido apply タスクID 実行版` と入力してください。実行版は最新の添付に記載されています。",
+        );
       try {
         return reply(
-          (await taskQueue.applyTask(argument))
+          (await taskQueue.applyTask(
+            taskId,
+            revision ? Number(revision) : undefined,
+          ))
             ? "✅ 差分を元の作業場所へ反映しました。起動・動作確認に進めます。"
-            : "反映できる完了タスクを指定してください。",
+            : "反映できる最新の完了タスクを指定してください。実行版が古い場合は最新の添付を確認してください。",
         );
       } catch {
         return reply(

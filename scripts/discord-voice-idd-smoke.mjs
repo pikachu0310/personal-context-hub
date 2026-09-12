@@ -176,6 +176,8 @@ assert.equal(
   await readFile(join(repository, "math.mjs"), "utf8"),
   "export const add = (a, b) => a - b;\n",
 );
+await runner.applyTask(implementation);
+await exec(process.execPath, ["--test", "math.test.mjs"], { cwd: repository });
 const resumedRunner = new CodexVoiceRunner(runnerConfig);
 const firstPatch = await readFile(implementation.artifacts.patchPath, "utf8");
 const continuation = {
@@ -207,6 +209,7 @@ const report = {
   discordConnected: false,
   sourceUnchangedBeforeExplicitApply: true,
   explicitApply: "passed",
+  iterativeApply: "passed",
   observerRouting: "passed",
   sameThreadResume: "passed",
   resumedTestOutput: resumedVerification.stdout,
@@ -228,6 +231,7 @@ console.log(
       observerRouting: "passed",
       sameThreadResume: "passed",
       explicitApply: "passed",
+      iterativeApply: "passed",
       independentTests: "passed",
       resultReplayAfterRestart: "passed",
       revisionArtifactsPreserved: "passed",

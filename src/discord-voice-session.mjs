@@ -607,6 +607,8 @@ export class DiscordVoiceTaskQueue {
       baselineTree: task.baselineTree,
       baselineFingerprint: task.baselineFingerprint,
       applied: task.applied,
+      appliedRevision: task.appliedRevision,
+      appliedFileState: structuredClone(task.appliedFileState),
       threadId: task.surface?.threadId ?? task.threadId,
       starterId: task.surface?.starterId ?? task.starterId,
       result: task.result,
@@ -688,18 +690,25 @@ export class DiscordVoiceTaskQueue {
     });
   }
 
-  async applyTask(taskId) {
+  async applyTask(taskId, expectedRevision) {
     const task = this.tasks.get(taskId);
     if (
       !task ||
       task.state !== "completed" ||
       task.executing ||
-      task.applied ||
+      (expectedRevision !== undefined &&
+        expectedRevision !== task.artifacts?.runRevision) ||
+      (task.applied &&
+        (!task.appliedRevision ||
+          task.appliedRevision === task.artifacts?.runRevision)) ||
       !this.applyTaskChanges
     )
       return false;
-    await this.applyTaskChanges(task);
+    if (!(await this.applyTaskChanges(task))) return false;
     await this.persist();
+    await Promise.resolve(task.surface?.update?.({ state: task.state })).catch(
+      () => undefined,
+    );
     return true;
   }
 
