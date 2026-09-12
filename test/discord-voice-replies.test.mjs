@@ -22,6 +22,59 @@ const meeting = (options = {}) =>
     ...options,
   });
 
+test("a second question is answered while the first answer is still playing, with speech kept in order", async (t) => {
+  const posts = [],
+    spoken = [],
+    observations = [];
+  let releaseSpeech;
+  const heldSpeech = new Promise((resolve) => {
+    releaseSpeech = resolve;
+  });
+  const session = meeting({
+    observe: async ({ statements }) => {
+      observations.push(statements.map((statement) => statement.text));
+      return JSON.stringify({
+        minutes: `会話${observations.length}`,
+        shouldReply: true,
+        reply: `回答${observations.length}`,
+      });
+    },
+    postText: async (text) => posts.push(text),
+    synthesize: async (text) => text,
+    playAudio: async (text) => {
+      spoken.push(text);
+      if (spoken.length === 1) await heldSpeech;
+    },
+  });
+  t.after(async () => {
+    releaseSpeech();
+    await session.stop();
+  });
+  const eventually = async (check) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.fail("next answer was blocked by the previous playback");
+  };
+  await session.addText("最初の質問", { userId: "member" });
+  let observationCompleted = false;
+  const first = session.observeNow().then(() => {
+    observationCompleted = true;
+  });
+  await eventually(() => spoken.length === 1);
+  await session.addText("次の質問", { userId: "member", requestReply: true });
+  await eventually(() => posts.length === 2);
+  assert.deepEqual(observations, [["最初の質問"], ["次の質問"]]);
+  assert.deepEqual(posts, ["回答1", "回答2"]);
+  assert.deepEqual(spoken, ["回答1"]);
+  assert.equal(observationCompleted, false);
+  releaseSpeech();
+  await first;
+  await session.speechQueue;
+  assert.deepEqual(spoken, ["回答1", "回答2"]);
+});
+
 test("a reply accepted by Discord but missing its acknowledgement reuses its delivery identity after restart", async (t) => {
   let saved;
   const received = new Map();

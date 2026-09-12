@@ -2447,7 +2447,14 @@ export class DiscordVoiceMeetingSession {
 
   observeNow() {
     if (this.closed) return Promise.resolve(false);
-    return this.#trackOperation(this.#observeNow());
+    return this.#trackOperation(
+      this.#observeNow().then(async (result) => {
+        // Keep the public completion contract while releasing the observation
+        // lock before playback, so the next question can be answered promptly.
+        await this.speechQueue;
+        return result;
+      }),
+    );
   }
 
   async #observeNow() {
@@ -2480,7 +2487,6 @@ export class DiscordVoiceMeetingSession {
       }
       if (!statements.length) {
         await this.#dispatchPendingTasks();
-        await this.speechQueue;
         return false;
       }
       const transcript = formatMeetingObservationTranscript(statements);
@@ -2629,7 +2635,7 @@ export class DiscordVoiceMeetingSession {
             this.shutdownController.signal,
           );
         }
-        await this.#queueMeetingSpeech(
+        this.#queueMeetingSpeech(
           this.#canSpeakFor(
             acceptedTasks.flatMap((task) => task.sourceSequences ?? []),
           )
@@ -2637,7 +2643,6 @@ export class DiscordVoiceMeetingSession {
             : "",
         );
       }
-      await this.speechQueue;
       this.#log("meeting_observation_completed", {
         elapsedMs: Date.now() - startedAt,
         statements: statements.length,
