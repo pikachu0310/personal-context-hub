@@ -5,10 +5,83 @@ import { ChannelType, MessageFlags } from "discord.js";
 import {
   createEditableDiscordPost,
   createDiscordTaskCardUpdater,
+  createDiscordTaskThread,
   formatDiscordTaskAction,
   formatDiscordTaskCard,
   startDiscordVoiceCodex,
 } from "../src/discord-voice-server.mjs";
+
+test("task creation recovers lost card, thread, and request acknowledgements in the same Discord thread", async () => {
+  const acceptedCards = new Map();
+  const acceptedMessages = new Map();
+  let threadCreated = false;
+  let threadCreations = 0;
+  let lookupOffline = true;
+  const task = { id: "task01", createdAt: 1, title: "work", request: "fix it" };
+  const thread = {
+    id: "starter01",
+    parentId: "parent01",
+    isThread: () => true,
+    send: async (payload) => {
+      assert.equal(payload.enforceNonce, true);
+      if (acceptedMessages.has(payload.nonce))
+        return acceptedMessages.get(payload.nonce);
+      const message = { content: payload.content };
+      acceptedMessages.set(payload.nonce, message);
+      if (payload.content.includes("依頼内容"))
+        throw new Error("request acknowledgement lost");
+      return message;
+    },
+  };
+  const starter = {
+    id: thread.id,
+    edit: async () => starter,
+    startThread: async () => {
+      if (threadCreated) throw new Error("thread already exists");
+      threadCreated = true;
+      threadCreations += 1;
+      throw new Error("thread acknowledgement lost");
+    },
+  };
+  const channel = {
+    id: thread.parentId,
+    client: {
+      channels: {
+        fetch: async (id, options) => {
+          assert.equal(id, starter.id);
+          assert.equal(options.force, true);
+          if (lookupOffline) throw new Error("lookup offline");
+          return thread;
+        },
+      },
+    },
+    send: async (payload) => {
+      assert.equal(payload.enforceNonce, true);
+      if (acceptedCards.has(payload.nonce))
+        return acceptedCards.get(payload.nonce);
+      acceptedCards.set(payload.nonce, starter);
+      throw new Error("card acknowledgement lost");
+    },
+  };
+  // Recreate the factory and task object to model restarting the adapter.
+  const attempt = () => createDiscordTaskThread(channel)({ ...task });
+  await assert.rejects(attempt(), /card acknowledgement lost/);
+  await assert.rejects(attempt(), /thread acknowledgement lost/);
+  lookupOffline = false;
+  await assert.rejects(attempt(), /request acknowledgement lost/);
+  const surface = await attempt();
+  assert.equal(surface.threadId, thread.id);
+  assert.equal(surface.starterId, starter.id);
+  assert.equal(acceptedCards.size, 1);
+  assert.equal(threadCreations, 1);
+  assert.equal(acceptedMessages.size, 2);
+  assert.equal(
+    [...acceptedMessages.values()].filter((message) =>
+      message.content.includes("依頼内容"),
+    ).length,
+    1,
+  );
+});
 
 test("task cards retry transient edits and serialize replacement of a deleted card", async () => {
   const posts = [],

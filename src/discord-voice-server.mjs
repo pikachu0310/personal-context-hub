@@ -472,11 +472,15 @@ export function createDiscordTaskCardUpdater(
 
 export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
   return async (task) => {
+    const creationKey = `task-thread:${task.id}:${task.createdAt}:${task.threadId ?? "initial"}`;
     const title = String(task.title ?? "Codexタスク")
       .replace(/[\r\n]+/g, " ")
       .trim();
     const starter = await textChannel.send(
-      createDiscordMessagePayload(formatDiscordTaskCard(task), { silent }),
+      createDiscordMessagePayload(formatDiscordTaskCard(task), {
+        silent,
+        idempotencyKey: `${creationKey}:card`,
+      }),
     );
     if (typeof starter.startThread !== "function") {
       throw new Error("Configured text channel cannot create task threads.");
@@ -489,13 +493,26 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
         reason: "Keep Codex task output separate from meeting minutes",
       });
     } catch (error) {
-      await starter
-        .edit({
-          content: formatDiscordTaskCard(task, { state: "failed" }),
-          allowedMentions: { parse: [] },
-        })
+      // A message and the thread started from it share an ID. The creation
+      // may have succeeded even when its HTTP acknowledgement was lost.
+      const existing = await textChannel.client?.channels
+        ?.fetch(starter.id, { force: true })
         .catch(() => undefined);
-      throw error;
+      if (
+        existing?.isThread?.() &&
+        String(existing.id) === String(starter.id) &&
+        String(existing.parentId) === String(textChannel.id)
+      ) {
+        thread = existing;
+      } else {
+        await starter
+          .edit({
+            content: formatDiscordTaskCard(task, { state: "failed" }),
+            allowedMentions: { parse: [] },
+          })
+          .catch(() => undefined);
+        throw error;
+      }
     }
     const threadId = String(thread.id ?? "");
     if (!threadId) throw new Error("Created task thread has no channel ID.");
@@ -518,7 +535,9 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       const request = escapeDiscordMarkdown(
         boundText(task.request, 1_200) || "依頼内容を取得できませんでした。",
       );
-      await post(`🧾 **依頼内容**\n${request}`);
+      await post(`🧾 **依頼内容**\n${request}`, {
+        idempotencyKey: `${creationKey}:request`,
+      });
       await post(
         [
           "💡 **このスレッドで操作できます**",
@@ -526,6 +545,7 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
           "停止: `停止` / `中止` / `キャンセル` / `stop` / `cancel`",
           "実行中の追加指示は、現在の処理が終わり次第、同じCodexセッションで続けます。",
         ].join("\n"),
+        { idempotencyKey: `${creationKey}:help` },
       ).catch(() => undefined);
     } catch (error) {
       await update({ state: "failed" }).catch(() => undefined);
