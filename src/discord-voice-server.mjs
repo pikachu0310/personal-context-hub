@@ -410,12 +410,71 @@ export function createDiscordArtifactPoster(
   };
 }
 
+export function createDiscordTaskCardUpdater(
+  textChannel,
+  task,
+  threadId,
+  starter,
+  { silent = true } = {},
+) {
+  let updating = Promise.resolve();
+  const update = (options = {}) => {
+    const next = updating.then(async () => {
+      const { state, elapsedMs, pendingInstructions, signal } = options;
+      signal?.throwIfAborted();
+      const payload = {
+        content: formatDiscordTaskCard(task, {
+          state,
+          threadId,
+          elapsedMs,
+          pendingInstructions,
+        }),
+        allowedMentions: { parse: [] },
+        components: taskControls(
+          task.id,
+          state,
+          task.artifacts?.runRevision,
+          Boolean(
+            task.appliedRevision &&
+            task.appliedRevision === task.artifacts?.runRevision,
+          ),
+        ),
+      };
+      if (starter) {
+        try {
+          starter = await starter.edit(payload);
+          return starter;
+        } catch (error) {
+          if (error?.code !== RESTJSONErrorCodes.UnknownMessage) throw error;
+        }
+      }
+      starter = await textChannel.send({
+        ...createDiscordMessagePayload(payload.content, {
+          silent,
+          idempotencyKey: `task-card:${task.id}:${task.createdAt}:${starter?.id ?? task.starterId ?? "restore"}`,
+        }),
+        components: payload.components,
+      });
+      await task.checkpoint?.();
+      return starter;
+    });
+    updating = next.catch(() => undefined);
+    return next;
+  };
+  return {
+    update,
+    get starterId() {
+      return starter?.id ?? task.starterId;
+    },
+  };
+}
+
 export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
   return async (task) => {
     const title = String(task.title ?? "Codexタスク")
       .replace(/[\r\n]+/g, " ")
       .trim();
-    let starter = await textChannel.send(
+    const starter = await textChannel.send(
       createDiscordMessagePayload(formatDiscordTaskCard(task), { silent }),
     );
     if (typeof starter.startThread !== "function") {
@@ -439,42 +498,14 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
     }
     const threadId = String(thread.id ?? "");
     if (!threadId) throw new Error("Created task thread has no channel ID.");
-    const update = async ({
-      state,
-      elapsedMs,
-      pendingInstructions,
-      signal,
-    } = {}) => {
-      if (signal?.aborted) throw signal.reason;
-      const payload = {
-        content: formatDiscordTaskCard(task, {
-          state,
-          threadId,
-          elapsedMs,
-          pendingInstructions,
-        }),
-        allowedMentions: { parse: [] },
-        components: taskControls(
-          task.id,
-          state,
-          task.artifacts?.runRevision,
-          Boolean(
-            task.appliedRevision &&
-            task.appliedRevision === task.artifacts?.runRevision,
-          ),
-        ),
-      };
-      try {
-        starter = await starter.edit(payload);
-      } catch {
-        starter = await textChannel.send({
-          ...createDiscordMessagePayload(payload.content, { silent }),
-          components: payload.components,
-        });
-        await task.checkpoint?.();
-      }
-      return starter;
-    };
+    const card = createDiscordTaskCardUpdater(
+      textChannel,
+      task,
+      threadId,
+      starter,
+      { silent },
+    );
+    const update = card.update;
     const post = (content, { signal, idempotencyKey } = {}) => {
       if (signal?.aborted) return Promise.reject(signal.reason);
       return thread.send(
@@ -506,7 +537,7 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       postArtifacts,
       threadId,
       get starterId() {
-        return starter.id;
+        return card.starterId;
       },
     };
   };
@@ -735,13 +766,27 @@ export async function startDiscordVoiceCodex({
       : undefined;
     if (taskQueue && saved?.tasks?.length) {
       await taskQueue.restore(saved.tasks, async (task) => {
-        if (!task.threadId || !task.starterId)
-          throw new Error("Task has no Discord surface");
+        if (!task.threadId) throw new Error("Task has no Discord surface");
         const thread = await guild.channels.fetch(task.threadId);
-        const starter = await textChannel.messages.fetch(task.starterId);
+        const starter = task.starterId
+          ? await textChannel.messages.fetch(task.starterId).catch((error) => {
+              if (error?.code !== RESTJSONErrorCodes.UnknownMessage)
+                throw error;
+              return undefined;
+            })
+          : undefined;
+        const card = createDiscordTaskCardUpdater(
+          textChannel,
+          task,
+          task.threadId,
+          starter,
+          messageOptions,
+        );
         return {
           threadId: task.threadId,
-          starterId: task.starterId,
+          get starterId() {
+            return card.starterId;
+          },
           postArtifacts: createDiscordArtifactPoster(
             thread,
             task,
@@ -754,23 +799,7 @@ export async function startDiscordVoiceCodex({
                 idempotencyKey,
               }),
             ),
-          update: (state) =>
-            starter.edit({
-              content: formatDiscordTaskCard(task, {
-                ...state,
-                threadId: task.threadId,
-              }),
-              allowedMentions: { parse: [] },
-              components: taskControls(
-                task.id,
-                state.state,
-                task.artifacts?.runRevision,
-                Boolean(
-                  task.appliedRevision &&
-                  task.appliedRevision === task.artifacts?.runRevision,
-                ),
-              ),
-            }),
+          update: card.update,
         };
       });
     }

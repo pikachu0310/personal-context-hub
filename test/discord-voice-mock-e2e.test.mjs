@@ -4,10 +4,105 @@ import test from "node:test";
 import { ChannelType, MessageFlags } from "discord.js";
 import {
   createEditableDiscordPost,
+  createDiscordTaskCardUpdater,
   formatDiscordTaskAction,
   formatDiscordTaskCard,
   startDiscordVoiceCodex,
 } from "../src/discord-voice-server.mjs";
+
+test("task cards retry transient edits and serialize replacement of a deleted card", async () => {
+  const posts = [],
+    edits = [];
+  let failure;
+  const replacement = {
+    id: "replacement",
+    edit: async (payload) => {
+      edits.push(payload);
+      return replacement;
+    },
+  };
+  const original = {
+    id: "original",
+    edit: async () => {
+      if (failure) throw failure;
+      return original;
+    },
+  };
+  const task = {
+    id: "task01",
+    title: "work",
+    createdAt: 1,
+    checkpoint: async () => {},
+  };
+  const channel = {
+    send: async (payload) => {
+      posts.push(payload);
+      return replacement;
+    },
+  };
+  const card = createDiscordTaskCardUpdater(
+    channel,
+    task,
+    "saved-thread",
+    original,
+  );
+  failure = Object.assign(new Error("unavailable"), { status: 503 });
+  await assert.rejects(card.update({ state: "running" }), /unavailable/);
+  assert.equal(posts.length, 0);
+  assert.equal(card.starterId, "original");
+  failure = Object.assign(new Error("deleted"), { code: 10008 });
+  await Promise.all([
+    card.update({ state: "running" }),
+    card.update({ state: "completed" }),
+  ]);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].enforceNonce, true);
+  assert.match(posts[0].content, /saved-thread/);
+  assert.match(edits.at(-1).content, /状態: \*\*完了\*\*/);
+  assert.equal(card.starterId, "replacement");
+});
+
+test("a missing restored card keeps the task thread and reuses its replacement identity after a lost acknowledgement", async () => {
+  const task = {
+    id: "task01",
+    createdAt: 1,
+    starterId: "deleted-card",
+    title: "work",
+  };
+  const accepted = new Map();
+  const attempts = [];
+  const channel = {
+    send: async (payload) => {
+      attempts.push(payload.nonce);
+      if (accepted.has(payload.nonce)) return accepted.get(payload.nonce);
+      accepted.set(payload.nonce, {
+        id: "restored-card",
+        edit: async () => {},
+      });
+      throw new Error("acknowledgement lost");
+    },
+  };
+  const first = createDiscordTaskCardUpdater(
+    channel,
+    task,
+    "saved-thread",
+    undefined,
+  );
+  await assert.rejects(
+    first.update({ state: "completed" }),
+    /acknowledgement lost/,
+  );
+  const retry = createDiscordTaskCardUpdater(
+    channel,
+    task,
+    "saved-thread",
+    undefined,
+  );
+  await retry.update({ state: "completed" });
+  assert.equal(accepted.size, 1);
+  assert.equal(attempts[0], attempts[1]);
+  assert.equal(retry.starterId, "restored-card");
+});
 
 test("live post updates retain the original message on a transient failure and replace only a deleted message", async () => {
   const sent = [];
