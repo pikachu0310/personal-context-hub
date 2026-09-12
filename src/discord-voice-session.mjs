@@ -2441,6 +2441,7 @@ export class DiscordVoiceMeetingSession {
       if (conversationReply)
         this.pendingControls.push({
           type: "reply",
+          meetingId: this.meetingId,
           requestKey: `${this.meetingId}:reply:${this.revision}`,
           notification: conversationReply,
           spokenNotification: speechExcerpt(conversationReply),
@@ -2554,13 +2555,25 @@ export class DiscordVoiceMeetingSession {
         }
         this.controlsAttempted.add(control);
         const chunks = splitDiscordText(control.notification);
+        const replyContext =
+          control.type === "reply" && control.meetingId !== this.meetingId
+            ? control.meetingId
+              ? "以前の会議への回答"
+              : "保存済みの回答"
+            : "";
         for (
           let index = control.deliveredChunks ?? 0;
           index < chunks.length;
           index += 1
         ) {
           await withTimeout(
-            (signal) => this.dependencies.postText(chunks[index], { signal }),
+            (signal) =>
+              this.dependencies.postText(
+                replyContext
+                  ? `↩️ **${replyContext}**\n${chunks[index]}`
+                  : chunks[index],
+                { signal },
+              ),
             this.stageTimeouts.posting,
             "posting saved meeting notification",
             this.shutdownController.signal,
@@ -2572,7 +2585,9 @@ export class DiscordVoiceMeetingSession {
           (pending) => pending !== control,
         );
         await this.persist();
-        const spoken = control.spokenNotification ?? control.notification;
+        const excerpt = control.spokenNotification ?? control.notification;
+        const spoken =
+          excerpt && replyContext ? `${replyContext}です。${excerpt}` : excerpt;
         if (!spoken) continue;
         const audio = await withTimeout(
           (signal) => this.dependencies.synthesize(spoken, { signal }),

@@ -98,3 +98,46 @@ test("a conversation answer waits for a durable save and does not resend text af
   assert.deepEqual(posts, ["こちらが回答です。"]);
   assert.equal(session.pendingControls.length, 0);
 });
+
+test("a saved answer delivered after a meeting switch keeps its old context and chunk position", async (t) => {
+  let saved;
+  let attempts = 0;
+  const answer = "旧議題への答えです。".repeat(220);
+  const chunks = splitDiscordText(answer);
+  const original = meeting({
+    checkpoint: async (value) => {
+      saved = structuredClone(value);
+    },
+    observe: async () =>
+      JSON.stringify({
+        minutes: "old decision",
+        shouldReply: true,
+        reply: answer,
+      }),
+    postText: async () => {
+      if (++attempts > 1) throw new Error("offline");
+    },
+  });
+  t.after(() => original.stop());
+  await original.addText("以前の会議への質問", { userId: "member" });
+  await original.observeNow();
+  assert.equal(await original.newMeeting(), true);
+  const delivered = [],
+    spoken = [];
+  const restored = meeting({
+    initialState: saved,
+    observe: async () =>
+      assert.fail("old answer must not be analyzed as new speech"),
+    postText: async (text) => delivered.push(text),
+    synthesize: async (text) => spoken.push(text),
+  });
+  t.after(() => restored.stop());
+  await restored.observeNow();
+  assert.deepEqual(
+    delivered,
+    chunks.slice(1).map((chunk) => `↩️ **以前の会議への回答**\n${chunk}`),
+  );
+  assert.ok(delivered.every((text) => text.length <= 2000));
+  assert.match(spoken[0], /^以前の会議への回答です。/);
+  assert.equal(restored.minutes, "");
+});
