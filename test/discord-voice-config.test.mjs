@@ -87,6 +87,21 @@ test("complex tasks inherit explicit worker settings and role reasoning values a
     );
 });
 
+test("the conversation deadline can be configured independently and preserves a shorter legacy deadline", () => {
+  const shorter = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS: "30000",
+  });
+  assert.equal(shorter.stageTimeouts.observing, 30_000);
+  const separate = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS: "900000",
+    PERSONAL_CONTEXT_VOICE_OBSERVER_TIMEOUT_MS: "15000",
+  });
+  assert.equal(separate.stageTimeouts.observing, 15_000);
+  assert.equal(separate.stageTimeouts.running_codex, 900_000);
+});
+
 test("voice config validates Discord targets and redacts the OpenAI key", () => {
   const config = loadDiscordVoiceConfig(valid);
   assert.equal(config.silenceMs, 1_000);
@@ -115,6 +130,7 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
     /personal-context-hub\/discord-voice-codex-home$/,
   );
   assert.equal(config.stageTimeouts.running_codex, 900_000);
+  assert.equal(config.stageTimeouts.observing, 60_000);
   const description = describeDiscordVoiceConfig(config);
   assert.equal(description.openaiApiKeyConfigured, true);
   assert.equal(description.codexHomeConfigured, true);

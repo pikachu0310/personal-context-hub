@@ -122,6 +122,13 @@ export function loadDiscordVoiceConfig(env = process.env) {
     "PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT",
     codexReasoningEffort ?? "medium",
   );
+  const codexTimeoutMs = integer(
+    env,
+    "PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS",
+    900_000,
+    30_000,
+    3_600_000,
+  );
   return {
     guildId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_GUILD_ID"),
     voiceChannelId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_CHANNEL_ID"),
@@ -289,12 +296,13 @@ export function loadDiscordVoiceConfig(env = process.env) {
         5_000,
         600_000,
       ),
-      running_codex: integer(
+      running_codex: codexTimeoutMs,
+      observing: integer(
         env,
-        "PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS",
-        900_000,
-        30_000,
-        3_600_000,
+        "PERSONAL_CONTEXT_VOICE_OBSERVER_TIMEOUT_MS",
+        Math.min(codexTimeoutMs, 60_000),
+        5_000,
+        300_000,
       ),
       posting: integer(
         env,

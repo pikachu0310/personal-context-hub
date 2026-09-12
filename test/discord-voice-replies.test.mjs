@@ -75,6 +75,55 @@ test("a second question is answered while the first answer is still playing, wit
   assert.deepEqual(spoken, ["回答1", "回答2"]);
 });
 
+test(
+  "a timed-out observation releases the next question without cancelling work or accepting a late answer",
+  { timeout: 2000 },
+  async (t) => {
+    let releaseLateAnswer, firstSignal;
+    let attempts = 0;
+    const posts = [];
+    const session = meeting({
+      stageTimeouts: { observing: 10, running_codex: 10000 },
+      getTasks: () => [{ id: "active-task", state: "running" }],
+      controlTask: async () =>
+        assert.fail("an observation timeout cannot stop background work"),
+      observe: async (_input, { signal }) => {
+        if (++attempts === 1) {
+          firstSignal = signal;
+          return new Promise((resolve) => {
+            releaseLateAnswer = resolve;
+          });
+        }
+        return JSON.stringify({
+          minutes: "最新の確認",
+          shouldReply: true,
+          reply: "再試行後の回答",
+        });
+      },
+      postText: async (text) => posts.push(text),
+    });
+    t.after(() => session.stop());
+    await session.addText("質問です", { userId: "member" });
+    assert.equal(await session.observeNow(), false);
+    assert.equal(firstSignal.aborted, true);
+    assert.equal(firstSignal.reason.code, "STAGE_TIMEOUT");
+    assert.equal(session.statements.length, 1);
+    assert.equal(session.observing, false);
+    assert.equal(session.observationRetryPending, true);
+    releaseLateAnswer(
+      JSON.stringify({
+        minutes: "古い確認",
+        shouldReply: true,
+        reply: "期限切れの回答",
+      }),
+    );
+    assert.equal(await session.observeNow(), true);
+    assert.deepEqual(posts, ["再試行後の回答"]);
+    assert.equal(session.minutes, "最新の確認");
+    assert.equal(session.getActiveTasks()[0].state, "running");
+  },
+);
+
 test("a reply accepted by Discord but missing its acknowledgement reuses its delivery identity after restart", async (t) => {
   let saved;
   const received = new Map();

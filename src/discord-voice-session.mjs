@@ -2512,7 +2512,8 @@ export class DiscordVoiceMeetingSession {
             },
             { signal },
           ),
-        this.stageTimeouts.running_codex,
+        this.stageTimeouts.observing ??
+          Math.min(this.stageTimeouts.running_codex, 60_000),
         "observing meeting",
         this.shutdownController.signal,
       );

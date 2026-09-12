@@ -24,6 +24,7 @@ test("readiness rejects invalid meeting and task settings instead of silently us
     ["PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS", "invalid-boolean"],
     ["PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES", "invalid-boolean"],
     ["PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT", "invalid-effort"],
+    ["PERSONAL_CONTEXT_VOICE_OBSERVER_TIMEOUT_MS", "1"],
     ["PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT", "invalid-effort"],
     ["PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT", "invalid-effort"],
     ["PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR", "relative/path"],
