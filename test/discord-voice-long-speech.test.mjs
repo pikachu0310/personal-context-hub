@@ -2,9 +2,35 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
 import { PcmSegmentBuffer } from "../src/discord-voice-audio.mjs";
+import { SpeechTurnAssembler } from "../src/discord-voice-utterances.mjs";
+import { buildMeetingObservationPrompt } from "../src/discord-voice-openai.mjs";
 import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
 import { subscribeToAllowedSpeaker } from "../src/discord-voice-server.mjs";
 const noop = async () => undefined;
+
+test("late corrections survive both observation prompt construction and oversized utterance context", () => {
+  const correction = "訂正。公開をやめてローカルだけで検証してください。";
+  const full = "説明。".repeat(3500) + correction;
+  const prompt = buildMeetingObservationPrompt({
+    statements: [{ sequence: 1, userId: "owner", text: full }],
+    ownerUserId: "owner",
+  });
+  const payload = JSON.parse(prompt.split("\n").at(-1));
+  assert.ok(payload.attributedStatements[0].text.endsWith(correction));
+  const turns = new SpeechTurnAssembler();
+  turns.register("long", 0, { sequence: 1, userId: "owner" });
+  turns.settle("long", 0, {
+    text: "最初の説明。".repeat(4000) + correction,
+    archived: true,
+  });
+  turns.finish("long", 1);
+  const [statement] = turns.drain();
+  assert.equal(statement.taskEligible, false);
+  assert.ok(statement.text.endsWith(correction));
+  const session = meeting({ initialState: { statements: [statement] } });
+  assert.match(session.getContextSnapshot(), /公開をやめてローカルだけで検証/);
+  return session.stop();
+});
 async function eventually(check) {
   for (let i = 0; i < 200; i++) {
     if (check()) return;

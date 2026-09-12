@@ -80,9 +80,11 @@ export class SpeechTurnAssembler {
         speakerName: turn.speakerName,
         startedAt: turn.startedAt,
         text:
-          (incomplete
-            ? "【発話の一部のみ認識。作業の実行指示として使用しない】\n"
-            : "") + text.slice(0, MAX_ASSEMBLED_TEXT),
+          (text.length > MAX_ASSEMBLED_TEXT
+            ? "【長い発話の末尾のみ。全文は会話ログを参照。作業の実行指示として使用しない】\n"
+            : incomplete
+              ? "【発話の一部のみ認識。作業の実行指示として使用しない】\n"
+              : "") + text.slice(-MAX_ASSEMBLED_TEXT),
         observed: false,
         archived: statements.every((statement) => statement.archived),
         taskEligible: !incomplete,

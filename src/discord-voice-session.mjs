@@ -111,6 +111,16 @@ export function boundText(text, maximum, suffix = TRUNCATION_SUFFIX) {
   return `${normalized.slice(0, end).trimEnd()}${safeSuffix}`;
 }
 
+function boundRecentText(text, maximum) {
+  const normalized = String(text ?? "").trim();
+  if (normalized.length <= maximum) return normalized;
+  const prefix = "（前半を省略。以下は最新の内容）\n";
+  let start = normalized.length - (maximum - prefix.length);
+  const first = normalized.charCodeAt(start);
+  if (first >= 0xdc00 && first <= 0xdfff) start++;
+  return prefix + normalized.slice(start);
+}
+
 export function splitDiscordText(text, maximum = MAX_DISCORD_MESSAGE) {
   const normalized = String(text ?? "").trim();
   if (!normalized) return [];
@@ -385,7 +395,7 @@ export function formatMeetingObservationTranscript(statements) {
   const transcript = ordered
     .map((statement) => `[${speakerLabel(statement)}] ${statement.text}`)
     .join("\n");
-  return boundText(transcript, MAX_MEETING_TRANSCRIPT_CHARACTERS);
+  return boundRecentText(transcript, MAX_MEETING_TRANSCRIPT_CHARACTERS);
 }
 
 export function parseMeetingObservation(value, fallbackMinutes = "") {
@@ -1716,7 +1726,19 @@ export class DiscordVoiceMeetingSession {
     for (let index = pending.length - 1; index >= 0; index -= 1) {
       const statement = pending[index];
       const size = statement.text.length + speakerLabel(statement).length + 4;
-      if (used + size > MAX_MEETING_TRANSCRIPT_CHARACTERS) break;
+      if (used + size > MAX_MEETING_TRANSCRIPT_CHARACTERS) {
+        if (!recent.length)
+          recent.unshift({
+            ...statement,
+            text: boundRecentText(
+              statement.text,
+              MAX_MEETING_TRANSCRIPT_CHARACTERS -
+                speakerLabel(statement).length -
+                4,
+            ),
+          });
+        break;
+      }
       recent.unshift(statement);
       used += size;
     }
@@ -1980,7 +2002,9 @@ export class DiscordVoiceMeetingSession {
 
       const reply = acceptedTasks.length
         ? `タスクを追加しました：${acceptedTasks.map((task) => task.title).join("、")}`
-        : !tasks.length && !taskControls.length && observation.shouldReply
+        : !observation.tasks.length &&
+            !observation.taskControls.length &&
+            observation.shouldReply
           ? observation.reply
           : "";
       if (reply) {
