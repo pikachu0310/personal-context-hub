@@ -45,6 +45,7 @@ test("participants can hear saved task status immediately without calling the ob
       { id: "active01", title: "計算機を修正", state: "running" },
       { id: "waiting1", state: "queued" },
       { id: "failed01", state: "failed" },
+      { id: "undelivered1", state: "completed", resultDeliveryPending: true },
     ],
     observe: async () => {
       observations++;
@@ -70,6 +71,7 @@ test("participants can hear saved task status immediately without calling the ob
   assert.ok(posts.some((text) => /実行中1件.*待機1件/.test(text)));
   assert.ok(posts.some((text) => text.includes("active01")));
   assert.ok(speech.some((text) => text.includes("失敗1件")));
+  assert.ok(speech.some((text) => text.includes("結果送信待ちが1件")));
   assert.equal(session.statements.at(-1).taskEligible, false);
   await session.addText("作業状況は？", {
     userId: "member",

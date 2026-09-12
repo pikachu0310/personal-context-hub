@@ -35,6 +35,13 @@ test("status shows pending and active tasks ahead of a long completed history", 
     createdAt: i,
   }));
   tasks.push(
+    {
+      id: "undelivered1",
+      title: "結果未送信",
+      state: "completed",
+      createdAt: -1,
+      resultDeliveryPending: true,
+    },
     { id: "running1", title: "現在の作業", state: "running", createdAt: 101 },
     { id: "pending1", title: "受付待ち", state: "failed", createdAt: 102 },
   );
@@ -44,6 +51,7 @@ test("status shows pending and active tasks ahead of a long completed history", 
   await send("!ido status");
   assert.match(posts[0], /running1/);
   assert.match(posts[0], /pending1.*受付保存/);
+  assert.match(posts[0], /undelivered1.*完了（結果送信待ち）/);
   assert.equal(posts[0].split("pending1").length - 1, 1);
   assert.ok(posts[0].length <= 1950);
   assert.match(posts[0], /status 2/);

@@ -894,10 +894,20 @@ export class DiscordVoiceTaskQueue {
 
   list() {
     return [...this.tasks.values()].map(
-      ({ id, title, state, surface, threadId, createdAt, controlVersion }) => ({
+      ({
         id,
         title,
         state,
+        surface,
+        threadId,
+        createdAt,
+        controlVersion,
+        resultDeliveryPending,
+      }) => ({
+        id,
+        title,
+        state,
+        resultDeliveryPending: Boolean(resultDeliveryPending),
         createdAt,
         controlVersion: controlVersion ?? 0,
         threadId: surface?.threadId ?? threadId,
@@ -2174,7 +2184,10 @@ export class DiscordVoiceMeetingSession {
     const count = (state) =>
       tasks.filter((task) => task.state === state).length;
     const summary = `実行中${count("running")}件、待機${count("queued")}件、受付中${count("awaiting_receipt")}件です。`;
-    const attention = `失敗${count("failed")}件、中断・再開待ち${count("interrupted")}件です。`;
+    const deliveries = tasks.filter(
+      (task) => task.resultDeliveryPending,
+    ).length;
+    const attention = `失敗${count("failed")}件、中断・再開待ち${count("interrupted")}件です。${deliveries ? `結果送信待ちが${deliveries}件あります。` : ""}`;
     const active = tasks.filter((task) =>
       ["running", "queued", "awaiting_receipt"].includes(task.state),
     );

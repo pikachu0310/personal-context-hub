@@ -54,7 +54,8 @@ function taskStatus(tasks, session, argument) {
   const priority = (task) =>
     task.pending || ["queued", "running"].includes(task.state)
       ? 0
-      : ["interrupted", "failed"].includes(task.state)
+      : task.resultDeliveryPending ||
+          ["interrupted", "failed"].includes(task.state)
         ? 1
         : 2;
   const ordered = [...byId.values()].sort(
@@ -72,7 +73,7 @@ function taskStatus(tasks, session, argument) {
     ),
     ...ordered.map(
       (task) =>
-        `\`${task.id}\` ${displayTaskState(task.state)} · ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 100))}${task.threadId ? ` <#${task.threadId}>` : ""}`,
+        `\`${task.id}\` ${displayTaskState(task.state)}${task.resultDeliveryPending ? "（結果送信待ち）" : ""} · ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 100))}${task.threadId ? ` <#${task.threadId}>` : ""}`,
     ),
   ];
   if (!rows.length)
