@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
 import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
+import { VoiceServiceError } from "./discord-voice-errors.mjs";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -766,8 +767,21 @@ export async function startDiscordVoiceCodex({
       : undefined;
     if (taskQueue && saved?.tasks?.length) {
       await taskQueue.restore(saved.tasks, async (task) => {
-        if (!task.threadId) throw new Error("Task has no Discord surface");
-        const thread = await guild.channels.fetch(task.threadId);
+        const missingThread = () =>
+          new VoiceServiceError(
+            "TASK_SURFACE_MISSING",
+            "Task result thread no longer exists",
+            "結果スレッドが削除されています。",
+          );
+        if (!task.threadId) throw missingThread();
+        const thread = await guild.channels
+          .fetch(task.threadId)
+          .catch((error) => {
+            if (error?.code === RESTJSONErrorCodes.UnknownChannel)
+              throw missingThread();
+            throw error;
+          });
+        if (!thread) throw missingThread();
         const starter = task.starterId
           ? await textChannel.messages.fetch(task.starterId).catch((error) => {
               if (error?.code !== RESTJSONErrorCodes.UnknownMessage)

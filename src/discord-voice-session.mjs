@@ -835,7 +835,27 @@ export class DiscordVoiceTaskQueue {
       return Promise.reject(new Error("No saved task surface"));
     if (!task.restoringSurface) {
       task.restoringSurface = withTimeout(
-        () => task.restoreSurface(task),
+        async (signal) => {
+          try {
+            return await task.restoreSurface(task);
+          } catch (error) {
+            if (task.threadId && error?.code !== "TASK_SURFACE_MISSING")
+              throw new VoiceServiceError(
+                "TASK_SURFACE_UNAVAILABLE",
+                "Could not restore the task result thread",
+                "Discordの結果スレッドを取得できませんでした。接続状態とBotの権限を確認して、同じタスクで再試行してください。",
+                { cause: error },
+              );
+            signal.throwIfAborted();
+            if (task.executing && task.cancelled)
+              throw new VoiceServiceError(
+                "TASK_CANCELLED",
+                "Task stopped during thread recovery",
+                "結果スレッドの復旧中に停止しました。",
+              );
+            return this.createTaskThread(task);
+          }
+        },
         DEFAULT_STAGE_TIMEOUTS.posting,
         "restoring task thread",
         this.shutdownController.signal,
@@ -1380,11 +1400,7 @@ export class DiscordVoiceTaskQueue {
                   "開始前に中止しました。",
                 );
               if (task.restoreSurface) {
-                try {
-                  return await this.#loadRestoredSurface(task);
-                } catch {
-                  this.#log("task_surface_restore_failed", { taskId: task.id });
-                }
+                return this.#loadRestoredSurface(task);
               }
               if (this.closed || task.cancelled)
                 throw new VoiceServiceError(
