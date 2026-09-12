@@ -4,8 +4,71 @@ import {
   DiscordVoiceMeetingSession,
   DiscordVoiceTaskQueue,
 } from "../src/discord-voice-session.mjs";
+import { createIdobataMessageHandler } from "../src/discord-voice-commands.mjs";
 
 const noop = async () => undefined;
+
+test("cancelling a failed receipt prevents a delayed replay from starting it", async (t) => {
+  let fail = true,
+    runs = 0;
+  const tasks = queue({
+    checkpoint: async () => {
+      if (fail) throw new Error("disk full");
+    },
+    runTask: async () => {
+      runs++;
+      return "unexpected";
+    },
+  });
+  t.after(() => tasks.stop());
+  const request = { id: "stableid", title: "work", requestKey: "voice:cancel" };
+  await assert.rejects(tasks.enqueueDurable(request));
+  await eventually(() => tasks.active === 0);
+  const id = tasks.list()[0].id;
+  const cancelled = await tasks.handleVoiceControlDurable({
+    type: "stop",
+    taskId: id,
+  });
+  assert.equal(cancelled.persisted, false);
+  fail = false;
+  await tasks.enqueueDurable(request);
+  await eventually(() => tasks.active === 0);
+  assert.equal(runs, 0);
+  assert.equal(tasks.list().length, 1);
+  assert.equal(tasks.list()[0].state, "cancelled");
+  assert.equal(id, request.id);
+});
+
+test("a meeting request can be cancelled before any queue receipt exists and survives restart", async (t) => {
+  let saved,
+    attempts = 0;
+  const original = meeting({
+    checkpoint: async (value) => {
+      saved = structuredClone(value);
+    },
+    enqueueTask: async () => {
+      attempts++;
+      throw new Error("unavailable");
+    },
+  });
+  t.after(() => original.stop());
+  await original.addText("井戸Bot、実装して", { userId: "owner" });
+  await original.observeNow();
+  const id = original.pendingTasks[0].id;
+  assert.ok(id);
+  assert.equal((await original.cancelPendingTask(id)).type, "cancelled");
+  const restored = meeting({
+    initialState: saved,
+    enqueueTask: async () => {
+      attempts++;
+      return true;
+    },
+  });
+  t.after(() => restored.stop());
+  await restored.observeNow();
+  assert.equal(attempts, 1);
+  assert.equal(restored.pendingTasks.length, 0);
+});
 const eventually = async (check) => {
   for (let i = 0; i < 200; i++) {
     if (check()) return;
@@ -49,6 +112,147 @@ function meeting(options = {}) {
   });
 }
 
+test("failed receipts retain their ID on retry and cannot overwrite another request", async (t) => {
+  let fail = true,
+    runs = 0;
+  const tasks = queue({
+    checkpoint: async () => {
+      if (fail) throw new Error("disk full");
+    },
+    runTask: async () => {
+      runs++;
+      return "result";
+    },
+  });
+  t.after(() => tasks.stop());
+  const task = { id: "stable01", title: "work", requestKey: "voice:retry" };
+  await assert.rejects(tasks.enqueueDurable(task));
+  await eventually(() => tasks.active === 0);
+  fail = false;
+  await tasks.enqueueDurable({ ...task, id: undefined });
+  await eventually(() => tasks.active === 0);
+  assert.equal(runs, 1);
+  assert.equal(tasks.list().length, 1);
+  assert.equal(tasks.list()[0].id, task.id);
+  await assert.rejects(
+    tasks.enqueueDurable({ ...task, requestKey: "another" }),
+    /already belongs/,
+  );
+});
+
+test("voice cancellation is resolved before replaying a pending receipt", async (t) => {
+  let runs = 0,
+    fail = true,
+    saved;
+  const tasks = queue({
+    checkpoint: async () => {
+      if (fail) throw new Error("disk full");
+    },
+    runTask: async () => {
+      runs++;
+      return "unexpected";
+    },
+  });
+  t.after(() => tasks.stop());
+  const session = meeting({
+    checkpoint: async (value) => {
+      saved = structuredClone(value);
+    },
+    enqueueTask: (task) => tasks.enqueueDurable(task),
+    getTaskReceipt: (key) => tasks.getReceipt(key),
+    getTasks: () => tasks.list(),
+    controlTask: (control) => tasks.handleVoiceControlDurable(control),
+    observe: async ({ statements, activeTasks }) =>
+      JSON.stringify(
+        statements[0].text.includes("停止")
+          ? {
+              minutes: "取り消し",
+              tasks: [],
+              taskControls: [
+                {
+                  type: "stop",
+                  taskId: activeTasks[0].id,
+                  sourceSequences: [statements[0].sequence],
+                },
+              ],
+              shouldReply: false,
+            }
+          : {
+              minutes: "作業依頼",
+              tasks: [
+                { title: "work", sourceSequences: [statements[0].sequence] },
+              ],
+              shouldReply: false,
+            },
+      ),
+  });
+  t.after(() => session.stop());
+  await session.addText("井戸Bot、実装して", { userId: "owner" });
+  await session.observeNow();
+  await eventually(() => tasks.active === 0);
+  fail = false;
+  await session.addText("井戸Bot、停止して", { userId: "owner" });
+  await session.observeNow();
+  assert.equal(runs, 0);
+  assert.equal(saved.pendingTasks.length, 0);
+  assert.equal(tasks.list()[0].state, "cancelled");
+});
+
+test("text stop cancels a pending request during its blocked receipt write", async (t) => {
+  let release,
+    runs = 0,
+    surfaces = 0;
+  const tasks = queue({
+    checkpoint: () =>
+      new Promise((resolve) => {
+        if (!release) release = resolve;
+        else resolve();
+      }),
+    createTaskThread: async () => {
+      surfaces++;
+      return { post: noop, update: noop };
+    },
+    runTask: async () => {
+      runs++;
+      return "unexpected";
+    },
+  });
+  const session = meeting({
+    enqueueTask: (task) => tasks.enqueueDurable(task),
+    getTaskReceipt: (key) => tasks.getReceipt(key),
+    controlTask: (control) => tasks.handleVoiceControlDurable(control),
+  });
+  t.after(async () => {
+    release?.();
+    await session.stop();
+    await tasks.stop();
+  });
+  await session.addText("井戸Bot、実装して", { userId: "owner" });
+  const observation = session.observeNow();
+  await eventually(() => release);
+  const task = session.pendingTasks[0];
+  const replies = [];
+  const handler = createIdobataMessageHandler({
+    config: { textChannelId: "channel", allowedUserId: "owner" },
+    session,
+    taskQueue: tasks,
+  });
+  const stopped = handler({
+    id: "cancel-message",
+    channelId: "channel",
+    content: `!ido stop ${task.id}`,
+    author: { id: "owner" },
+    channel: { send: async (value) => replies.push(value.content) },
+  });
+  await eventually(() => task.cancelled);
+  release();
+  await Promise.all([observation, stopped]);
+  await eventually(() => tasks.active === 0);
+  assert.equal(runs, 0);
+  assert.equal(surfaces, 0);
+  assert.ok(replies.some((text) => text.includes("停止しました")));
+});
+
 test("a task cannot create its Discord surface or execute before its receipt is saved", async (t) => {
   let release,
     surfaces = 0,
@@ -77,6 +281,38 @@ test("a task cannot create its Discord surface or execute before its receipt is 
   assert.equal(runs, 0);
   release();
   await eventually(() => runs === 1);
+});
+
+test("stop during the transition to running cannot launch a worker afterward", async (t) => {
+  let release,
+    runs = 0;
+  const tasks = queue({
+    checkpoint: async (records) => {
+      if (records[0]?.state === "running" && !release)
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+    },
+    runTask: async () => {
+      runs++;
+      return "unexpected";
+    },
+  });
+  t.after(async () => {
+    release?.();
+    await tasks.stop();
+  });
+  await tasks.enqueueDurable({ title: "work" });
+  await eventually(() => release);
+  const stopped = tasks.handleVoiceControlDurable({
+    type: "stop",
+    taskId: tasks.list()[0].id,
+  });
+  release();
+  await stopped;
+  await eventually(() => tasks.active === 0);
+  assert.equal(runs, 0);
+  assert.equal(tasks.list()[0].state, "cancelled");
 });
 
 test("a failed task receipt never starts Codex", async (t) => {

@@ -193,7 +193,7 @@ export function createIdobataMessageHandler({
       const tasks = taskQueue?.list() ?? [];
       const pending = (session.pendingTasks ?? []).map(
         (task) =>
-          `${task.rejectionReason ? "受付不可・通知を再試行中" : "受付保存を再試行中"} · ${task.title}`,
+          `\`${task.id}\` ${task.cancelled ? "取り消し保存を再試行中" : task.rejectionReason ? "受付不可・通知を再試行中" : "受付保存を再試行中"} · ${task.title}`,
       );
       pending.push(
         ...(session.pendingControls ?? []).map(
@@ -314,8 +314,10 @@ export function createIdobataMessageHandler({
       };
       let action;
       try {
-        action = await (taskQueue.handleTaskMessageDurable?.(instruction) ??
-          taskQueue.handleTaskMessage(instruction));
+        action =
+          (command === "stop" && (await session.cancelPendingTask?.(taskId))) ||
+          (await (taskQueue.handleTaskMessageDurable?.(instruction) ??
+            taskQueue.handleTaskMessage(instruction)));
       } catch {
         return reply(
           "追加指示を保存できなかったため受け付けていません。保存先を確認して再試行してください。",

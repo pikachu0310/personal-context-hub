@@ -591,24 +591,41 @@ export class DiscordVoiceTaskQueue {
   async enqueueDurable(task) {
     const accepted = this.#enqueueTask(task);
     if (!accepted) return false;
+    if (accepted.state === "cancelled") {
+      await this.persist({ strict: true });
+      return true;
+    }
     await accepted.acceptancePromise;
     return true;
   }
 
   #enqueueTask(task) {
     if (this.closed) return false;
+    let previous;
     if (task.requestKey) {
-      const existing = [...this.tasks.values()].find(
-        (candidate) =>
-          candidate.requestKey === task.requestKey && !candidate.receiptFailed,
+      previous = [...this.tasks.values()].find(
+        (candidate) => candidate.requestKey === task.requestKey,
       );
-      if (existing) return existing;
+      if (
+        previous &&
+        (!previous.receiptFailed ||
+          previous.state === "cancelled" ||
+          previous.executing)
+      )
+        return previous;
     }
     if (this.queue.length + this.active >= this.maximumPendingTasks)
       return false;
+    let id = previous?.id ?? task.id;
+    if (id && this.tasks.has(id) && this.tasks.get(id) !== previous)
+      throw new Error("Task ID already belongs to another request");
+    if (!id)
+      do {
+        id = randomUUID().slice(0, 8);
+      } while (this.tasks.has(id));
     const queuedTask = {
       ...task,
-      id: randomUUID().slice(0, 8),
+      id,
       createdAt: Date.now(),
       instructions: [],
       cancelled: false,
@@ -791,6 +808,14 @@ export class DiscordVoiceTaskQueue {
       state,
       threadId: surface?.threadId,
     }));
+  }
+
+  getReceipt(requestKey) {
+    if (!requestKey) return undefined;
+    const task = [...this.tasks.values()].find(
+      (entry) => entry.requestKey === requestKey,
+    );
+    return task ? { id: task.id, state: task.state } : undefined;
   }
 
   handleTaskMessage({ taskId, ...message }) {
@@ -1256,7 +1281,6 @@ export class DiscordVoiceTaskQueue {
       }
       task.executing = true;
       task.state = "running";
-      await this.persist();
       task.controller = new AbortController();
       const abortTask = () =>
         task.controller?.abort(this.shutdownController.signal.reason);
@@ -1265,6 +1289,7 @@ export class DiscordVoiceTaskQueue {
       });
       removeShutdownAbort = () =>
         this.shutdownController.signal.removeEventListener("abort", abortTask);
+      await this.persist();
       postTaskText =
         typeof taskSurface === "function" ? taskSurface : taskSurface.post;
       const updateTask =
@@ -1308,9 +1333,10 @@ export class DiscordVoiceTaskQueue {
       const response = boundText(
         await withTimeout(
           (signal) => {
-            workerInvoked = true;
-            const execution = Promise.resolve().then(() =>
-              this.runTask(task, {
+            const execution = Promise.resolve().then(() => {
+              signal.throwIfAborted();
+              workerInvoked = true;
+              return this.runTask(task, {
                 signal,
                 onProgress: async (progress) => {
                   const content = boundText(progress, MAX_DISCORD_MESSAGE);
@@ -1338,8 +1364,8 @@ export class DiscordVoiceTaskQueue {
                     });
                   });
                 },
-              }),
-            );
+              });
+            });
             task.workerSettlement = execution.then(
               () => undefined,
               () => undefined,
@@ -1523,6 +1549,7 @@ export class DiscordVoiceMeetingSession {
     playAudio,
     enqueueTask = () => false,
     controlTask = () => false,
+    getTaskReceipt = () => undefined,
     ownerUserId,
     tasksEnabled = false,
     operatorUserIds = [],
@@ -1551,6 +1578,7 @@ export class DiscordVoiceMeetingSession {
       playAudio,
       enqueueTask,
       controlTask,
+      getTaskReceipt,
     };
     this.logger = logger;
     this.ownerUserId = ownerUserId;
@@ -1574,7 +1602,15 @@ export class DiscordVoiceMeetingSession {
     this.sequence = initialState.sequence ?? 0;
     this.minutes = initialState.minutes ?? "";
     this.results = initialState.results ?? [];
-    this.pendingTasks = initialState.pendingTasks ?? [];
+    this.pendingTasks = structuredClone(initialState.pendingTasks ?? []).map(
+      (task) => ({
+        ...task,
+        id:
+          getTaskReceipt(task.requestKey)?.id ??
+          task.id ??
+          randomUUID().slice(0, 8),
+      }),
+    );
     this.pendingControls = initialState.pendingControls ?? [];
     this.speechTurns = new SpeechTurnAssembler(initialState.speechTurns ?? []);
     this.speechTurns.interrupt();
@@ -1652,6 +1688,49 @@ export class DiscordVoiceMeetingSession {
   addText(text, metadata = {}) {
     if (this.closed) return Promise.resolve(false);
     return this.#trackOperation(this.#addText(text, metadata));
+  }
+
+  getActiveTasks() {
+    const tasks = new Map(this.getTasks().map((task) => [task.id, task]));
+    for (const task of this.pendingTasks) {
+      if (!tasks.has(task.id) || tasks.get(task.id).state === "failed")
+        tasks.set(task.id, {
+          id: task.id,
+          title: task.title,
+          state: task.cancelled ? "cancelled" : "awaiting_receipt",
+        });
+    }
+    return [...tasks.values()];
+  }
+
+  cancelPendingTask(taskId) {
+    if (!taskId) return Promise.resolve(false);
+    const task = this.pendingTasks.find(
+      (entry) =>
+        entry.id === taskId ||
+        this.dependencies.getTaskReceipt(entry.requestKey)?.id === taskId,
+    );
+    if (!task) return Promise.resolve(false);
+    task.cancelled = true;
+    return this.#trackOperation(this.#savePendingCancellation(task));
+  }
+
+  async #savePendingCancellation(task) {
+    const receipt = this.dependencies.getTaskReceipt(task.requestKey);
+    try {
+      const stopped = this.dependencies.controlTask({
+        type: "stop",
+        taskId: receipt?.id ?? task.id,
+        requestKey: `${task.requestKey}:cancel-pending`,
+      });
+      const [, result] = await Promise.all([this.persist(), stopped]);
+      return {
+        type: "cancelled",
+        ...(result?.persisted === false ? { persisted: false } : {}),
+      };
+    } catch {
+      return { type: "cancelled", persisted: false };
+    }
   }
 
   finishUtterance(id, count, { incomplete = false } = {}) {
@@ -1880,7 +1959,6 @@ export class DiscordVoiceMeetingSession {
     this.observing = true;
     const startedAt = Date.now();
     try {
-      await this.#dispatchPendingTasks();
       await this.#dispatchPendingControls();
       await this.#archivePendingStatements();
       this.statements = this.statements.filter(
@@ -1901,7 +1979,10 @@ export class DiscordVoiceMeetingSession {
         statements.push(statement);
         observationCharacters += statement.text.length;
       }
-      if (!statements.length) return false;
+      if (!statements.length) {
+        await this.#dispatchPendingTasks();
+        return false;
+      }
       const transcript = formatMeetingObservationTranscript(statements);
       const raw = await withTimeout(
         (signal) =>
@@ -1911,7 +1992,7 @@ export class DiscordVoiceMeetingSession {
               minutes: this.minutes,
               transcript,
               statements,
-              activeTasks: this.getTasks(),
+              activeTasks: this.getActiveTasks(),
               results: this.results,
             },
             { signal },
@@ -1960,6 +2041,7 @@ export class DiscordVoiceMeetingSession {
       this.minutes = observation.minutes;
       this.revision += 1;
       for (const task of tasks) {
+        task.id = randomUUID().slice(0, 8);
         task.meetingId = this.meetingId;
         task.context = this.getContextSnapshot();
         task.requestKey = `${this.meetingId}:voice:${[...task.sourceSequences].sort((a, b) => a - b).join(",")}`;
@@ -1973,8 +2055,8 @@ export class DiscordVoiceMeetingSession {
       for (const control of taskControls) {
         control.requestKey = `${this.meetingId}:control:${control.type}:${[...control.sourceSequences].sort((a, b) => a - b).join(",")}`;
         if (!control.taskId) {
-          const active = this.getTasks().filter((task) =>
-            ["queued", "running"].includes(task.state),
+          const active = this.getActiveTasks().filter((task) =>
+            ["queued", "running", "awaiting_receipt"].includes(task.state),
           );
           if (active.length === 1) control.taskId = active[0].id;
           else
@@ -2068,7 +2150,10 @@ export class DiscordVoiceMeetingSession {
       try {
         if (!control.notification) {
           const result = await withTimeout(
-            () => this.dependencies.controlTask(control),
+            async () =>
+              (control.type === "stop" &&
+                (await this.cancelPendingTask(control.taskId))) ||
+              this.dependencies.controlTask(control),
             this.stageTimeouts.posting,
             "saving task control",
             this.shutdownController.signal,
@@ -2123,19 +2208,33 @@ export class DiscordVoiceMeetingSession {
     for (const task of [...this.pendingTasks]) {
       if (this.closed) break;
       try {
-        if (!task.rejectionReason) {
+        if (
+          this.dependencies.getTaskReceipt(task.requestKey)?.state ===
+          "cancelled"
+        )
+          task.cancelled = true;
+        if (!task.cancelled && !task.rejectionReason) {
           const dispatched = await withTimeout(
             () => this.dependencies.enqueueTask(task),
             this.stageTimeouts.posting,
             "saving task receipt",
             this.shutdownController.signal,
           );
+          if (
+            this.dependencies.getTaskReceipt(task.requestKey)?.state ===
+            "cancelled"
+          )
+            task.cancelled = true;
           if (!dispatched) {
             task.rejectionReason = "queue_full";
             await this.persist();
           }
         }
-        if (task.rejectionReason) {
+        if (task.cancelled) {
+          const result = await this.#savePendingCancellation(task);
+          if (result.persisted === false)
+            throw new Error("Cancellation save pending");
+        } else if (task.rejectionReason) {
           await withTimeout(
             (signal) =>
               this.dependencies.postText(
@@ -2156,12 +2255,17 @@ export class DiscordVoiceMeetingSession {
           requestKey: task.requestKey,
           errorCode: voiceErrorCode(error),
         });
-        if (!task.rejectionReason && !task.retryNoticeSent && !this.closed) {
+        if (
+          !task.cancelled &&
+          !task.rejectionReason &&
+          !task.retryNoticeSent &&
+          !this.closed
+        ) {
           try {
             await withTimeout(
               (signal) =>
                 this.dependencies.postText(
-                  `依頼「${escapeDiscordMarkdown(task.title)}」は会議に保存済みです。作業の受付を再試行しています。状況は /ido status で確認できます。`,
+                  `依頼「${escapeDiscordMarkdown(task.title)}」（${task.id}）は会議に保存済みです。作業の受付を再試行しています。/ido status で確認、/ido stop ${task.id} で取り消せます。`,
                   { signal },
                 ),
               this.stageTimeouts.posting,
