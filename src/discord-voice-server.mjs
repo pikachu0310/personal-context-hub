@@ -459,9 +459,11 @@ export async function startDiscordVoiceCodex({
   logger = console,
   dependencies = {},
 } = {}) {
-  const store = config.meetingStatePath
-    ? new MeetingStateStore(config.meetingStatePath, meetingScope(config))
-    : undefined;
+  const store =
+    dependencies.meetingStateStore ??
+    (config.meetingStatePath
+      ? new MeetingStateStore(config.meetingStatePath, meetingScope(config))
+      : undefined);
   let saved = await store?.load();
   // Build local adapters before Discord login so unsafe Codex configuration
   // fails closed without joining or sending to a channel.
@@ -479,6 +481,47 @@ export async function startDiscordVoiceCodex({
   let loginAttempted = false;
   let serviceClosing = false;
   let reconnecting = false;
+  let stopping;
+  const pendingOperations = new Set();
+  const trackOperation = (operation) => {
+    pendingOperations.add(operation);
+    void operation
+      .finally(() => pendingOperations.delete(operation))
+      .catch(() => undefined);
+  };
+  const stopService = () => {
+    if (stopping) return stopping;
+    serviceClosing = true;
+    clearInterval(deliveryInterval);
+    stopping = (async () => {
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => session?.stop?.()),
+        Promise.resolve().then(() => taskQueue?.stop?.()),
+        ...pendingOperations,
+        ...(!session
+          ? [Promise.resolve().then(() => transcriptArchive?.stop?.())]
+          : []),
+      ]);
+      const failures = results
+        .filter((result) => result.status === "rejected")
+        .map((result) => result.reason);
+      try {
+        await store?.release();
+      } catch (error) {
+        failures.push(error);
+      }
+      await Promise.all([
+        destroyQuietly(connection),
+        loginAttempted ? destroyQuietly(client) : Promise.resolve(),
+      ]);
+      if (failures.length)
+        throw new AggregateError(
+          failures,
+          "Voice service stopped with incomplete cleanup or state persistence.",
+        );
+    })();
+    return stopping;
+  };
   try {
     await store?.acquire();
     saved = await store?.load();
@@ -688,28 +731,34 @@ export async function startDiscordVoiceCodex({
       taskQueue,
     });
     client.on?.(Events.InteractionCreate, (interaction) => {
-      void handleInteraction(interaction).catch((error) =>
-        logAudioFailure(logger, "task_interaction_failed", error),
+      if (serviceClosing) return;
+      trackOperation(
+        handleInteraction(interaction).catch((error) =>
+          logAudioFailure(logger, "task_interaction_failed", error),
+        ),
       );
     });
-    deliveryInterval = setInterval(
-      () => void taskQueue?.retryResultDelivery(),
-      30_000,
-    );
+    deliveryInterval = setInterval(() => {
+      if (!serviceClosing && taskQueue)
+        trackOperation(taskQueue.retryResultDelivery());
+    }, 30_000);
     deliveryInterval.unref?.();
-    void taskQueue?.retryResultDelivery();
+    if (taskQueue) trackOperation(taskQueue.retryResultDelivery());
     client.on?.(Events.MessageCreate, (message) => {
-      void handleMessage(message)
-        .then((action) => {
-          const response = formatDiscordTaskAction(action);
-          if (response)
-            return message.channel.send(
-              createDiscordMessagePayload(response, messageOptions),
-            );
-        })
-        .catch((error) =>
-          logAudioFailure(logger, "message_handling_failed", error),
-        );
+      if (serviceClosing) return;
+      trackOperation(
+        handleMessage(message)
+          .then((action) => {
+            const response = formatDiscordTaskAction(action);
+            if (response)
+              return message.channel.send(
+                createDiscordMessagePayload(response, messageOptions),
+              );
+          })
+          .catch((error) =>
+            logAudioFailure(logger, "message_handling_failed", error),
+          ),
+      );
     });
     subscribeToAllowedSpeaker({
       connection,
@@ -736,34 +785,17 @@ export async function startDiscordVoiceCodex({
       event: "ready",
       ...describeDiscordVoiceConfig(config),
     });
-    let stopped = false;
     return {
       client,
       connection,
       session,
       taskQueue,
-      async stop() {
-        if (stopped) return;
-        stopped = true;
-        serviceClosing = true;
-        clearInterval(deliveryInterval);
-        await session.stop();
-        await taskQueue?.stop?.();
-        await store?.release();
-        await Promise.all([destroyQuietly(connection), destroyQuietly(client)]);
-      },
+      stop: stopService,
     };
   } catch (error) {
-    serviceClosing = true;
-    clearInterval(deliveryInterval);
-    await Promise.allSettled([
-      session?.stop?.(),
-      taskQueue?.stop?.(),
-      transcriptArchive?.stop?.(),
-      store?.release(),
-      destroyQuietly(connection),
-      loginAttempted ? destroyQuietly(client) : Promise.resolve(),
-    ]);
+    await stopService().catch((failure) =>
+      logAudioFailure(logger, "startup_cleanup_failed", failure),
+    );
     throw error;
   }
 }

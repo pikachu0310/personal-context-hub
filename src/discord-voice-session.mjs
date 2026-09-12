@@ -9,6 +9,20 @@ const MAX_DISCORD_MESSAGE = 1_900;
 const MAX_TRANSCRIPT_CHARACTERS = 8_000;
 const MAX_CODEX_RESPONSE_CHARACTERS = 12_000;
 const TRUNCATION_SUFFIX = " …（長さ上限で省略）";
+const UNCONFIRMED_INSTRUCTION_PREFIX =
+  "中断前の追加指示は完了未確認です。履歴と作業場所を確認し、実行済みの外部操作を繰り返さず、未完了分だけ続けてください。\n";
+function retainInterruptedInstruction(task, entry, uncertain = true) {
+  const text = typeof entry === "string" ? entry : entry?.text;
+  if (!text) return;
+  task.instructions.unshift({
+    id: typeof entry === "object" ? entry.id : randomUUID(),
+    text:
+      uncertain && !text.startsWith(UNCONFIRMED_INSTRUCTION_PREFIX)
+        ? UNCONFIRMED_INSTRUCTION_PREFIX + text
+        : text,
+  });
+  task.additionalInstruction = undefined;
+}
 const DEFAULT_STAGE_TIMEOUTS = Object.freeze({
   transcribing: 120_000,
   running_codex: 900_000,
@@ -170,7 +184,7 @@ export class DiscordVoiceSession {
     if (this.closed) return false;
     if (this.queue.length >= this.maximumQueuedTurns) return false;
     this.queue.push({ id: randomUUID(), wav, metadata, queuedAt: Date.now() });
-    void this.#drain();
+    if (!this.processing) this.processingOperation = this.#drain();
     return true;
   }
 
@@ -186,7 +200,7 @@ export class DiscordVoiceSession {
   }
 
   stop() {
-    if (this.closed) return;
+    if (this.closed) return this.processingOperation;
     this.closed = true;
     this.queue = [];
     this.stoppedAtStage = this.state;
@@ -198,6 +212,7 @@ export class DiscordVoiceSession {
         "音声サービスを停止しました。",
       ),
     );
+    return this.processingOperation;
   }
 
   async #processTurn(turn) {
@@ -714,22 +729,14 @@ export class DiscordVoiceTaskQueue {
       if (!record?.id) continue;
       const task = {
         ...record,
-        instructions: record.instructions ?? [],
+        instructions: structuredClone(record.instructions ?? []),
         executing: false,
       };
       if (
-        ["running", "queued"].includes(task.state) &&
+        ["running", "queued", "interrupted"].includes(task.state) &&
         task.additionalInstruction
       ) {
-        const prefix =
-          "再起動前の追加指示は完了未確認です。履歴と作業場所を確認し、実行済みの外部操作を繰り返さず、未完了分だけ続けてください。\n";
-        task.instructions.unshift({
-          id: randomUUID(),
-          text: task.additionalInstruction.startsWith(prefix)
-            ? task.additionalInstruction
-            : prefix + task.additionalInstruction,
-        });
-        task.additionalInstruction = undefined;
+        retainInterruptedInstruction(task, task.additionalInstruction);
       }
       if (["running", "queued"].includes(task.state))
         task.state = "interrupted";
@@ -813,6 +820,7 @@ export class DiscordVoiceTaskQueue {
       await (requestKey
         ? task.controlPersistenceByKey?.get(requestKey)
         : task.controlPersistence);
+      if (result.type === "cancelled") await task.workerSettlement;
       return result;
     } catch (error) {
       if (result.type === "cancelled") return { ...result, persisted: false };
@@ -1077,7 +1085,10 @@ export class DiscordVoiceTaskQueue {
       .then(() => {
         if (this.closed || task.cancelled || !task.instructions.includes(entry))
           return;
-        if (task.executing && task.controller?.signal.aborted)
+        if (
+          task.executing &&
+          (task.controller?.signal.aborted || task.workerFailed)
+        )
           task.resumeAfterAbort = true;
         if (!task.executing && !this.queue.includes(task)) {
           if (!task.surface) task.surfacePromise = undefined;
@@ -1152,7 +1163,11 @@ export class DiscordVoiceTaskQueue {
     );
     const cancellations = queued.map((task) =>
       Promise.resolve(task.surfacePromise)
-        .then((surface) => this.#markCancelled(surface, task))
+        .then((surface) =>
+          task.cancelled
+            ? this.#markCancelled(surface, task)
+            : this.#markInterrupted(surface, task),
+        )
         .catch(() => undefined),
     );
     this.stopping = Promise.allSettled([
@@ -1162,7 +1177,7 @@ export class DiscordVoiceTaskQueue {
         task.controlPersistence,
         ...(task.controlPersistenceByKey?.values() ?? []),
       ]),
-    ]).then(() => undefined);
+    ]).then(() => this.persist({ strict: true }));
     return this.stopping;
   }
 
@@ -1218,7 +1233,8 @@ export class DiscordVoiceTaskQueue {
       if (taskSurface?.threadId)
         this.tasksByThreadId.set(String(taskSurface.threadId), task);
       if (task.cancelled || this.closed) {
-        await this.#markCancelled(taskSurface, task);
+        if (task.cancelled) await this.#markCancelled(taskSurface, task);
+        else await this.#markInterrupted(taskSurface, task);
         return;
       }
       task.executing = true;
@@ -1276,34 +1292,42 @@ export class DiscordVoiceTaskQueue {
         await withTimeout(
           (signal) => {
             workerInvoked = true;
-            return this.runTask(task, {
-              signal,
-              onProgress: async (progress) => {
-                const content = boundText(progress, MAX_DISCORD_MESSAGE);
-                if (
-                  !content ||
-                  content === lastProgress ||
-                  progressPosts >= 50 ||
-                  Date.now() - lastProgressAt < this.progressIntervalMs
-                ) {
-                  return;
-                }
-                lastProgress = content;
-                lastProgressAt = Date.now();
-                progressPosts += 1;
-                await withTimeout(
-                  (postSignal) => postTaskText(content, { signal: postSignal }),
-                  DEFAULT_STAGE_TIMEOUTS.posting,
-                  "posting task progress",
-                  this.shutdownController.signal,
-                ).catch((error) => {
-                  this.#log("power_task_progress_post_failed", {
-                    taskId: task.id,
-                    errorCode: voiceErrorCode(error),
+            const execution = Promise.resolve().then(() =>
+              this.runTask(task, {
+                signal,
+                onProgress: async (progress) => {
+                  const content = boundText(progress, MAX_DISCORD_MESSAGE);
+                  if (
+                    !content ||
+                    content === lastProgress ||
+                    progressPosts >= 50 ||
+                    Date.now() - lastProgressAt < this.progressIntervalMs
+                  ) {
+                    return;
+                  }
+                  lastProgress = content;
+                  lastProgressAt = Date.now();
+                  progressPosts += 1;
+                  await withTimeout(
+                    (postSignal) =>
+                      postTaskText(content, { signal: postSignal }),
+                    DEFAULT_STAGE_TIMEOUTS.posting,
+                    "posting task progress",
+                    this.shutdownController.signal,
+                  ).catch((error) => {
+                    this.#log("power_task_progress_post_failed", {
+                      taskId: task.id,
+                      errorCode: voiceErrorCode(error),
+                    });
                   });
-                });
-              },
-            });
+                },
+              }),
+            );
+            task.workerSettlement = execution.then(
+              () => undefined,
+              () => undefined,
+            );
+            return execution;
           },
           this.taskTimeoutMs,
           "running power task",
@@ -1350,14 +1374,28 @@ export class DiscordVoiceTaskQueue {
       } else if (!task.cancelled) task.state = "completed";
       await this.persist();
     } catch (error) {
+      task.workerFailed = !workerSucceeded;
+      if (this.closed && !task.cancelled) {
+        if (!workerSucceeded)
+          retainInterruptedInstruction(
+            task,
+            consumedInstruction,
+            workerInvoked,
+          );
+        if (workerSucceeded && !task.instructions.length) {
+          task.state = "completed";
+          await this.persist();
+        } else await this.#markInterrupted(taskSurface, task);
+        return;
+      }
       if (
-        !workerInvoked &&
+        !workerSucceeded &&
         consumedInstruction &&
         !task.cancelled &&
         !this.closed &&
         error?.code !== "TASK_CANCELLED"
       ) {
-        task.instructions.unshift(consumedInstruction);
+        retainInterruptedInstruction(task, consumedInstruction, workerInvoked);
       }
       if (this.closed || task.cancelled || error?.code === "TASK_CANCELLED") {
         await this.#markCancelled(taskSurface, task);
@@ -1386,10 +1424,13 @@ export class DiscordVoiceTaskQueue {
         ).catch(() => undefined);
       }
     } finally {
+      await task.workerSettlement;
       removeShutdownAbort();
       task.executing = false;
       task.controller = undefined;
       task.additionalInstruction = undefined;
+      task.workerSettlement = undefined;
+      task.workerFailed = false;
       if (task.resumeAfterAbort && !this.closed && task.instructions.length) {
         task.resumeAfterAbort = false;
         task.cancelled = false;
@@ -1415,6 +1456,20 @@ export class DiscordVoiceTaskQueue {
         state: "cancelled",
         elapsedMs: Date.now() - task.createdAt,
       }),
+    ).catch(() => undefined);
+  }
+
+  async #markInterrupted(surface, task) {
+    task.state = "interrupted";
+    await this.persist();
+    await withTimeout(
+      () =>
+        surface?.update?.({
+          state: "interrupted",
+          pendingInstructions: task.instructions.length,
+        }),
+      DEFAULT_STAGE_TIMEOUTS.posting,
+      "showing interrupted task",
     ).catch(() => undefined);
   }
 
@@ -1495,6 +1550,7 @@ export class DiscordVoiceMeetingSession {
     this.audioQueue = [];
     this.activeTranscriptions = 0;
     this.activeTranscriptionJobs = new Set();
+    this.activeOperations = new Set();
     this.meetingId = initialState.meetingId ?? randomUUID();
     this.statements = initialState.statements ?? [];
     this.sequence = initialState.sequence ?? 0;
@@ -1557,7 +1613,12 @@ export class DiscordVoiceMeetingSession {
     });
   }
 
-  async addText(text, metadata = {}) {
+  addText(text, metadata = {}) {
+    if (this.closed) return Promise.resolve(false);
+    return this.#trackOperation(this.#addText(text, metadata));
+  }
+
+  async #addText(text, metadata = {}) {
     const receivedAt = metadata.startedAt ?? Date.now();
     while (this.resetting) await this.meetingBoundary;
     if (this.closed || !String(text).trim()) return false;
@@ -1715,7 +1776,12 @@ export class DiscordVoiceMeetingSession {
     }
   }
 
-  async observeNow() {
+  observeNow() {
+    if (this.closed) return Promise.resolve(false);
+    return this.#trackOperation(this.#observeNow());
+  }
+
+  async #observeNow() {
     if (this.closed || this.resetting || this.observing) return false;
     this.observing = true;
     const startedAt = Date.now();
@@ -2017,8 +2083,8 @@ export class DiscordVoiceMeetingSession {
     return { accepted };
   }
 
-  async stop() {
-    if (this.closed) return;
+  stop() {
+    if (this.stopping) return this.stopping;
     this.closed = true;
     this.cancelInterval(this.interval);
     this.audioQueue = [];
@@ -2029,11 +2095,29 @@ export class DiscordVoiceMeetingSession {
         "音声サービスを停止しました。",
       ),
     );
-    await this.meetingBoundary;
-    await Promise.allSettled([...this.activeTranscriptionJobs]);
-    await this.#archivePendingStatements();
-    await this.persist();
-    await this.dependencies.closeTranscriptArchive();
+    this.stopping = (async () => {
+      await this.meetingBoundary;
+      await Promise.allSettled([
+        ...this.activeOperations,
+        ...this.activeTranscriptionJobs,
+      ]);
+      await this.liveUpdate;
+      try {
+        await this.#archivePendingStatements();
+        await this.persist();
+      } finally {
+        await this.dependencies.closeTranscriptArchive();
+      }
+    })();
+    return this.stopping;
+  }
+
+  #trackOperation(operation) {
+    this.activeOperations.add(operation);
+    void operation
+      .finally(() => this.activeOperations.delete(operation))
+      .catch(() => undefined);
+    return operation;
   }
 
   #drainTranscriptions() {

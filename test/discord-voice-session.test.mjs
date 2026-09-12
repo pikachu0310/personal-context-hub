@@ -681,7 +681,7 @@ test("power task queue runs work separately and posts bounded lifecycle updates"
   await queue.stop();
 });
 
-test("stopping the task queue marks an active Discord task as cancelled", async () => {
+test("stopping the service leaves an active Discord task interrupted", async () => {
   const states = [];
   const threadPosts = [];
   const queue = new DiscordVoiceTaskQueue({
@@ -700,7 +700,11 @@ test("stopping the task queue marks an active Discord task as cancelled", async 
   assert.equal(queue.enqueue({ title: "長い処理", request: "続けて" }), true);
   await eventually(() => states.includes("running"));
   await queue.stop();
-  assert.ok(threadPosts.some((content) => content.includes("タスク中止")));
+  assert.ok(states.includes("interrupted"));
+  assert.equal(
+    threadPosts.some((content) => content.includes("タスク中止")),
+    false,
+  );
 });
 
 test("owner thread messages continue the same power task and can cancel it", async () => {

@@ -90,7 +90,9 @@ test("a failed task receipt never starts Codex", async (t) => {
       return "result";
     },
   });
-  t.after(() => tasks.stop());
+  t.after(() =>
+    assert.rejects(tasks.stop(), { code: "TASK_STATE_SAVE_FAILED" }),
+  );
   tasks.enqueue({ title: "work" });
   await eventually(() => tasks.active === 0);
   assert.equal(runs, 0);
@@ -139,7 +141,9 @@ test("a stuck receipt times out and a task can be cancelled before its thread ex
     checkpointTimeoutMs: 10,
     checkpoint: () => new Promise(() => undefined),
   });
-  t.after(() => stuck.stop());
+  t.after(() =>
+    assert.rejects(stuck.stop(), { code: "TASK_STATE_SAVE_FAILED" }),
+  );
   await assert.rejects(stuck.enqueueDurable({ title: "stuck" }), {
     code: "TASK_STATE_SAVE_FAILED",
   });
