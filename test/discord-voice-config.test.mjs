@@ -4,6 +4,7 @@ import {
   describeDiscordVoiceConfig,
   loadDiscordVoiceConfig,
 } from "../src/discord-voice-config.mjs";
+import { selectTaskProfile } from "../src/discord-voice-workspace.mjs";
 
 const valid = {
   PERSONAL_CONTEXT_VOICE_GUILD_ID: "11111111111111111",
@@ -14,6 +15,77 @@ const valid = {
   PERSONAL_CONTEXT_VOICE_CODEX_HOME: "/mnt/c/Users/example/.codex",
   OPENAI_API_KEY: "test-secret-never-print",
 };
+
+test("shared model settings reach every role unless that role is explicitly overridden", () => {
+  const shared = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT: "high",
+  });
+  assert.equal(shared.observerModel, "gpt-6-astra");
+  assert.equal(shared.observerReasoningEffort, "high");
+  assert.equal(
+    selectTaskProfile({ complexity: "routine" }, shared).model,
+    "gpt-6-astra",
+  );
+  assert.equal(
+    selectTaskProfile({ complexity: "complex" }, shared).modelReasoningEffort,
+    "high",
+  );
+  const split = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT: "high",
+    PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL: "gpt-5.6-sol",
+    PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT: "low",
+    PERSONAL_CONTEXT_VOICE_TASK_MODEL: "gpt-5.6-sol",
+    PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT: "medium",
+    PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT: "high",
+  });
+  assert.equal(split.observerReasoningEffort, "low");
+  assert.equal(
+    selectTaskProfile({ complexity: "routine" }, split).model,
+    "gpt-5.6-sol",
+  );
+  assert.equal(
+    selectTaskProfile({ complexity: "routine" }, split).modelReasoningEffort,
+    "medium",
+  );
+  assert.equal(
+    selectTaskProfile({ complexity: "complex" }, split).model,
+    "gpt-6-astra",
+  );
+  const effective = describeDiscordVoiceConfig(split);
+  assert.deepEqual(effective.observer, {
+    model: "gpt-5.6-sol",
+    reasoningEffort: "low",
+  });
+  assert.deepEqual(effective.complexTask, {
+    model: "gpt-6-astra",
+    reasoningEffort: "high",
+  });
+  assert.doesNotMatch(JSON.stringify(effective), /test-secret-never-print/);
+});
+
+test("complex tasks inherit explicit worker settings and role reasoning values are validated", () => {
+  const configured = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_TASK_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT: "high",
+  });
+  assert.equal(configured.complexTaskModel, "gpt-6-astra");
+  assert.equal(configured.complexTaskReasoningEffort, "high");
+  for (const role of ["OBSERVER", "TASK", "COMPLEX_TASK"])
+    assert.throws(
+      () =>
+        loadDiscordVoiceConfig({
+          ...valid,
+          [`PERSONAL_CONTEXT_VOICE_${role}_REASONING_EFFORT`]: "invalid",
+        }),
+      /REASONING_EFFORT/,
+    );
+});
 
 test("voice config validates Discord targets and redacts the OpenAI key", () => {
   const config = loadDiscordVoiceConfig(valid);

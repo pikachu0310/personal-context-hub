@@ -18,6 +18,7 @@ npm run start:discord:voice:instance -- YOUR_PROFILE
 ```
 
 グループ開発では `PERSONAL_CONTEXT_VOICE_MODE=meeting`、`PERSONAL_CONTEXT_VOICE_POWER_MODE=true`、`PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE=true` を設定します。
+モデルと推論強度は `PERSONAL_CONTEXT_VOICE_CODEX_MODEL` / `PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT` を共通設定とし、`OBSERVER`・`TASK`・`COMPLEX_TASK` ごとの指定を優先します。複雑な作業の設定を省略すると `TASK` を引き継ぎます。例の設定では会議観測をSol low、作業をSol mediumに分けており、`inspect` で実効設定を確認できます。
 Botには対象チャンネルでの閲覧・接続・発言・送信・履歴閲覧・公開スレッド作成・スレッド送信・ファイル添付を許可し、Developer PortalでMessage Content Intentを有効にします。
 起動すると通話に参加し、認識テキストの保存とAI音声の使用をチャンネルへ告知します。参加者へ保存範囲を説明してから利用してください。
 

@@ -58,6 +58,15 @@ function absolutePath(value, name) {
   return resolve(value);
 }
 
+function reasoningEffort(env, name, fallback) {
+  const value = env[name]?.trim().toLowerCase() || fallback;
+  if (value && !codexReasoningEfforts.has(value))
+    throw new Error(
+      `${name} must be minimal, low, medium, high, xhigh, max, or ultra.`,
+    );
+  return value;
+}
+
 export function loadDiscordVoiceConfig(env = process.env) {
   const workingDirectory = absolutePath(
     required(env, "PERSONAL_CONTEXT_VOICE_WORKDIR"),
@@ -98,17 +107,21 @@ export function loadDiscordVoiceConfig(env = process.env) {
   if (!new Set(["turn", "meeting"]).has(voiceMode)) {
     throw new Error("PERSONAL_CONTEXT_VOICE_MODE must be turn or meeting.");
   }
-  const codexReasoningEffort =
-    env.PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT?.trim().toLowerCase() ||
-    undefined;
-  if (
-    codexReasoningEffort &&
-    !codexReasoningEfforts.has(codexReasoningEffort)
-  ) {
-    throw new Error(
-      "PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT must be minimal, low, medium, high, xhigh, max, or ultra.",
-    );
-  }
+  const codexReasoningEffort = reasoningEffort(
+    env,
+    "PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT",
+  );
+  const codexModel =
+    env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined;
+  const taskModel =
+    env.PERSONAL_CONTEXT_VOICE_TASK_MODEL?.trim() ||
+    codexModel ||
+    "gpt-5.6-sol";
+  const taskReasoningEffort = reasoningEffort(
+    env,
+    "PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT",
+    codexReasoningEffort ?? "medium",
+  );
   return {
     guildId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_GUILD_ID"),
     voiceChannelId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_CHANNEL_ID"),
@@ -143,13 +156,23 @@ export function loadDiscordVoiceConfig(env = process.env) {
     meetingStatePath: `${statePath}.meeting.json`,
     taskWorkspaceDirectory: `${statePath}.workspaces`,
     observerModel:
-      env.PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL?.trim() || "gpt-5.6-sol",
-    observerReasoningEffort: "low",
-    taskModel: env.PERSONAL_CONTEXT_VOICE_TASK_MODEL?.trim() || "gpt-5.6-sol",
-    taskReasoningEffort: "medium",
+      env.PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL?.trim() ||
+      codexModel ||
+      "gpt-5.6-sol",
+    observerReasoningEffort: reasoningEffort(
+      env,
+      "PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT",
+      codexReasoningEffort ?? "low",
+    ),
+    taskModel,
+    taskReasoningEffort,
     complexTaskModel:
-      env.PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL?.trim() || "gpt-5.6-sol",
-    complexTaskReasoningEffort: "medium",
+      env.PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL?.trim() || taskModel,
+    complexTaskReasoningEffort: reasoningEffort(
+      env,
+      "PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT",
+      taskReasoningEffort,
+    ),
     immediateReactions: boolean(
       env,
       "PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS",
@@ -185,7 +208,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ttsModel: env.PERSONAL_CONTEXT_VOICE_TTS_MODEL?.trim() || "gpt-4o-mini-tts",
     ttsVoice: env.PERSONAL_CONTEXT_VOICE_TTS_VOICE?.trim() || "marin",
     ttsSpeed: number(env, "PERSONAL_CONTEXT_VOICE_TTS_SPEED", 1, 0.25, 4),
-    codexModel: env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined,
+    codexModel,
     codexReasoningEffort,
     codexHome: env.PERSONAL_CONTEXT_VOICE_CODEX_HOME?.trim()
       ? absolutePath(
@@ -327,6 +350,18 @@ export function describeDiscordVoiceConfig(config) {
     codexModel: config.codexModel ?? "Codex configured default",
     codexReasoningEffort:
       config.codexReasoningEffort ?? "Codex configured default",
+    observer: {
+      model: config.observerModel,
+      reasoningEffort: config.observerReasoningEffort,
+    },
+    task: {
+      model: config.taskModel,
+      reasoningEffort: config.taskReasoningEffort,
+    },
+    complexTask: {
+      model: config.complexTaskModel,
+      reasoningEffort: config.complexTaskReasoningEffort,
+    },
     codexHomeConfigured: Boolean(config.codexHome),
     isolatedCodexHomeConfigured: Boolean(config.isolatedCodexHome),
     codexSandbox: config.codexSandbox,

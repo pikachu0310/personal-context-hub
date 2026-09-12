@@ -304,8 +304,11 @@ export function selectTaskProfile(task, config) {
       ? (config.complexTaskModel ?? config.taskModel ?? config.codexModel)
       : (config.taskModel ?? config.codexModel),
     modelReasoningEffort: complex
-      ? (config.complexTaskReasoningEffort ?? "high")
-      : (config.taskReasoningEffort ?? "medium"),
+      ? (config.complexTaskReasoningEffort ??
+        config.taskReasoningEffort ??
+        config.codexReasoningEffort ??
+        "high")
+      : (config.taskReasoningEffort ?? config.codexReasoningEffort ?? "medium"),
     sandboxMode: "workspace-write",
     networkAccessEnabled: true,
     webSearchMode: "live",

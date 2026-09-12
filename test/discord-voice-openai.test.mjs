@@ -496,7 +496,7 @@ test("power tasks run in a separate workspace-bound networked thread", async () 
   assert.equal(threadOptions.webSearchMode, "live");
   assert.equal(threadOptions.workingDirectory, "/home/example/github");
   assert.equal(threadOptions.model, "test-model");
-  assert.equal(threadOptions.modelReasoningEffort, "medium");
+  assert.equal(threadOptions.modelReasoningEffort, "high");
   assert.match(prompt, /検索して/);
   assert.deepEqual(progress, [
     "🤖 Codexが作業を開始しました。",
