@@ -22,6 +22,115 @@ const queue = (options = {}) =>
     ...options,
   });
 
+test("a question without a task ID can use the latest saved result before Discord receives it", async (t) => {
+  let release, context;
+  const tasks = queue({
+    createTaskThread: async () => ({
+      update: noop,
+      post: async (content) => {
+        if (content.includes("実行結果"))
+          await new Promise((resolve) => {
+            release = resolve;
+          });
+      },
+    }),
+    runTask: async (task) => {
+      task.runRevision = 1;
+      task.evidence = {
+        runRevision: 1,
+        tests: [{ scope: "command_exit", outcome: "passed" }],
+      };
+      return "計算バグを修正し、既存テストが成功しました。";
+    },
+  });
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: noop,
+    upsertLiveTranscript: noop,
+    upsertMinutes: noop,
+    postText: noop,
+    synthesize: noop,
+    playAudio: noop,
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+    logger: {},
+    initialState: { meetingId: "current-meeting" },
+    getTasks: () => tasks.list(),
+    getTaskResult: (id) => tasks.getTaskResult(id),
+    observe: async (value) => {
+      context = value;
+      return JSON.stringify({ minutes: "確認", shouldReply: false, tasks: [] });
+    },
+  });
+  t.after(async () => {
+    release?.();
+    await tasks.stop();
+    await session.stop();
+  });
+  await tasks.enqueueDurable({
+    id: "saved01",
+    title: "計算修正",
+    meetingId: session.meetingId,
+  });
+  await eventually(() => release && tasks.active === 0);
+  assert.equal(
+    session.results.length,
+    0,
+    "no result notification has been received yet",
+  );
+  assert.equal(tasks.snapshot()[0].resultDeliveryPending, true);
+  await session.addText("さっきお願いした修正の結果は？", { userId: "owner" });
+  await session.observeNow();
+  assert.equal(context.results.length, 1);
+  assert.equal(context.results[0].id, "saved01");
+  assert.match(context.results[0].result, /既存テストが成功/);
+  assert.match(context.results[0].verification, /成功 1件/);
+  assert.equal(context.results[0].runRevision, 1);
+  assert.equal(context.results[0].resultDeliveryPending, true);
+});
+
+test("automatic result context is bounded by completion time and the current meeting", async (t) => {
+  const results = Array.from({ length: 12 }, (_, index) => ({
+    id: `task${index}`,
+    result: `result ${index}`,
+    completedAt: 12 - index,
+    meetingId: "current",
+    artifacts: { privatePath: "do not include" },
+  }));
+  results.push({
+    id: "previous",
+    result: "unrelated",
+    completedAt: 100,
+    meetingId: "previous",
+  });
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: noop,
+    upsertLiveTranscript: noop,
+    upsertMinutes: noop,
+    postText: noop,
+    synthesize: noop,
+    playAudio: noop,
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+    logger: {},
+    initialState: { meetingId: "current" },
+    getTasks: () => results,
+    getTaskResult: (id) => results.find((result) => result.id === id),
+  });
+  t.after(() => session.stop());
+  const context = session.getObservationResults([{ text: "さっきの結果は？" }]);
+  assert.deepEqual(
+    context.map((result) => result.id),
+    ["task4", "task3", "task2", "task1", "task0"],
+  );
+  assert.equal(JSON.stringify(context).includes("privatePath"), false);
+  await session.newMeeting();
+  assert.deepEqual(session.getObservationResults([{ text: "結果は？" }]), []);
+  assert.equal(
+    session.getObservationResults([{ text: "previous の結果は？" }])[0].id,
+    "previous",
+  );
+});
+
 test("a stop while completed work awaits instruction receipts remains cancelled", async (t) => {
   let release;
   const tasks = queue({

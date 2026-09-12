@@ -922,6 +922,7 @@ export class DiscordVoiceTaskQueue {
       result: task.result,
       runRevision: task.resultMetadata?.runRevision,
       completedAt: task.resultMetadata?.completedAt,
+      resultDeliveryPending: Boolean(task.resultDeliveryPending),
       verification:
         task.resultMetadata?.verification ??
         "検証記録: この結果に対応する実行版は未確認",
@@ -2002,20 +2003,33 @@ export class DiscordVoiceMeetingSession {
       .map((statement) => statement.text)
       .join("\n")
       .toLowerCase();
-    const named = this.getActiveTasks()
-      .filter((task) => task.id && text.includes(String(task.id).toLowerCase()))
-      .slice(0, 3)
+    const tasks = this.getActiveTasks();
+    const saved = tasks
       .map((task) => this.dependencies.getTaskResult(task.id))
-      .filter(Boolean);
-    const results = [
+      .filter(
+        (result) => result?.result && result.meetingId === this.meetingId,
+      );
+    const recent = [
       ...new Map(
         [
           ...this.results.slice(-5).map((result) => ({
             ...result,
             ...this.dependencies.getTaskResult(result.id),
           })),
-          ...named,
+          ...saved,
         ].map((result) => [result.id, result]),
+      ).values(),
+    ]
+      .sort((a, b) => (a.completedAt ?? 0) - (b.completedAt ?? 0))
+      .slice(-5);
+    const named = tasks
+      .filter((task) => task.id && text.includes(String(task.id).toLowerCase()))
+      .slice(0, 3)
+      .map((task) => this.dependencies.getTaskResult(task.id))
+      .filter(Boolean);
+    const results = [
+      ...new Map(
+        [...recent, ...named].map((result) => [result.id, result]),
       ).values(),
     ];
     return results.map((result) => ({
@@ -2025,6 +2039,7 @@ export class DiscordVoiceMeetingSession {
       currentState: result.currentState,
       runRevision: result.runRevision,
       currentRunRevision: result.currentRunRevision,
+      resultDeliveryPending: result.resultDeliveryPending,
       result: boundText(result.result, 4000),
       verification: result.verification,
       threadId: result.threadId,

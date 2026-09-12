@@ -93,6 +93,7 @@ const posts = [],
   played = [];
 const acceptedNonces = new Map();
 let lostAcknowledgement = false;
+let uploadsAvailable = false;
 let currentCheck;
 let session;
 const postText = async (text, options) => {
@@ -122,7 +123,12 @@ const tasks = new DiscordVoiceTaskQueue({
     post: noop,
     update: noop,
     postArtifacts: createDiscordArtifactPoster(
-      { send: async (payload) => artifactPosts.push(payload) },
+      {
+        send: async (payload) => {
+          if (!uploadsAvailable) throw new Error("Synthetic upload outage");
+          artifactPosts.push(payload);
+        },
+      },
       task,
     ),
   }),
@@ -237,7 +243,7 @@ try {
   });
   let task;
   await check("implementationAndIndependentTests", async () => {
-    await until(() => tasks.active === 0 && session.results.length === 1);
+    await until(() => tasks.active === 0 && tasks.deliveries.size === 0);
     task = tasks.snapshot()[0];
     assert.equal(task.state, "completed");
     assert.equal(task.artifacts.status.trim(), "M\tmath.mjs");
@@ -259,11 +265,6 @@ try {
     report.verification = task.evidence;
     report.independentTestOutput = result.stdout;
   });
-  await check("artifactReturn", async () => {
-    assert.equal(artifactPosts.length, 1);
-    assert.equal(artifactPosts[0].files.length, 2);
-    assert.equal(artifactPosts[0].enforceNonce, true);
-  });
   await check("speechStopWithoutTaskCancellation", async () => {
     const observations = report.observationElapsedMs.length;
     const statement = await speakIntoMeeting(
@@ -275,6 +276,10 @@ try {
     assert.equal(tasks.list()[0].state, "completed");
   });
   await check("resultQuestionAndReplyRecovery", async () => {
+    assert.equal(session.results.length, 0);
+    assert.equal(tasks.snapshot()[0].resultDeliveryPending, true);
+    assert.equal(artifactPosts.length, 0);
+    report.resultQuestionBeforeDelivery = true;
     await session.addText(
       "井戸Bot、いまの仕事で何を直し、テストはどうなったか短く教えてください。",
       { userId: "operator", taskEligible: false },
@@ -310,6 +315,15 @@ try {
     );
     assert.equal(played.length, spoken.length);
     report.synthesizedReplies = played.length;
+  });
+  await check("artifactReturn", async () => {
+    uploadsAvailable = true;
+    await tasks.retryResultDelivery();
+    assert.equal(tasks.snapshot()[0].resultDeliveryPending, false);
+    assert.equal(session.results.length, 1);
+    assert.equal(artifactPosts.length, 1);
+    assert.equal(artifactPosts[0].files.length, 2);
+    assert.equal(artifactPosts[0].enforceNonce, true);
   });
   await check("explicitApply", async () => {
     assert.equal(
