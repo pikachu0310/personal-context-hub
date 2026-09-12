@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { VoiceServiceError } from "../src/discord-voice-errors.mjs";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceSession,
@@ -1011,9 +1012,15 @@ test("meeting mode retains statements when an observation is invalid and retries
   const minutesEdits = [];
   const liveEdits = [];
   const session = new DiscordVoiceMeetingSession({
-    transcribe: async () => "再試行対象",
+    transcribe: async () => "再試行対象" + "長い会話の内容です。".repeat(250),
     observe: async () => {
       attempts += 1;
+      if (attempts === 3)
+        throw new VoiceServiceError(
+          "CODEX_AUTH_EXPIRED",
+          "private authentication error must not appear in Discord",
+          "Codexの認証期限が切れています。ローカル管理者が再認証してください。",
+        );
       return attempts === 1
         ? "invalid"
         : JSON.stringify({
@@ -1046,10 +1053,22 @@ test("meeting mode retains statements when an observation is invalid and retries
   assert.equal(session.statements.length, 1);
   await session.liveUpdate;
   assert.match(liveEdits.at(-1), /次の確認で再試行/);
+  assert.equal(await session.observeNow(), false);
+  await session.liveUpdate;
+  assert.match(liveEdits.at(-1), /認証期限が切れています/);
+  assert.match(liveEdits.at(-1), /再試行対象/);
+  assert.doesNotMatch(
+    liveEdits.at(-1),
+    /private authentication error|発話を待っています/,
+  );
   assert.equal(await session.observeNow(), true);
   assert.equal(session.statements.length, 0);
   await session.liveUpdate;
-  assert.doesNotMatch(liveEdits.at(-1), /会話の確認に失敗|会話を処理中/);
+  assert.doesNotMatch(
+    liveEdits.at(-1),
+    /会話の確認に失敗|会話を処理中|認証期限/,
+  );
+  assert.ok(liveEdits.every((content) => content.length <= 1900));
   const processingEdits = liveEdits.filter((content) =>
     /会話を処理中/.test(content),
   );

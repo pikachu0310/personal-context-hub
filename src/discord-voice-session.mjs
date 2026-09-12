@@ -390,17 +390,32 @@ export function formatMeetingTranscript(
       `**${escapeDiscordMarkdown(speakerLabel(statement))}**: ${statement.text}`,
   );
   const header = "🎙️ **会話ログ・処理状況**";
+  const omittedNotice = (count) =>
+    `_表示を省略した発話 ${count} 件があります。_\n`;
+  const bodyLimit = Math.max(
+    0,
+    maximum -
+      header.length -
+      1 -
+      (lines.length > 1 ? omittedNotice(lines.length).length : 0),
+  );
   const kept = [];
-  let used = header.length;
+  let used = 0;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index];
-    if (used + line.length + 1 > maximum) break;
+    if (used + line.length + (kept.length ? 1 : 0) > bodyLimit) {
+      if (!kept.length) kept.push(boundText(line, bodyLimit));
+      break;
+    }
     kept.unshift(line);
-    used += line.length + 1;
+    used += line.length + (kept.length > 1 ? 1 : 0);
   }
   const omitted = lines.length - kept.length;
   const body = kept.length ? kept.join("\n") : "_発話を待っています。_";
-  return `${header}\n${omitted ? `_表示を省略した発話 ${omitted} 件があります。_\n` : ""}${body}`;
+  return boundText(
+    `${header}\n${omitted ? omittedNotice(omitted) : ""}${body}`,
+    maximum,
+  );
 }
 
 export function formatMeetingObservationTranscript(statements) {
@@ -1781,6 +1796,7 @@ export class DiscordVoiceMeetingSession {
     this.observing = false;
     this.processingConversation = false;
     this.observationRetryPending = false;
+    this.observationFailureMessage = "";
     this.immediateObservationRequested = false;
     this.immediateObservationScheduled = false;
     this.closed = false;
@@ -2395,6 +2411,7 @@ export class DiscordVoiceMeetingSession {
       revision: this.revision,
       silencedThroughSequence: this.silencedThroughSequence,
       observationRetryPending: this.observationRetryPending,
+      observationFailureMessage: this.observationFailureMessage,
     };
     try {
       await this.#archivePendingStatements();
@@ -2414,6 +2431,7 @@ export class DiscordVoiceMeetingSession {
       this.silencedThroughSequence = null;
       this.revision = 0;
       this.observationRetryPending = false;
+      this.observationFailureMessage = "";
       await this.persist();
       this.#queueLiveUpdate();
       return true;
@@ -2556,6 +2574,7 @@ export class DiscordVoiceMeetingSession {
       );
       analyzingConversation = false;
       this.observationRetryPending = false;
+      this.observationFailureMessage = "";
       this.minutes = observation.minutes;
       this.revision += 1;
       for (const task of tasks) {
@@ -2662,7 +2681,13 @@ export class DiscordVoiceMeetingSession {
       return true;
     } catch (error) {
       if (!this.closed) {
-        if (analyzingConversation) this.observationRetryPending = true;
+        if (analyzingConversation) {
+          this.observationRetryPending = true;
+          this.observationFailureMessage =
+            error instanceof VoiceServiceError
+              ? boundText(error.publicMessage ?? "", 160)
+              : "";
+        }
         this.#log("meeting_observation_failed", {
           elapsedMs: Date.now() - startedAt,
           errorCode: voiceErrorCode(error),
@@ -3048,12 +3073,14 @@ export class DiscordVoiceMeetingSession {
     const statements = this.statements.filter(
       (statement) => !statement.observed,
     );
-    let content = formatMeetingTranscript(statements);
     const notices = [];
     if (this.processingConversation)
       notices.push("会話を処理中。続けて話せます");
-    else if (this.observationRetryPending && statements.length)
+    else if (this.observationRetryPending && statements.length) {
       notices.push("会話の確認に失敗。次の確認で再試行します");
+      if (this.observationFailureMessage)
+        notices.push(this.observationFailureMessage);
+    }
     if (this.speechTurns.turns.size)
       notices.push(
         `${this.speechTurns.turns.size}件の発話を認識中。話し終わってから依頼を処理します`,
@@ -3063,7 +3090,15 @@ export class DiscordVoiceMeetingSession {
       notices.push(`認識失敗 ${this.failedTranscriptions} 件`);
     if (this.archiveFailures)
       notices.push(`保存再試行待ち ${this.archiveFailures} 件`);
-    if (notices.length) content += `\n_状態: ${notices.join(" / ")}_`;
+    const status = notices.length ? `\n_状態: ${notices.join(" / ")}_` : "";
+    const content =
+      formatMeetingTranscript(
+        statements,
+        Math.min(
+          MAX_LIVE_TRANSCRIPT_CHARACTERS,
+          MAX_DISCORD_MESSAGE - status.length,
+        ),
+      ) + status;
     this.liveUpdate = this.liveUpdate
       .then(() =>
         withTimeout(
