@@ -802,12 +802,15 @@ export class DiscordVoiceTaskQueue {
   }
 
   list() {
-    return [...this.tasks.values()].map(({ id, title, state, surface }) => ({
-      id,
-      title,
-      state,
-      threadId: surface?.threadId,
-    }));
+    return [...this.tasks.values()].map(
+      ({ id, title, state, surface, createdAt }) => ({
+        id,
+        title,
+        state,
+        createdAt,
+        threadId: surface?.threadId,
+      }),
+    );
   }
 
   getReceipt(requestKey) {
@@ -1703,6 +1706,40 @@ export class DiscordVoiceMeetingSession {
     return [...tasks.values()];
   }
 
+  getObservationTaskContext(statements) {
+    const all = this.getActiveTasks();
+    const active = all.filter((task) =>
+      ["queued", "running", "awaiting_receipt"].includes(task.state),
+    );
+    const text = statements
+      .map((statement) => statement.text)
+      .join("\n")
+      .toLowerCase();
+    const mentioned = all.filter(
+      (task) => task.id && text.includes(String(task.id).toLowerCase()),
+    );
+    const recent = [...all]
+      .reverse()
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+      .slice(0, 10);
+    const selected = [
+      ...new Map(
+        [...mentioned, ...active, ...recent].map((task) => [task.id, task]),
+      ).values(),
+    ].slice(0, 80);
+    return {
+      activeTasks: selected.map((task) => ({
+        ...task,
+        title: boundText(task.title, 160),
+      })),
+      taskListSummary: {
+        total: all.length,
+        active: active.length,
+        omitted: all.length - selected.length,
+      },
+    };
+  }
+
   cancelPendingTask(taskId) {
     if (!taskId) return Promise.resolve(false);
     const task = this.pendingTasks.find(
@@ -1992,7 +2029,7 @@ export class DiscordVoiceMeetingSession {
               minutes: this.minutes,
               transcript,
               statements,
-              activeTasks: this.getActiveTasks(),
+              ...this.getObservationTaskContext(statements),
               results: this.results,
             },
             { signal },

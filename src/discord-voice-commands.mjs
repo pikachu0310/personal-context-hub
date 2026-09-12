@@ -1,4 +1,8 @@
-import { boundText, splitDiscordText } from "./discord-voice-session.mjs";
+import {
+  boundText,
+  splitDiscordText,
+  escapeDiscordMarkdown,
+} from "./discord-voice-session.mjs";
 
 export const IDOBATA_HELP = [
   "🪣 **井戸Bot — 話す・作る・試す**",
@@ -6,12 +10,76 @@ export const IDOBATA_HELP = [
   "`/ido ask 質問` 即答 · `/ido context` 議事録",
   "`/ido task 依頼` 実装 · `/ido research 調査内容`",
   "`/ido benchmark 比較内容` · `/ido test 検証内容`",
-  "`/ido status` 作業一覧 · `/ido stop タスクID`",
+  "`/ido status ページ番号` 作業一覧 · `/ido stop タスクID`",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
   "`/ido apply タスクID 実行版` 確認した差分を作業場所へ反映",
   "作業・中断・新規会議は設定済みの操作担当者が使えます。",
   "作業結果は専用スレッドとこの会話へ戻ります。",
 ].join("\n");
+
+function taskStatus(tasks, session, argument) {
+  if (argument && !/^[1-9][0-9]{0,5}$/.test(argument))
+    return "ページ番号は1以上の整数で指定してください。`/ido status 1`";
+  const page = argument ? Number(argument) : 1;
+  const byId = new Map(
+    tasks.map((task, index) => [task.id, { ...task, index }]),
+  );
+  for (const task of session.pendingTasks ?? []) {
+    byId.set(task.id, {
+      ...byId.get(task.id),
+      ...task,
+      pending: true,
+      state: task.cancelled
+        ? "取り消し保存を再試行中"
+        : task.rejectionReason
+          ? "受付不可・通知を再試行中"
+          : "受付保存を再試行中",
+    });
+  }
+  const priority = (task) =>
+    task.pending || ["queued", "running"].includes(task.state)
+      ? 0
+      : ["interrupted", "failed"].includes(task.state)
+        ? 1
+        : 2;
+  const ordered = [...byId.values()].sort(
+    (a, b) =>
+      priority(a) - priority(b) ||
+      (b.createdAt ?? b.index ?? 0) - (a.createdAt ?? a.index ?? 0),
+  );
+  const rows = [
+    ...(session.pendingControls ?? []).map(
+      (control) =>
+        `操作の保存・通知を再試行中 · ${control.taskId ?? "対象確認待ち"}`,
+    ),
+    ...ordered.map(
+      (task) =>
+        `\`${task.id}\` ${task.state} · ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 100))}${task.threadId ? ` <#${task.threadId}>` : ""}`,
+    ),
+  ];
+  if (!rows.length)
+    return "まだ作業はありません。`/ido task 依頼` で開始できます。";
+  const pages = [];
+  let current = [];
+  let length = 0;
+  for (const row of rows) {
+    const bounded = boundText(row, 400);
+    if (
+      current.length &&
+      (length + bounded.length + 1 > 1700 || current.length >= 8)
+    ) {
+      pages.push(current.join("\n"));
+      current = [];
+      length = 0;
+    }
+    current.push(bounded);
+    length += bounded.length + 1;
+  }
+  if (current.length) pages.push(current.join("\n"));
+  if (page > pages.length)
+    return `ページ番号は1〜${pages.length}で指定してください。\`/ido status 1\``;
+  return `作業一覧 · ${byId.size}件 · ${page}/${pages.length}ページ\n${pages[page - 1]}${page < pages.length ? `\n次へ: /ido status ${page + 1}` : ""}${page > 1 ? `\n前へ: /ido status ${page - 1}` : ""}`;
+}
 
 export function taskControls(taskId, state, revision, applied = false) {
   return [
@@ -190,28 +258,7 @@ export function createIdobataMessageHandler({
     const argument = (match[2] ?? "").trim();
     if (command === "help") return reply(IDOBATA_HELP);
     if (command === "status") {
-      const tasks = taskQueue?.list() ?? [];
-      const pending = (session.pendingTasks ?? []).map(
-        (task) =>
-          `\`${task.id}\` ${task.cancelled ? "取り消し保存を再試行中" : task.rejectionReason ? "受付不可・通知を再試行中" : "受付保存を再試行中"} · ${task.title}`,
-      );
-      pending.push(
-        ...(session.pendingControls ?? []).map(
-          (control) =>
-            `操作の保存・通知を再試行中 · ${control.taskId ?? "対象確認待ち"}`,
-        ),
-      );
-      return reply(
-        tasks.length || pending.length
-          ? [
-              ...tasks.map(
-                (task) =>
-                  `\`${task.id}\` ${task.state} · ${task.title}${task.threadId ? ` <#${task.threadId}>` : ""}`,
-              ),
-              ...pending,
-            ].join("\n")
-          : "まだ作業はありません。`/ido task 依頼` で開始できます。",
-      );
+      return reply(taskStatus(taskQueue?.list() ?? [], session, argument));
     }
     if (command === "context") {
       for (const chunk of splitDiscordText(

@@ -143,6 +143,7 @@ export function buildMeetingObservationPrompt({
   ownerUserId,
   powerMode = false,
   activeTasks = [],
+  taskListSummary,
   results = [],
   operatorUserIds = [],
 }) {
@@ -166,6 +167,7 @@ export function buildMeetingObservationPrompt({
     "外部通信、Web検索、push、deploy、外部送信、承認要求は行わないでください。",
     "前回までの議事録と今回の話者別発言を読み、前提・決定事項・未解決点・TODO・訂正を区別して累積議事録を更新してください。訂正は旧情報を置き換え、未決定を決定扱いしないでください。",
     "taskResultsは実際の作業結果です。次の質問や判断に根拠として使い、未検証の結果を成功と断定しないでください。作業依頼はresearch/implementation/benchmark/testとroutine/complexへ分類してください。",
+    "activeTasksは進行中・受付待ち、最近の作業、発言でIDを指定された作業の抜粋です。taskListSummary.omittedが1以上なら他にも履歴があります。載っていない作業が存在しないとは断定せず、必要なら /ido status のページ指定で確認を案内してください。taskListSummary.activeが複数なら、一つしか見えていなくても曖昧な操作対象を決めつけないでください。",
     "新しい要点がなくてもminutesは空にせず、前回の議事録をそのまま返してください。前回も空なら「まだ議事録に残す要点はありません。」としてください。",
     "参加者同士ですでに解決した話題、雑談、相づち、独り言には応答しません。",
     "未解決の明確な質問、Codexへの依頼、誤解の訂正、または会話を前進させる有用な情報がある場合だけshouldReplyをtrueにしてください。",
@@ -183,6 +185,7 @@ export function buildMeetingObservationPrompt({
       newTranscript: transcript,
       attributedStatements,
       activeTasks,
+      taskListSummary,
       taskResults: results,
     }),
   ].join("\n");
