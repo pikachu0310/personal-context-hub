@@ -24,6 +24,7 @@
     "smoke:discord:user": "bash scripts/run-discord-rpc-windows.sh smoke",
     "smoke:mail:thunderbird": "node scripts/thunderbird-mail-smoke.mjs",
     "inspect:public": "node scripts/inspect-public-context.mjs",
+    "coordination:read": "node scripts/read-github-coordination.mjs",
     "inspect:mail:thunderbird": "node scripts/inspect-thunderbird-mail.mjs",
     "inspect:discord": "node scripts/inspect-discord-auth.mjs",
     "inspect:discord:voice": "node --env-file-if-exists=.env scripts/inspect-discord-voice-config.mjs",
