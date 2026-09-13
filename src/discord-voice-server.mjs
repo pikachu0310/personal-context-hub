@@ -32,6 +32,8 @@ import {
   taskControls,
   hasTaskChanges,
   IDOBATA_HELP,
+  IDOBATA_APPLICATION_COMMAND,
+  createIdobataSlashHandler,
 } from "./discord-voice-commands.mjs";
 import { readDiscordTokenStore } from "./discord-config.mjs";
 import {
@@ -335,6 +337,35 @@ export function createEditableDiscordPost(textChannel, { silent = true } = {}) {
   };
 }
 
+export function createMinutesDiscordPost(textChannel, options = {}) {
+  let message;
+  return async (content, { minutes = "" } = {}) => {
+    const payload = {
+      ...createDiscordMessagePayload(content, options),
+      files: [
+        {
+          attachment: Buffer.from(minutes || content, "utf8"),
+          name: "minutes.md",
+        },
+      ],
+      attachments: [],
+    };
+    if (message) {
+      try {
+        message = await message.edit(payload);
+        return message;
+      } catch (error) {
+        if (error?.code !== RESTJSONErrorCodes.UnknownMessage) throw error;
+      }
+    }
+    message = await textChannel.send(payload);
+    // Pin only our minutes message; if permission is absent, /ido context and
+    // the full attachment still make the current minutes available.
+    await message.pin?.().catch(() => undefined);
+    return message;
+  };
+}
+
 const DISCORD_TASK_STATES = Object.freeze({
   queued: ["⏳", "待機中"],
   running: ["🟡", "実行中"],
@@ -604,7 +635,9 @@ export async function startDiscordVoiceCodex({
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildVoiceStates,
       GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
+      ...(config.messageContentIntent === false
+        ? []
+        : [GatewayIntentBits.MessageContent]),
     ],
   }),
   logger = console,
@@ -633,6 +666,7 @@ export async function startDiscordVoiceCodex({
   let serviceClosing = false;
   let reconnecting = false;
   let voiceRecoveryFailed = false;
+  let manuallyDisconnected = false;
   let stopping;
   const pendingOperations = new Set();
   const trackOperation = (operation) => {
@@ -713,10 +747,7 @@ export async function startDiscordVoiceCodex({
       textChannel,
       messageOptions,
     );
-    const upsertMinutes = createEditableDiscordPost(
-      textChannel,
-      messageOptions,
-    );
+    const upsertMinutes = createMinutesDiscordPost(textChannel, messageOptions);
     transcriptArchive =
       config.voiceMode === "meeting"
         ? (dependencies.transcriptArchive ??
@@ -751,7 +782,7 @@ export async function startDiscordVoiceCodex({
       logAudioFailure(logger, "voice_connection_failed", error);
     });
     connection.on?.(VoiceConnectionStatus.Disconnected, () => {
-      if (serviceClosing || reconnecting) return;
+      if (serviceClosing || reconnecting || manuallyDisconnected) return;
       reconnecting = true;
       voiceRecoveryFailed = false;
       const waitForState = dependencies.entersState ?? entersState;
@@ -763,13 +794,13 @@ export async function startDiscordVoiceCodex({
           ]);
           await waitForState(connection, VoiceConnectionStatus.Ready, 20_000);
         } catch {
-          if (serviceClosing) return;
+          if (serviceClosing || manuallyDisconnected) return;
           try {
             if (!connection.rejoin?.())
               throw new Error("Voice rejoin unavailable");
             await waitForState(connection, VoiceConnectionStatus.Ready, 20_000);
           } catch {
-            if (serviceClosing) return;
+            if (serviceClosing || manuallyDisconnected) return;
             voiceRecoveryFailed = true;
             await postText(
               "⚠️ 通話との接続が切れ、再接続できませんでした。音声は受信していません。テキストで作業を続けられます。操作担当者は `/ido reconnect` で再接続を試せます。",
@@ -858,6 +889,7 @@ export async function startDiscordVoiceCodex({
       config.voiceMode === "meeting"
         ? new DiscordVoiceMeetingSession({
             transcribe: audio.transcribe,
+            quickReply: audio.quickReply,
             observe: (observation, options) =>
               codex.observeMeeting(observation, options),
             upsertLiveTranscript,
@@ -876,6 +908,9 @@ export async function startDiscordVoiceCodex({
             ownerUserId: config.allowedUserId,
             tasksEnabled: config.powerMode,
             operatorUserIds: config.operatorUserIds,
+            allParticipantsOperate: config.allParticipantsOperate,
+            autonomousTasks: config.autonomousTasks,
+            answerUnaddressedQuestions: config.answerUnaddressedQuestions,
             requireWakeWord: config.requireWakeWord,
             initialState: saved?.meeting,
             checkpoint: (meeting) => store?.save({ meeting }),
@@ -904,10 +939,18 @@ export async function startDiscordVoiceCodex({
       session,
       taskQueue,
       resetMeeting: () => codex.resetMeeting?.(),
+      leaveVoice: async () => {
+        manuallyDisconnected = true;
+        session.voicePaused = true;
+        await session.silenceSpeech?.();
+        connection.disconnect();
+      },
       getVoiceStatus: () => {
         const state = connection.state?.status;
         if (serviceClosing || state === VoiceConnectionStatus.Destroyed)
           return "通話: 停止（音声は受信していません）";
+        if (manuallyDisconnected)
+          return "通話: 退出済み。`/ido join` で接続できます。";
         if (state === VoiceConnectionStatus.Ready) return "通話: 接続済み";
         if (reconnecting) return "通話: 再接続中（音声受信は中断）";
         if (voiceRecoveryFailed || state === VoiceConnectionStatus.Disconnected)
@@ -926,6 +969,8 @@ export async function startDiscordVoiceCodex({
         if (connection.state?.status === VoiceConnectionStatus.Ready)
           return "connected";
         if (reconnecting) return "busy";
+        manuallyDisconnected = false;
+        session.voicePaused = false;
         reconnecting = true;
         voiceRecoveryFailed = false;
         try {
@@ -950,12 +995,16 @@ export async function startDiscordVoiceCodex({
       config,
       taskQueue,
     });
+    const handleSlash = createIdobataSlashHandler({ config, handleMessage });
+    await guild.commands?.create(IDOBATA_APPLICATION_COMMAND);
     client.on?.(Events.InteractionCreate, (interaction) => {
       if (serviceClosing) return;
       trackOperation(
-        handleInteraction(interaction).catch((error) =>
-          logAudioFailure(logger, "task_interaction_failed", error),
-        ),
+        handleSlash(interaction)
+          .then((handled) => handled || handleInteraction(interaction))
+          .catch((error) =>
+            logAudioFailure(logger, "task_interaction_failed", error),
+          ),
       );
     });
     deliveryInterval = setInterval(() => {
@@ -1000,6 +1049,10 @@ export async function startDiscordVoiceCodex({
           : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
     );
     if (config.voiceMode === "meeting") await postText(IDOBATA_HELP);
+    if (config.allParticipantsOperate || config.autonomousTasks)
+      await postText(
+        `⚙️ この会議の設定: ${config.allParticipantsOperate ? "参加者全員が作業を指示・操作できます。" : "設定済みの操作担当者が作業を操作できます。"}${config.autonomousTasks ? "会話から必要な作業を判断してタスク化します。" : ""}${config.answerUnaddressedQuestions ? "呼びかけなしの質問にも応答します。" : ""}`,
+      );
     logInfoQuietly(logger, {
       component: "discord-voice",
       event: "ready",

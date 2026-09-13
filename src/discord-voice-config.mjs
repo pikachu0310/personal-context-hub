@@ -160,6 +160,21 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD",
       true,
     ),
+    allParticipantsOperate: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE",
+      false,
+    ),
+    autonomousTasks: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_AUTONOMOUS_TASKS",
+      false,
+    ),
+    answerUnaddressedQuestions: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS",
+      false,
+    ),
     meetingStatePath: `${statePath}.meeting.json`,
     taskWorkspaceDirectory: `${statePath}.workspaces`,
     observerModel:
@@ -185,6 +200,13 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS",
       true,
     ),
+    messageContentIntent: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_MESSAGE_CONTENT_INTENT",
+      true,
+    ),
+    quickReplyModel:
+      env.PERSONAL_CONTEXT_VOICE_QUICK_REPLY_MODEL?.trim() || "gpt-4.1-mini",
     silentMessages: boolean(
       env,
       "PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES",
@@ -342,6 +364,11 @@ export function describeDiscordVoiceConfig(config) {
     operatorUserCount: config.operatorUserIds?.length ?? 0,
     requireWakeWord: config.requireWakeWord,
     immediateReactions: config.immediateReactions,
+    allParticipantsOperate: config.allParticipantsOperate,
+    autonomousTasks: config.autonomousTasks,
+    answerUnaddressedQuestions: config.answerUnaddressedQuestions,
+    quickReplyModel: config.quickReplyModel,
+    messageContentIntent: config.messageContentIntent,
     silentMessages: config.silentMessages,
     workingDirectory: config.workingDirectory,
     statePath: config.statePath,

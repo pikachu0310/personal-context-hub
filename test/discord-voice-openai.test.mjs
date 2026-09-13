@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { wrapPcmAsWav } from "../src/discord-voice-audio.mjs";
 import {
   CodexVoiceRunner,
   buildMeetingObservationPrompt,
@@ -231,11 +232,19 @@ test("OpenAI audio adapter uses bounded Japanese STT and PCM TTS contracts", asy
     },
     { client },
   );
-  assert.equal(await adapter.transcribe(Buffer.from("wav")), "こんにちは");
+  const pcm = Buffer.alloc(48_000);
+  for (let i = 0; i < pcm.length; i += 2)
+    pcm.writeInt16LE(Math.round(1000 * Math.sin(i / 30)), i);
+  assert.equal(await adapter.transcribe(wrapPcmAsWav(pcm)), "こんにちは");
+  assert.equal(
+    await adapter.transcribe(wrapPcmAsWav(Buffer.alloc(192_000))),
+    "",
+  );
   assert.deepEqual(await adapter.synthesize("返答"), Buffer.from([1, 2, 3]));
   assert.equal(calls[0][1].language, undefined);
   assert.deepEqual(calls[0][1].languages, ["ja", "en"]);
-  assert.ok(calls[0][1].keywords.includes("Codex"));
+  assert.equal(calls[0][1].keywords, undefined);
+  assert.equal(calls[0][1].prompt, undefined);
   assert.equal(calls[0][2].body, undefined);
   assert.equal(calls[1][1].response_format, "pcm");
   assert.equal(calls[1][1].speed, 2);

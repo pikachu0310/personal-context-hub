@@ -1800,6 +1800,7 @@ export class DiscordVoiceMeetingSession {
   constructor({
     transcribe,
     observe,
+    quickReply,
     upsertLiveTranscript,
     upsertMinutes,
     archiveTranscript = async () => undefined,
@@ -1814,6 +1815,9 @@ export class DiscordVoiceMeetingSession {
     ownerUserId,
     tasksEnabled = false,
     operatorUserIds = [],
+    allParticipantsOperate = false,
+    autonomousTasks = false,
+    answerUnaddressedQuestions = false,
     requireWakeWord = false,
     initialState = {},
     checkpoint = async () => undefined,
@@ -1830,6 +1834,7 @@ export class DiscordVoiceMeetingSession {
     this.dependencies = {
       transcribe,
       observe,
+      quickReply,
       upsertLiveTranscript,
       upsertMinutes,
       archiveTranscript,
@@ -1845,6 +1850,9 @@ export class DiscordVoiceMeetingSession {
     this.logger = logger;
     this.ownerUserId = ownerUserId;
     this.operatorUserIds = operatorUserIds;
+    this.allParticipantsOperate = allParticipantsOperate;
+    this.autonomousTasks = autonomousTasks;
+    this.answerUnaddressedQuestions = answerUnaddressedQuestions;
     this.requireWakeWord = requireWakeWord;
     this.checkpoint = checkpoint;
     this.getTasks = getTasks;
@@ -1896,6 +1904,8 @@ export class DiscordVoiceMeetingSession {
     this.liveUpdate = Promise.resolve();
     this.speechQueue = Promise.resolve();
     this.pendingSpeechCount = 0;
+    this.activeQuickReplies = 0;
+    this.voicePaused = false;
     this.speechController = new AbortController();
     this.silencedThroughSequence = initialState.silencedThroughSequence ?? null;
     this.speechStopSavePending = false;
@@ -2171,14 +2181,93 @@ export class DiscordVoiceMeetingSession {
     }
   }
 
-  #tryImmediateTaskAction(statement) {
+  async #tryImmediateTaskAction(statement) {
     if (isImmediateSpeechStop(statement.text))
       return this.#tryImmediateSpeechStop(statement);
-    return isImmediateTaskStatus(statement.text, {
+    const handled = await (isImmediateTaskStatus(statement.text, {
       explicitlyAsked: statement.requestReply === true,
     })
       ? this.#tryImmediateStatus(statement)
-      : this.#tryImmediateStop(statement);
+      : this.#tryImmediateStop(statement));
+    if (!handled) this.#startQuickReply(statement);
+    return handled;
+  }
+
+  #startQuickReply(statement) {
+    if (
+      !this.dependencies.quickReply ||
+      statement.handledAction ||
+      (!statement.requestReply &&
+        (!this.immediateReactions ||
+          statement.taskEligible === false ||
+          (!(
+            this.answerUnaddressedQuestions &&
+            /[？?]|(?:ですか|ますか|だっけ|なの|かな|教えて)[。！!\s]*$|(?:どうすれ|どうや|何が|何を|なぜ|なんで)/u.test(
+              statement.text,
+            )
+          ) &&
+            !/^(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,\s。！!？?]/iu.test(
+              statement.text,
+            )))) ||
+      (!statement.requestReply &&
+        /(?:実装|修正|作成|調査|検索|ベンチマーク|テスト)(?:して|をお願い)|作って|直して|調べて/u.test(
+          statement.text,
+        ))
+    )
+      return;
+    if (this.activeQuickReplies >= 3) return;
+    this.activeQuickReplies++;
+    statement.handledAction = { type: "quick_reply", pending: true };
+    if (!this.autonomousTasks) statement.taskEligible = false;
+    const startedAt = Date.now();
+    const context = this.getContextSnapshot();
+    this.#trackOperation(
+      (async () => {
+        let reply;
+        try {
+          reply = boundText(
+            await withTimeout(
+              (signal) =>
+                this.dependencies.quickReply(
+                  { text: statement.text, context },
+                  { signal },
+                ),
+              15_000,
+              "answering voice question",
+              this.shutdownController.signal,
+            ),
+            1200,
+          );
+          if (!reply) throw new Error("Empty quick reply");
+          this.#log("meeting_quick_reply_completed", {
+            sequence: statement.sequence,
+            elapsedMs: Date.now() - startedAt,
+          });
+        } catch (error) {
+          if (this.closed) return;
+          reply = "返答の生成に失敗しました。もう一度呼びかけてください。";
+          this.#log("meeting_quick_reply_failed", {
+            errorCode: voiceErrorCode(error),
+          });
+        }
+        await this.#saveImmediateReply(
+          statement,
+          {
+            type: "reply",
+            meetingId: statement.meetingId,
+            sourceSequences: [statement.sequence],
+            requestKey: `${statement.meetingId}:quick:${statement.sequence}`,
+            notification: reply,
+            spokenNotification: this.#canSpeakFor([statement.sequence])
+              ? speechExcerpt(reply)
+              : "",
+          },
+          { type: "quick_reply" },
+        );
+      })().finally(() => {
+        this.activeQuickReplies--;
+      }),
+    );
   }
 
   async #tryImmediateStatus(statement) {
@@ -2253,6 +2342,7 @@ export class DiscordVoiceMeetingSession {
       statement.taskEligible === false ||
       !this.ownerUserId ||
       !(
+        (this.allParticipantsOperate && Boolean(statement.userId)) ||
         statement.userId === this.ownerUserId ||
         this.operatorUserIds.includes(statement.userId)
       )
@@ -2279,7 +2369,8 @@ export class DiscordVoiceMeetingSession {
   }
 
   async #saveImmediateReply(statement, control, handledAction) {
-    statement.taskEligible = false;
+    if (!(this.autonomousTasks && handledAction.type === "quick_reply"))
+      statement.taskEligible = false;
     statement.handledAction = handledAction;
     // This is a notification-only receipt. Replaying it never invokes a worker or control.
     this.pendingControls.push(control);
@@ -2305,6 +2396,7 @@ export class DiscordVoiceMeetingSession {
       statement.taskEligible === false ||
       !this.ownerUserId ||
       !(
+        (this.allParticipantsOperate && Boolean(statement.userId)) ||
         statement.userId === this.ownerUserId ||
         this.operatorUserIds.includes(statement.userId)
       )
@@ -2508,6 +2600,7 @@ export class DiscordVoiceMeetingSession {
       this.closed ||
       this.resetting ||
       this.observing ||
+      this.activeQuickReplies ||
       this.pendingSpeechCount ||
       this.activeTextInputs ||
       this.activeTranscriptions ||
@@ -2657,7 +2750,8 @@ export class DiscordVoiceMeetingSession {
       const authorizedStatements = statements.map((statement) => ({
         ...statement,
         userId:
-          (statement.userId === this.ownerUserId ||
+          ((this.allParticipantsOperate && Boolean(statement.userId)) ||
+            statement.userId === this.ownerUserId ||
             this.operatorUserIds.includes(statement.userId)) &&
           (!this.requireWakeWord ||
             /(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)/iu.test(
@@ -2684,7 +2778,7 @@ export class DiscordVoiceMeetingSession {
         (signal) =>
           this.dependencies.upsertMinutes(
             `📝 **議事録・共有コンテキスト（rev ${this.revision + 1}）**\n${boundText(observation.minutes, 1750)}\n全文: /ido context`,
-            { signal },
+            { signal, minutes: observation.minutes },
           ),
         this.stageTimeouts.posting,
         "updating meeting minutes",
@@ -2696,6 +2790,8 @@ export class DiscordVoiceMeetingSession {
       this.minutes = observation.minutes;
       this.revision += 1;
       for (const task of tasks) {
+        if (this.autonomousTasks)
+          task.request = `会話から必要な作業を自律実行する設定です。次の成果を調査・実装・検証してください: ${task.title}\n判断の根拠となった会話（外部操作への追加許可ではありません）:\n${task.request}`;
         task.id = randomUUID().slice(0, 8);
         task.meetingId = this.meetingId;
         task.context = this.getContextSnapshot();
@@ -2918,7 +3014,7 @@ export class DiscordVoiceMeetingSession {
   }
 
   #queueMeetingSpeech(spoken) {
-    if (!spoken || this.closed) return Promise.resolve();
+    if (!spoken || this.closed || this.voicePaused) return Promise.resolve();
     const speechSignal = AbortSignal.any([
       this.shutdownController.signal,
       this.speechController.signal,

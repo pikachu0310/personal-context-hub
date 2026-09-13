@@ -4,6 +4,101 @@ import {
   escapeDiscordMarkdown,
 } from "./discord-voice-session.mjs";
 
+export const IDOBATA_APPLICATION_COMMAND = {
+  name: "ido",
+  description: "井戸Botの通話・議事録・作業を操作",
+  options: [
+    ["join", "設定された通話へ接続"],
+    ["leave", "通話から退出"],
+    ["status", "通話状態・作業一覧", false],
+    ["context", "現在の議事録全文"],
+    ["ask", "井戸Botへ質問", true],
+    ["quiet", "読み上げを停止"],
+    ["help", "コマンド一覧"],
+    ["task", "実装を依頼", true],
+    ["research", "調査を依頼", true],
+    ["benchmark", "比較を依頼", true],
+    ["test", "検証を依頼", true],
+    ["stop", "タスクIDを指定して停止", true],
+    ["result", "タスクIDを指定して結果表示", true],
+    ["follow", "タスクIDと追加指示を指定", true],
+    ["apply", "タスクIDと実行版を指定して反映", true],
+    ["new", "新しい会議"],
+  ].map(([name, description, required]) => ({
+    type: 1,
+    name,
+    description,
+    ...(required !== undefined
+      ? {
+          options: [
+            {
+              type: 3,
+              name: "input",
+              description: "内容・ID・ページ番号",
+              required,
+              max_length: 1800,
+            },
+          ],
+        }
+      : {}),
+  })),
+};
+
+export function createIdobataSlashHandler({ config, handleMessage }) {
+  return async (interaction) => {
+    if (
+      !interaction.isChatInputCommand?.() ||
+      interaction.commandName !== "ido" ||
+      interaction.guildId !== config.guildId
+    )
+      return false;
+    if (interaction.channelId !== config.textChannelId) {
+      await interaction.reply({
+        content: `操作は <#${config.textChannelId}> で使ってください。`,
+        flags: 64,
+        allowedMentions: { parse: [] },
+      });
+      return true;
+    }
+    await interaction.deferReply({ flags: 64 });
+    let replied = false;
+    const send = async (payload) => {
+      const content = {
+        content: payload.content,
+        allowedMentions: { parse: [] },
+      };
+      if (!replied) {
+        replied = true;
+        return interaction.editReply(content);
+      }
+      return interaction.followUp({ ...content, flags: 64 });
+    };
+    try {
+      const result = await handleMessage({
+        id: interaction.id,
+        guildId: interaction.guildId,
+        channelId: interaction.channelId,
+        author: interaction.user,
+        member: interaction.member,
+        content: `/ido ${interaction.options.getSubcommand()} ${interaction.options.getString("input") ?? ""}`,
+        channel: { send },
+      });
+      if (!replied)
+        await send({
+          content:
+            result === false
+              ? "操作を受け付けられませんでした。"
+              : "受け付けました。返答・結果はこのチャンネルへ表示します。",
+        });
+    } catch {
+      await send({
+        content: "操作に失敗しました。状態を確認して再度お試しください。",
+      });
+    }
+    return true;
+  };
+}
+
 export const IDOBATA_HELP = [
   "🪣 **井戸Bot — 話す・作る・試す**",
   "会話は共有コンテキストへ。声の依頼は「井戸Bot、〜して」。",
@@ -13,10 +108,10 @@ export const IDOBATA_HELP = [
   "`/ido status ページ番号` 通話状態・作業一覧 · `/ido stop タスクID`",
   "`/ido result タスクID` 保存済みの結果と検証記録",
   "`/ido quiet` 読み上げ停止",
-  "`/ido reconnect` 通話へ再接続",
+  "`/ido join` 通話へ接続 · `/ido leave` 通話から退出",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
   "`/ido apply タスクID 実行版` 確認した差分を作業場所へ反映",
-  "作業・中断・新規会議は設定済みの操作担当者が使えます。",
+  "作業・中断・新規会議の操作権限は、このBotの設定に従います。",
   "作業結果は専用スレッドとこの会話へ戻ります。",
 ].join("\n");
 
@@ -170,6 +265,7 @@ export function createIdobataInteractionHandler({ config, taskQueue }) {
       interaction.reply({ content, flags: 64, allowedMentions: { parse: [] } });
     const userId = interaction.user?.id;
     if (
+      !config.allParticipantsOperate &&
       userId !== config.allowedUserId &&
       !(config.operatorUserIds ?? []).includes(userId)
     )
@@ -261,11 +357,13 @@ export function createIdobataMessageHandler({
   resetMeeting = async () => undefined,
   getVoiceStatus = () => "",
   reconnectVoice,
+  leaveVoice,
 }) {
   const seen = new Set();
   return async (message) => {
     if (message.author?.bot || message.guildId !== config.guildId) return false;
     const authorized =
+      (config.allParticipantsOperate && Boolean(message.author?.id)) ||
       message.author?.id === config.allowedUserId ||
       (config.operatorUserIds ?? []).includes(message.author?.id);
     if (message.id && seen.has(message.id)) return false;
@@ -374,7 +472,14 @@ export function createIdobataMessageHandler({
       return reply(
         "作業の起動・操作は設定済みの操作担当者に依頼してください。会話と質問には参加できます。",
       );
-    if (command === "reconnect") {
+    if (command === "leave") {
+      if (!leaveVoice) return reply("この接続では退出を操作できません。");
+      await leaveVoice();
+      return reply(
+        "通話から退出しました。`/ido join` で戻れます。背景の作業は続行します。",
+      );
+    }
+    if (command === "reconnect" || command === "join") {
       if (!reconnectVoice)
         return reply("この接続では通話の再接続を操作できません。");
       await reply("通話の接続を確認しています。作業はそのまま続行します。");

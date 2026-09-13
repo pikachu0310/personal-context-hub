@@ -1,5 +1,49 @@
 const WAV_HEADER_BYTES = 44;
 
+// A conservative signal gate, not a speech recognizer: reject silence, DC and
+// brief clicks before STT. Do not reject recognized words such as 「はい」.
+export function qualifyTranscriptionAudio(wav) {
+  if (
+    !Buffer.isBuffer(wav) ||
+    wav.length < 44 ||
+    wav.toString("ascii", 0, 4) !== "RIFF" ||
+    wav.toString("ascii", 36, 40) !== "data"
+  )
+    throw new Error("Expected a PCM WAV produced by wrapPcmAsWav");
+  const rate = wav.readUInt32LE(24);
+  const channels = wav.readUInt16LE(22);
+  if (
+    wav.readUInt16LE(20) !== 1 ||
+    wav.readUInt16LE(34) !== 16 ||
+    !rate ||
+    !channels
+  )
+    throw new Error("Expected signed 16-bit PCM WAV");
+  const pcm = wav.subarray(44);
+  const frameBytes = Math.max(
+    channels * 2,
+    Math.floor(rate * 0.02) * channels * 2,
+  );
+  let activeMs = 0;
+  for (let offset = 0; offset < pcm.length; offset += frameBytes) {
+    const end = Math.min(pcm.length, offset + frameBytes);
+    let sum = 0,
+      square = 0,
+      samples = 0;
+    for (let i = offset; i + 1 < end; i += 2) {
+      const sample = pcm.readInt16LE(i);
+      sum += sample;
+      square += sample * sample;
+      samples++;
+    }
+    const rms = samples
+      ? Math.sqrt(Math.max(0, square / samples - (sum / samples) ** 2))
+      : 0;
+    if (rms >= 80) activeMs += (samples / channels / rate) * 1000;
+  }
+  return { accepted: activeMs >= 80, activeMs };
+}
+
 export function wrapPcmAsWav(
   pcm,
   { sampleRate = 48_000, channels = 2, bitsPerSample = 16 } = {},
