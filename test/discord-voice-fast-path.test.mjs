@@ -244,10 +244,12 @@ test("minutes restart restores only the Bot's previous entry", async () => {
 
 test("manual voice leave does not auto-rejoin and slash join resumes connection", async () => {
   const commands = [];
+  const players = [];
   let rejoins = 0;
   const connection = Object.assign(new EventEmitter(), {
     state: { status: "ready" },
     receiver: { speaking: new EventEmitter() },
+    subscribe: (player) => players.push(player),
     disconnect() {
       this.state.status = "disconnected";
       this.emit("disconnected");
@@ -301,7 +303,6 @@ test("manual voice leave does not auto-rejoin and slash join resumes connection"
       audioAdapter: {},
       joinVoiceChannel: () => connection,
       entersState: async () => connection,
-      playAudio: async () => {},
     },
   });
   const sendCommand = async (command) => {
@@ -324,7 +325,19 @@ test("manual voice leave does not auto-rejoin and slash join resumes connection"
   };
   try {
     assert.equal(commands[0].name, "ido");
+    const startListeners = connection.receiver.speaking.listenerCount("start");
+    const endListeners = connection.receiver.speaking.listenerCount("end");
+    assert.equal(players.length, 1);
     await sendCommand("leave");
+    assert.equal(players.length, 2);
+    assert.equal(
+      connection.receiver.speaking.listenerCount("start"),
+      startListeners,
+    );
+    assert.equal(
+      connection.receiver.speaking.listenerCount("end"),
+      endListeners,
+    );
     assert.equal(rejoins, 0);
     assert.equal(connection.state.status, "disconnected");
     await sendCommand("join");

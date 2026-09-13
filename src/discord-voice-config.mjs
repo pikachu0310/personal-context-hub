@@ -288,6 +288,13 @@ export function loadDiscordVoiceConfig(env = process.env) {
       300,
       5_000,
     ),
+    speechStartSilenceMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS",
+      1_000,
+      0,
+      5_000,
+    ),
     minimumAudioMs: integer(
       env,
       "PERSONAL_CONTEXT_VOICE_MINIMUM_AUDIO_MS",
@@ -417,6 +424,7 @@ export function describeDiscordVoiceConfig(config) {
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
     ttsSpeed: config.ttsSpeed,
+    speechStartSilenceMs: config.speechStartSilenceMs,
     maximumPendingTranscriptions: config.maximumPendingTranscriptions,
     maximumPendingTasks: config.maximumPendingTasks,
     taskConcurrency: config.taskConcurrency,

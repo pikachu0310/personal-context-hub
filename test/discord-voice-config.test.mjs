@@ -16,6 +16,38 @@ const valid = {
   OPENAI_API_KEY: "test-secret-never-print",
 };
 
+test("speech-start silence defaults to one second and is independent of recording silence", () => {
+  const config = loadDiscordVoiceConfig(valid);
+  assert.equal(config.speechStartSilenceMs, 1_000);
+  assert.equal(describeDiscordVoiceConfig(config).speechStartSilenceMs, 1_000);
+  for (const silence of [0, 750, 5_000]) {
+    const configured = loadDiscordVoiceConfig({
+      ...valid,
+      PERSONAL_CONTEXT_VOICE_SILENCE_MS: "1500",
+      PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS: String(silence),
+    });
+    assert.equal(configured.speechStartSilenceMs, silence);
+    assert.equal(configured.silenceMs, 1_500);
+    assert.equal(
+      describeDiscordVoiceConfig(configured).speechStartSilenceMs,
+      silence,
+    );
+  }
+});
+
+test("speech-start silence rejects invalid delays", () => {
+  for (const silence of ["-1", "5001", "0.5", "invalid"]) {
+    assert.throws(
+      () =>
+        loadDiscordVoiceConfig({
+          ...valid,
+          PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS: silence,
+        }),
+      /PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS must be an integer from 0 through 5000/,
+    );
+  }
+});
+
 test("automatic routing cannot inherit Astra from an old shared or complex profile", () => {
   const shared = loadDiscordVoiceConfig({
     ...valid,

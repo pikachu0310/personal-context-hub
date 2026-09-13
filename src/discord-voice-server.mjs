@@ -8,6 +8,7 @@ import { browserPreviewVerifier } from "./discord-voice-preview-browser.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
 import { VoiceServiceError } from "./discord-voice-errors.mjs";
+import { SpeechStartGate } from "./discord-voice-speech-start.mjs";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -115,7 +116,11 @@ export function serializeAudioPlayback(play) {
   };
 }
 
-export function createDiscordPlayer(connection, logger = console) {
+export function createDiscordPlayer(
+  connection,
+  logger = console,
+  { speechStartSilenceMs = 1_000 } = {},
+) {
   const player = createAudioPlayer({
     behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
   });
@@ -123,17 +128,25 @@ export function createDiscordPlayer(connection, logger = console) {
     logAudioFailure(logger, "playback_failed", error);
   });
   connection.subscribe(player);
-  return serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
+  const speechStart = new SpeechStartGate(connection.receiver.speaking, {
+    silenceMs: speechStartSilenceMs,
+  });
+  const play = serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
     if (signal?.aborted) throw signal.reason;
     const stopOnAbort = () => player.stop(true);
     signal?.addEventListener("abort", stopOnAbort, { once: true });
     try {
       const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
       const seconds = raw.length / PCM_BYTES_PER_SECOND;
-      const resource = createAudioResource(Readable.from(raw), {
-        inputType: StreamType.Raw,
-      });
-      player.play(resource);
+      await speechStart.runWhenQuiet(
+        () => {
+          const resource = createAudioResource(Readable.from(raw), {
+            inputType: StreamType.Raw,
+          });
+          player.play(resource);
+        },
+        { signal },
+      );
       await entersState(player, AudioPlayerStatus.Playing, 5_000);
       await entersState(
         player,
@@ -144,6 +157,8 @@ export function createDiscordPlayer(connection, logger = console) {
       signal?.removeEventListener("abort", stopOnAbort);
     }
   });
+  play.dispose = () => speechStart.dispose();
+  return play;
 }
 
 export function createDiscordLiveOutput(connection, logger = console) {
@@ -755,6 +770,7 @@ export async function startDiscordVoiceCodex({
   let transcriptArchive;
   let session;
   let taskQueue;
+  let playAudio;
   let live;
   let previews;
   let deliveryInterval;
@@ -776,6 +792,7 @@ export async function startDiscordVoiceCodex({
     serviceClosing = true;
     live?.close();
     clearInterval(deliveryInterval);
+    playAudio?.dispose?.();
     stopping = (async () => {
       const results = await Promise.allSettled([
         Promise.resolve().then(() => previews?.close()),
@@ -922,8 +939,8 @@ export async function startDiscordVoiceCodex({
       VoiceConnectionStatus.Ready,
       20_000,
     );
-    let playAudio =
-      dependencies.playAudio ?? createDiscordPlayer(connection, logger);
+    playAudio =
+      dependencies.playAudio ?? createDiscordPlayer(connection, logger, config);
     previews = new TaskPreviewManager({
       command: config.previewCommand,
       workspaceRoot: config.taskWorkspaceDirectory,
@@ -1125,8 +1142,10 @@ export async function startDiscordVoiceCodex({
       if (enabled && live?.ready) return "live";
       liveChanging = true;
       const fallback = () => {
+        playAudio?.dispose?.();
         playAudio =
-          dependencies.playAudio ?? createDiscordPlayer(connection, logger);
+          dependencies.playAudio ??
+          createDiscordPlayer(connection, logger, config);
         session.dependencies.playAudio = playAudio;
       };
       try {
@@ -1180,8 +1199,10 @@ export async function startDiscordVoiceCodex({
         manuallyDisconnected = true;
         live?.close();
         session.voicePaused = true;
+        playAudio?.dispose?.();
         playAudio =
-          dependencies.playAudio ?? createDiscordPlayer(connection, logger);
+          dependencies.playAudio ??
+          createDiscordPlayer(connection, logger, config);
         session.dependencies.playAudio = playAudio;
         await session.silenceSpeech?.();
         connection.disconnect();
