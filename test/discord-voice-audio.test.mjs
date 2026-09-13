@@ -3,9 +3,9 @@ import test from "node:test";
 import {
   PcmTurnBuffer,
   pcmDurationSeconds,
-  ttsPcm24kMonoToDiscordRaw,
   wrapPcmAsWav,
-} from "../src/discord-voice-audio.mjs";
+} from "../src/engine/input/audio.mjs";
+import { ttsPcm24kMonoToDiscordRaw } from "../src/adapters/discord/audio-format.mjs";
 
 test("wrapPcmAsWav emits a complete PCM RIFF header", () => {
   const pcm = Buffer.alloc(48_000 * 2 * 2);

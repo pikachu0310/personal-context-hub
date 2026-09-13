@@ -4,10 +4,10 @@ import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
-import { loadDiscordVoiceConfig } from "../src/discord-voice-config.mjs";
-import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
-import { voiceErrorCode } from "../src/discord-voice-errors.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
+import { loadDiscordVoiceConfig } from "../src/runtime/discord-voice/config.mjs";
+import { DiscordVoiceTaskQueue } from "../src/adapters/discord/sessions.mjs";
+import { voiceErrorCode } from "../src/engine/errors.mjs";
 
 // Real Codex, a disposable repository, and deliberately stalled Discord writes.
 // No Discord connection, participant recording, or original-repository edits.

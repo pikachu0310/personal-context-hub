@@ -7,8 +7,8 @@ import test from "node:test";
 import {
   TaskPreviewManager,
   parsePreviewCommand,
-  formatTaskPreview,
-} from "../src/discord-voice-preview.mjs";
+} from "../src/execution/preview.mjs";
+import { formatTaskPreview } from "../src/engine/output/preview.mjs";
 
 test("preview starts only the configured sandbox command, verifies the version and rejects stale participant reports", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "preview-unit-"));

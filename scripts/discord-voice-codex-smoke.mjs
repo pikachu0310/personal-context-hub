@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
 
 const workingDirectory = resolve(process.argv[2] ?? process.cwd());
 const temporaryDirectory = await mkdtemp(

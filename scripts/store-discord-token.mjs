@@ -2,7 +2,7 @@ import {
   DISCORD_API_BASE,
   getDiscordTokenStoreDescription,
   writeDiscordTokenStore,
-} from "../src/discord-config.mjs";
+} from "../src/integrations/discord-bot/config.mjs";
 
 function getArgument(name) {
   const index = process.argv.indexOf(name);

@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 const COMMAND_TARGETS = Object.freeze({
   auth: "scripts/store-discord-token.mjs",
   inspect: "scripts/inspect-discord-voice-config.mjs",
-  start: "src/discord-voice-server.mjs",
+  start: "src/runtime/discord-voice/server.mjs",
 });
 const PROFILE_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 

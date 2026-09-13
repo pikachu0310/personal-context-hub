@@ -4,12 +4,12 @@ import {
   buildDiscordRpcChannelPaths,
   DiscordRpcClient,
   normalizeDiscordRpcMessages,
-} from "../src/discord-rpc-client.mjs";
+} from "../src/integrations/discord-rpc/client.mjs";
 import {
   DISCORD_RPC_OPCODES,
   DiscordRpcFrameDecoder,
   encodeDiscordRpcFrame,
-} from "../src/discord-rpc-transport.mjs";
+} from "../src/integrations/discord-rpc/transport.mjs";
 
 test("Discord RPC frames decode across fragmented input", () => {
   const encoded = encodeDiscordRpcFrame(DISCORD_RPC_OPCODES.FRAME, {

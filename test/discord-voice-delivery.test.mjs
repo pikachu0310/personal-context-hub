@@ -3,8 +3,8 @@ import test from "node:test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
-import { createDiscordArtifactPoster } from "../src/discord-voice-server.mjs";
+import { DiscordVoiceTaskQueue } from "../src/adapters/discord/sessions.mjs";
+import { createDiscordArtifactPoster } from "../src/adapters/discord/transport.mjs";
 
 const noop = async () => undefined;
 const eventually = async (check) => {

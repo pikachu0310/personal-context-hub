@@ -1,21 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { VoiceServiceError } from "../src/discord-voice-errors.mjs";
+import { VoiceServiceError } from "../src/engine/errors.mjs";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceSession,
   DiscordVoiceTaskQueue,
+} from "../src/adapters/discord/sessions.mjs";
+import {
   authorizeMeetingTaskControls,
   authorizeMeetingTasks,
+  formatMeetingObservationTranscript,
+  parseMeetingObservation,
+} from "../src/engine/observation/observation.mjs";
+import {
   boundText,
   formatElapsedTime,
-  formatMeetingObservationTranscript,
-  formatMeetingTranscript,
-  parseMeetingObservation,
   speechExcerpt,
-  splitDiscordText,
   withTimeout,
-} from "../src/discord-voice-session.mjs";
+} from "../src/engine/shared.mjs";
+import {
+  formatMeetingTranscript,
+  splitDiscordText,
+} from "../src/adapters/discord/presentation.mjs";
 
 async function eventually(check, timeoutMs = 1_000) {
   const deadline = Date.now() + timeoutMs;

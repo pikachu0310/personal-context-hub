@@ -5,9 +5,9 @@ import { ChannelType, MessageFlags } from "discord.js";
 import {
   createDiscordMessagePayload,
   createDiscordPlayer,
-  startDiscordVoiceCodex,
   subscribeToAllowedSpeaker,
-} from "../src/discord-voice-server.mjs";
+} from "../src/adapters/discord/transport.mjs";
+import { startDiscordVoiceCodex } from "../src/runtime/discord-voice/index.mjs";
 
 test("Discord messages suppress notifications by default and can opt out", () => {
   assert.equal(

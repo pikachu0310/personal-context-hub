@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { inspectDiscordVoiceReadiness } from "./discord-voice-diagnostics.mjs";
+import { inspectDiscordVoiceReadiness } from "./diagnostics.mjs";
 
 export const VOICE_CODEX_DOCTOR_OK = "VOICE_CODEX_DOCTOR_OK";
 export const VOICE_CODEX_DOCTOR_FAILED = "VOICE_CODEX_DOCTOR_FAILED";
@@ -127,11 +127,11 @@ function childEnvironment() {
 
 function defaultSmokeRunner(scriptName, marker) {
   const scriptPath = fileURLToPath(
-    new URL(`../scripts/${scriptName}`, import.meta.url),
+    new URL(`../../../scripts/${scriptName}`, import.meta.url),
   );
   return async () => {
     const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: fileURLToPath(new URL("..", import.meta.url)),
+      cwd: fileURLToPath(new URL("../../..", import.meta.url)),
       encoding: "utf8",
       env: childEnvironment(),
       timeout: 30_000,

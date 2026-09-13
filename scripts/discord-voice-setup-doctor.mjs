@@ -1,4 +1,4 @@
-import { runDiscordVoiceSetupDoctor } from "../src/discord-voice-setup-doctor.mjs";
+import { runDiscordVoiceSetupDoctor } from "../src/runtime/discord-voice/setup-doctor.mjs";
 
 const arguments_ = process.argv.slice(2);
 if (arguments_.length) {

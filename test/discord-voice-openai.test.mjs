@@ -14,7 +14,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import test from "node:test";
-import { wrapPcmAsWav } from "../src/discord-voice-audio.mjs";
+import { wrapPcmAsWav } from "../src/engine/input/audio.mjs";
 import {
   CodexVoiceRunner,
   buildMeetingObservationPrompt,
@@ -22,12 +22,12 @@ import {
   buildCodexPrompt,
   buildCodexEnvironment,
   buildPowerTaskPrompt,
-  createOpenAIAudioAdapter,
   codexWorkspaceTrustDirectories,
   isSafeIsolatedCodexConfig,
   describePowerTaskEvent,
   prepareIsolatedCodexHome,
-} from "../src/discord-voice-openai.mjs";
+} from "../src/execution/codex/runner.mjs";
+import { createOpenAIAudioAdapter } from "../src/providers/openai-audio.mjs";
 
 test("Codex restart accepts trust for the Git main repository of a linked worktree", async () => {
   const root = await realpath(

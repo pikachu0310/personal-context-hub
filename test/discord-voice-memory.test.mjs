@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MeetingMemory } from "../src/discord-voice-memory.mjs";
-import { parseImmediateTaskInstruction } from "../src/discord-voice-intents.mjs";
+import { MeetingMemory } from "../src/engine/observation/memory.mjs";
+import { parseImmediateTaskInstruction } from "../src/engine/observation/intents.mjs";
 
 test("source retrieval preserves an older relevant statement and corrections replace sourced interpretations", () => {
   const memory = new MeetingMemory();

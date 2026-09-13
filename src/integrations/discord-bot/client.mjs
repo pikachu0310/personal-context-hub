@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import { DISCORD_API_BASE, readDiscordTokenStore } from "./discord-config.mjs";
+import { DISCORD_API_BASE, readDiscordTokenStore } from "./config.mjs";
 
 const TOKEN_CACHE_MS = 60 * 1000;
 const DIRECTORY_CACHE_MS = 5 * 60 * 1000;

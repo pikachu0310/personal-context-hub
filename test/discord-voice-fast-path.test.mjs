@@ -4,17 +4,15 @@ import { EventEmitter } from "node:events";
 import {
   qualifyTranscriptionAudio,
   wrapPcmAsWav,
-} from "../src/discord-voice-audio.mjs";
-import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
+} from "../src/engine/input/audio.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
 import {
   createIdobataMessageHandler,
   createIdobataSlashHandler,
-} from "../src/discord-voice-commands.mjs";
-import {
-  createMinutesDiscordPost,
-  startDiscordVoiceCodex,
-} from "../src/discord-voice-server.mjs";
-import { buildMeetingObservationPrompt } from "../src/discord-voice-openai.mjs";
+} from "../src/adapters/discord/commands.mjs";
+import { createMinutesDiscordPost } from "../src/adapters/discord/transport.mjs";
+import { startDiscordVoiceCodex } from "../src/runtime/discord-voice/index.mjs";
+import { buildMeetingObservationPrompt } from "../src/execution/codex/runner.mjs";
 
 async function until(check) {
   for (let i = 0; i < 200; i++) {

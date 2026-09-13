@@ -5,7 +5,7 @@ import {
   accountFolderPrefix,
   getThunderbirdProfilePath,
   readThunderbirdAccounts,
-} from "./thunderbird-config.mjs";
+} from "./config.mjs";
 
 const MAX_BODY_CHARS = 40_000;
 const MAX_SNIPPET_CHARS = 800;

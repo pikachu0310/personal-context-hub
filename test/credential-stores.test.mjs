@@ -3,15 +3,18 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readTokenStore, writeTokenStore } from "../src/config.mjs";
+import {
+  readTokenStore,
+  writeTokenStore,
+} from "../src/integrations/traq/config.mjs";
 import {
   readDiscordTokenStore,
   writeDiscordTokenStore,
-} from "../src/discord-config.mjs";
+} from "../src/integrations/discord-bot/config.mjs";
 import {
   readDiscordRpcCredentialStore,
   writeDiscordRpcCredentialStore,
-} from "../src/discord-rpc-config.mjs";
+} from "../src/integrations/discord-rpc/config.mjs";
 
 async function temporaryDirectory(t) {
   const path = await mkdtemp(join(tmpdir(), "personal-context-hub-test-"));

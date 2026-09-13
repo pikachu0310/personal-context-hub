@@ -1,12 +1,22 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-export const DISCORD_API_BASE = new URL("https://discord.com/api/v10/");
+export const TRAQ_ORIGIN = process.env.TRAQ_ORIGIN ?? "https://q.trap.jp";
+export const TRAQ_API_BASE = new URL("/api/v3/", TRAQ_ORIGIN);
+export const TRAQ_REDIRECT_URI = "http://127.0.0.1:8943/oauth/callback";
+export const TRAQ_CALLBACK_PORT = 8943;
+export const TRAQ_OAUTH_SCOPES = [
+  "openid",
+  "profile",
+  "read",
+  "write",
+  "manage_bot",
+];
 
 const isWsl =
   process.platform === "linux" &&
@@ -15,34 +25,35 @@ const isWsl =
       "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
     ));
 const dpapiScriptPath = fileURLToPath(
-  new URL("../scripts/discord-token-dpapi.ps1", import.meta.url),
+  new URL("../../../scripts/traq-token-dpapi.ps1", import.meta.url),
 );
 const dpapiScript = readFileSync(dpapiScriptPath, "utf8");
 
-export function getDiscordTokenBackend() {
-  if (process.env.PERSONAL_CONTEXT_DISCORD_TOKEN_PATH) return "file";
-  if (process.env.PERSONAL_CONTEXT_DISCORD_TOKEN_BACKEND) {
-    return process.env.PERSONAL_CONTEXT_DISCORD_TOKEN_BACKEND;
+export function getTokenBackend() {
+  if (process.env.PERSONAL_CONTEXT_TOKEN_PATH) return "file";
+  if (process.env.PERSONAL_CONTEXT_TOKEN_BACKEND) {
+    return process.env.PERSONAL_CONTEXT_TOKEN_BACKEND;
   }
   return process.platform === "win32" || isWsl ? "dpapi" : "file";
 }
 
-export function getDiscordTokenPath() {
-  if (process.env.PERSONAL_CONTEXT_DISCORD_TOKEN_PATH) {
-    return process.env.PERSONAL_CONTEXT_DISCORD_TOKEN_PATH;
+export function getTokenPath() {
+  if (process.env.PERSONAL_CONTEXT_TOKEN_PATH) {
+    return process.env.PERSONAL_CONTEXT_TOKEN_PATH;
   }
+
   const dataRoot =
     process.env.LOCALAPPDATA ?? join(homedir(), ".local", "share");
-  return join(dataRoot, "personal-context-hub", "discord-bot.json");
+  return join(dataRoot, "personal-context-hub", "traq-oauth.json");
 }
 
-export function getDiscordTokenStoreDescription() {
-  return getDiscordTokenBackend() === "dpapi"
-    ? "Windows DPAPI CurrentUser: %LOCALAPPDATA%\\personal-context-hub\\discord-bot.dpapi"
-    : getDiscordTokenPath();
+export function getTokenStoreDescription() {
+  return getTokenBackend() === "dpapi"
+    ? "Windows DPAPI CurrentUser: %LOCALAPPDATA%\\personal-context-hub\\traq-oauth.dpapi"
+    : getTokenPath();
 }
 
-function runDiscordDpapi(action, input = "") {
+function runDpapi(action, input = "") {
   return new Promise((resolve, reject) => {
     const powershellExecutable = isWsl
       ? "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
@@ -73,7 +84,7 @@ function runDiscordDpapi(action, input = "") {
       const detail = Buffer.concat(stderr).toString("utf8").trim();
       reject(
         new Error(
-          `Windows DPAPI Discord credential operation failed (${code})${detail ? `: ${detail}` : ""}`,
+          `Windows DPAPI token operation failed (${code})${detail ? `: ${detail}` : ""}`,
         ),
       );
     });
@@ -81,39 +92,39 @@ function runDiscordDpapi(action, input = "") {
   });
 }
 
-export async function readDiscordTokenStore(path) {
+export async function readTokenStore(path) {
   let contents;
   try {
     contents =
-      path || getDiscordTokenBackend() === "file"
-        ? await readFile(path ?? getDiscordTokenPath(), "utf8")
-        : await runDiscordDpapi("read");
+      path || getTokenBackend() === "file"
+        ? await readFile(path ?? getTokenPath(), "utf8")
+        : await runDpapi("read");
   } catch (error) {
     if (error?.code === "ENOENT") {
       throw new Error(
-        "Discord is not authenticated. Store a Bot token with: npm run auth:discord -- --application-id <APPLICATION_ID>",
+        "traQ is not authenticated. Run: npm run auth:traq -- --client-id <CLIENT_ID>",
       );
     }
     throw error;
   }
 
-  const credential = JSON.parse(contents);
-  if (!credential.token || !credential.applicationId || !credential.botUserId) {
+  const token = JSON.parse(contents);
+  if (!token.clientId || !token.accessToken || !token.expiresAt) {
     throw new Error(
-      `Invalid Discord credential store at ${getDiscordTokenStoreDescription()}`,
+      `Invalid traQ token store at ${getTokenStoreDescription()}`,
     );
   }
-  return credential;
+  return token;
 }
 
-export async function writeDiscordTokenStore(credential, path) {
-  const contents = `${JSON.stringify(credential, null, 2)}\n`;
-  if (!path && getDiscordTokenBackend() === "dpapi") {
-    await runDiscordDpapi("write", contents);
+export async function writeTokenStore(token, path) {
+  const contents = `${JSON.stringify(token, null, 2)}\n`;
+  if (!path && getTokenBackend() === "dpapi") {
+    await runDpapi("write", contents);
     return;
   }
 
-  const resolvedPath = path ?? getDiscordTokenPath();
+  const resolvedPath = path ?? getTokenPath();
   await mkdir(dirname(resolvedPath), { recursive: true });
   const temporaryPath = `${resolvedPath}.${randomBytes(6).toString("hex")}.tmp`;
   await writeFile(temporaryPath, contents, {

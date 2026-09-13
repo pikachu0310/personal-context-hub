@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDiscordMessagePayload } from "../src/discord-voice-server.mjs";
-import {
-  DiscordVoiceMeetingSession,
-  splitDiscordText,
-} from "../src/discord-voice-session.mjs";
+import { createDiscordMessagePayload } from "../src/adapters/discord/transport.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
+import { splitDiscordText } from "../src/adapters/discord/presentation.mjs";
 
 const noop = async () => undefined;
 const meeting = (options = {}) =>

@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import {
-  DiscordLiveBridge,
-  LiveInputMixer,
-} from "../src/discord-voice-live.mjs";
+import { DiscordLiveBridge, LiveInputMixer } from "../src/providers/live.mjs";
 
 test("Live mixes simultaneous Discord tracks on one clock, clips and bounds buffered audio", () => {
   const mixer = new LiveInputMixer({ maximumBufferedFrames: 1 });

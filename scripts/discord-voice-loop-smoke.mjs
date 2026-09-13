@@ -10,10 +10,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
-import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
-import { TaskPreviewManager } from "../src/discord-voice-preview.mjs";
-import { browserPreviewVerifier } from "../src/discord-voice-preview-browser.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
+import { DiscordVoiceTaskQueue } from "../src/adapters/discord/sessions.mjs";
+import { TaskPreviewManager } from "../src/execution/preview.mjs";
+import { browserPreviewVerifier } from "../src/execution/preview-browser.mjs";
 
 const exec = promisify(execFile);
 const root = await mkdtemp(join(tmpdir(), "idd-loop-smoke-"));

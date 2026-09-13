@@ -5,7 +5,7 @@ import {
   buildMessageSearchParams,
   normalizeWritePath,
   TraqClient,
-} from "../src/traq-client.mjs";
+} from "../src/integrations/traq/client.mjs";
 
 test("buildMessageSearchParams preserves supported filters", () => {
   const params = buildMessageSearchParams({

@@ -9,8 +9,8 @@ import {
   createDiscordTaskThread,
   formatDiscordTaskAction,
   formatDiscordTaskCard,
-  startDiscordVoiceCodex,
-} from "../src/discord-voice-server.mjs";
+} from "../src/adapters/discord/transport.mjs";
+import { startDiscordVoiceCodex } from "../src/runtime/discord-voice/index.mjs";
 
 test("task creation recovers lost card, thread, and request acknowledgements in the same Discord thread", async () => {
   const acceptedCards = new Map();

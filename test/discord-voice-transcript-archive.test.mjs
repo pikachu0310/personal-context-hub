@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createDiscordTranscriptPublisher,
+  formatDiscordTranscriptBatch,
+} from "../src/adapters/discord/transcript-publisher.mjs";
+import {
   createLocalTranscriptArchive,
   createMeetingTranscriptArchive,
-  formatDiscordTranscriptBatch,
-  transcriptDateKey,
-} from "../src/discord-voice-transcript-archive.mjs";
+} from "../src/storage/transcript-archive.mjs";
+import { transcriptDateKey } from "../src/storage/transcript-format.mjs";
 
 const statement = {
   id: "statement-1",

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { TraqClient } from "./traq-client.mjs";
+import { TraqClient } from "./client.mjs";
 
 const client = new TraqClient();
 const server = new McpServer(

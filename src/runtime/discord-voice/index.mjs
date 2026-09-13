@@ -1,12 +1,12 @@
-import { DiscordLiveBridge } from "../providers/live.mjs";
-import { TaskPreviewManager } from "../execution/preview.mjs";
-import { browserPreviewVerifier } from "../execution/preview-browser.mjs";
-import { createDiscordLiveOutput } from "../adapters/discord/transport.mjs";
-import { createDiscordTranscriptPublisher } from "../adapters/discord/transcript-publisher.mjs";
-import { createConversationEngine } from "../engine/conversation.mjs";
-import { createCodexBackend } from "../execution/codex/backend.mjs";
-import { bindExecution } from "../execution/port.mjs";
-import { discordPresentation } from "../adapters/discord/presentation.mjs";
+import { DiscordLiveBridge } from "../../providers/live.mjs";
+import { TaskPreviewManager } from "../../execution/preview.mjs";
+import { browserPreviewVerifier } from "../../execution/preview-browser.mjs";
+import { createDiscordLiveOutput } from "../../adapters/discord/transport.mjs";
+import { createDiscordTranscriptPublisher } from "../../adapters/discord/transcript-publisher.mjs";
+import { createConversationEngine } from "../../engine/conversation.mjs";
+import { createCodexBackend } from "../../execution/codex/backend.mjs";
+import { bindExecution } from "../../execution/port.mjs";
+import { discordPresentation } from "../../adapters/discord/presentation.mjs";
 import {
   createDiscordPlayer,
   createDiscordMessagePayload,
@@ -20,9 +20,9 @@ import {
   logAudioFailure,
   logInfoQuietly,
   destroyQuietly,
-} from "../adapters/discord/transport.mjs";
+} from "../../adapters/discord/transport.mjs";
 
-import { VoiceServiceError } from "../engine/errors.mjs";
+import { VoiceServiceError } from "../../engine/errors.mjs";
 import { once } from "node:events";
 
 import {
@@ -38,26 +38,29 @@ import {
   RESTJSONErrorCodes,
 } from "discord.js";
 
-import { MeetingStateStore, meetingScope } from "../storage/meeting-state.mjs";
+import {
+  MeetingStateStore,
+  meetingScope,
+} from "../../storage/meeting-state.mjs";
 import {
   createIdobataMessageHandler,
   createIdobataInteractionHandler,
   IDOBATA_HELP,
   IDOBATA_APPLICATION_COMMAND,
   createIdobataSlashHandler,
-} from "../adapters/discord/commands.mjs";
-import { readDiscordTokenStore } from "../discord-config.mjs";
+} from "../../adapters/discord/commands.mjs";
+import { readDiscordTokenStore } from "../../integrations/discord-bot/config.mjs";
 
 import {
   describeDiscordVoiceConfig,
   loadDiscordVoiceConfig,
-} from "../discord-voice-config.mjs";
-import { createOpenAIAudioAdapter } from "../providers/openai-audio.mjs";
-import { boundText } from "../engine/shared.mjs";
+} from "./config.mjs";
+import { createOpenAIAudioAdapter } from "../../providers/openai-audio.mjs";
+import { boundText } from "../../engine/shared.mjs";
 import {
   createLocalTranscriptArchive,
   createMeetingTranscriptArchive,
-} from "../storage/transcript-archive.mjs";
+} from "../../storage/transcript-archive.mjs";
 
 export async function startDiscordVoiceCodex({
   config = loadDiscordVoiceConfig(),

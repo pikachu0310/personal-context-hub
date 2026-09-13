@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { VoiceServiceError } from "../src/discord-voice-errors.mjs";
-import { inspectDiscordVoiceReadiness } from "../src/discord-voice-diagnostics.mjs";
+import { VoiceServiceError } from "../src/engine/errors.mjs";
+import { inspectDiscordVoiceReadiness } from "../src/runtime/discord-voice/diagnostics.mjs";
 
 const publicEnvironment = Object.freeze({
   PERSONAL_CONTEXT_VOICE_GUILD_ID: "11111111111111111",

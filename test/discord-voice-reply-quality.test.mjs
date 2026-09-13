@@ -1,10 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
-import {
-  CodexVoiceRunner,
-  createOpenAIAudioAdapter,
-} from "../src/discord-voice-openai.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
+import { createOpenAIAudioAdapter } from "../src/providers/openai-audio.mjs";
 
 const until = async (check) => {
   for (let i = 0; i < 200; i++) {
