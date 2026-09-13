@@ -6,8 +6,12 @@ import {
   type FormEvent,
 } from "react";
 import { StudioFiles, type StudioRequester } from "./StudioFiles";
+import { StudioText } from "./StudioText";
+import { StudioConversation } from "./StudioConversation";
+import { StudioTaskList } from "./StudioTaskList";
 import {
   ArrowRight,
+  MessagesSquare,
   Check,
   CheckCheck,
   ChevronDown,
@@ -21,7 +25,6 @@ import {
   Monitor,
   PanelRightClose,
   Plus,
-  Radio,
   RefreshCw,
   Send,
   Settings2,
@@ -72,6 +75,16 @@ const formatTime = (at: number) =>
         minute: "2-digit",
       })
     : "";
+function jumpTo(id: string) {
+  const element = document.getElementById(id);
+  element?.focus({ preventScroll: true });
+  element?.scrollIntoView({
+    block: "start",
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "auto"
+      : "smooth",
+  });
+}
 const stageName: Record<string, string> = {
   EXECUTE: "Codex",
   QUEUE: "受付",
@@ -188,6 +201,23 @@ export function Studio() {
   const task = snapshot?.tasks.find((item) => item.id === selectedId);
   const comparison = snapshot?.tasks.find((item) => item.id === compareId);
   const canOperate = actor?.role === "operator" && connected;
+  const composerTarget =
+    snapshot?.tasks.find((item) => item.id === draftTarget?.taskId) ?? task;
+  const targetMismatch =
+    composerMode === "follow" &&
+    Boolean(draftTarget && draftTarget.taskId !== task?.id);
+  const canSend =
+    canOperate &&
+    !busy &&
+    Boolean(draft.trim()) &&
+    (composerMode !== "follow" || Boolean(task && !targetMismatch));
+  const taskActivity = snapshot?.activity
+    .filter(
+      (event) =>
+        event.taskId === task?.id &&
+        ["EXECUTE", "QUEUE", "DELIVER"].includes(event.stage),
+    )
+    .at(-1);
   const running =
     snapshot?.tasks.filter((item) => ["running", "queued"].includes(item.state))
       .length ?? 0;
@@ -760,51 +790,19 @@ export function Studio() {
         </div>
       )}
       <div className="studio-workspace">
-        <nav className="task-rail" aria-label="つくっているもの">
-          <div className="rail-heading">
-            <span>つくっているもの</span>
-            <span>{snapshot?.tasks.length ?? 0}</span>
-          </div>
-          <button
-            className="new-task"
-            disabled={!canOperate}
-            onClick={() => setCreateOpen(true)}
-          >
-            <Plus size={18} />
-            新しくつくる
-          </button>
-          <div className="task-list">
-            {snapshot?.tasks
-              .slice()
-              .reverse()
-              .map((item) => (
-                <button
-                  key={item.id}
-                  className={`task-item ${selectedId === item.id ? "selected" : ""}`}
-                  onClick={() => {
-                    setSelectedId(item.id);
-                    if (compareId === item.id) setCompareId("");
-                  }}
-                >
-                  <span className={`task-state-dot ${item.state}`} />
-                  <strong>{item.title}</strong>
-                  <span>{stateLabel[item.state] ?? item.state}</span>
-                  <small>
-                    仕様 {item.specRevision} · 実行 {item.runRevision || "—"}
-                  </small>
-                </button>
-              ))}
-          </div>
-          <div className="rail-footer">
-            <Radio size={15} />
-            <span>
-              {running
-                ? `${running} 件の作業が進行中`
-                : "次のアイデアを待っています"}
-            </span>
-          </div>
-        </nav>
-        <main className="artifact-main">
+        <StudioTaskList
+          key={roomId}
+          tasks={snapshot?.tasks ?? []}
+          selectedId={selectedId}
+          canOperate={canOperate && !busy}
+          onCreate={() => setCreateOpen(true)}
+          onSelect={(id) => {
+            preferredSelection.current = "";
+            setSelectedId(id);
+            if (compareId === id) setCompareId("");
+          }}
+        />
+        <main className="artifact-main" id="studio-artifact" tabIndex={-1}>
           <div className="artifact-heading">
             <div>
               <p className="eyebrow">
@@ -860,6 +858,41 @@ export function Studio() {
               </div>
             )}
           </div>
+          {task &&
+            [
+              "queued",
+              "running",
+              "failed",
+              "interrupted",
+              "cancelled",
+            ].includes(task.state) && (
+              <div className={`task-progress ${task.state}`}>
+                <div>
+                  <strong>
+                    {task.state === "queued"
+                      ? "順番を待っています"
+                      : task.state === "running"
+                        ? "制作を進めています"
+                        : "追加の指示から再開できます"}
+                  </strong>
+                  <p>
+                    {task.state === "running" && taskActivity
+                      ? `直近 ${formatTime(taskActivity.at)} · ${taskActivity.summary || taskActivity.tool || "作業を進めています"}`
+                      : task.state === "queued"
+                        ? "開始すると、この画面に進み具合が届きます。"
+                        : task.state === "running"
+                          ? "会話を続けながら待てます。追加の指示も送れます。"
+                          : "最初から入力し直す必要はありません。変えたい点を伝えてください。"}
+                  </p>
+                </div>
+                <button
+                  className="button-secondary"
+                  onClick={() => setPane("activity")}
+                >
+                  動きを見る
+                </button>
+              </div>
+            )}
           {!task ? (
             <section className="artifact-empty">
               <div className="empty-orbit">
@@ -903,6 +936,7 @@ export function Studio() {
                   results={
                     snapshot?.capabilities?.files && task.resultRunRevision ? (
                       <StudioFiles
+                        hideEmpty
                         key={`${roomId}:${task.id}:${task.resultRunRevision}`}
                         roomId={roomId}
                         taskId={task.id}
@@ -923,6 +957,7 @@ export function Studio() {
                       snapshot?.capabilities?.files &&
                       comparison.resultRunRevision ? (
                         <StudioFiles
+                          hideEmpty
                           key={`${roomId}:${comparison.id}:${comparison.resultRunRevision}`}
                           roomId={roomId}
                           taskId={comparison.id}
@@ -945,7 +980,11 @@ export function Studio() {
                         : task.preview?.state === "starting"
                           ? "プレビューを起動しています"
                           : snapshot?.capabilities?.preview === false
-                            ? "成果ファイルと結果を確認できます"
+                            ? task.result
+                              ? "成果ファイルと結果を確認できます"
+                              : ["running", "queued"].includes(task.state)
+                                ? "制作の結果がここに届きます"
+                                : "追加の指示で作業を再開できます"
                             : ["running", "queued"].includes(task.state)
                               ? "この版のプレビューを準備しています"
                               : "現在開けるプレビューはありません"}
@@ -1007,7 +1046,9 @@ export function Studio() {
                     }}
                   >
                     <MessageCircle size={16} />
-                    ここを直したい
+                    {["cancelled", "interrupted", "failed"].includes(task.state)
+                      ? "指示して再開"
+                      : "ここを直したい"}
                   </button>
                   {["running", "queued"].includes(task.state) && (
                     <button
@@ -1043,7 +1084,7 @@ export function Studio() {
             </div>
           )}
         </main>
-        <aside className="conversation-panel">
+        <aside className="conversation-panel" id="studio-context" tabIndex={-1}>
           <div
             className="panel-tabs"
             role="tablist"
@@ -1078,40 +1119,10 @@ export function Studio() {
             aria-labelledby={`tab-${pane}`}
           >
             {pane === "conversation" && (
-              <>
-                <div className="conversation-intro">
-                  <span className="connection-dot" />
-                  <p>この部屋の会話が、制作の文脈になります。</p>
-                </div>
-                {snapshot?.statements.length ? (
-                  snapshot.statements.map((statement, index) => (
-                    <article
-                      className="statement"
-                      key={`${statement.id ?? statement.sequence}-${index}`}
-                    >
-                      <span className="speaker-avatar">
-                        {statement.speaker.slice(0, 1)}
-                      </span>
-                      <div>
-                        <header>
-                          <strong>{statement.speaker}</strong>
-                          <time>{formatTime(statement.at)}</time>
-                        </header>
-                        <p>{statement.text}</p>
-                      </div>
-                    </article>
-                  ))
-                ) : (
-                  <div className="panel-empty">
-                    <MessageCircle size={27} />
-                    <p>
-                      まだ会話はありません。
-                      <br />
-                      どんなものが欲しいか、話してみましょう。
-                    </p>
-                  </div>
-                )}
-              </>
+              <StudioConversation
+                key={roomId}
+                statements={snapshot?.statements ?? []}
+              />
             )}
             {pane === "spec" &&
               (task ? (
@@ -1176,9 +1187,11 @@ export function Studio() {
                           ? " · 現在の仕様への反映は未確認"
                           : ""}
                       </p>
-                      <p className="preserve-lines result-text">
-                        {task.result}
-                      </p>
+                      <StudioText
+                        key={`${task.id}:${task.resultRunRevision}`}
+                        text={task.result}
+                        copy
+                      />
                     </>
                   ) : (
                     <p className="muted">結果が届くとここに表示します。</p>
@@ -1186,7 +1199,7 @@ export function Studio() {
                   {task.verification && (
                     <details>
                       <summary>検証の記録</summary>
-                      <p className="preserve-lines">{task.verification}</p>
+                      <StudioText text={task.verification} />
                     </details>
                   )}
                   {snapshot?.capabilities?.files && task.resultRunRevision && (
@@ -1208,6 +1221,13 @@ export function Studio() {
             {pane === "activity" && (
               <div className="activity-list">
                 <p className="panel-note">エンジンが実際に処理した記録です。</p>
+                {!snapshot?.activity.some(
+                  (event) => !task || event.taskId === task.id || !event.taskId,
+                ) && (
+                  <p className="muted">
+                    まだ処理の記録はありません。依頼を受け付けると、ここに進み具合が届きます。
+                  </p>
+                )}
                 {snapshot?.activity
                   .filter(
                     (event) =>
@@ -1281,6 +1301,26 @@ export function Studio() {
                   {actor?.role === "viewer" ? " · 閲覧のみ" : ""}
                 </span>
               </div>
+              {composerMode === "follow" && (
+                <div
+                  className={`composer-target ${targetMismatch ? "mismatch" : ""}`}
+                >
+                  <span>
+                    修正先：{composerTarget?.title ?? "成果を選んでください"}
+                  </span>
+                  {targetMismatch && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(String(draftTarget?.taskId));
+                        preferredSelection.current = "";
+                      }}
+                    >
+                      修正先へ戻る
+                    </button>
+                  )}
+                </div>
+              )}
               <textarea
                 id="studio-composer"
                 aria-label={
@@ -1299,14 +1339,38 @@ export function Studio() {
                       ? "例：今の会話をもとに、案内ページをつくって"
                       : "例：スマートフォンで使えると嬉しい"
                 }
+                onKeyDown={(event) => {
+                  if (
+                    (event.ctrlKey || event.metaKey) &&
+                    event.key === "Enter" &&
+                    !event.nativeEvent.isComposing &&
+                    event.keyCode !== 229 &&
+                    canSend
+                  ) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
                 maxLength={6000}
                 rows={3}
                 disabled={actor?.role === "viewer"}
               />
+              <div className="composer-hint">
+                <span>Ctrl / ⌘ + Enter で送信</span>
+                <span>
+                  {draft.length > 5000
+                    ? `${draft.length} / 6000`
+                    : draft
+                      ? "このタブに下書きを保持"
+                      : "Enter で改行"}
+                </span>
+              </div>
               <div className="composer-bottom">
                 <small>
                   {composerMode === "follow"
-                    ? `仕様 ${draftTarget?.specRevision ?? task?.specRevision ?? "—"} に追加します`
+                    ? targetMismatch
+                      ? "修正先へ戻ると送信できます"
+                      : `仕様 ${draftTarget?.specRevision ?? task?.specRevision ?? "—"} に追加します`
                     : composerMode === "ask"
                       ? "明示的な呼びかけとして届けます"
                       : "呼びかけがなければ会話を見守ります"}
@@ -1314,14 +1378,7 @@ export function Studio() {
                 <button
                   className="send-button"
                   aria-label="送信"
-                  disabled={
-                    !canOperate ||
-                    busy ||
-                    !draft.trim() ||
-                    (composerMode === "follow" &&
-                      (!task ||
-                        (draftTarget && draftTarget.taskId !== task.id)))
-                  }
+                  disabled={!canSend}
                 >
                   {busy ? (
                     <LoaderCircle className="spin" size={17} />
@@ -1334,6 +1391,32 @@ export function Studio() {
           )}
         </aside>
       </div>
+      {!stage && (
+        <nav className="studio-mobile-nav" aria-label="画面内を移動">
+          <button onClick={() => jumpTo("studio-artifact")}>
+            <Monitor size={16} />
+            成果
+          </button>
+          <button
+            onClick={() => {
+              setPane("conversation");
+              jumpTo("studio-context");
+            }}
+          >
+            <MessagesSquare size={16} />
+            会話・指示
+          </button>
+          <button
+            onClick={() => {
+              setPane("spec");
+              jumpTo("studio-context");
+            }}
+          >
+            <Clipboard size={16} />
+            仕様
+          </button>
+        </nav>
+      )}
       <div className="studio-toast" role="status">
         {notice}
       </div>
@@ -1596,7 +1679,9 @@ function Artifact({
         </div>
         <span>
           {label ? `案 ${label} · ` : ""}
-          {url ? `実行 ${preview?.runRevision} のプレビュー` : "プレビュー"}
+          {url
+            ? `実行 ${preview?.runRevision} のプレビュー`
+            : "成果と作業の状態"}
         </span>
         <div>
           {url && (
@@ -1676,7 +1761,7 @@ function Artifact({
                   ? task.preview?.state === "expired" ||
                     task.preview?.state === "stopped"
                     ? "成果のプレビューを開き直せます。"
-                    : "作業の結果が届いています。"
+                    : "成果が届きました。"
                   : task.state === "cancelled"
                     ? "この作業は停止しました。"
                     : "続きを、ここから。"}
@@ -1695,7 +1780,7 @@ function Artifact({
                           task.preview?.state === "stopped"
                         ? "プレビューの表示は終了しましたが、成果は保存されています。「プレビューを開き直す」で同じ版を表示できます。"
                         : previewConfigured === false
-                          ? "このプロジェクトではWebプレビューを設定していません。結果と成果ファイルをここで確認できます。"
+                          ? "成果ファイルと結果の説明を、ここで確認できます。"
                           : "結果と成果ファイルを確認できます。Webアプリの場合はプレビューを開いて試せます。"
                   : "仕様と会話を残したまま、追加の指示で再開できます。"}
           </p>
@@ -1714,12 +1799,12 @@ function Artifact({
       {!url && task.result && (
         <div className="artifact-result">
           {results}
-          <details>
+          <details open>
             <summary>
               結果の説明を読む · 仕様 {task.resultSpecRevision ?? "未確認"} /
               実行 {task.resultRunRevision ?? "未確認"}
             </summary>
-            <p className="preserve-lines">{task.result}</p>
+            <StudioText key={task.resultRunRevision} text={task.result} copy />
           </details>
         </div>
       )}

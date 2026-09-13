@@ -32,11 +32,13 @@ export function StudioFiles({
   runRevision,
   roomId,
   request,
+  hideEmpty = false,
 }: {
   taskId: string;
   runRevision: number;
   roomId: string;
   request: StudioRequester;
+  hideEmpty?: boolean;
 }) {
   const [manifest, setManifest] = useState<Manifest>();
   const [error, setError] = useState("");
@@ -99,6 +101,7 @@ export function StudioFiles({
       setBusy("");
     }
   }
+  if (hideEmpty && manifest && !manifest.files.length && !error) return null;
   return (
     <section className="result-files" aria-label="成果ファイル">
       <header>
