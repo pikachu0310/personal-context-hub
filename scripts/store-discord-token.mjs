@@ -41,8 +41,28 @@ if (!bot.bot || !/^\d{17,20}$/.test(bot.id ?? "")) {
   throw new Error("The credential did not authenticate a Discord Bot user.");
 }
 
+const applicationResponse = await fetch(
+  new URL("oauth2/applications/@me", DISCORD_API_BASE),
+  {
+    headers: {
+      accept: "application/json",
+      authorization: `Bot ${token}`,
+      "user-agent": "personal-context-hub/0.1.0",
+    },
+  },
+);
+if (!applicationResponse.ok) {
+  throw new Error(
+    `Discord rejected the Bot application lookup (${applicationResponse.status}).`,
+  );
+}
+const application = await applicationResponse.json();
+if (!/^\d{17,20}$/.test(application.id ?? "")) {
+  throw new Error("Discord returned an invalid Bot Application ID.");
+}
+
 await writeDiscordTokenStore({
-  applicationId,
+  applicationId: application.id,
   botUserId: bot.id,
   botUsername: bot.username,
   botGlobalName: bot.global_name ?? null,
@@ -55,7 +75,8 @@ console.log(
   JSON.stringify(
     {
       stored: true,
-      applicationId,
+      applicationId: application.id,
+      requestedApplicationIdMatched: applicationId === application.id,
       botUserId: bot.id,
       botUsername: bot.username,
       tokenStore: getDiscordTokenStoreDescription(),
