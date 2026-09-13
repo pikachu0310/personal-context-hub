@@ -8,12 +8,15 @@ WindowsネイティブのNode.js 22以降とGitを使用します。
 
 ```powershell
 npm ci
-npm run agent:desktop
 npm run agent:desktop:package
 npm run agent:desktop:smoke
 ```
 
 成果物は `dist/desktop/IDO-Agent-Setup-0.2.0.exe` と `dist/desktop/win-unpacked/` です。スモークテストは隔離した設定ディレクトリで配布版を起動し、ウィンドウ・IPC制限・未認証HTTPの拒否・終了時のローカルサーバー停止を確認します。Botへの接続やOpenAIへのログイン・有料タスク実行は行いません。
+
+ビルド後の手動確認は `dist/desktop/win-unpacked/IDO Agent.exe` を開きます。リポジトリ直下の `Start Agent.cmd` もこの実行ファイルを優先して起動し、なければインストール済みのスタートメニューのショートカットを開きます。見つからない場合は手順を表示し、インストールや別プロセスの起動を自動では行いません。
+
+ソース変更をその場で確認する開発起動には `npm run agent:desktop` を使います。ビルド済みアプリには変更が自動反映されないので、配布前に再ビルドしてください。WindowsのチェックアウトではWindowsのNode.js/npmを使用し、WSLのnpmからWindows版アプリを起動しないでください。
 
 `scripts/prepare-agent-desktop.mjs` は検証済みのステージング先を消去し、クライアント依存のソースだけをコピーします。Codex SDKとWebSocketのバージョンはルートのlockfileに固定します。公式Codex実行ファイルを同梱するため、実ファイルパスを維持する `asar: false` を使用します。アイコンは `desktop/icon.svg` から `node scripts/build-agent-icon.mjs` で再生成できます。
 
@@ -31,6 +34,15 @@ npm run agent:desktop:smoke
 
 レビュー済みインストーラーを公開した後、Botのローカル設定 `PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL` にHTTPS URLを指定すると、Discordのセットアップ案内にダウンロードボタンが出ます。URLには参加コード・認証情報を含めないでください。URL未設定時は主催者からインストーラーを受け取る案内になります。リリース公開やBotの起動はビルドコマンドから行いません。
 
-従来の `Start Agent.cmd` とブラウザUIは開発・移行用に残しています。通常の参加案内では配布しません。旧ブラウザUIのタブを閉じても旧プロセスは止まらないため、切り替え前に旧UIの接続停止と起動プロセスの終了を行います。
+`Start Agent.cmd` はデスクトップアプリの起動用です。参加者にはインストーラーを配布し、スタートメニューからの起動を案内してください。旧ブラウザUIは移行時の診断用に `npm run agent:ui` で起動できます。旧UIのタブを閉じても旧プロセスは止まらないため、切り替え前に旧UIの接続停止と起動プロセスの終了を行います。
+
+## 主催者の反映・起動手順
+
+1. Windowsでインストーラーをビルド・検証します。テスト参加者へファイルを渡すか、レビュー済みの配布先へ公開します。未署名のテスト版である場合は、その状態を伝えてください。
+2. 公開した場合だけ、Botが実際に読み込むローカル設定に `PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL` を指定します。参加ガイドのURLは `PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL` です。ローカルファイルパスやlocalhostをダウンロードURLとして設定しないでください。URLを設定しない場合は、主催者からインストーラーを受け取る案内が表示されます。
+3. Bot側にもこの版のコードを反映し、Worker Gatewayと公開WSS接続先を用意してから、Botの環境で `npm ci`、`npm run start:discord:voice` を実行します。WSLで運用しているBotは、WSL側のチェックアウトと設定を使います。この操作は実際にDiscordへ接続します。
+4. Discordで `/ido agent setup` の案内と配布先、`/ido agent connect` の参加情報を確認します。参加者はWindowsアプリで接続し、`/ido task` でテスト依頼を送って承認・進捗・停止を確認します。
+
+ドキュメントの変更だけでは稼働中Botの案内は変わりません。Botへのコード反映と再起動が必要です。インストーラーの作成だけで、公開配布先・WSS接続先・Botの起動が完了するわけではありません。
 
 参考: [Electronのセキュリティガイド](https://www.electronjs.org/docs/latest/tutorial/security)、[electron-builderのNSIS設定](https://www.electron.build/nsis/)、[Codex App Server](https://developers.openai.com/codex/app-server/)。App Serverのロード状態はそのサーバーが管理するスレッドの状態であり、新しいサーバーを起動するだけで他プロセスの実行状態を取得できるとは扱いません。

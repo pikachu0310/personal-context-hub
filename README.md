@@ -27,6 +27,8 @@ Botには対象チャンネルでの閲覧・接続・発言・送信・履歴�
 
 参加者が自分のPCとCodex認証で参加する場合は、Bot側でWorker Gatewayを有効にします。Gatewayはloopbackへbindし、外部公開時はTLS reverse proxyを通した `wss://` URLだけを公開してください。Windowsの参加者は **IDO Agent** をインストールし、接続設定の「OpenAIでログイン」から公式ページで認証します。Discordの `/ido agent connect` で本人だけに表示された参加情報をアプリへ貼り付け、作業フォルダーを選ぶと参加できます。タスク一覧で進捗・結果を確認し、個別停止できます。[参加手順と主催者の設定](docs/discord-agent-participant.md)を参照してください。
 
+初回はDiscordの **`/ido agent setup` → インストーラーを入手・インストール → Windowsのスタートメニューで「IDO Agent」を起動** の順に進みます。次回からはスタートメニューでアプリを開いて再接続します。開発者のビルド、ローカル起動、主催者がBotへ案内を反映する手順は[アプリのビルド・配布・起動ガイド](docs/agent-desktop-development.md)を参照してください。
+
 CLIを使う場合の接続方法も残しています。
 
 ```powershell
