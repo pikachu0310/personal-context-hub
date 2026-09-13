@@ -6,6 +6,44 @@ history.replaceState(null, "", "/");
 const element = (id) => document.getElementById(id);
 let initialized = false;
 let submitting = false;
+let renderedApprovals = "";
+function showApprovals(approvals) {
+  const signature = JSON.stringify(approvals);
+  if (signature === renderedApprovals) return;
+  renderedApprovals = signature;
+  element("approval-section").hidden = approvals.length === 0;
+  element("approvals").replaceChildren();
+  for (const item of approvals) {
+    const article = document.createElement("article");
+    const title = document.createElement("h3");
+    title.textContent = item.title;
+    const details = document.createElement("pre");
+    details.textContent = [
+      item.request,
+      item.context,
+      item.additionalInstruction,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    article.append(title, details);
+    for (const approved of [true, false]) {
+      const button = document.createElement("button");
+      button.textContent = approved ? "このタスクを実行" : "実行しない";
+      button.className = approved ? "" : "secondary";
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        try {
+          await request("/approve", { id: item.id, approved });
+        } catch (error) {
+          element("error").textContent = error.message;
+        }
+        await update();
+      });
+      article.append(button);
+    }
+    element("approvals").append(article);
+  }
+}
 async function request(path, input) {
   const response = await fetch(path, {
     method: input === undefined ? "GET" : "POST",
@@ -22,6 +60,11 @@ async function request(path, input) {
 async function update() {
   try {
     const state = await request("/status");
+    showApprovals(state.approvals ?? []);
+    if (state.connectionPolicy) {
+      element("automatic").checked = state.connectionPolicy.automatic;
+      element("network").checked = state.connectionPolicy.networkAccess;
+    }
     if (!initialized) {
       element("workdir").value = state.profile.workingDirectory ?? "";
       element("gateway").value = state.profile.gatewayUrl ?? "";
@@ -31,7 +74,7 @@ async function update() {
     element("auth-status").textContent = state.login.pending
       ? "OpenAIの認証ページでログインを完了してください。"
       : state.login.authenticated
-        ? "ログイン済み。このPCのCodex認証を使います。"
+        ? "ログイン済み。このPCの接続用Codex認証を使います。"
         : "未ログインです。OpenAIの公式ページでログインしてください。";
     element("login").disabled =
       state.login.pending ||
@@ -60,7 +103,17 @@ async function update() {
       !state.login.authenticated;
     element("stop").disabled =
       state.busy || !(state.connected || state.reconnecting || state.revoked);
-    for (const id of ["workdir", "gateway", "code", "name", "folder"])
+    for (const id of [
+      "workdir",
+      "gateway",
+      "code",
+      "name",
+      "folder",
+      "automatic",
+      "network",
+      "invitation",
+      "import",
+    ])
       element(id).disabled =
         submitting ||
         state.busy ||
@@ -85,6 +138,13 @@ function action(id, run) {
 }
 action("login", () => request("/login", {}));
 action("refresh", () => request("/refresh-login", {}));
+action("import", async () => {
+  const invitation = element("invitation").value.trim();
+  element("invitation").value = "";
+  const result = await request("/invitation", { invitation });
+  element("gateway").value = result.gatewayUrl;
+  element("code").value = result.pairingCode;
+});
 action("folder", async () => {
   const result = await request("/folder", {});
   if (result.path) element("workdir").value = result.path;
@@ -97,6 +157,8 @@ action("connect", async () => {
     gatewayUrl: element("gateway").value,
     pairingCode: element("code").value,
     name: element("name").value,
+    automatic: element("automatic").checked,
+    networkAccess: element("network").checked,
   };
   element("code").value = "";
   try {
@@ -106,6 +168,10 @@ action("connect", async () => {
     input.pairingCode = "";
   }
 });
-action("stop", () => request("/stop", {}));
+action("stop", async () => {
+  await request("/stop", {});
+  element("automatic").checked = false;
+  element("network").checked = false;
+});
 void update();
 setInterval(update, 2000);

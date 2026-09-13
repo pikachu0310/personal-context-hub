@@ -1,4 +1,8 @@
 import { boundText } from "../../engine/shared.mjs";
+import {
+  encodeAgentInvitation,
+  agentGuideComponents,
+} from "../../discord-agent-onboarding.mjs";
 import { splitDiscordText, escapeDiscordMarkdown } from "./presentation.mjs";
 import { requestedVoiceModel } from "../../engine/model-policy.mjs";
 
@@ -489,9 +493,10 @@ export function createIdobataMessageHandler({
     }
     const content = String(message.content ?? "").trim();
     const match = content.match(/^[!/]ido(?:\s+(\w+))?(?:\s+([\s\S]*))?$/i);
-    const reply = (text) =>
+    const reply = (text, components = []) =>
       message.channel.send({
         content: boundText(text, 1950),
+        components,
         allowedMentions: { parse: [] },
         flags: config.silentMessages === false ? undefined : 4096,
       });
@@ -533,12 +538,19 @@ export function createIdobataMessageHandler({
         return reply(
           [
             "🔐 **個人Codex Workerの接続コード**",
+            "1. 下の参加手順を開き、自分のPCで接続画面を起動します。",
+            "2. 画面の「OpenAIでログイン」で認証します。パスワードはOpenAI公式ページだけに入力してください。",
+            "3. 次の参加情報を画面の「Discordの参加情報」に貼り付けて読み込み、作業フォルダーを選んで接続します。",
+            `\`${encodeAgentInvitation(pairing)}\``,
             `Gateway: \`${pairing.gatewayUrl}\``,
             `コード: \`${pairing.code}\`（約${remaining}分で失効・1回限り）`,
-            "自分のPCで `Start Agent.cmd` をダブルクリックし、「OpenAIでログイン」を選んでください。",
-            "接続画面で作業フォルダーを選び、上のGatewayと参加コードを入力して「エージェントを接続」を押してください。",
+            "Windowsは `Start Agent.cmd` をダブルクリックで起動できます。既定ではタスクごとに本人の実行確認が必要です。",
+            pairing.gatewayUrl.startsWith("ws:")
+              ? "⚠️ 現在はBotと同じPCからの接続専用です。他のPCで参加するには管理者による公開WSSの設定が必要です。"
+              : "",
             "Discord・Codex・GitHubのログイン情報をBotへ送らないでください。",
           ].join("\n"),
+          agentGuideComponents(config.agentJoinGuideUrl),
         );
       }
       if (action === "disconnect") {

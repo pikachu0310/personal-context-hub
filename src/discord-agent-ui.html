@@ -58,6 +58,23 @@
         border-radius: 8px;
         font: inherit;
       }
+      input[type="checkbox"] {
+        width: auto;
+        margin-right: 8px;
+      }
+      #approvals article {
+        border: 1px solid #b7c9c1;
+        padding: 16px;
+        border-radius: 8px;
+        margin-top: 12px;
+      }
+      #approvals pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 300px;
+        overflow: auto;
+        font: inherit;
+      }
       button {
         border: 0;
         border-radius: 8px;
@@ -117,7 +134,7 @@
       <div class="eyebrow">IDO BOT / PERSONAL AGENT</div>
       <h1>自分のCodexを、チームにつなぐ。</h1>
       <p>
-        このPCで作業するエージェントをDiscordに接続します。<br />OpenAIのログイン情報は、このPCに保存されます。
+        このPCで作業するエージェントをDiscordに接続します。<br />OpenAIのログイン情報は、このPCの接続用Codexに保存されます。
       </p>
       <section>
         <h2>1　OpenAIにログイン</h2>
@@ -132,6 +149,17 @@
       </section>
       <section>
         <h2>2　作業場所とDiscordを接続</h2>
+        <label for="invitation"
+          >Discordの参加情報（ido1.から始まる文字列）</label
+        >
+        <div class="row">
+          <input
+            id="invitation"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+          /><button id="import" class="secondary">読み込む</button>
+        </div>
         <label for="workdir">作業するリポジトリのフォルダー</label>
         <div class="row">
           <input
@@ -162,7 +190,22 @@
         <label for="name">エージェントの表示名（任意）</label
         ><input id="name" maxlength="80" autocomplete="off" />
         <p class="hint">
-          接続すると、Botが割り当てたタスクをこのPCで実行します。変更は分離された作業場所に保存します。
+          タスクを受け取ると、この画面で実行内容を確認できます。変更は分離された作業場所に保存します。
+        </p>
+        <label
+          ><input
+            id="automatic"
+            type="checkbox"
+          />この接続中は、選んだリポジトリのタスクを自動実行する</label
+        >
+        <label
+          ><input
+            id="network"
+            type="checkbox"
+          />タスクからの外部通信を許可する</label
+        >
+        <p class="hint">
+          外部通信を許可すると依存取得や外部サービスへのアクセスが可能になります。許可は保存せず、接続するたびに確認します。
         </p>
         <div class="row">
           <button id="connect">エージェントを接続</button
@@ -170,6 +213,13 @@
         </div>
         <p id="connection-status" class="status" role="status">未接続</p>
         <p id="error" role="alert"></p>
+      </section>
+      <section id="approval-section" hidden>
+        <h2>実行の確認</h2>
+        <p>
+          Botから届いた依頼です。作業内容を確認して許可してください。確認が間に合わない場合は実行せずに終了します。
+        </p>
+        <div id="approvals"></div>
       </section>
       <footer>
         接続中はこのPCと接続アプリを起動したままにしてください。ページを閉じてもエージェントは動作します。終了時は「接続を停止」を押してください。

@@ -1,6 +1,7 @@
 import { CodexAgentTeam } from "../discord-agent-team.mjs";
 import { AgentWorkerRegistry } from "../discord-agent-worker-registry.mjs";
 import { AgentWorkerGateway } from "../discord-agent-worker-gateway.mjs";
+import { assertPublicWorkerPolicy } from "../discord-agent-public-policy.mjs";
 import { DiscordAgentWebhookPublisher } from "../discord-agent-avatar.mjs";
 import { createDistributedTaskRunner } from "../discord-agent-task-runner.mjs";
 import { CodexVoiceRunner } from "../execution/codex/runner.mjs";
@@ -80,6 +81,7 @@ export async function startDiscordVoiceCodex({
   logger = console,
   dependencies = {},
 } = {}) {
+  assertPublicWorkerPolicy(config);
   const store =
     dependencies.meetingStateStore ??
     (config.meetingStatePath
@@ -205,6 +207,11 @@ export async function startDiscordVoiceCodex({
           host: config.workerGatewayHost,
           port: config.workerGatewayPort,
           publicUrl: config.workerGatewayPublicUrl,
+          authorizeOwner: (ownerUserId) =>
+            Boolean(ownerUserId) &&
+            (config.allParticipantsOperate ||
+              ownerUserId === config.allowedUserId ||
+              (config.operatorUserIds ?? []).includes(ownerUserId)),
           defaultWorkingDirectory: config.workingDirectory,
           heartbeatTimeoutMs: config.workerHeartbeatTimeoutMs,
           leaseTtlMs: config.workerLeaseTtlMs,

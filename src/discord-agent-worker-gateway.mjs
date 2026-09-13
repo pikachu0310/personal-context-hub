@@ -104,9 +104,13 @@ function safeArtifacts(value) {
 export function validateWorkerGatewayConfig({ host, publicUrl }) {
   const loopback = ["127.0.0.1", "::1", "localhost"].includes(host);
   const url = new URL(publicUrl);
-  const publicLoopback = ["127.0.0.1", "::1", "localhost"].includes(
+  const publicLoopback = ["127.0.0.1", "[::1]", "localhost"].includes(
     url.hostname,
   );
+  if (url.username || url.password || url.hash || url.search)
+    throw new Error(
+      "Worker gateway URL must not contain credentials, queries or fragments.",
+    );
   if (!loopback)
     throw new Error(
       "Worker gateway must bind to loopback behind a TLS reverse proxy.",
@@ -132,6 +136,10 @@ export class AgentWorkerGateway {
     onAvailability = () => undefined,
     logger = console,
     WebSocketServerClass = WebSocketServer,
+    maximumConnections = 200,
+    maximumUnauthenticatedConnections = 32,
+    maximumMessagesPerWindow = 120,
+    authorizeOwner = () => true,
   }) {
     validateWorkerGatewayConfig({ host, publicUrl });
     this.registry = registry;
@@ -146,6 +154,11 @@ export class AgentWorkerGateway {
     this.onAvailability = onAvailability;
     this.logger = logger;
     this.WebSocketServerClass = WebSocketServerClass;
+    this.maximumConnections = maximumConnections;
+    this.maximumUnauthenticatedConnections = maximumUnauthenticatedConnections;
+    this.maximumMessagesPerWindow = maximumMessagesPerWindow;
+    this.authorizeOwner = authorizeOwner;
+    this.sessions = new Map();
     this.connections = new Map();
     this.pending = new Map();
   }
@@ -156,6 +169,8 @@ export class AgentWorkerGateway {
       host: this.host,
       port: this.port,
       maxPayload: MAX_MESSAGE_BYTES,
+      // Browser pages have no reason to talk directly to this machine protocol.
+      verifyClient: ({ origin }) => !origin,
     });
     this.server.on("connection", (socket) => this.#accept(socket));
     await new Promise((resolve, reject) => {
@@ -179,6 +194,11 @@ export class AgentWorkerGateway {
   }
 
   createPairing(identity) {
+    if (!this.authorizeOwner(identity.ownerUserId))
+      throw gatewayError(
+        "WORKER_OWNER_DENIED",
+        "This owner is not allowed to register a Worker.",
+      );
     return {
       ...this.registry.createPairing(identity),
       gatewayUrl: this.publicUrl,
@@ -263,11 +283,24 @@ export class AgentWorkerGateway {
   }
 
   #accept(socket) {
+    if (
+      this.sessions.size >= this.maximumConnections ||
+      [...this.sessions.values()].filter((value) => !value.agentId).length >=
+        this.maximumUnauthenticatedConnections
+    ) {
+      socket.close(1013, "Gateway connection limit reached");
+      return;
+    }
     const session = {
       challenge: randomBytes(32).toString("base64url"),
       challengeExpiresAt: Date.now() + 30_000,
       agentId: undefined,
+      windowStartedAt: Date.now(),
+      messageCount: 0,
+      queued: 0,
+      processing: Promise.resolve(),
     };
+    this.sessions.set(socket, session);
     session.challengeTimer = setTimeout(
       () => {
         if (!session.agentId && socket.readyState === OPEN)
@@ -284,24 +317,46 @@ export class AgentWorkerGateway {
       }),
     );
     socket.on("message", (data) => {
-      void this.#message(socket, session, data).catch((error) => {
-        this.logger.warn?.({
-          component: "agent-worker-gateway",
-          event: "message_rejected",
-          code: error?.code ?? "WORKER_MESSAGE_INVALID",
+      if (Date.now() - session.windowStartedAt >= 10_000) {
+        session.windowStartedAt = Date.now();
+        session.messageCount = 0;
+      }
+      if (
+        ++session.messageCount > this.maximumMessagesPerWindow ||
+        session.queued >= 16
+      ) {
+        socket.close(4002, "Worker message limit reached");
+        return;
+      }
+      session.queued++;
+      session.processing = session.processing
+        .then(() => {
+          if (socket.readyState !== OPEN) return;
+          return this.#message(socket, session, data);
+        })
+        .catch((error) => {
+          this.logger.warn?.({
+            component: "agent-worker-gateway",
+            event: "message_rejected",
+            code: error?.code ?? "WORKER_MESSAGE_INVALID",
+          });
+          if (socket.readyState === OPEN)
+            socket.send(
+              JSON.stringify({
+                type: "error",
+                code: error?.code ?? "WORKER_MESSAGE_INVALID",
+                message: "Worker request was rejected.",
+              }),
+            );
+          socket.close(4002, "Worker request rejected");
+        })
+        .finally(() => {
+          session.queued--;
         });
-        if (socket.readyState === OPEN)
-          socket.send(
-            JSON.stringify({
-              type: "error",
-              code: error?.code ?? "WORKER_MESSAGE_INVALID",
-              message: "Worker request was rejected.",
-            }),
-          );
-      });
     });
     socket.on("close", () => {
       clearTimeout(session.challengeTimer);
+      this.sessions.delete(socket);
       if (!session.agentId) return;
       if (this.connections.get(session.agentId) !== socket) return;
       this.connections.delete(session.agentId);
@@ -343,6 +398,9 @@ export class AgentWorkerGateway {
       }
       if (
         message.type !== "authenticate" ||
+        !this.authorizeOwner(
+          this.registry.describe?.(message.agentId)?.ownerUserId,
+        ) ||
         !this.registry.authenticate({
           ...message,
           challenge: session.challenge,
@@ -360,6 +418,16 @@ export class AgentWorkerGateway {
       await this.checkpoint(this.registry.snapshot());
       return;
     }
+    // Replaced/revoked sockets must not extend or settle a new connection's lease.
+    if (
+      this.connections.get(session.agentId) !== socket ||
+      !this.registry.describe(session.agentId) ||
+      !this.authorizeOwner(this.registry.describe(session.agentId)?.ownerUserId)
+    )
+      throw gatewayError(
+        "WORKER_AUTH_FAILED",
+        "Worker connection is no longer registered.",
+      );
     if (message.type === "heartbeat") {
       this.registry.heartbeat(session.agentId);
       for (const lease of this.pending.values())

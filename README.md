@@ -29,10 +29,10 @@ CLIを使う場合の接続方法も残しています。
 
 ```powershell
 Copy-Item .env.agent.example .env.agent
-Write-Output '<PAIRING_CODE>' | npm run agent:pair -- --gateway wss://agents.example.com --workdir C:/path/to/repository --capabilities frontend,test
+Write-Output '<PAIRING_CODE>' | npm run agent:pair -- --gateway wss://agents.example.com --workdir C:/path/to/repository --capabilities frontend,test --allow-automatic
 ```
 
-初回pairing後は `npm run start:discord:agent` で再接続できます。Workerは端末内でEd25519鍵を作り、WindowsではWorker tokenと秘密鍵をCurrentUser DPAPIへ、Linuxではmode `0600` のファイルへ保存します。Codex・Discord・GitHubのcredentialはBotへ送らず、Bot側にはWorker tokenのSHA-256 hashと公開鍵だけを保存します。Codex threadと分離worktreeの対応も担当者端末だけに保存します。`/ido agent disconnect` で登録を失効でき、`/ido agent status` で接続状態を確認できます。
+初回pairing後は `npm run start:discord:agent -- --allow-automatic` で再接続できます。Workerは端末内でEd25519鍵を作り、WindowsではWorker tokenと秘密鍵をCurrentUser DPAPIへ、Linuxではmode `0600` のファイルへ保存します。Codex・Discord・GitHubのcredentialはBotへ送らず、Bot側にはWorker tokenのSHA-256 hashと公開鍵だけを保存します。Codex threadと分離worktreeの対応も担当者端末だけに保存します。`/ido agent disconnect` で登録を失効でき、`/ido agent status` で接続状態を確認できます。
 
 起動すると通話に参加し、認識テキストの保存とAI音声の使用をチャンネルへ告知します。参加者へ保存範囲を説明してから利用してください。
 

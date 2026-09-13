@@ -69,7 +69,7 @@ export class AgentWorkerRegistry {
       if (
         !record ||
         !DISCORD_SNOWFLAKE.test(String(record.ownerUserId ?? "")) ||
-        !String(record.agentId ?? "").startsWith("member-") ||
+        record.agentId !== `member-${record.ownerUserId}` ||
         !record.publicKey ||
         !record.tokenHash
       )
@@ -104,6 +104,10 @@ export class AgentWorkerRegistry {
       if (pairing.expiresAt < this.now() || pairing.ownerUserId === userId)
         this.pairings.delete(key);
     const code = randomBytes(9).toString("base64url").toUpperCase();
+    if (this.pairings.size >= 1024)
+      throw new Error(
+        "Too many pending worker registrations. Try again later.",
+      );
     const expiresAt = this.now() + this.pairingTtlMs;
     this.pairings.set(digest(code), {
       ownerUserId: userId,

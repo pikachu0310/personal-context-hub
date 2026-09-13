@@ -1,18 +1,24 @@
 # 自分のCodexをDiscordにつなぐ
 
-参加者のPCでCodexを動かし、1つのDiscord Botからタスクを受け取ります。OpenAIのログイン情報を主催者へ渡す必要はありません。
+参加者のPCでCodexを動かし、1つのDiscord Botからタスクを受け取ります。コードとPRはGitHub、相談と進捗はDiscord Forumで共有します。OpenAIのログイン情報を主催者へ渡す必要はありません。Web画面は接続と実行確認に使い、作業は各自のPC内で行います。
+
+専用のネイティブアプリをインストールする必要はありませんが、Node.js・Gitとこのリポジトリの接続用プロセスは必要です。ブラウザだけでローカルPCの作業を自動実行する方式ではありません。
 
 ## Windowsで参加する
 
 1. Node.js 22以降とGitをインストールし、このリポジトリをWindowsのフォルダーへ取得します。作業対象のリポジトリも自分のPCに用意します。
 2. `Start Agent.cmd` をダブルクリックします。初回は必要な依存パッケージをインストールしてから、ブラウザに接続画面が開きます。WSLのネットワークパスからは起動せず、Windows側のコピーを使ってください。
-3. **OpenAIでログイン**を押し、OpenAI公式の認証ページでログインします。既にこのPCのCodexでログイン済みなら、その認証を利用できます。
-4. Discordで `/ido agent connect` を選びます。自分だけに表示された接続先と、1回限りの参加コードを接続画面に入力します。
+3. **OpenAIでログイン**を押し、OpenAI公式の認証ページでログインします。普段のCodexの設定を引き継がない接続用の保存先を使うため、最初の1回はログインが必要です。次回以降は接続用Codexの認証を再利用します。
+4. Discordで `/ido agent connect` を選びます。自分だけに表示された `ido1.` から始まる参加情報を、画面の「Discordの参加情報」に貼り付けて**読み込む**を押します。管理者が参加ガイドを設定していれば、Discord内のボタンから手順を開けます。
 5. 作業対象のフォルダーを選び、**エージェントを接続**を押します。「接続中」と表示されればタスクを受け取れます。
 
 初回認証時にブラウザが自動で開かない場合は、画面の「認証ページが開かなければ、ここをクリック」を使ってください。このリンクも公式Codexが発行するOpenAIのURLです。
 
 次回は起動ファイルから画面を開き、参加コードを空欄にして再接続できます。接続先を変更する場合は新しい参加コードが必要です。既存の認証情報を別のサーバーへ送りません。
+
+既定ではタスクを受け取ってもすぐに実行しません。この画面に表示された依頼を確認して**このタスクを実行**を押してください。90秒以内に確認できない場合や**実行しない**を選んだ場合は実行しません。同じIssueへの追加指示も、その都度確認します。
+
+信頼できるチームのタスクを自動で受ける場合は、接続前に**この接続中は、選んだリポジトリのタスクを自動実行する**を選べます。タスクのシェルからの外部通信とライブWeb検索は既定で無効です。依存取得などが必要な場合だけ**外部通信を許可する**を選んでください。これらの許可は設定ファイルへ保存しません。OpenAIとのモデル通信とBotとの連絡は、タスクの外部通信設定とは別に行います。
 
 接続中はPCと接続アプリを起動したままにします。ブラウザのページを閉じてもWorkerは動き続けます。離席時は**接続を停止**を押してください。登録自体を失効させる場合はDiscordの `/ido agent disconnect` を使います。これでOpenAIからログアウトするわけではありません。
 
@@ -20,12 +26,14 @@ macOS/Linuxのデスクトップ環境でも `npm ci` 後に `npm run agent:ui` 
 
 ## 認証と作業場所
 
-- OpenAIの認証は同梱の公式Codexが行い、認証情報はそのPCのCodexの保存先に残します。この接続アプリはパスワード入力欄を持たず、認証ファイルも読みません。
+- OpenAIの認証は同梱の公式Codexが行い、認証情報はそのPCの接続用 `codex-home` に残します。この接続アプリはパスワード入力欄を持たず、認証ファイルも読みません。接続用Codexでは個人のユーザー設定を共有せず、Apps・フック・プラグインなどの自動利用も無効にします。
 - Botとの接続鍵は別物です。WindowsではCurrentUser DPAPI、Linuxでは所有者だけが読めるファイルへ保存します。中央Botには公開鍵と接続トークンのハッシュだけが残ります。
 - 接続先、作業フォルダー、表示名は端末内のアプリ設定に保存します。参加コードや認証情報はそこへ保存しません。
 - 作業は指定したリポジトリの分離worktreeで実行します。GitHubへのアクセスが必要なら各自のGit認証も事前に用意してください。Botへの参加だけで他人のリポジトリ権限は付与されません。
 
 公式の認証方式は[OpenAIのCodex認証ガイド](https://developers.openai.com/codex/auth/)を参照してください。
+
+CLIから直接接続する場合は `--allow-automatic` または `PERSONAL_CONTEXT_AGENT_ALLOW_AUTOMATIC=true` による自動実行への明示的な同意が必要です。CLIは `CODEX_HOME` の認証を使用します。本人確認を挟んで実行したい場合はWeb画面を使ってください。
 
 ## 主催者が用意する接続先
 
@@ -38,8 +46,15 @@ PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_ENABLED=true
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST=127.0.0.1
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT=8787
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL=wss://agents.example.com
+PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL=https://example.com/agent-join
+PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE=false
+PERSONAL_CONTEXT_VOICE_AUTONOMOUS_TASKS=false
+PERSONAL_CONTEXT_VOICE_CODEX_SANDBOX=workspace-write
+PERSONAL_CONTEXT_VOICE_OPERATOR_IDS=<参加を許可するDiscordユーザーIDのカンマ区切り>
 ```
 
 `agents.example.com` は実際の公開接続先に置き換えます。プロキシはWebSocket Upgradeと長時間接続を許可し、公開側では有効なTLS証明書を使ってください。公開対象はWorker Gatewayだけです。参加者用のローカル接続画面やCodexの認証コールバックを公開してはいけません。
 
 公開先のDNS・証明書・プロキシ設定はホストごとに必要です。このリポジトリだけで公開URLが発行されるわけではありません。Botを起動してから実際に異なるPCの2人が接続し、個別のタスク配信・再接続・登録解除を確認してください。
+
+[公開運用の境界と設定例](discord-agent-public-deployment.md)も確認してください。公開URLを指定した状態で、参加者全員の無条件操作・ホストのsandbox無効化・自律的タスク作成を有効にすると起動を拒否します。

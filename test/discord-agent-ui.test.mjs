@@ -11,6 +11,7 @@ import { createAgentUi } from "../src/discord-agent-ui.mjs";
 import { AgentWorkerRegistry } from "../src/discord-agent-worker-registry.mjs";
 import { AgentWorkerGateway } from "../src/discord-agent-worker-gateway.mjs";
 import { CodexAgentTeam } from "../src/discord-agent-team.mjs";
+import { encodeAgentInvitation } from "../src/discord-agent-onboarding.mjs";
 
 function fakeProcess() {
   const child = new EventEmitter();
@@ -192,6 +193,7 @@ test("two independent UI participants pair, receive separate tasks and reconnect
       workingDirectory: process.cwd(),
       gatewayUrl,
       pairingCode: pairing.code,
+      automatic: true,
     };
     const response = await setup.call("/connect", input);
     assert.equal(response.status, 200, JSON.stringify(await response.json()));
@@ -260,4 +262,62 @@ test("UI fails closed before authentication and on expired pairing without leaki
   const failed = await call("/connect", input);
   assert.equal(failed.status, 400);
   assert.doesNotMatch(await failed.text(), /秘密/);
+});
+
+test("browser approval gates execution and permission choices are not persisted", async (t) => {
+  let workerOptions;
+  let executorOptions;
+  let executions = 0;
+  const { call, directory } = await fixture(t, {
+    createExecutor: (options) => {
+      executorOptions = options;
+      return { run: async () => ++executions };
+    },
+    createWorker: (options) => {
+      workerOptions = options;
+      return {
+        authenticated: true,
+        socket: { readyState: 1 },
+        connect: async () => ({}),
+        stop: async () => {},
+      };
+    },
+  });
+  const pairing = {
+    gatewayUrl: "wss://agents.example.com",
+    code: "ABCDEFGHIJKL",
+    expiresAt: Date.now() + 30_000,
+  };
+  const imported = await (
+    await call("/invitation", { invitation: encodeAgentInvitation(pairing) })
+  ).json();
+  assert.equal(imported.pairingCode, pairing.code);
+  assert.equal(
+    (await call("/connect", { ...imported, workingDirectory: process.cwd() }))
+      .status,
+    200,
+  );
+  assert.equal(executorOptions.networkAccess, false);
+  assert.equal(executorOptions.codexHome, join(directory, "codex-home"));
+  const task = workerOptions.executor.run({ id: "task", request: "Run tests" });
+  assert.equal(executions, 0);
+  const state = await (await call("/status")).json();
+  assert.equal(state.approvals.length, 1);
+  assert.equal(
+    (await call("/approve", { id: state.approvals[0].id, approved: true }))
+      .status,
+    200,
+  );
+  assert.equal(await task, 1);
+  assert.equal(
+    (await call("/approve", { id: state.approvals[0].id, approved: true }))
+      .status,
+    409,
+  );
+  assert.equal((await call("/stop", {})).status, 200);
+  const disk = JSON.parse(
+    await readFile(join(directory, "profile.json"), "utf8"),
+  );
+  assert.equal(disk.automatic, undefined);
+  assert.equal(disk.networkAccess, undefined);
 });

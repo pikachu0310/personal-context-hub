@@ -46,6 +46,7 @@ async function createGateway(t) {
       return { agentId: id };
     },
     snapshot: () => [],
+    describe: (id) => ({ agentId: id }),
   };
   const gateway = new AgentWorkerGateway({
     registry,
@@ -97,6 +98,21 @@ test("closing a replaced socket preserves the replacement's online state and tas
     ],
   };
   const result = gateway.runTask(task);
+  let settled = false;
+  void result.then(() => {
+    settled = true;
+  });
+  const oldLease = replacement.sent.find((message) => message.type === "task");
+  oldSocket.emit(
+    "message",
+    JSON.stringify({
+      type: "result",
+      leaseId: oldLease.leaseId,
+      result: "forged",
+    }),
+  );
+  await flush();
+  assert.equal(settled, false);
   oldSocket.finishClose();
   assert.equal(online.get("worker"), true);
   assert.equal(gateway.connections.get("worker"), replacement);

@@ -178,6 +178,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_ENABLED",
       false,
     ),
+    agentJoinGuideUrl: env.PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL?.trim(),
     workerGatewayHost:
       env.PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST?.trim() || "127.0.0.1",
     workerGatewayPort: integer(

@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import WebSocket from "ws";
 import {
-  buildCodexEnvironment,
+  buildCodexOptions,
   buildPowerTaskPrompt,
 } from "./execution/codex/runner.mjs";
 import {
@@ -66,6 +66,8 @@ export class LocalCodexWorkerExecutor {
     workspaceDirectory,
     model,
     reasoningEffort = "medium",
+    networkAccess = false,
+    codexHome,
     codex,
   }) {
     this.workingDirectory = resolve(workingDirectory);
@@ -76,11 +78,11 @@ export class LocalCodexWorkerExecutor {
     });
     this.model = model;
     this.reasoningEffort = reasoningEffort;
+    this.networkAccess = networkAccess === true;
     this.codex =
       codex ??
       new Codex({
-        env: buildCodexEnvironment(process.env, process.env.CODEX_HOME),
-        config: { analytics: { enabled: false } },
+        ...buildCodexOptions(process.env, codexHome ?? process.env.CODEX_HOME),
       });
   }
 
@@ -98,17 +100,17 @@ export class LocalCodexWorkerExecutor {
     const runRevision = localState.runRevision + 1;
     task.runRevision = runRevision;
     const options = {
-      workingDirectory,
-      approvalPolicy: "never",
-      sandboxMode: "workspace-write",
-      networkAccessEnabled: true,
-      webSearchMode: "live",
-      skipGitRepoCheck: false,
-      additionalDirectories: [],
       ...selectTaskProfile(task, {
         taskModel: this.model,
         taskReasoningEffort: this.reasoningEffort,
       }),
+      workingDirectory,
+      approvalPolicy: "never",
+      sandboxMode: "workspace-write",
+      networkAccessEnabled: this.networkAccess,
+      webSearchMode: this.networkAccess ? "live" : "disabled",
+      skipGitRepoCheck: false,
+      additionalDirectories: [],
     };
     const thread = localState.codexThreadId
       ? this.codex.resumeThread(localState.codexThreadId, options)
@@ -338,6 +340,14 @@ export class DiscordAgentWorker {
       return;
     }
     if (message.type === "paired") {
+      if (
+        !this.pairingCode ||
+        !this.pendingPrivateKey ||
+        !this.pendingPublicKey ||
+        !/^member-\d{17,20}$/.test(String(message.agentId ?? "")) ||
+        !/^[A-Za-z0-9_-]{43}$/.test(String(message.token ?? ""))
+      )
+        throw new Error("Unexpected or invalid pairing response.");
       this.credential = {
         agentId: message.agentId,
         token: message.token,
@@ -352,6 +362,8 @@ export class DiscordAgentWorker {
       return;
     }
     if (message.type === "authenticated") {
+      if (!this.credential || message.agentId !== this.credential.agentId)
+        throw new Error("Worker authentication identity mismatch.");
       this.#online();
       return;
     }
@@ -359,7 +371,37 @@ export class DiscordAgentWorker {
       this.tasks.get(message.leaseId)?.abort();
       return;
     }
-    if (message.type === "task") void this.#task(message);
+    if (message.type === "task") {
+      if (!this.authenticated)
+        throw new Error("Task received before authentication.");
+      if (
+        !/^[a-zA-Z0-9_-]{1,80}$/.test(String(message.taskId ?? "")) ||
+        !/^[a-zA-Z0-9_-]{1,100}$/.test(String(message.leaseId ?? ""))
+      )
+        throw new Error("Invalid remote task identity.");
+      if (this.tasks.has(message.leaseId)) return;
+      // Do not let the server select local paths, cached threads or credentials.
+      const accepted = {};
+      for (const key of [
+        "leaseId",
+        "taskId",
+        "issueId",
+        "title",
+        "request",
+        "context",
+        "kind",
+        "complexity",
+        "modelSelection",
+        "activeSpecRevision",
+        "acceptanceCriteria",
+        "sourceStatements",
+        "additionalInstruction",
+        "additionalInstructionSource",
+      ])
+        accepted[key] = message[key];
+      accepted.id = message.taskId;
+      void this.#task(accepted);
+    }
   }
 
   #online() {

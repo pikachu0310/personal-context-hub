@@ -23,6 +23,13 @@ async function stdin() {
 }
 
 const action = process.argv[2] ?? "start";
+if (
+  !process.argv.includes("--allow-automatic") &&
+  process.env.PERSONAL_CONTEXT_AGENT_ALLOW_AUTOMATIC !== "true"
+)
+  throw new Error(
+    "Use the browser UI for per-task consent, or explicitly opt into this repository's unattended execution with --allow-automatic.",
+  );
 if (!["pair", "start"].includes(action))
   throw new Error("Use 'pair' or 'start'.");
 const workingDirectory = resolve(
@@ -77,6 +84,7 @@ const executor = new LocalCodexWorkerExecutor({
     argument("--reasoning") ??
     process.env.PERSONAL_CONTEXT_AGENT_REASONING_EFFORT ??
     "medium",
+  networkAccess: process.env.PERSONAL_CONTEXT_AGENT_ALLOW_NETWORK === "true",
 });
 const worker = new DiscordAgentWorker({
   gatewayUrl,

@@ -405,6 +405,9 @@ test("a local Codex Worker keeps changes in an isolated worktree and returns onl
     workspaceDirectory: workspaces,
     codex: {
       startThread: (options) => {
+        assert.equal(options.sandboxMode, "workspace-write");
+        assert.equal(options.networkAccessEnabled, false);
+        assert.equal(options.webSearchMode, "disabled");
         workerDirectory = options.workingDirectory;
         return {
           id: "local-thread",

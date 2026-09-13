@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { AgentBrowserLogin } from "./discord-agent-login.mjs";
+import { AgentExecutionConsent } from "./discord-agent-execution-consent.mjs";
+import { decodeAgentInvitation } from "./discord-agent-onboarding.mjs";
 import {
   DiscordAgentWorker,
   LocalCodexWorkerExecutor,
@@ -25,7 +27,7 @@ const defaultDirectory = join(
 
 export async function createAgentUi({
   directory = defaultDirectory,
-  login = new AgentBrowserLogin(),
+  login,
   createWorker = (options) => new DiscordAgentWorker(options),
   createExecutor = (options) => new LocalCodexWorkerExecutor(options),
   readCredential = readAgentWorkerCredential,
@@ -37,7 +39,15 @@ export async function createAgentUi({
     });
   },
   connectionTimeoutMs = 30_000,
+  approvalTimeoutMs = 90_000,
 } = {}) {
+  // Keep the connection agent's Codex configuration separate from personal
+  // plugins, hooks and MCP settings. The official login stores its own auth.
+  const codexHome = join(directory, "codex-home");
+  await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  login ??= new AgentBrowserLogin({
+    env: { ...process.env, CODEX_HOME: codexHome },
+  });
   const token = randomBytes(32).toString("base64url");
   let profile = {};
   try {
@@ -48,6 +58,8 @@ export async function createAgentUi({
     if (error.code !== "ENOENT") throw error;
   }
   let worker;
+  let consent;
+  let connectionPolicy;
   let busy = false;
   let lastError = "";
   let origin;
@@ -64,6 +76,8 @@ export async function createAgentUi({
     const previous = worker;
     worker = undefined;
     await previous?.stop();
+    consent = undefined;
+    connectionPolicy = undefined;
   };
   const connect = async (input) => {
     if (busy || worker) throw new UiError("先に接続を停止してください。");
@@ -134,15 +148,17 @@ export async function createAgentUi({
         join(directory, "profile.json"),
       );
       profile = nextProfile;
-      worker = createWorker({
-        gatewayUrl,
-        credential,
-        pairingCode: pairingCode || undefined,
-        name: nextProfile.name || undefined,
-        capabilities: ["*"],
-        maximumConcurrentTasks: 1,
+      connectionPolicy = {
+        automatic: input.automatic === true,
+        networkAccess: input.networkAccess === true,
+      };
+      consent = new AgentExecutionConsent({
+        automatic: input.automatic === true,
+        timeoutMs: approvalTimeoutMs,
         executor: createExecutor({
           workingDirectory,
+          codexHome,
+          networkAccess: input.networkAccess === true,
           workspaceDirectory: join(
             directory,
             "workspaces",
@@ -152,6 +168,15 @@ export async function createAgentUi({
               .slice(0, 16),
           ),
         }),
+      });
+      worker = createWorker({
+        gatewayUrl,
+        credential,
+        pairingCode: pairingCode || undefined,
+        name: nextProfile.name || undefined,
+        capabilities: ["*"],
+        maximumConcurrentTasks: 1,
+        executor: consent,
         credentialWriter: writeCredential,
       });
       await Promise.race([
@@ -222,6 +247,8 @@ export async function createAgentUi({
           ),
           revoked: Boolean(worker?.reconnectDisabled),
           canPickFolder: process.platform === "win32",
+          approvals: consent?.describe() ?? [],
+          connectionPolicy,
         });
       if (
         request.method !== "POST" ||
@@ -229,13 +256,35 @@ export async function createAgentUi({
         request.headers["content-type"] !== "application/json"
       )
         return send(403, { error: "Forbidden" });
-      let contents = "";
+      const chunks = [];
+      let size = 0;
       for await (const chunk of request) {
-        contents += chunk;
-        if (Buffer.byteLength(contents) > 16_384)
-          return send(413, { error: "Request too large" });
+        size += chunk.length;
+        if (size > 16_384) return send(413, { error: "Request too large" });
+        chunks.push(chunk);
       }
+      const contents = Buffer.concat(chunks).toString("utf8");
       const input = JSON.parse(contents || "{}");
+      if (request.url === "/invitation") {
+        if (worker || busy)
+          return send(409, { error: "先に接続を停止してください。" });
+        try {
+          return send(200, decodeAgentInvitation(input.invitation));
+        } catch {
+          return send(400, {
+            error:
+              "参加情報が無効または期限切れです。Discordで再発行してください。",
+          });
+        }
+      }
+      if (request.url === "/approve") {
+        if (
+          typeof input.approved !== "boolean" ||
+          !consent?.decide(input.id, input.approved)
+        )
+          return send(409, { error: "この確認依頼は終了しています。" });
+        return send(200, { ok: true });
+      }
       if (request.url === "/login") {
         if (busy || worker)
           return send(409, {
