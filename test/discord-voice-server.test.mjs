@@ -82,20 +82,13 @@ test("voice player contains playback errors and rejects pre-cancelled work", asy
     /service stopped/,
   );
 
-  const listenerCalls = [];
-  const observedSignal = {
-    aborted: false,
-    addEventListener: (event) => listenerCalls.push(["add", event]),
-    removeEventListener: (event) => listenerCalls.push(["remove", event]),
-  };
+  const controller = new AbortController();
   await assert.rejects(
-    () => play(Buffer.alloc(1), { signal: observedSignal }),
+    () => play(Buffer.alloc(1), { signal: controller.signal }),
     /complete int16 samples/,
   );
-  assert.deepEqual(listenerCalls, [
-    ["add", "abort"],
-    ["remove", "abort"],
-  ]);
+  assert.equal(controller.signal.aborted, false);
+  play.dispose();
 });
 
 test("playback checks every participant after synthesis and again after a queued response", async (t) => {
@@ -791,4 +784,96 @@ test("voice server validates Codex isolation before reading or using Discord cre
   );
   assert.equal(credentialRead, false);
   assert.equal(loginCalled, false);
+});
+
+test("context changed during quiet wait is revalidated before synchronous playback admission", async (t) => {
+  const speaking = new EventEmitter();
+  let player,
+    revision = 1,
+    validated = 0,
+    validations = 0,
+    starts = 0;
+  const play = createDiscordPlayer(
+    { subscribe: (value) => (player = value), receiver: { speaking } },
+    { error() {} },
+    { speechStartSilenceMs: 20 },
+  );
+  t.after(() => play.dispose());
+  const marker = new Error("admitted fresh audio");
+  player.play = () => {
+    starts++;
+    assert.equal(validated, revision);
+    throw marker;
+  };
+  const attempt = play(Buffer.alloc(1920), {
+    beforeStart: async () => {
+      validations++;
+      validated = revision;
+      return true;
+    },
+    canStart: () => validated === revision,
+  });
+  await new Promise((r) => setTimeout(r, 5));
+  revision++;
+  await assert.rejects(attempt, (error) => error === marker);
+  assert.equal(validations, 2);
+  assert.equal(starts, 1);
+});
+
+test("human speech interrupts admitted playback and leaves no interruption listener", async (t) => {
+  const speaking = new EventEmitter();
+  let player,
+    stops = 0;
+  const play = createDiscordPlayer(
+    { subscribe: (value) => (player = value), receiver: { speaking } },
+    { error() {} },
+    { speechStartSilenceMs: 0 },
+  );
+  t.after(() => play.dispose());
+  player.stop = () => {
+    stops++;
+  };
+  player.play = () => speaking.emit("start", "any-participant");
+  await assert.rejects(play(Buffer.alloc(1920)), /abort|interrupt/i);
+  assert.equal(stops, 1);
+  assert.equal(speaking.listenerCount("start"), 1); // Only the persistent quiet gate remains.
+});
+
+test("every speaker interrupts Live once while the STT allowlist still applies", () => {
+  const speaking = new EventEmitter(),
+    decoder = new EventEmitter(),
+    opus = new EventEmitter();
+  opus.pipe = () => decoder;
+  opus.destroy = () => {};
+  decoder.destroy = () => {};
+  const starts = [];
+  let subscriptions = 0;
+  subscribeToAllowedSpeaker({
+    connection: {
+      receiver: {
+        speaking,
+        subscribe: () => {
+          subscriptions++;
+          return opus;
+        },
+      },
+    },
+    config: {
+      allowedUserId: "owner",
+      silenceMs: 1000,
+      minimumAudioMs: 250,
+      maximumAudioSeconds: 90,
+    },
+    session: { enqueue: () => true },
+    postText: async () => {},
+    logger: { error() {} },
+    live: { speakerStart: (id) => starts.push(id), speakerEnd: () => {} },
+    createDecoder: () => decoder,
+  });
+  speaking.emit("start", "other");
+  assert.equal(subscriptions, 0);
+  speaking.emit("start", "owner");
+  assert.equal(subscriptions, 1);
+  assert.deepEqual(starts, ["other", "owner"]);
+  decoder.emit("end");
 });

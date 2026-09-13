@@ -1,3 +1,4 @@
+import { createSpeechTicket } from "./reply/speech-ticket.mjs";
 import { MeetingMemory } from "./observation/memory.mjs";
 import { deliverSpeech } from "./output/speech.mjs";
 import { randomUUID } from "node:crypto";
@@ -50,6 +51,8 @@ export class MeetingSession {
     transcribe,
     observe,
     quickReply,
+    classifyVoiceNeed,
+    revalidateReply,
     investigateQuestion,
     getRuntimeContext = () => ({}),
     upsertLiveTranscript,
@@ -92,6 +95,8 @@ export class MeetingSession {
       transcribe,
       observe,
       quickReply,
+      classifyVoiceNeed,
+      revalidateReply,
       investigateQuestion,
       getRuntimeContext,
       upsertLiveTranscript,
@@ -127,6 +132,10 @@ export class MeetingSession {
     this.cancelInterval = cancelInterval;
     this.audioQueue = [];
     this.activeTranscriptions = 0;
+    this.replyContextRevision = 0;
+    this.speechCandidates = new Map();
+    this.latestSpeechOrders = new Map();
+    this.announcedResults = new Set();
     this.activeTranscriptionJobs = new Set();
     this.activeOperations = new Set();
     this.archiveOperations = new WeakMap();
@@ -473,6 +482,7 @@ export class MeetingSession {
   }
 
   async #tryImmediateTaskAction(statement) {
+    this.replyContextRevision++;
     this.memory.remember(statement);
     this.dependencies.onStatement(statement);
     if (
@@ -609,6 +619,27 @@ export class MeetingSession {
         let reply;
         let investigated = false;
         try {
+          if (this.dependencies.classifyVoiceNeed) {
+            const need = await withTimeout(
+              (signal) =>
+                this.dependencies.classifyVoiceNeed(
+                  { text: statement.text, context },
+                  { signal },
+                ),
+              15_000,
+              "classifying voice need",
+              this.shutdownController.signal,
+            );
+            this.#log("meeting_voice_need", {
+              sequence: statement.sequence,
+              decision: need.decision,
+            });
+            if (need.decision !== "reply") {
+              statement.handledAction = { type: "quick_reply", ignored: true };
+              await this.persist();
+              return;
+            }
+          }
           const rawDecision = await withTimeout(
             (signal) =>
               this.dependencies.quickReply(
@@ -696,6 +727,7 @@ export class MeetingSession {
           }
           return;
         }
+        this.replyContextRevision++;
         this.recentConversation.push({
           role: "assistant",
           sequence: statement.sequence,
@@ -827,6 +859,9 @@ export class MeetingSession {
     if (!(this.autonomousTasks && handledAction.type === "quick_reply"))
       statement.taskEligible = false;
     statement.handledAction = handledAction;
+    control.speechTargets ??= [
+      { sequence: statement.sequence, text: statement.text },
+    ];
     // This is a notification-only receipt. Replaying it never invokes a worker or control.
     this.pendingControls.push(control);
     try {
@@ -1027,6 +1062,7 @@ export class MeetingSession {
       this.results = this.results.filter(
         (previous) => previous.id !== result.id,
       );
+      this.replyContextRevision++;
       this.results.push({
         ...result,
         result: boundText(result.result, 4000),
@@ -1042,7 +1078,10 @@ export class MeetingSession {
         "Meeting closed before result notification",
         "会議を停止しています。",
       );
-    if (options.resultAlreadyDelivered) return;
+    if (options.resultAlreadyDelivered) {
+      if (meetingId === this.meetingId) this.#announceTaskResult(result);
+      return;
+    }
     if (meetingId !== this.meetingId) {
       await this.dependencies.postText(
         this.presentation.meetingResult(result, true),
@@ -1054,6 +1093,28 @@ export class MeetingSession {
       this.presentation.meetingResult(result, false),
       options,
     );
+    this.#announceTaskResult(result);
+  }
+
+  #announceTaskResult(result) {
+    if (
+      result.superseded ||
+      this.dependencies.isLive() ||
+      !this.dependencies.revalidateReply
+    )
+      return;
+    const key = `${this.meetingId}:${result.id}:${result.runRevision ?? 0}`;
+    if (this.announcedResults.has(key)) return;
+    this.announcedResults.add(key);
+    if (this.announcedResults.size > 200)
+      this.announcedResults.delete(this.announcedResults.values().next().value);
+    void this.#queueMeetingSpeech(speechExcerpt(result.result), [
+      {
+        text: `タスク結果: ${result.title ?? result.id}`,
+        resultId: result.id,
+        runRevision: result.runRevision ?? 0,
+      },
+    ]);
   }
 
   async newMeeting(resetObserver = async () => undefined) {
@@ -1363,6 +1424,11 @@ export class MeetingSession {
             ),
           ],
           notification: conversationReply,
+          speechTargets: statements
+            .filter((s) =>
+              observation.replySourceSequences.includes(s.sequence),
+            )
+            .map(({ sequence, text }) => ({ sequence, text })),
           spokenNotification:
             statements.some(
               (statement) =>
@@ -1499,8 +1565,10 @@ export class MeetingSession {
           await this.persist();
         }
         if (control.type === "reply" && control.notification) {
+          this.replyContextRevision++;
           this.recentConversation.push({
             role: "assistant",
+            sourceSequences: control.sourceSequences,
             text: boundText(control.notification, 1200),
           });
           this.recentConversation = this.recentConversation.slice(-24);
@@ -1509,12 +1577,21 @@ export class MeetingSession {
           (pending) => pending !== control,
         );
         await this.persist();
-        const excerpt = control.spokenNotification ?? control.notification;
+        // Receipts and ordinary progress stay in text; only actual answers speak.
+        const excerpt = ["reply", "status"].includes(control.type)
+          ? (control.spokenNotification ?? control.notification)
+          : "";
         const spoken =
           excerpt && replyContext ? `${replyContext}です。${excerpt}` : excerpt;
         // Text delivery must not wait for an earlier spoken response.
         void this.#queueMeetingSpeech(
           this.#canSpeakFor(control.sourceSequences) ? spoken : "",
+          control.speechTargets ??
+            this.recentConversation.filter(
+              (item) =>
+                item.role === "user" &&
+                control.sourceSequences?.includes(item.sequence),
+            ),
         );
       } catch (error) {
         this.#log("meeting_control_dispatch_pending", {
@@ -1534,7 +1611,7 @@ export class MeetingSession {
     );
   }
 
-  #queueMeetingSpeech(spoken) {
+  #queueMeetingSpeech(spoken, targets = []) {
     if (!this.speechEnabled || !spoken || this.closed || this.voicePaused)
       return Promise.resolve();
     if (this.dependencies.isLive()) {
@@ -1545,6 +1622,76 @@ export class MeetingSession {
       this.shutdownController.signal,
       this.speechController.signal,
     ]);
+    const key = targets
+      .map((target) =>
+        target.text
+          .normalize("NFKC")
+          .replace(/[\s、。！？!?]/gu, " ")
+          .trim(),
+      )
+      .join("\n");
+    const order = Math.max(
+      -1,
+      ...targets.map((target) => target.sequence ?? -1),
+    );
+    const historyKey = `${this.meetingId}:${key}`;
+    if (key && (this.latestSpeechOrders.get(historyKey) ?? -1) > order)
+      return Promise.resolve();
+    if (key) this.latestSpeechOrders.set(historyKey, order);
+    if (this.latestSpeechOrders.size > 200)
+      this.latestSpeechOrders.delete(
+        this.latestSpeechOrders.keys().next().value,
+      );
+    const candidate = { order };
+    if (key) this.speechCandidates.set(key, candidate);
+    const ticket = createSpeechTicket({
+      isCurrent: () =>
+        (!key || this.speechCandidates.get(key) === candidate) &&
+        targets.every((target) => {
+          if (!target.resultId) return true;
+          const current = this.results.find(
+            (result) => result.id === target.resultId,
+          );
+          return (
+            current &&
+            !current.superseded &&
+            (current.runRevision ?? 0) === target.runRevision
+          );
+        }),
+      text: spoken,
+      targets,
+      validate: this.dependencies.revalidateReply
+        ? async (input, options) => {
+            const decision = await this.dependencies.revalidateReply(
+              input,
+              options,
+            );
+            this.#log("meeting_speech_revalidated", {
+              decision: decision.decision,
+              sourceSequences: targets
+                .map((t) => t.sequence)
+                .filter(Number.isInteger),
+            });
+            return decision;
+          }
+        : undefined,
+      getState: () => ({
+        revision: this.replyContextRevision,
+        pendingTranscripts:
+          this.activeTranscriptions +
+          this.audioQueue.length +
+          this.speechTurns.turns.size +
+          this.activeTextInputs,
+        conversation: this.recentConversation.filter(
+          (item) =>
+            !targets.some(
+              (target) =>
+                target.sequence === item.sequence ||
+                item.sourceSequences?.includes(target.sequence),
+            ),
+        ),
+      }),
+    });
     this.pendingSpeechCount++;
     this.speechQueue = this.speechQueue
       .then(() =>
@@ -1553,6 +1700,8 @@ export class MeetingSession {
           playAudio: this.dependencies.playAudio,
           stageTimeouts: this.stageTimeouts,
           signal: speechSignal,
+          beforeStart: ticket.beforeStart,
+          canStart: ticket.canStart,
         }),
       )
       .catch((error) => {
@@ -1563,6 +1712,8 @@ export class MeetingSession {
       })
       .finally(() => {
         this.pendingSpeechCount--;
+        if (key && this.speechCandidates.get(key) === candidate)
+          this.speechCandidates.delete(key);
       });
     return this.#trackOperation(this.speechQueue);
   }

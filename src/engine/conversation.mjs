@@ -68,6 +68,8 @@ export async function createConversationEngine({
             speechEnabled: output.capabilities.audio,
             transcribe: audio.transcribe?.bind(audio),
             quickReply: audio.quickReply?.bind(audio),
+            classifyVoiceNeed: audio.classifyVoiceNeed?.bind(audio),
+            revalidateReply: audio.revalidateReply?.bind(audio),
             investigateQuestion: execution.investigateQuestion,
             getRuntimeContext: hooks.getRuntimeContext,
             onStatement: hooks.onStatement,

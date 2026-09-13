@@ -1,3 +1,8 @@
+import {
+  VOICE_NEED_POLICY,
+  REVALIDATION_POLICY,
+  parseRevalidation,
+} from "../engine/reply/policy.mjs";
 import OpenAI, { toFile } from "openai";
 import { qualifyTranscriptionAudio } from "../engine/input/audio.mjs";
 export function createOpenAIAudioAdapter(config, { client } = {}) {
@@ -26,6 +31,79 @@ export function createOpenAIAudioAdapter(config, { client } = {}) {
       }
       const result = await openai.audio.transcriptions.create(request, options);
       return result.text;
+    },
+    async classifyVoiceNeed(input, { signal } = {}) {
+      const response = await openai.responses.create(
+        {
+          model: config.quickReplyModel ?? "gpt-4.1-mini",
+          store: false,
+          max_output_tokens: 200,
+          instructions: VOICE_NEED_POLICY,
+          input: JSON.stringify(input),
+          text: {
+            format: {
+              type: "json_schema",
+              name: "voice_need",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  decision: {
+                    type: "string",
+                    enum: ["reply", "pass", "unknown"],
+                  },
+                },
+                required: ["decision"],
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        { signal },
+      );
+      const result = JSON.parse(response.output_text);
+      if (!["reply", "pass", "unknown"].includes(result.decision))
+        throw new Error("Invalid voice need decision");
+      return result;
+    },
+    async revalidateReply(input, { signal } = {}) {
+      const response = await openai.responses.create(
+        {
+          model: config.quickReplyModel ?? "gpt-4.1-mini",
+          store: false,
+          max_output_tokens: 300,
+          instructions: REVALIDATION_POLICY,
+          input: JSON.stringify(input),
+          text: {
+            format: {
+              type: "json_schema",
+              name: "speech_revalidation",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  decision: {
+                    type: "string",
+                    enum: ["keep", "cancel", "unknown"],
+                  },
+                  evidenceSequences: {
+                    type: "array",
+                    items: { type: "integer" },
+                  },
+                },
+                required: ["decision", "evidenceSequences"],
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        { signal },
+      );
+      return parseRevalidation(
+        JSON.parse(response.output_text),
+        input.conversation,
+        input.targets,
+      );
     },
     async quickReply(
       { text, context, explicitlyAsked = false },

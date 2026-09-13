@@ -94,32 +94,67 @@ export function createDiscordPlayer(
   const speechStart = new SpeechStartGate(connection.receiver.speaking, {
     silenceMs: speechStartSilenceMs,
   });
-  const play = serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
-    if (signal?.aborted) throw signal.reason;
-    const stopOnAbort = () => player.stop(true);
-    signal?.addEventListener("abort", stopOnAbort, { once: true });
-    try {
-      const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
-      const seconds = raw.length / PCM_BYTES_PER_SECOND;
-      await speechStart.runWhenQuiet(
-        () => {
-          const resource = createAudioResource(Readable.from(raw), {
-            inputType: StreamType.Raw,
-          });
-          player.play(resource);
-        },
-        { signal },
-      );
-      await entersState(player, AudioPlayerStatus.Playing, 5_000);
-      await entersState(
-        player,
-        AudioPlayerStatus.Idle,
-        Math.max(10_000, Math.ceil(seconds * 1_000) + 10_000),
-      );
-    } finally {
-      signal?.removeEventListener("abort", stopOnAbort);
-    }
-  });
+  const play = serializeAudioPlayback(
+    async (ttsPcm, { signal, beforeStart, canStart } = {}) => {
+      if (signal?.aborted) throw signal.reason;
+      const interruption = new AbortController();
+      signal = signal
+        ? AbortSignal.any([signal, interruption.signal])
+        : interruption.signal;
+      let playing = false;
+      const onHumanStart = () => {
+        if (playing)
+          interruption.abort(
+            Object.assign(new Error("Human speech interrupted playback"), {
+              code: "SPEECH_STOPPED",
+            }),
+          );
+      };
+      connection.receiver.speaking.on("start", onHumanStart);
+      const stopOnAbort = () => player.stop(true);
+      signal?.addEventListener("abort", stopOnAbort, { once: true });
+      try {
+        const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
+        const seconds = raw.length / PCM_BYTES_PER_SECOND;
+        let admitted = false;
+        while (!admitted) {
+          if (signal.aborted) throw signal.reason;
+          if (beforeStart && !(await beforeStart({ signal }))) return;
+          admitted = await speechStart.runWhenQuiet(
+            () => {
+              if (canStart && !canStart()) return false;
+              const resource = createAudioResource(Readable.from(raw), {
+                inputType: StreamType.Raw,
+              });
+              playing = true;
+              player.play(resource);
+              return true;
+            },
+            { signal },
+          );
+        }
+        await entersState(
+          player,
+          AudioPlayerStatus.Playing,
+          AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+        );
+        await entersState(
+          player,
+          AudioPlayerStatus.Idle,
+          AbortSignal.any([
+            signal,
+            AbortSignal.timeout(
+              Math.max(10_000, Math.ceil(seconds * 1_000) + 10_000),
+            ),
+          ]),
+        );
+      } finally {
+        playing = false;
+        connection.receiver.speaking.off("start", onHumanStart);
+        signal?.removeEventListener("abort", stopOnAbort);
+      }
+    },
+  );
   play.dispose = () => speechStart.dispose();
   return play;
 }
@@ -191,8 +226,8 @@ export function subscribeToAllowedSpeaker({
       .catch(() => undefined);
   connection.receiver.speaking.on("end", (userId) => live?.speakerEnd(userId));
   connection.receiver.speaking.on("start", (userId) => {
-    if (!config.listenToEveryone && userId !== config.allowedUserId) return;
     live?.speakerStart(userId);
+    if (!config.listenToEveryone && userId !== config.allowedUserId) return;
     if (active.has(userId)) return;
     const startedAt = Date.now();
     active.add(userId);
