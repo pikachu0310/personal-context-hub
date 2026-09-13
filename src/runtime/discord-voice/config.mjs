@@ -187,6 +187,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
       false,
     ),
     agentJoinGuideUrl: env.PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL?.trim(),
+    agentDownloadUrl: env.PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL?.trim(),
     workerAllowGuildMembers: boolean(
       env,
       "PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS",

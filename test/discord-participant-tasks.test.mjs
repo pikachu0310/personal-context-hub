@@ -251,10 +251,6 @@ test("enrollment policy and registration are checked for task creation; setup st
       authorizeOwner: async () => allowed,
       statusForOwner: () => [],
     },
-    buildDownload: async () => ({
-      name: "Connect-Agent.cmd",
-      attachment: Buffer.from("test"),
-    }),
   });
   const message = {
     guildId: "guild",
@@ -277,6 +273,8 @@ test("enrollment policy and registration are checked for task creation; setup st
     deferReply: async (p) => assert.equal(p.flags, 64),
     editReply: async (p) => replies.push(p),
   });
-  assert.equal(replies.at(-1).files[0].name, "Connect-Agent.cmd");
+  assert.equal(replies.at(-1).files.length, 0);
+  assert.match(replies.at(-1).content, /IDO Agent/);
+  assert.doesNotMatch(replies.at(-1).content, /Connect-Agent\.cmd/);
   assert.deepEqual(replies.at(-1).allowedMentions, { parse: [] });
 });

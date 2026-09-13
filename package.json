@@ -32,8 +32,8 @@
     "inspect:discord:voice:offline": "node scripts/inspect-discord-voice-config.mjs --offline",
     "inspect:discord:user": "bash scripts/run-discord-rpc-windows.sh inspect",
     "lint": "eslint .",
-    "format": "prettier --write \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test/**/*.mjs\" \"docs/**/*.md\" \".github/**/*.yml\" \"*.{js,json,md}\"",
-    "format:check": "prettier --check \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test/**/*.mjs\" \"docs/**/*.md\" \".github/**/*.yml\" \"*.{js,json,md}\"",
+    "format": "prettier --write \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test/**/*.mjs\" \"docs/**/*.md\" \".github/**/*.yml\" \"*.{js,json,md}\" \"desktop/**/*.{mjs,cjs,js,html,json}\"",
+    "format:check": "prettier --check \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test/**/*.mjs\" \"docs/**/*.md\" \".github/**/*.yml\" \"*.{js,json,md}\" \"desktop/**/*.{mjs,cjs,js,html,json}\"",
     "test": "node --test",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/**/*.mjs --test-coverage-lines=60 --test-coverage-branches=60 --test-coverage-functions=30",
     "verify": "npm run check && npm run lint && npm run format:check && npm run test:coverage && npm audit",
@@ -56,7 +56,11 @@
     "start:studio": "node --env-file-if-exists=.env src/runtime/browser/server.mjs",
     "studio:demo:init": "node scripts/studio-demo-init.mjs",
     "smoke:studio": "node scripts/studio-browser-smoke.mjs",
-    "smoke:studio:live": "node scripts/studio-live-smoke.mjs"
+    "smoke:studio:live": "node scripts/studio-live-smoke.mjs",
+    "agent:desktop": "electron desktop/main.mjs",
+    "agent:desktop:prepare": "node scripts/prepare-agent-desktop.mjs",
+    "agent:desktop:package": "npm run agent:desktop:prepare && npm --prefix .desktop-build/app install --omit=dev --ignore-scripts && electron-builder --config desktop/builder.config.json --win --publish never",
+    "agent:desktop:smoke": "node scripts/agent-desktop-smoke.mjs"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
@@ -73,6 +77,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "electron": "44.3.0",
+    "electron-builder": "26.15.3",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
     "prettier": "^3.6.2"

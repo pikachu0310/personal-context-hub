@@ -98,6 +98,59 @@ async function fixture(t, extra = {}) {
   return { ui, directory, login, url, headers, call };
 }
 
+test("desktop task API cancels only the selected task and shutdown waits for owned work", async (t) => {
+  let execute;
+  let stopped = 0;
+  const { call, ui, url } = await fixture(t, {
+    createWorker: ({ executor }) => {
+      execute = executor;
+      return {
+        authenticated: true,
+        connect: async () => {},
+        stop: async () => {},
+      };
+    },
+    createExecutor: () => ({
+      run: async (_task, { signal, onProgress }) => {
+        await onProgress("working");
+        await new Promise((resolve) =>
+          signal.addEventListener("abort", resolve, { once: true }),
+        );
+        await new Promise((resolve) => setImmediate(resolve));
+        stopped++;
+        signal.throwIfAborted();
+      },
+    }),
+  });
+  assert.equal(
+    (
+      await call("/connect", {
+        gatewayUrl: "ws://127.0.0.1:8787/workers",
+        pairingCode: "test-code",
+        workingDirectory: "sample",
+        automatic: true,
+      })
+    ).status,
+    200,
+  );
+  const first = assert.rejects(execute.run({ id: "one", title: "one" }));
+  const second = assert.rejects(execute.run({ id: "two", title: "two" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await call("/stop-task", { id: "unknown" })).status, 409);
+  assert.equal((await call("/stop-task", { id: "one" })).status, 200);
+  await first;
+  const state = await (await call("/status")).json();
+  assert.equal(
+    state.tasks.find((task) => task.id === "one").state,
+    "cancelled",
+  );
+  assert.equal(state.tasks.find((task) => task.id === "two").state, "running");
+  await ui.close();
+  await second;
+  assert.equal(stopped, 2);
+  await assert.rejects(fetch(new URL("/status", url)));
+});
+
 test("local UI rejects cross-origin, missing capability, DNS rebinding and oversized requests", async (t) => {
   const { call, headers, url } = await fixture(t);
   assert.equal((await fetch(new URL("/status", url))).status, 403);

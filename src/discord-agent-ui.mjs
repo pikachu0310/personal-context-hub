@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { AgentBrowserLogin } from "./discord-agent-login.mjs";
+import { AgentTaskMonitor } from "./discord-agent-task-monitor.mjs";
 import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
 import { AgentExecutionConsent } from "./discord-agent-execution-consent.mjs";
 import { decodeAgentInvitation } from "./discord-agent-onboarding.mjs";
@@ -42,6 +43,9 @@ export async function createAgentUi({
   },
   connectionTimeoutMs = 30_000,
   approvalTimeoutMs = 90_000,
+  pickFolder,
+  taskMonitor = new AgentTaskMonitor(),
+  assetDirectory = new URL("./", import.meta.url),
 } = {}) {
   // Keep the connection agent's Codex configuration separate from personal
   // plugins, hooks and MCP settings. The official login stores its own auth.
@@ -65,12 +69,13 @@ export async function createAgentUi({
   let busy = false;
   let lastError = "";
   let origin;
+  let closing = false;
   const page = await readFile(
-    new URL("./discord-agent-ui.html", import.meta.url),
+    new URL("./discord-agent-ui.html", assetDirectory),
     "utf8",
   );
   const script = await readFile(
-    new URL("./discord-agent-ui-client.js", import.meta.url),
+    new URL("./discord-agent-ui-client.js", assetDirectory),
     "utf8",
   );
   const joinPage = await readFile(
@@ -86,10 +91,12 @@ export async function createAgentUi({
     const previous = worker;
     worker = undefined;
     await previous?.stop();
+    await taskMonitor.close();
     consent = undefined;
     connectionPolicy = undefined;
   };
   const connect = async (input) => {
+    if (closing) throw new UiError("アプリを終了しています。");
     if (busy || worker) throw new UiError("先に接続を停止してください。");
     busy = true;
     lastError = "";
@@ -97,6 +104,7 @@ export async function createAgentUi({
     try {
       if (!(await login.refresh()).authenticated)
         throw new UiError("先にOpenAIへログインしてください。");
+      if (closing) throw new UiError("アプリを終了しています。");
       if (
         typeof input.workingDirectory !== "string" ||
         !input.workingDirectory.trim()
@@ -152,23 +160,30 @@ export async function createAgentUi({
         automatic: input.automatic === true,
         networkAccess: input.networkAccess === true,
       };
+      const executor = createExecutor({
+        workingDirectory,
+        codexHome,
+        networkAccess: input.networkAccess === true,
+        workspaceDirectory: join(
+          directory,
+          "workspaces",
+          createHash("sha256")
+            .update(workingDirectory)
+            .digest("hex")
+            .slice(0, 16),
+        ),
+      });
       consent = new AgentExecutionConsent({
         automatic: input.automatic === true,
         timeoutMs: approvalTimeoutMs,
-        executor: createExecutor({
-          workingDirectory,
-          codexHome,
-          networkAccess: input.networkAccess === true,
-          workspaceDirectory: join(
-            directory,
-            "workspaces",
-            createHash("sha256")
-              .update(workingDirectory)
-              .digest("hex")
-              .slice(0, 16),
-          ),
-        }),
+        executor: {
+          run: (task, options) => {
+            taskMonitor.markRunning(task.id);
+            return executor.run(task, options);
+          },
+        },
       });
+      if (closing) throw new UiError("アプリを終了しています。");
       worker = createWorker({
         gatewayUrl,
         credential,
@@ -176,7 +191,10 @@ export async function createAgentUi({
         name: nextProfile.name || undefined,
         capabilities: ["*"],
         maximumConcurrentTasks: 1,
-        executor: consent,
+        executor: taskMonitor.wrap(consent, {
+          automatic: input.automatic === true,
+          workingDirectory,
+        }),
         credentialWriter: writeCredential,
       });
       await Promise.race([
@@ -252,7 +270,8 @@ export async function createAgentUi({
             worker && !worker.authenticated && !worker.reconnectDisabled,
           ),
           revoked: Boolean(worker?.reconnectDisabled),
-          canPickFolder: process.platform === "win32",
+          canPickFolder: Boolean(pickFolder) || process.platform === "win32",
+          tasks: taskMonitor.list(),
           approvals: consent?.describe() ?? [],
           connectionPolicy,
         });
@@ -271,6 +290,13 @@ export async function createAgentUi({
       }
       const contents = Buffer.concat(chunks).toString("utf8");
       const input = JSON.parse(contents || "{}");
+      if (request.url === "/stop-task") {
+        if (!taskMonitor.cancel(input.id))
+          return send(409, { error: "このタスクは実行中ではありません。" });
+        return send(200, { ok: true });
+      }
+      if (request.url === "/folder" && pickFolder)
+        return send(200, { path: await pickFolder() });
       if (request.url === "/invitation") {
         if (worker || busy)
           return send(409, { error: "先に接続を停止してください。" });
@@ -347,8 +373,10 @@ export async function createAgentUi({
   return {
     url: `${origin}/#${token}`,
     async close() {
+      closing = true;
       login.stop();
       await stop();
+      await taskMonitor.close();
       await new Promise((resolve) => {
         server.close(resolve);
         server.closeIdleConnections();

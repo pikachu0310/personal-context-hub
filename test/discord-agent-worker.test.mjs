@@ -299,13 +299,13 @@ test("the private Discord slash reply retains pairing and guide buttons without 
   assert.equal(calls[0].ownerUserId, owner);
   assert.match(replies[0].content, /PAIR-CODE/);
   assert.doesNotMatch(replies[0].content, /token|auth\.json/i);
-  assert.match(
-    replies[0].components[0].components[1].url,
-    /^http:\/\/127\.0\.0\.1:17879\/join#ido1\./,
+  assert.equal(
+    replies[0].components[0].components[0].custom_id,
+    "ido:agent-setup",
   );
   assert.deepEqual(replies[0].allowedMentions, { parse: [] });
   assert.equal(
-    replies[0].components[0].components[2].url,
+    replies[0].components[0].components[1].url,
     config.agentJoinGuideUrl,
   );
 });

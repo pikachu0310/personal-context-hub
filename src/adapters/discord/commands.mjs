@@ -10,7 +10,6 @@ import {
   participantTaskAssignment,
   canControlDiscordTask,
 } from "../../discord-task-access.mjs";
-import { buildAgentDownload } from "../../discord-agent-download.mjs";
 
 export const IDOBATA_APPLICATION_COMMAND = {
   name: "ido",
@@ -24,7 +23,7 @@ export const IDOBATA_APPLICATION_COMMAND = {
         {
           type: 1,
           name: "setup",
-          description: "初回の接続用.cmdをダウンロード（Windows）",
+          description: "接続アプリのインストール方法（Windows）",
         },
         {
           type: 1,
@@ -481,7 +480,6 @@ export function createIdobataMessageHandler({
   leaveVoice,
   setLiveMode,
   workerGateway,
-  buildDownload = buildAgentDownload,
 }) {
   const seen = new Set();
   const commandChannelIds = new Set(
@@ -570,19 +568,22 @@ export function createIdobataMessageHandler({
       if (action === "setup") {
         if (!(await workerGateway.authorizeOwner?.(message.author.id)))
           return reply("このサーバーの参加条件を満たしていません。");
-        const file = await buildDownload();
         return reply(
           [
             "📥 **初回セットアップ（Windows）**",
-            "1. このメッセージの **Connect-Agent.cmd** をダウンロードし、作業するPCでダブルクリックします。リポジトリの取得は不要です。",
-            "2. 初回はNode.js・Git・接続用の部品を準備します。確認画面が出たら内容を確認してください。",
-            "3. ブラウザに **井戸Bot · エージェント接続** が開いたら、OpenAIでログインします。",
-            "4. この画面を残して `/ido agent connect` → **② 参加情報を入力** を押します。",
-            "5. 作業フォルダーを選んで接続します。タスク実行は本人が承認します。",
-            "このファイルは参加者用アプリをPC内に展開します。Botの秘密情報や参加コードは含みません。信頼するBotからの添付だけを実行してください。",
+            config.agentDownloadUrl
+              ? "1. 下のボタンから **IDO Agent** のインストーラーを取得してインストールします。"
+              : "1. 主催者が配布する **IDO Agent** のインストーラーを使用してください。ダウンロード先はまだ設定されていません。",
+            "2. スタートメニューの **IDO Agent** を開き、「接続設定」でOpenAIへログインします。Node.jsの別途インストールは不要です。作業にはGitが必要です。",
+            "3. `/ido agent connect` で参加情報を取得し、アプリへ貼り付けます。",
+            "4. 作業フォルダーを選んで接続します。タスクの実行確認・進捗・停止はアプリで行えます。",
+            "ウィンドウを閉じるか「アプリを終了」を押すと、このアプリのタスクと接続を停止します。",
           ].join("\n"),
-          [],
-          [file],
+          agentGuideComponents(
+            config.agentJoinGuideUrl,
+            undefined,
+            config.agentDownloadUrl,
+          ),
         );
       }
       if (action === "connect") {
@@ -601,21 +602,25 @@ export function createIdobataMessageHandler({
         return reply(
           [
             "🔐 **個人Codex Workerの接続コード**",
-            "**初めての人：先に `/ido agent setup` から Connect-Agent.cmd をダウンロードして開いてください。**",
-            "接続画面が開いていない人も、ダウンロードした.cmdから起動してください。",
+            "**初めての人：先に `/ido agent setup` の案内から IDO Agent をインストールしてください。**",
+            "1. IDO Agentを開き、「接続設定」を選びます。",
             "2. 画面の「OpenAIでログイン」で認証します。パスワードはOpenAI公式ページだけに入力してください。",
-            "3. 同じPC・同じブラウザで下の「② 参加情報を入力」を押し、入力後に「接続画面を表示」を押してください。そこで作業フォルダーを選んで接続します。",
-            "ボタンがない・使えない場合は、次の参加情報を接続画面の「Discordの参加情報」に貼り付けて読み込みます。リンク・参加情報は他人に共有しないでください。",
+            "3. 次の `ido1.` から始まる参加情報を、アプリの「Discordの参加情報」に貼り付け、「参加情報を読み込む」を押します。",
+            "4. 接続先と作業フォルダーを確認して接続してください。参加情報は他人に共有しないでください。",
             `\`${encodeAgentInvitation(pairing)}\``,
             `Gateway: \`${pairing.gatewayUrl}\``,
             `コード: \`${pairing.code}\`（約${remaining}分で失効・1回限り）`,
-            "ダウンロードした `Connect-Agent.cmd` をダブルクリックすると接続画面が開きます。既定ではタスクごとに本人の実行確認が必要です。",
+            "既定ではタスクごとにアプリで本人の実行確認が必要です。",
             pairing.gatewayUrl.startsWith("ws:")
               ? "⚠️ 現在はBotと同じPCからの接続専用です。他のPCで参加するには管理者による公開WSSの設定が必要です。"
               : "",
             "Discord・Codex・GitHubのログイン情報をBotへ送らないでください。",
           ].join("\n"),
-          agentGuideComponents(config.agentJoinGuideUrl, pairing),
+          agentGuideComponents(
+            config.agentJoinGuideUrl,
+            pairing,
+            config.agentDownloadUrl,
+          ),
         );
       }
       if (action === "disconnect") {
