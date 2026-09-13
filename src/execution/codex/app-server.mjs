@@ -145,7 +145,12 @@ export class AppServerCodex extends EventEmitter {
     this.connecting = (async () => {
       this.child = this.spawnProcess(
         this.options.codexPathOverride ?? "codex",
-        ["app-server", "--stdio", ...configArgs(this.options.config)],
+        [
+          "app-server",
+          "--listen",
+          "stdio://",
+          ...configArgs(this.options.config),
+        ],
         {
           env: this.options.env,
           stdio: ["pipe", "pipe", "pipe"],
@@ -167,6 +172,54 @@ export class AppServerCodex extends EventEmitter {
           return this.fail(new Error("Invalid Codex App Server message"));
         }
         if (message.id !== undefined && message.method) {
+          if (
+            this.options.onApprovalRequest &&
+            [
+              "item/commandExecution/requestApproval",
+              "item/fileChange/requestApproval",
+              "item/permissions/requestApproval",
+            ].includes(message.method)
+          ) {
+            void Promise.resolve()
+              .then(() =>
+                this.options.onApprovalRequest(
+                  message.method,
+                  message.params ?? {},
+                ),
+              )
+              .then((result) => {
+                if (!this.closed)
+                  this.send({
+                    id: message.id,
+                    result:
+                      message.method === "item/permissions/requestApproval"
+                        ? {
+                            permissions:
+                              result?.decision === "accept"
+                                ? (message.params?.permissions ?? {})
+                                : {},
+                            scope: "turn",
+                          }
+                        : {
+                            decision:
+                              result?.decision === "accept"
+                                ? "accept"
+                                : "decline",
+                          },
+                  });
+              })
+              .catch(() => {
+                if (!this.closed)
+                  this.send({
+                    id: message.id,
+                    result:
+                      message.method === "item/permissions/requestApproval"
+                        ? { permissions: {}, scope: "turn" }
+                        : { decision: "decline" },
+                  });
+              });
+            return;
+          }
           // Never let a server-side approval request hang an unattended meeting.
           // Our tools run with approvalPolicy=never; unexpected requests fail closed.
           this.send({
@@ -305,6 +358,16 @@ class AppServerThread {
           },
         );
         this.id = response.thread.id;
+        if (
+          options.requireWritableSandbox &&
+          response.sandbox?.type === "readOnly"
+        ) {
+          const error = new Error(
+            "The native sandbox is not ready for workspace writes",
+          );
+          error.code = "AGENT_SANDBOX_NOT_READY";
+          throw error;
+        }
       })();
     return this.preparing;
   }

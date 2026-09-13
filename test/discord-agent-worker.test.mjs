@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
+import { voiceErrorMessage } from "../src/engine/errors.mjs";
 import { AgentWorkerRegistry } from "../src/discord-agent-worker-registry.mjs";
 import {
   AgentWorkerGateway,
@@ -192,6 +193,20 @@ test("a paired Worker receives a task and returns progress and result", async ()
   assert.equal("privateValue" in task.evidence, false);
   assert.equal("workingDirectory" in task.artifacts, false);
   assert.equal("patchPath" in task.artifacts, false);
+  worker.executor.run = async () => {
+    const error = new Error("private local details");
+    error.code = "AGENT_SANDBOX_NOT_READY";
+    throw error;
+  };
+  await assert.rejects(
+    gateway.runTask({ ...task, id: "failed-sandbox" }),
+    (error) => {
+      assert.equal(error.code, "AGENT_SANDBOX_NOT_READY");
+      assert.match(voiceErrorMessage(error), /Windowsサンドボックス/);
+      assert.doesNotMatch(voiceErrorMessage(error), /private local details/);
+      return true;
+    },
+  );
   await worker.stop();
   await gateway.stop();
 });
@@ -297,15 +312,22 @@ test("the private Discord slash reply retains pairing and guide buttons without 
     followUp: async () => assert.fail("Expected a single private reply"),
   });
   assert.equal(calls[0].ownerUserId, owner);
-  assert.match(replies[0].content, /PAIR-CODE/);
+  const invitation = replies[0].content.match(
+    /```text\n(ido1\.[A-Za-z0-9_-]+)\n```/,
+  )[1];
+  assert.equal(
+    JSON.parse(Buffer.from(invitation.slice(5), "base64url").toString("utf8"))
+      .code,
+    "PAIR-CODE",
+  );
   assert.doesNotMatch(replies[0].content, /token|auth\.json/i);
-  assert.match(
-    replies[0].components[0].components[1].url,
-    /^http:\/\/127\.0\.0\.1:17879\/join#ido1\./,
+  assert.equal(
+    replies[0].components[0].components[0].custom_id,
+    "ido:agent-setup",
   );
   assert.deepEqual(replies[0].allowedMentions, { parse: [] });
   assert.equal(
-    replies[0].components[0].components[2].url,
+    replies[0].components[0].components[1].url,
     config.agentJoinGuideUrl,
   );
 });

@@ -1,0 +1,24 @@
+{
+  "appId": "org.idobot.agent",
+  "productName": "IDO Agent",
+  "directories": { "app": ".desktop-build/app", "output": "dist/desktop" },
+  "files": ["**/*"],
+  "asar": false,
+  "npmRebuild": false,
+  "win": {
+    "icon": "desktop/icon.ico",
+    "target": [{ "target": "nsis", "arch": ["x64"] }],
+    "artifactName": "IDO-Agent-Setup-${version}.${ext}",
+    "requestedExecutionLevel": "asInvoker"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowElevation": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "runAfterFinish": false,
+    "shortcutName": "IDO Agent"
+  },
+  "publish": null
+}

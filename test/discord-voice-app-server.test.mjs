@@ -49,6 +49,82 @@ function server({ handle, requestTimeoutMs = 1000 } = {}) {
   };
 }
 
+test("desktop fails before turn start if effective sandbox is read-only", async () => {
+  const fake = server({
+    handle(message, emit) {
+      if (message.method !== "thread/start") return false;
+      emit({
+        id: message.id,
+        result: { thread: { id: "readonly" }, sandbox: { type: "readOnly" } },
+      });
+      return true;
+    },
+  });
+  try {
+    const thread = fake.client.startThread({ requireWritableSandbox: true });
+    const { events } = await thread.runStreamed("test");
+    await assert.rejects(events.next(), {
+      code: "AGENT_SANDBOX_NOT_READY",
+    });
+    assert.equal(
+      fake.messages.some((message) => message.method === "turn/start"),
+      false,
+    );
+  } finally {
+    await fake.client.close();
+  }
+});
+
+test("interactive desktop approvals answer only supported operations and never grant session-wide access", async () => {
+  const fake = server();
+  fake.client.options.onApprovalRequest = async (_method, params) => ({
+    decision: params.command === "git status" ? "accept" : "acceptForSession",
+  });
+  await fake.client.connect();
+  fake.emit({
+    id: 801,
+    method: "item/commandExecution/requestApproval",
+    params: { command: "git status" },
+  });
+  fake.emit({
+    id: 802,
+    method: "item/commandExecution/requestApproval",
+    params: { command: "other" },
+  });
+  fake.emit({ id: 803, method: "unknown/requestApproval", params: {} });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fake.messages.find((x) => x.id === 801).result, {
+    decision: "accept",
+  });
+  assert.deepEqual(fake.messages.find((x) => x.id === 802).result, {
+    decision: "decline",
+  });
+  assert.equal(fake.messages.find((x) => x.id === 803).error.code, -32601);
+  fake.client.options.onApprovalRequest = async () => ({ decision: "accept" });
+  fake.emit({
+    id: 804,
+    method: "item/permissions/requestApproval",
+    params: { permissions: { network: { enabled: true } } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fake.messages.find((x) => x.id === 804).result, {
+    permissions: { network: { enabled: true } },
+    scope: "turn",
+  });
+  fake.client.options.onApprovalRequest = async () => ({ decision: "decline" });
+  fake.emit({
+    id: 805,
+    method: "item/permissions/requestApproval",
+    params: { permissions: { network: { enabled: true } } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fake.messages.find((x) => x.id === 805).result, {
+    permissions: {},
+    scope: "turn",
+  });
+  await fake.client.close();
+});
+
 test("App Server normalizes evidence, usage, schema, active steering and thread resume", async () => {
   const fake = server({
     handle(message, emit) {

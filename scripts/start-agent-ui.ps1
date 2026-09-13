@@ -3,7 +3,7 @@ Add-Type -AssemblyName System.Windows.Forms
 try {
     $projectDirectory = if ($env:IDO_AGENT_PROJECT_DIRECTORY) { (Resolve-Path -LiteralPath $env:IDO_AGENT_PROJECT_DIRECTORY).Path } else { (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path }
     if ($projectDirectory.StartsWith('\\')) {
-        throw 'Copy or clone this project into a Windows folder before opening Start Agent.cmd.'
+        throw 'The legacy browser UI requires a Windows checkout. For IDO Agent, use the desktop installer and Windows Start menu.'
     }
     Set-Location -LiteralPath $projectDirectory
     function Refresh-AgentPath {
@@ -30,7 +30,7 @@ try {
     $nodeExecutable = (Get-Command node.exe -ErrorAction Stop).Source
     $nodeVersion = & $nodeExecutable --version
     if ([int]($nodeVersion.TrimStart('v').Split('.')[0]) -lt 22) {
-        throw 'Install Node.js 22 or later, then reopen Start Agent.cmd.'
+        throw 'The legacy browser UI requires Node.js 22 or later. IDO Agent includes its runtime; open it from the Windows Start menu.'
     }
     if (-not (Test-Path -LiteralPath (Join-Path $projectDirectory 'node_modules\@openai\codex\package.json'))) {
         & npm.cmd ci --omit=dev

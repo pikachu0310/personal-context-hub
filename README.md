@@ -25,7 +25,9 @@ Botには対象チャンネルでの閲覧・接続・発言・送信・履歴�
 
 1つのBotへ複数のCodexエージェントを接続する場合は、`PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` にエージェントのJSON配列を設定します。各要素は `id`、`name`、担当判定に使う `capabilities`、並行数、対象repo、任意の専用Discordチャンネル、モデル設定を持ちます。Issueは担当領域と現在の負荷から割り当て、担当と理由を保存してから実行します。`PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` を設定するとIssueごとにForum投稿を作り、進捗・質問・指摘・回答を同じスレッドへ集約します。エージェント別アイコンを使う場合はForumでのWebhook管理権限も必要です。
 
-参加者が自分のPCとCodex認証で参加する場合は、Bot側でWorker Gatewayを有効にします。Gatewayはloopbackへbindし、外部公開時はTLS reverse proxyを通した `wss://` URLだけを公開してください。Windowsの参加者は **`Start Agent.cmd` をダブルクリック**し、画面の「OpenAIでログイン」から公式ページで認証します。Discordで `/ido agent connect` を選び、本人だけに表示された接続先と参加コードを画面に入力すると参加できます。[参加手順と主催者の設定](docs/discord-agent-participant.md)を参照してください。
+参加者が自分のPCとCodex認証で参加する場合は、Bot側でWorker Gatewayを有効にします。Gatewayはloopbackへbindし、外部公開時はTLS reverse proxyを通した `wss://` URLだけを公開してください。Windowsの参加者は **IDO Agent** をインストールし、接続設定の「OpenAIでログイン」から公式ページで認証します。Discordの `/ido agent connect` で本人だけに表示された参加情報をアプリへ貼り付け、作業フォルダーを選ぶと参加できます。タスク一覧で進捗・結果を確認し、個別停止できます。[参加手順と主催者の設定](docs/discord-agent-participant.md)を参照してください。
+
+初回はDiscordの **`/ido agent setup` → インストーラーを入手・インストール → Windowsのスタートメニューで「IDO Agent」を起動** の順に進みます。次回からはスタートメニューでアプリを開いて再接続します。開発者のビルド、ローカル起動、主催者がBotへ案内を反映する手順は[アプリのビルド・配布・起動ガイド](docs/agent-desktop-development.md)を参照してください。
 
 CLIを使う場合の接続方法も残しています。
 

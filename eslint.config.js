@@ -7,13 +7,15 @@ export default [
       "node_modules/**",
       "ui/node_modules/**",
       "ui/dist/**",
+      ".desktop-build/**",
+      "dist/**",
       ".private/**",
       ".codex_tmp_*/**",
     ],
   },
   js.configs.recommended,
   {
-    files: ["**/*.js", "**/*.mjs"],
+    files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",

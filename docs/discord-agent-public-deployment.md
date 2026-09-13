@@ -6,7 +6,7 @@
 
 公開するのは中央BotのWorker GatewayのWSS接続先と、秘密を含まない参加ガイドだけです。参加者のローカルUI、OpenAI認証のコールバック、Codex App Server、ファイルシステム、Botの資格情報は公開しません。Tailscaleや参加者側のVPNは不要です。
 
-参加条件を満たす人には、Discordの本人だけに見える応答で `Connect-Agent.cmd` を配布します。稼働中のBotと同じ版の接続クライアントを同梱し、設定・認証情報・実行履歴は含めません。取得にGitHubへのログインは不要です。`WORKER_ALLOW_GUILD_MEMBERS=true` の場合、登録済みの参加者は本人のエージェントへのIssueタスク作成と停止ができます。`ALL_PARTICIPANTS_OPERATE=false` のまま利用でき、他人のタスクとBot全体の操作権限は付与しません。
+参加条件を満たす人には、Discordの本人だけに見える応答で **IDO Agent** のインストール方法を案内します。`PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL` に公開HTTPSのインストーラーURLを設定すると、ダウンロードボタンも表示します。稼働中のBotと互換性のある版を配布し、Botの設定・認証情報・実行履歴は含めません。取得にGitHubへのログインは不要です。`WORKER_ALLOW_GUILD_MEMBERS=true` の場合、登録済みの参加者は本人のエージェントへのIssueタスク作成と停止ができます。`ALL_PARTICIPANTS_OPERATE=false` のまま利用でき、他人のタスクとBot全体の操作権限は付与しません。
 
 ## 主催者のPCで運用する
 

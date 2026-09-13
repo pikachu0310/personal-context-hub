@@ -1,8 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { createServer } from "node:http";
+import { agentInstallerHandler } from "./discord-agent-installer.mjs";
 import { WebSocketServer } from "ws";
 import { identifyVerificationCommand } from "./engine/evidence.mjs";
 import { taskModelSelection } from "./engine/model-policy.mjs";
 import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
+import { VoiceServiceError } from "./engine/errors.mjs";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const OPEN = 1;
@@ -137,6 +140,7 @@ export class AgentWorkerGateway {
     maximumUnauthenticatedConnections = 32,
     maximumMessagesPerWindow = 120,
     authorizeOwner = () => true,
+    installerPath,
   }) {
     const { url } = validateWorkerGatewayConfig({ host, publicUrl, port });
     this.path = url.pathname;
@@ -156,6 +160,7 @@ export class AgentWorkerGateway {
     this.maximumUnauthenticatedConnections = maximumUnauthenticatedConnections;
     this.maximumMessagesPerWindow = maximumMessagesPerWindow;
     this.authorizeOwner = authorizeOwner;
+    this.installerPath = installerPath;
     this.sessions = new Map();
     this.connections = new Map();
     this.pending = new Map();
@@ -163,9 +168,14 @@ export class AgentWorkerGateway {
 
   async start() {
     if (this.server) return this;
+    if (this.installerPath)
+      this.httpServer = createServer(
+        await agentInstallerHandler(this.installerPath),
+      );
     this.server = new this.WebSocketServerClass({
-      host: this.host,
-      port: this.port,
+      ...(this.httpServer
+        ? { server: this.httpServer }
+        : { host: this.host, port: this.port }),
       maxPayload: MAX_MESSAGE_BYTES,
       maxFragments: 64,
       maxBufferedChunks: 256,
@@ -199,6 +209,10 @@ export class AgentWorkerGateway {
       };
       this.server.once("listening", ready);
       this.server.once("error", reject);
+      if (this.httpServer) {
+        this.httpServer.once("error", reject);
+        this.httpServer.listen(this.port, this.host);
+      }
     });
     this.sweepTimer = setInterval(
       () => this.#sweep(),
@@ -317,6 +331,11 @@ export class AgentWorkerGateway {
     const server = this.server;
     this.server = undefined;
     await new Promise((resolve) => server.close(resolve));
+    if (this.httpServer) {
+      this.httpServer.closeAllConnections();
+      await new Promise((resolve) => this.httpServer.close(resolve));
+      this.httpServer = undefined;
+    }
   }
 
   #accept(socket) {
@@ -514,10 +533,16 @@ export class AgentWorkerGateway {
     if (message.type === "task_error") {
       this.#settle(
         message.leaseId,
-        gatewayError(
-          "WORKER_TASK_FAILED",
-          String(message.message ?? "Worker task failed."),
-        ),
+        message.code === "AGENT_SANDBOX_NOT_READY"
+          ? new VoiceServiceError(
+              "AGENT_SANDBOX_NOT_READY",
+              "Worker sandbox is read-only",
+              "IDO Agentの実行環境が読み取り専用です。アプリで接続を停止し、接続設定からWindowsサンドボックスをセットアップしてください。完了後に再接続し、このスレッドで続きの実行を依頼してください。",
+            )
+          : gatewayError(
+              "WORKER_TASK_FAILED",
+              String(message.message ?? "Worker task failed."),
+            ),
         true,
       );
     }

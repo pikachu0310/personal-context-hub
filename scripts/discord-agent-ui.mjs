@@ -6,7 +6,7 @@ import { AGENT_UI_PORT } from "../src/discord-agent-onboarding.mjs";
 const ui = await createAgentUi({ port: AGENT_UI_PORT }).catch((error) => {
   const message =
     error.code === "EADDRINUSE"
-      ? "The agent connection app is already running, or port 17879 is in use. Return to the browser tab opened by Start Agent.cmd. If that tab was closed, close the existing agent UI process before starting it again."
+      ? "The legacy browser UI is already running, or port 17879 is in use. Return to its existing browser tab. For the desktop app, open IDO Agent from the Windows Start menu."
       : "Could not start the agent connection app. Check the local configuration and try again.";
   if (process.platform === "win32") {
     execFileSync(

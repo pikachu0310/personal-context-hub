@@ -8,7 +8,11 @@ export function assertPublicWorkerPolicy(config) {
     port: config.workerGatewayPort,
     publicUrl: config.workerGatewayPublicUrl,
   });
-  agentGuideComponents(config.agentJoinGuideUrl);
+  agentGuideComponents(
+    config.agentJoinGuideUrl,
+    undefined,
+    config.agentDownloadUrl,
+  );
   if (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return;
   if (config.allParticipantsOperate)
     throw new Error(

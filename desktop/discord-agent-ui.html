@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>IDO Agent</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
+        color: #e9ebef;
+        background: #111318;
+        font-size: 14px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+      input[type="checkbox"] {
+        width: auto;
+      }
+      button {
+        cursor: pointer;
+        border: 1px solid #343943;
+        border-radius: 8px;
+        background: #242a33;
+        color: #edf0f4;
+        padding: 9px 13px;
+      }
+      button:hover {
+        background: #303844;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      button.primary {
+        background: #b3efcf;
+        color: #153329;
+        border-color: #b3efcf;
+      }
+      button.danger {
+        color: #ffb8b8;
+        border-color: #654045;
+        background: #322125;
+      }
+      input,
+      textarea {
+        width: 100%;
+        background: #161a20;
+        border: 1px solid #343943;
+        border-radius: 8px;
+        color: inherit;
+        padding: 10px;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 85px;
+      }
+      label {
+        display: block;
+        margin: 16px 0 6px;
+        color: #c3c9d4;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      small,
+      .muted {
+        color: #929baa;
+      }
+      .app {
+        display: grid;
+        grid-template-columns: 275px minmax(0, 1fr);
+        height: 100vh;
+      }
+      .sidebar {
+        min-height: 0;
+        background: #191c22;
+        border-right: 1px solid #2b3038;
+        display: flex;
+        flex-direction: column;
+        padding: 23px 16px;
+        gap: 20px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 17px;
+        font-weight: 650;
+      }
+      .logo {
+        width: 34px;
+        height: 34px;
+        border: 1px solid #83b69d;
+        border-radius: 11px;
+        color: #b3efcf;
+        display: grid;
+        place-items: center;
+        font-size: 23px;
+      }
+      .brand small {
+        font-size: 10px;
+        letter-spacing: 1.5px;
+        display: block;
+        margin-top: 3px;
+        font-weight: 500;
+      }
+      .nav {
+        display: flex;
+        gap: 6px;
+      }
+      .nav button {
+        flex: 1;
+      }
+      .nav button.active {
+        background: #343c47;
+      }
+      .section-label {
+        color: #99a4b2;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 1px;
+      }
+      .task-list {
+        overflow: auto;
+        flex: 1;
+        min-height: 0;
+      }
+      .task-row {
+        display: block;
+        text-align: left;
+        width: 100%;
+        background: none;
+        border-color: transparent;
+        margin: 6px 0;
+        padding: 13px 10px;
+      }
+      .task-row.selected {
+        background: #292f39;
+        border-color: #424d5a;
+      }
+      .task-row strong {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-weight: 500;
+        margin-bottom: 7px;
+      }
+      .task-row small {
+        font-size: 11px;
+      }
+      .sidebar-bottom {
+        border-top: 1px solid #30343c;
+        padding-top: 16px;
+      }
+      .connection {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .dot {
+        height: 8px;
+        width: 8px;
+        border-radius: 50%;
+        background: #758091;
+      }
+      .dot.online {
+        background: #9fe4bd;
+      }
+      .main {
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .toolbar {
+        height: 76px;
+        flex-shrink: 0;
+        padding: 0 30px;
+        border-bottom: 1px solid #2b3038;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 1.5px;
+        color: #94a091;
+        margin-bottom: 7px;
+      }
+      .toolbar h1 {
+        font-size: 19px;
+        font-weight: 600;
+      }
+      .toolbar-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .content {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 30px;
+      }
+      .work-area {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: 24px;
+        min-height: 100%;
+      }
+      .card {
+        border: 1px solid #303640;
+        border-radius: 12px;
+        background: #181c23;
+        padding: 20px;
+      }
+      .detail {
+        display: flex;
+        flex-direction: column;
+        gap: 23px;
+        min-width: 0;
+      }
+      .detail h2 {
+        font-size: 25px;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+      }
+      .badge {
+        display: inline-block;
+        border: 1px solid #405246;
+        color: #b3efcf;
+        background: #25352d;
+        border-radius: 6px;
+        padding: 5px 8px;
+        font-size: 11px;
+        width: fit-content;
+      }
+      .meta h3 {
+        font-size: 12px;
+        color: #b9c1cd;
+        margin-bottom: 17px;
+      }
+      .meta p {
+        font-size: 12px;
+        line-height: 1.8;
+        margin-bottom: 20px;
+        overflow-wrap: anywhere;
+      }
+      .meta .label {
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: #8692a2;
+        display: block;
+        margin-bottom: 5px;
+      }
+      .request {
+        white-space: pre-wrap;
+        line-height: 1.8;
+        color: #cbd1db;
+        font-size: 13px;
+      }
+      .activity {
+        border-top: 1px solid #303640;
+        padding-top: 22px;
+      }
+      .activity h3 {
+        font-size: 13px;
+        margin-bottom: 15px;
+      }
+      .log-entry {
+        border-left: 2px solid #405247;
+        padding: 0 0 18px 16px;
+        margin-left: 4px;
+      }
+      .log-entry time {
+        font-size: 10px;
+        color: #8a98a8;
+      }
+      .log-entry pre,
+      pre.result {
+        font-family: inherit;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        line-height: 1.8;
+        font-size: 13px;
+        color: #c9d3df;
+        margin: 7px 0;
+      }
+      .empty {
+        height: 100%;
+        min-height: 430px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        text-align: center;
+        gap: 18px;
+      }
+      .empty .logo {
+        width: 62px;
+        height: 62px;
+        font-size: 36px;
+        border-radius: 19px;
+      }
+      .empty h2 {
+        font-size: 25px;
+      }
+      .empty p {
+        max-width: 410px;
+        line-height: 1.9;
+        color: #929baa;
+      }
+      .empty code {
+        color: #d3e9dc;
+      }
+      .settings {
+        max-width: 790px;
+        margin: auto;
+      }
+      .settings h2 {
+        font-size: 24px;
+        margin-bottom: 10px;
+      }
+      .settings > p {
+        line-height: 1.9;
+        margin-bottom: 25px;
+      }
+      .steps {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 18px;
+      }
+      .steps h3 {
+        font-size: 15px;
+        margin-bottom: 13px;
+      }
+      .step-number {
+        color: #b3efcf;
+        margin-right: 10px;
+        font-size: 12px;
+      }
+      .inline {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .inline input {
+        flex: 1;
+      }
+      .checks label {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        line-height: 1.7;
+        font-size: 12px;
+      }
+      .checks input {
+        width: auto;
+        margin-top: 5px;
+      }
+      .notice {
+        font-size: 12px;
+        line-height: 1.8;
+        color: #a7b3c2;
+        padding: 12px 0;
+      }
+      .error {
+        color: #ffbdc0;
+        line-height: 1.6;
+        font-size: 12px;
+        padding: 0 30px;
+        background: #312024;
+      }
+      .error:empty {
+        display: none;
+      }
+      .footer {
+        border-top: 1px solid #2b3038;
+        padding: 13px 30px;
+        color: #7e8b9b;
+        font-size: 11px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .approval {
+        border-color: #827146;
+        background: #2b2820;
+      }
+      .approval p {
+        font-size: 12px;
+        line-height: 1.8;
+        margin-bottom: 15px;
+      }
+      .hidden,
+      [hidden] {
+        display: none !important;
+      }
+      .filter {
+        display: flex;
+        gap: 6px;
+        margin-top: -8px;
+      }
+      .filter button {
+        font-size: 11px;
+        padding: 5px 9px;
+      }
+      .filter .active {
+        border-color: #899e8f;
+        color: #b3efcf;
+      }
+      a {
+        color: #b3efcf;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid #b3efcf;
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="logo">井</span>
+          <div>IDO Agent<small>LOCAL WORKSPACE</small></div>
+        </div>
+        <nav class="nav">
+          <button id="view-tasks" class="active">タスク</button
+          ><button id="view-settings">接続設定</button>
+        </nav>
+        <input
+          id="search"
+          placeholder="タスクを検索"
+          aria-label="タスクを検索"
+        />
+        <div class="section-label">
+          このPCのタスク <span id="task-count">0</span>
+        </div>
+        <div class="filter">
+          <button id="filter-all" class="active">すべて</button
+          ><button id="filter-active">進行中</button
+          ><button id="filter-done">終了</button>
+        </div>
+        <div id="task-list" class="task-list"></div>
+        <div class="sidebar-bottom">
+          <div class="connection">
+            <span id="connection-dot" class="dot"></span
+            ><small id="connection-status">未接続</small>
+          </div>
+          <button id="disconnect">接続を停止</button>
+        </div>
+      </aside>
+      <main class="main">
+        <header class="toolbar">
+          <div>
+            <div class="eyebrow">YOUR AGENTS, IN ONE PLACE</div>
+            <h1 id="page-title">タスク</h1>
+          </div>
+          <div class="toolbar-actions">
+            <button id="setup-shortcut">接続する</button
+            ><button id="quit">アプリを終了</button>
+          </div>
+        </header>
+        <div id="error" class="error" role="alert"></div>
+        <div class="content">
+          <section id="tasks-view">
+            <div id="empty" class="empty">
+              <div class="logo">井</div>
+              <h2>ここがエージェントの作業場所です。</h2>
+              <p>
+                Discordから届いたタスクの進捗を確認し、<br />必要なときに停止できます。まずは接続設定から。
+              </p>
+              <button id="empty-setup" class="primary">
+                エージェントを接続
+              </button>
+              <p><code>/ido task</code> でタスクを依頼できます。</p>
+            </div>
+            <div id="work-area" class="work-area" hidden>
+              <article class="detail">
+                <span id="task-state" class="badge"></span>
+                <h2 id="task-title"></h2>
+                <div class="card">
+                  <div class="eyebrow">REQUEST</div>
+                  <p id="task-request" class="request"></p>
+                </div>
+                <div id="approval" class="card approval" hidden>
+                  <p>
+                    このタスクを選択した作業フォルダーで実行します。依頼内容を確認してください。
+                  </p>
+                  <div class="inline">
+                    <button id="approve" class="primary">
+                      このタスクを実行</button
+                    ><button id="reject">実行しない</button>
+                  </div>
+                </div>
+                <section class="activity">
+                  <div id="command-approval" class="card approval" hidden>
+                    <h3>操作の許可を求めています</h3>
+                    <p>
+                      この操作だけを許可します。サンドボックス外の実行を含む場合があります。内容と作業場所を確認してください。
+                    </p>
+                    <pre id="command-preview" class="result"></pre>
+                    <button id="allow-command">今回の操作を許可</button>
+                    <button id="deny-command">拒否する</button>
+                  </div>
+                  <h3>アクティビティ</h3>
+                  <div id="logs"></div>
+                  <pre id="result" class="result"></pre>
+                </section>
+              </article>
+              <aside>
+                <div class="card meta">
+                  <h3>タスクの詳細</h3>
+                  <p>
+                    <span class="label">SOURCE</span
+                    ><span id="task-source"></span>
+                  </p>
+                  <p>
+                    <span class="label">WORKSPACE</span
+                    ><span id="task-workdir"></span>
+                  </p>
+                  <p>
+                    <span class="label">STARTED</span
+                    ><span id="task-started"></span>
+                  </p>
+                  <button id="cancel-task" class="danger">タスクを停止</button>
+                  <button id="pause-task">一時停止して権限を見直す</button>
+                  <p id="task-permissions" class="notice"></p>
+                  <div id="resume-controls" hidden>
+                    <label
+                      ><input
+                        id="resume-network"
+                        type="checkbox"
+                      />再開後の外部通信を許可</label
+                    >
+                    <p>
+                      同じ作業場所とCodexの会話から続けます。実行済みの変更は取り消しません。
+                    </p>
+                    <button id="resume-task">この設定で再開</button>
+                    <label
+                      ><input
+                        id="resume-permissions"
+                        type="checkbox"
+                      />追加権限も自動承認する</label
+                    >
+                  </div>
+                  <p id="retry-help" hidden></p>
+                  <p>
+                    <span class="label">UPDATED</span
+                    ><span id="task-updated"></span>
+                  </p>
+                </div>
+                <p class="notice">
+                  アプリを終了すると、このアプリで受けたタスクと接続を停止します。
+                </p>
+              </aside>
+            </div>
+          </section>
+          <section id="settings-view" class="settings" hidden>
+            <h2>自分のエージェントをつなぐ</h2>
+            <p id="process-info" class="notice"></p>
+            <p class="muted">
+              OpenAIの認証はこのPC内で管理します。接続するだけではタスクの実行は始まりません。
+            </p>
+            <div class="steps">
+              <div class="card">
+                <h3>このPCのほかのCodexタスク</h3>
+                <label
+                  ><input id="local-tasks" type="checkbox" />Codex
+                  App・CLIの直近タスクも表示する</label
+                >
+                <p id="local-task-status" class="notice"></p>
+              </div>
+              <div class="card">
+                <h3><span class="step-number">01</span>OpenAIにログイン</h3>
+                <p id="auth-status" class="notice">認証状態を確認しています…</p>
+                <div class="inline">
+                  <button id="login" class="primary">OpenAIでログイン</button
+                  ><button id="refresh">状態を再確認</button
+                  ><button id="login-link" hidden>認証ページを開く</button>
+                </div>
+              </div>
+              <div class="card">
+                <h3><span class="step-number">02</span>Discordの参加情報</h3>
+                <p class="notice">
+                  Discordで <code>/ido agent connect</code> を選び、表示された
+                  <code>ido1.</code> から始まる参加情報を貼り付けます。
+                </p>
+                <textarea
+                  id="invitation"
+                  placeholder="ido1.…"
+                  aria-label="Discordの参加情報"
+                  spellcheck="false"
+                ></textarea
+                ><button id="import">参加情報を読み込む</button
+                ><label for="gateway">接続先</label
+                ><input
+                  id="gateway"
+                  placeholder="wss://…/workers"
+                  spellcheck="false"
+                /><input id="code" type="hidden" /><label for="name"
+                  >エージェントの表示名</label
+                ><input
+                  id="name"
+                  maxlength="80"
+                  placeholder="自分のエージェント"
+                />
+              </div>
+              <div class="card">
+                <h3>
+                  <span class="step-number">03</span>作業フォルダーと実行の確認
+                </h3>
+                <p id="sandbox-status" class="notice"></p>
+                <button id="setup-sandbox">
+                  Windowsサンドボックスをセットアップ
+                </button>
+                <p class="notice">
+                  初回はWindowsの管理者確認が表示されます。Codex専用の実行ユーザー・アクセス制御を準備します。作業フォルダーを選び、接続を停止してから実行してください。
+                </p>
+                <div class="inline">
+                  <input
+                    id="workdir"
+                    placeholder="Gitリポジトリのフォルダー"
+                    aria-label="作業フォルダー"
+                  /><button id="folder">フォルダーを選択</button>
+                </div>
+                <p class="notice">
+                  作業にはGitが必要です。<button id="git-help">
+                    Gitの公式サイト
+                  </button>
+                </p>
+                <div class="checks">
+                  <label
+                    ><input
+                      id="automatic"
+                      type="checkbox"
+                    />この接続中は、選んだリポジトリのタスクを自動実行する</label
+                  ><label
+                    ><input
+                      id="network"
+                      type="checkbox"
+                    />タスクの外部通信を許可する</label
+                  >
+                </div>
+                <p class="notice">
+                  未選択の場合は、タスクごとにこのアプリで実行を確認します。OpenAI・Botへの接続通信は別に行います。
+                </p>
+                <label
+                  ><input
+                    id="automatic-permissions"
+                    type="checkbox"
+                  />全承認：タスク開始・追加権限を自動承認する</label
+                >
+                <p class="notice">
+                  この接続中は、サンドボックス外のコマンド実行・ファイルアクセス・通信の追加許可も自動で返します。承認内容はタスクのアクティビティに表示します。OS・組織の制限やログインは解除しません。設定は保存しません。
+                </p>
+                <button id="connect" class="primary">エージェントを接続</button>
+              </div>
+            </div>
+          </section>
+        </div>
+        <footer class="footer">
+          <span id="permission-status">このPCで実行 · 自動起動なし</span
+          ><span>終了すると接続と実行を停止</span>
+        </footer>
+      </main>
+    </div>
+    <script src="/client.js"></script>
+  </body>
+</html>

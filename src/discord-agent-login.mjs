@@ -40,14 +40,17 @@ export class AgentBrowserLogin {
   }
 
   async refresh() {
+    if (this.stopped) return { ...this.state };
     if (this.checking) return this.checking;
     this.checking = new Promise((resolve) => {
       const child = this.command(["login", "status"]);
+      this.checkChild = child;
       // Do not return CLI output: API-key status can contain key material.
       child.stdout.resume();
       child.stderr.resume();
       const timer = setTimeout(() => child.kill(), 10_000);
       const finish = (code) => {
+        if (this.checkChild === child) this.checkChild = undefined;
         clearTimeout(timer);
         this.state.authenticated = code === 0;
         resolve({ ...this.state });
@@ -66,6 +69,7 @@ export class AgentBrowserLogin {
   }
 
   start() {
+    if (this.stopped) return;
     if (this.child) return;
     const child = this.command(["login"]);
     this.state = { authenticated: false, pending: true };
@@ -106,6 +110,8 @@ export class AgentBrowserLogin {
   }
 
   stop() {
+    this.stopped = true;
     this.child?.kill();
+    this.checkChild?.kill();
   }
 }

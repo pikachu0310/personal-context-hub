@@ -34,25 +34,34 @@ export function decodeAgentInvitation(value, now = Date.now()) {
   return { gatewayUrl: data.gatewayUrl, pairingCode: data.code };
 }
 
-export function agentGuideComponents(guideUrl, pairing) {
+export function agentGuideComponents(guideUrl, pairing, downloadUrl) {
   const components = [];
   if (pairing) {
     components.push({
       type: 2,
       style: 1,
       custom_id: "ido:agent-setup",
-      label: "① 接続用.cmdをダウンロード",
+      label: "アプリのインストール方法",
     });
-    const url = agentInvitationUrl(pairing);
-    // Discord limits link buttons to 512 characters. Keep manual import as a
-    // fallback for unusually long gateway URLs instead of failing the reply.
-    if (url.length <= 512)
-      components.push({
-        type: 2,
-        style: 5,
-        label: "② 参加情報を入力",
-        url,
-      });
+  }
+  if (downloadUrl) {
+    const url = new URL(downloadUrl);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      url.href.length > 512
+    )
+      throw new Error(
+        "App download must be a bounded HTTPS URL without credentials or fragments.",
+      );
+    components.push({
+      type: 2,
+      style: 5,
+      label: "IDO Agentをダウンロード",
+      url: url.href,
+    });
   }
   if (guideUrl) {
     const url = new URL(guideUrl);

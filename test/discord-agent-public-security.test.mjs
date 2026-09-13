@@ -66,9 +66,8 @@ test("Discord autofill links keep invitation data in the fragment and never incl
   const buttons = agentGuideComponents("https://example.com/join", pairing)[0]
     .components;
   assert.equal(buttons[0].custom_id, "ido:agent-setup");
-  assert.equal(buttons[1].url, url.href);
-  assert.equal(buttons[2].url, "https://example.com/join");
-  assert.equal(new URL(buttons[2].url).hash, "");
+  assert.equal(buttons[1].url, "https://example.com/join");
+  assert.equal(new URL(buttons[1].url).hash, "");
   const longPairing = {
     ...pairing,
     gatewayUrl: `wss://example.com/${"a".repeat(500)}`,

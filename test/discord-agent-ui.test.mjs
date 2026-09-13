@@ -98,6 +98,59 @@ async function fixture(t, extra = {}) {
   return { ui, directory, login, url, headers, call };
 }
 
+test("desktop task API cancels only the selected task and shutdown waits for owned work", async (t) => {
+  let execute;
+  let stopped = 0;
+  const { call, ui, url } = await fixture(t, {
+    createWorker: ({ executor }) => {
+      execute = executor;
+      return {
+        authenticated: true,
+        connect: async () => {},
+        stop: async () => {},
+      };
+    },
+    createExecutor: () => ({
+      run: async (_task, { signal, onProgress }) => {
+        await onProgress("working");
+        await new Promise((resolve) =>
+          signal.addEventListener("abort", resolve, { once: true }),
+        );
+        await new Promise((resolve) => setImmediate(resolve));
+        stopped++;
+        signal.throwIfAborted();
+      },
+    }),
+  });
+  assert.equal(
+    (
+      await call("/connect", {
+        gatewayUrl: "ws://127.0.0.1:8787/workers",
+        pairingCode: "test-code",
+        workingDirectory: "sample",
+        automatic: true,
+      })
+    ).status,
+    200,
+  );
+  const first = assert.rejects(execute.run({ id: "one", title: "one" }));
+  const second = assert.rejects(execute.run({ id: "two", title: "two" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await call("/stop-task", { id: "unknown" })).status, 409);
+  assert.equal((await call("/stop-task", { id: "one" })).status, 200);
+  await first;
+  const state = await (await call("/status")).json();
+  assert.equal(
+    state.tasks.find((task) => task.id === "one").state,
+    "cancelled",
+  );
+  assert.equal(state.tasks.find((task) => task.id === "two").state, "running");
+  await ui.close();
+  await second;
+  assert.equal(stopped, 2);
+  await assert.rejects(fetch(new URL("/status", url)));
+});
+
 test("local UI rejects cross-origin, missing capability, DNS rebinding and oversized requests", async (t) => {
   const { call, headers, url } = await fixture(t);
   assert.equal((await fetch(new URL("/status", url))).status, 403);
@@ -289,6 +342,63 @@ test("UI fails closed before authentication and on expired pairing without leaki
   assert.doesNotMatch(await failed.text(), /秘密/);
 });
 
+test("desktop full approval is local, visible, and reset on reconnect", async (t) => {
+  let workerOptions;
+  const { call, directory } = await fixture(t, {
+    interactiveApprovals: true,
+    createExecutor: (options) => ({
+      run: async (task, { signal }) => {
+        assert.equal(options.networkAccess, false);
+        return options.requestApproval(
+          task.id,
+          "item/permissions/requestApproval",
+          { permissions: { network: { enabled: true } } },
+          signal,
+        );
+      },
+    }),
+    createWorker: (options) => {
+      workerOptions = options;
+      return {
+        authenticated: true,
+        socket: { readyState: 1 },
+        connect: async () => ({}),
+        stop: async () => {},
+      };
+    },
+  });
+  const input = {
+    workingDirectory: process.cwd(),
+    gatewayUrl: "wss://agents.example.com",
+    pairingCode: "example",
+  };
+  assert.equal(
+    (await call("/connect", { ...input, automaticPermissions: true })).status,
+    200,
+  );
+  assert.deepEqual(
+    await workerOptions.executor.run({ id: "full", request: "test" }),
+    { decision: "accept" },
+  );
+  const state = await (await call("/status")).json();
+  assert.equal(state.connectionPolicy.automaticPermissions, true);
+  assert.equal(state.tasks[0].automaticPermissions, true);
+  assert.equal(state.commandApprovals.length, 0);
+  assert.match(state.tasks[0].logs[0].text, /自動承認/);
+  assert.equal(
+    JSON.parse(await readFile(join(directory, "profile.json"), "utf8"))
+      .automaticPermissions,
+    undefined,
+  );
+  await call("/stop", {});
+  await call("/connect", input);
+  assert.equal(
+    (await (await call("/status")).json()).connectionPolicy
+      .automaticPermissions,
+    false,
+  );
+});
+
 test("browser approval gates execution and permission choices are not persisted", async (t) => {
   let workerOptions;
   let executorOptions;
@@ -322,13 +432,11 @@ test("browser approval gates execution and permission choices are not persisted"
       .status,
     200,
   );
-  assert.equal(executorOptions.networkAccess, false);
   assert.equal(
     (await call("/invitation", { invitation: encodeAgentInvitation(pairing) }))
       .status,
     409,
   );
-  assert.equal(executorOptions.codexHome, join(directory, "codex-home"));
   const task = workerOptions.executor.run({ id: "task", request: "Run tests" });
   assert.equal(executions, 0);
   const state = await (await call("/status")).json();
@@ -339,6 +447,8 @@ test("browser approval gates execution and permission choices are not persisted"
     200,
   );
   assert.equal(await task, 1);
+  assert.equal(executorOptions.networkAccess, false);
+  assert.equal(executorOptions.codexHome, join(directory, "codex-home"));
   assert.equal(
     (await call("/approve", { id: state.approvals[0].id, approved: true }))
       .status,

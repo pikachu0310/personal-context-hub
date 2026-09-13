@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Codex } from "@openai/codex-sdk";
+import { AppServerCodex } from "./execution/codex/app-server.mjs";
+import { codexBinary } from "./codex-binary.mjs";
 import WebSocket from "ws";
 import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
 import {
@@ -70,6 +72,7 @@ export class LocalCodexWorkerExecutor {
     networkAccess = false,
     codexHome,
     codex,
+    requestApproval,
   }) {
     this.workingDirectory = resolve(workingDirectory);
     this.workspaceDirectory = resolve(workspaceDirectory);
@@ -80,6 +83,8 @@ export class LocalCodexWorkerExecutor {
     this.model = model;
     this.reasoningEffort = reasoningEffort;
     this.networkAccess = networkAccess === true;
+    this.requestApproval = requestApproval;
+    this.codexHome = codexHome;
     this.codex =
       codex ??
       new Codex({
@@ -88,6 +93,22 @@ export class LocalCodexWorkerExecutor {
   }
 
   async run(task, { signal, onProgress } = {}) {
+    if (!this.requestApproval)
+      return this.execute(task, { signal, onProgress }, this.codex);
+    const client = new AppServerCodex({
+      ...buildCodexOptions(process.env, this.codexHome),
+      codexPathOverride: codexBinary(),
+      onApprovalRequest: (method, params) =>
+        this.requestApproval(task.id, method, params, signal),
+    });
+    try {
+      return await this.execute(task, { signal, onProgress }, client);
+    } finally {
+      await client.close();
+    }
+  }
+
+  async execute(task, { signal, onProgress } = {}, codex = this.codex) {
     task.id ??= task.taskId;
     const previousWorkspace = join(this.workspaceDirectory, task.id);
     if (!task.workingDirectory && existsSync(previousWorkspace))
@@ -106,17 +127,18 @@ export class LocalCodexWorkerExecutor {
         taskReasoningEffort: this.reasoningEffort,
       }),
       workingDirectory,
-      approvalPolicy: "never",
+      approvalPolicy: this.requestApproval ? "on-request" : "never",
       sandboxMode: "workspace-write",
+      requireWritableSandbox: Boolean(this.requestApproval),
       networkAccessEnabled: this.networkAccess,
       webSearchMode: this.networkAccess ? "live" : "disabled",
       skipGitRepoCheck: false,
       additionalDirectories: [],
     };
     const thread = localState.codexThreadId
-      ? this.codex.resumeThread(localState.codexThreadId, options)
-      : this.codex.startThread(options);
-    const prompt = task.additionalInstruction
+      ? codex.resumeThread(localState.codexThreadId, options)
+      : codex.startThread(options);
+    let prompt = task.additionalInstruction
       ? [
           "同じIssueへの追加指示です。元の依頼の権限範囲で作業を続けてください。",
           `追加指示:\n${task.additionalInstruction}`,
@@ -126,6 +148,10 @@ export class LocalCodexWorkerExecutor {
           assignedAgentId: task.agentId,
           assignedAgentName: task.agentName,
         });
+    if (localState.codexThreadId)
+      prompt =
+        "同じタスクの続きです。実行済みの変更・外部操作を確認し、重複作成を避けて未完了の部分から続けてください。\n" +
+        prompt;
     const evidence = {
       runRevision,
       commands: 0,
@@ -151,11 +177,17 @@ export class LocalCodexWorkerExecutor {
     let finalResponse = "";
     let codexThreadId = localState.codexThreadId ?? thread.id;
     for await (const event of events) {
-      if (event.type === "thread.started") codexThreadId = event.thread_id;
+      if (event.type === "turn.failed" || event.type === "error")
+        throw new Error("Codex execution failed.");
+      if (event.type === "thread.started") {
+        codexThreadId = event.thread_id;
+        await writeTaskState(statePath, { codexThreadId, runRevision });
+      }
       if (event.type !== "item.completed") continue;
       if (event.item?.type === "agent_message") {
         finalResponse = String(event.item.text ?? "");
-        await onProgress?.(finalResponse);
+        if (event.item.phase !== "final_answer")
+          await onProgress?.(finalResponse);
       }
       if (event.item?.type === "command_execution") {
         evidence.commands += 1;
@@ -444,6 +476,8 @@ export class DiscordAgentWorker {
       this.#send({
         type: "task_error",
         leaseId: task.leaseId,
+        code:
+          error?.code === "AGENT_SANDBOX_NOT_READY" ? error.code : undefined,
         message: controller.signal.aborted
           ? "Task was cancelled."
           : `Codex Worker failed (${error?.name ?? "Error"}).`,
