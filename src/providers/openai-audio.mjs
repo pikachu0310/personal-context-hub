@@ -48,9 +48,25 @@ export function createOpenAIAudioAdapter(config, { client } = {}) {
       } else {
         request.language = "ja";
       }
-      const result = await openai.audio.transcriptions.create(request, {
-        signal,
-      });
+      let result;
+      try {
+        result = await openai.audio.transcriptions.create(request, {
+          signal,
+        });
+      } catch (error) {
+        // Keep provider failures diagnosable without logging request bodies,
+        // response messages, credentials or recorded speech.
+        const apiErrorCode = error?.code ?? error?.error?.code;
+        report("api_error", {
+          httpStatus: Number.isInteger(error?.status) ? error.status : null,
+          apiErrorCode:
+            typeof apiErrorCode === "string" &&
+            /^[a-z][a-z0-9_]{0,63}$/.test(apiErrorCode)
+              ? apiErrorCode
+              : null,
+        });
+        throw error;
+      }
       // gpt-transcribe explicitly returns [] when it cannot reliably detect a
       // language. Nonempty generated text is not sufficient evidence of speech.
       if (Array.isArray(result.languages) && result.languages.length === 0) {
