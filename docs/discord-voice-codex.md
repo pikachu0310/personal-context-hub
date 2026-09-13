@@ -63,6 +63,7 @@
 - Discord受信: Opus 48kHz stereoをPCMへdecodeし、無音1,000msを発話終端とする。
 - STT入力: PCMを16-bit 48kHz stereo WAVへ包み、最大90秒・25MB未満に制限する。短すぎる発話は破棄する。
 - TTS出力: 指定速度（0.25〜4倍、既定1倍）の24kHz mono signed 16-bit little-endian PCMを48kHz stereoへ決定的に変換し、Discordへ再生する。
+- 発話開始: 文字起こし対象のallowlistにかかわらず、受信側で全参加者の発話終了を確認し、無音が既定1,000ms続くまで待つ。再生直前にも確認し、待機中に誰かが話し始めたら無音の待機時間を数え直す。`PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS`で0〜5,000msに設定でき、録音終端の`PERSONAL_CONTEXT_VOICE_SILENCE_MS`とは独立する。0でも発話中の参加者がいなくなるまで待つ。この制御は再生開始だけに適用し、再生途中の自動中断や回答の破棄は行わない。
 - Discord client、Voice connection、受信stream、再生playerの`error`はプロセスへ伝播させず、秘密を含まないerror種別だけを構造化ログへ残す。
 - Decode後のPCMが不完全なsample frameでもプロセスを落とさず、その発話だけを破棄して固定文で再入力を案内する。
 - 応答本文が長い場合、Textには全文を分割投稿し、音声は先頭1,200文字までを自然な区切りで読む。
