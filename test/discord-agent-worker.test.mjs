@@ -297,7 +297,14 @@ test("the private Discord slash reply retains pairing and guide buttons without 
     followUp: async () => assert.fail("Expected a single private reply"),
   });
   assert.equal(calls[0].ownerUserId, owner);
-  assert.match(replies[0].content, /PAIR-CODE/);
+  const invitation = replies[0].content.match(
+    /```text\n(ido1\.[A-Za-z0-9_-]+)\n```/,
+  )[1];
+  assert.equal(
+    JSON.parse(Buffer.from(invitation.slice(5), "base64url").toString("utf8"))
+      .code,
+    "PAIR-CODE",
+  );
   assert.doesNotMatch(replies[0].content, /token|auth\.json/i);
   assert.equal(
     replies[0].components[0].components[0].custom_id,

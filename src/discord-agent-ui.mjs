@@ -7,6 +7,9 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { AgentBrowserLogin } from "./discord-agent-login.mjs";
 import { AgentTaskMonitor } from "./discord-agent-task-monitor.mjs";
+import { AgentCommandApproval } from "./discord-agent-command-approval.mjs";
+import { AgentPausableExecution } from "./discord-agent-pause.mjs";
+import { AgentSandboxSetup } from "./discord-agent-sandbox.mjs";
 import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
 import { AgentExecutionConsent } from "./discord-agent-execution-consent.mjs";
 import { decodeAgentInvitation } from "./discord-agent-onboarding.mjs";
@@ -46,11 +49,14 @@ export async function createAgentUi({
   pickFolder,
   taskMonitor = new AgentTaskMonitor(),
   assetDirectory = new URL("./", import.meta.url),
+  commandApproval = new AgentCommandApproval(),
+  interactiveApprovals = false,
 } = {}) {
   // Keep the connection agent's Codex configuration separate from personal
   // plugins, hooks and MCP settings. The official login stores its own auth.
   const codexHome = join(directory, "codex-home");
   await mkdir(codexHome, { recursive: true, mode: 0o700 });
+  const sandboxSetup = new AgentSandboxSetup(codexHome);
   login ??= new AgentBrowserLogin({
     env: { ...process.env, CODEX_HOME: codexHome },
   });
@@ -70,6 +76,7 @@ export async function createAgentUi({
   let lastError = "";
   let origin;
   let closing = false;
+  let pausable;
   const page = await readFile(
     new URL("./discord-agent-ui.html", assetDirectory),
     "utf8",
@@ -97,6 +104,8 @@ export async function createAgentUi({
   };
   const connect = async (input) => {
     if (closing) throw new UiError("アプリを終了しています。");
+    if (sandboxSetup.state.pending)
+      throw new UiError("サンドボックスの設定完了を待ってください。");
     if (busy || worker) throw new UiError("先に接続を停止してください。");
     busy = true;
     lastError = "";
@@ -160,10 +169,14 @@ export async function createAgentUi({
         automatic: input.automatic === true,
         networkAccess: input.networkAccess === true,
       };
-      const executor = createExecutor({
+      const executorOptions = {
         workingDirectory,
         codexHome,
         networkAccess: input.networkAccess === true,
+        requestApproval: interactiveApprovals
+          ? (taskId, method, params, signal) =>
+              commandApproval.request(taskId, method, params, signal)
+          : undefined,
         workspaceDirectory: join(
           directory,
           "workspaces",
@@ -172,6 +185,22 @@ export async function createAgentUi({
             .digest("hex")
             .slice(0, 16),
         ),
+      };
+      pausable = new AgentPausableExecution({
+        execute: async (task, options, networkAccess) => {
+          try {
+            return await createExecutor({
+              ...executorOptions,
+              networkAccess,
+            }).run(task, options);
+          } finally {
+            commandApproval.cancelTask(task.id);
+          }
+        },
+        onState: (id, state) => {
+          const record = taskMonitor.records.get(id);
+          if (record) record.state = state;
+        },
       });
       consent = new AgentExecutionConsent({
         automatic: input.automatic === true,
@@ -179,7 +208,7 @@ export async function createAgentUi({
         executor: {
           run: (task, options) => {
             taskMonitor.markRunning(task.id);
-            return executor.run(task, options);
+            return pausable.run(task, options, input.networkAccess === true);
           },
         },
       });
@@ -272,6 +301,8 @@ export async function createAgentUi({
           revoked: Boolean(worker?.reconnectDisabled),
           canPickFolder: Boolean(pickFolder) || process.platform === "win32",
           tasks: taskMonitor.list(),
+          commandApprovals: commandApproval.list(),
+          sandboxSetup: sandboxSetup.state,
           approvals: consent?.describe() ?? [],
           connectionPolicy,
         });
@@ -290,6 +321,45 @@ export async function createAgentUi({
       }
       const contents = Buffer.concat(chunks).toString("utf8");
       const input = JSON.parse(contents || "{}");
+      if (request.url === "/setup-sandbox") {
+        if (!sandboxSetup.state.supported || sandboxSetup.state.pending)
+          return send(409, { error: "セットアップを開始できません。" });
+        if (worker || busy || closing)
+          return send(409, {
+            error: "接続を停止してからセットアップしてください。",
+          });
+        const cwd =
+          typeof input.workingDirectory === "string" &&
+          input.workingDirectory.trim()
+            ? resolve(input.workingDirectory.trim())
+            : undefined;
+        if (!cwd)
+          return send(400, { error: "作業フォルダーを選んでください。" });
+        busy = true;
+        try {
+          await validateRepository(cwd);
+          if (closing) return send(409, { error: "アプリを終了しています。" });
+          sandboxSetup.start(cwd);
+        } finally {
+          busy = false;
+        }
+        return send(200, { ok: true });
+      }
+      if (request.url === "/pause-task") {
+        if (!(await pausable?.pause(input.id)))
+          return send(409, { error: "このタスクは一時停止できません。" });
+        return send(200, { ok: true });
+      }
+      if (request.url === "/resume-task") {
+        if (!pausable?.resume(input.id, input.networkAccess))
+          return send(409, { error: "停止完了を待ってから再開してください。" });
+        return send(200, { ok: true });
+      }
+      if (request.url === "/approve-command") {
+        if (!commandApproval.decide(input.id, input.approved))
+          return send(409, { error: "この操作の承認依頼は終了しています。" });
+        return send(200, { ok: true });
+      }
       if (request.url === "/stop-task") {
         if (!taskMonitor.cancel(input.id))
           return send(409, { error: "このタスクは実行中ではありません。" });
@@ -374,7 +444,9 @@ export async function createAgentUi({
     url: `${origin}/#${token}`,
     async close() {
       closing = true;
+      commandApproval.close();
       login.stop();
+      await sandboxSetup.close();
       await stop();
       await taskMonitor.close();
       await new Promise((resolve) => {

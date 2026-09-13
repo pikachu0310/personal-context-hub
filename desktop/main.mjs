@@ -55,6 +55,7 @@ else {
     session.defaultSession.setPermissionCheckHandler(() => false);
     try {
       ui = await createAgentUi({
+        interactiveApprovals: true,
         assetDirectory: new URL("./", import.meta.url),
         pickFolder: async () => {
           const result = await dialog.showOpenDialog(window, {
@@ -108,6 +109,13 @@ else {
         if (!response.ok)
           throw new Error(result.error ?? "操作に失敗しました。");
         if (path === "/status") {
+          result.processInfo = {
+            name: app.isPackaged
+              ? "IDO Agent.exe"
+              : "electron.exe (IDO Agent 開発版)",
+            pid: process.pid,
+            version: app.getVersion(),
+          };
           const local = await localTasks.list();
           result.localTasks = {
             enabled: local.enabled,

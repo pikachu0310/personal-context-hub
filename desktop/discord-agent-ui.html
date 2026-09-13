@@ -511,6 +511,15 @@
                   </div>
                 </div>
                 <section class="activity">
+                  <div id="command-approval" class="card approval" hidden>
+                    <h3>操作の許可を求めています</h3>
+                    <p>
+                      この操作だけを許可します。サンドボックス外の実行を含む場合があります。内容と作業場所を確認してください。
+                    </p>
+                    <pre id="command-preview" class="result"></pre>
+                    <button id="allow-command">今回の操作を許可</button>
+                    <button id="deny-command">拒否する</button>
+                  </div>
                   <h3>アクティビティ</h3>
                   <div id="logs"></div>
                   <pre id="result" class="result"></pre>
@@ -532,6 +541,20 @@
                     ><span id="task-started"></span>
                   </p>
                   <button id="cancel-task" class="danger">タスクを停止</button>
+                  <button id="pause-task">一時停止して権限を見直す</button>
+                  <div id="resume-controls" hidden>
+                    <label
+                      ><input
+                        id="resume-network"
+                        type="checkbox"
+                      />再開後の外部通信を許可</label
+                    >
+                    <p>
+                      同じ作業場所とCodexの会話から続けます。実行済みの変更は取り消しません。
+                    </p>
+                    <button id="resume-task">この設定で再開</button>
+                  </div>
+                  <p id="retry-help" hidden></p>
                   <p>
                     <span class="label">UPDATED</span
                     ><span id="task-updated"></span>
@@ -545,6 +568,7 @@
           </section>
           <section id="settings-view" class="settings" hidden>
             <h2>自分のエージェントをつなぐ</h2>
+            <p id="process-info" class="notice"></p>
             <p class="muted">
               OpenAIの認証はこのPC内で管理します。接続するだけではタスクの実行は始まりません。
             </p>
@@ -596,6 +620,13 @@
                 <h3>
                   <span class="step-number">03</span>作業フォルダーと実行の確認
                 </h3>
+                <p id="sandbox-status" class="notice"></p>
+                <button id="setup-sandbox">
+                  Windowsサンドボックスをセットアップ
+                </button>
+                <p class="notice">
+                  初回はWindowsの管理者確認が表示されます。Codex専用の実行ユーザー・アクセス制御を準備します。作業フォルダーを選び、接続を停止してから実行してください。
+                </p>
                 <div class="inline">
                   <input
                     id="workdir"

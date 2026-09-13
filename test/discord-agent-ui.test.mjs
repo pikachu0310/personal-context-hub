@@ -375,13 +375,11 @@ test("browser approval gates execution and permission choices are not persisted"
       .status,
     200,
   );
-  assert.equal(executorOptions.networkAccess, false);
   assert.equal(
     (await call("/invitation", { invitation: encodeAgentInvitation(pairing) }))
       .status,
     409,
   );
-  assert.equal(executorOptions.codexHome, join(directory, "codex-home"));
   const task = workerOptions.executor.run({ id: "task", request: "Run tests" });
   assert.equal(executions, 0);
   const state = await (await call("/status")).json();
@@ -392,6 +390,8 @@ test("browser approval gates execution and permission choices are not persisted"
     200,
   );
   assert.equal(await task, 1);
+  assert.equal(executorOptions.networkAccess, false);
+  assert.equal(executorOptions.codexHome, join(directory, "codex-home"));
   assert.equal(
     (await call("/approve", { id: state.approvals[0].id, approved: true }))
       .status,

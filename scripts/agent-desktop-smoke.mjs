@@ -114,7 +114,30 @@ try {
       startedAt: now - 90000,
     }));
     ipcMain.removeHandler("ido:request");
+    let commandApprovals = [
+      {
+        id: "command-demo",
+        taskId: "demo-running",
+        operation: "git status",
+        cwd: "C:/Projects/sample-app",
+        reason: "作業状況を確認します",
+      },
+    ];
     ipcMain.handle("ido:request", (_event, path, input) => {
+      if (path === "/approve-command") {
+        if (input.id !== "command-demo" || input.approved !== true)
+          throw new Error("Invalid approval");
+        commandApprovals = [];
+        return {};
+      }
+      if (path === "/pause-task" || path === "/resume-task") {
+        const task = tasks.find((task) => task.id === input.id);
+        if (!task) throw new Error("Unknown task");
+        if (path === "/resume-task" && input.networkAccess !== true)
+          throw new Error("Expected network consent");
+        task.state = path === "/pause-task" ? "paused" : "running";
+        return {};
+      }
       if (path === "/stop-task") {
         const task = tasks.find((task) => task.id === input.id);
         if (!task) throw new Error("Unknown fixture task");
@@ -124,6 +147,7 @@ try {
       if (path !== "/status") throw new Error("Not a fixture route");
       return {
         tasks,
+        commandApprovals,
         approvals: [],
         profile: {},
         connected: true,
@@ -139,6 +163,12 @@ try {
     .getByRole("button", { name: /接続エラー時の案内を改善する/ })
     .click();
   await page.screenshot({ path: resolve("dist/desktop/tasks-preview.png") });
+  await page.locator("#allow-command").click();
+  await page.locator("#command-approval").waitFor({ state: "hidden" });
+  await page.locator("#pause-task").click();
+  await page.locator("#resume-network").check();
+  await page.locator("#resume-task").click();
+  await page.locator("#resume-controls").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "終了", exact: true }).click();
   assert.equal(await page.locator(".task-row").count(), 1);
   assert.equal(await page.locator("#cancel-task").isDisabled(), true);

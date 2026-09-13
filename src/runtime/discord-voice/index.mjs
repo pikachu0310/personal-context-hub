@@ -227,6 +227,7 @@ export async function startDiscordVoiceCodex({
           host: config.workerGatewayHost,
           port: config.workerGatewayPort,
           publicUrl: config.workerGatewayPublicUrl,
+          installerPath: config.agentInstallerPath,
           authorizeOwner: createWorkerOwnerAuthorizer({
             config,
             fetchMember: async (ownerUserId) => {
@@ -254,6 +255,17 @@ export async function startDiscordVoiceCodex({
           logger,
         });
       await workerGateway.start?.();
+      if (
+        config.agentInstallerPath &&
+        config.workerGatewayPublicUrl?.startsWith("wss://")
+      ) {
+        const address = new URL(config.workerGatewayPublicUrl);
+        address.protocol = "https:";
+        address.pathname = "/agent";
+        config.agentJoinGuideUrl ||= address.href;
+        address.pathname = "/agent/installer.exe";
+        config.agentDownloadUrl ||= address.href;
+      }
     }
     client.on?.(Events.Error, (error) => {
       logAudioFailure(logger, "discord_client_failed", error);

@@ -7,7 +7,8 @@ let state,
   initialized = false,
   busy = false,
   taskSignature;
-const active = (task) => ["running", "awaiting_approval"].includes(task.state);
+const active = (task) =>
+  ["running", "awaiting_approval", "pausing", "paused"].includes(task.state);
 const labels = {
   running: "実行中",
   awaiting_approval: "承認待ち",
@@ -16,6 +17,8 @@ const labels = {
   failed: "失敗",
   not_started: "実行しませんでした",
   external: "外部で管理 · 状態未確認",
+  pausing: "一時停止中…",
+  paused: "一時停止済み",
 };
 const time = (value) =>
   new Date(value).toLocaleString("ja-JP", {
@@ -78,11 +81,25 @@ function renderTasks() {
     task.updatedAt ?? task.finishedAt ?? task.logs.at(-1)?.at ?? task.startedAt,
   );
   el("cancel-task").disabled = !active(task);
+  el("pause-task").disabled = task.state !== "running";
+  el("resume-controls").hidden = task.state !== "paused";
+  el("retry-help").hidden = active(task) || task.source !== "discord";
+  el("retry-help").textContent =
+    `終了したタスクをやり直す場合はDiscordで /ido follow ${task.id} 前回の続きから再実行してください を送ります。`;
+  const command = (state.commandApprovals ?? []).find(
+    (item) => item.taskId === task.id,
+  );
+  el("command-approval").hidden = !command;
+  el("command-preview").textContent = command
+    ? `${command.operation}\n\n作業場所: ${command.cwd || "—"}\n理由: ${command.reason || "—"}`
+    : "";
+  if (command) el("task-state").textContent = "操作の承認待ち";
   el("approval").hidden = !state.approvals.some(
     (item) => item.taskId === task.id,
   );
   el("logs").replaceChildren();
   for (const log of task.logs) {
+    if (task.result && log.text === task.result.slice(0, 2000)) continue;
     const entry = document.createElement("div");
     entry.className = "log-entry";
     const at = document.createElement("time");
@@ -96,11 +113,14 @@ function renderTasks() {
     el("logs").textContent = active(task)
       ? "タスクの進捗を待っています。"
       : "このタスクの進捗ログはありません。";
-  el("result").textContent = task.result ?? "";
+  el("result").textContent = task.errorMessage ?? task.result ?? "";
 }
 async function refresh() {
   try {
     state = await api.request("/status");
+    el("process-info").textContent = state.processInfo
+      ? `タスクマネージャーの「詳細」で ${state.processInfo.name} / PID ${state.processInfo.pid} を確認できます。バージョン ${state.processInfo.version}`
+      : "";
     el("local-tasks").checked = state.localTasks?.enabled ?? false;
     el("local-task-status").textContent = !state.localTasks?.enabled
       ? "表示を有効にすると、このPCのCodexの直近タスク名と作業場所を読み取ります。Discordには送りません。"
@@ -133,6 +153,15 @@ async function refresh() {
         : "未ログインです。OpenAIの公式ページでログインしてください。";
     el("login-link").hidden = !state.login.loginUrl;
     const connected = state.connected || state.reconnecting || state.revoked;
+    el("setup-sandbox").hidden = !state.sandboxSetup?.supported;
+    el("setup-sandbox").disabled =
+      busy || connected || state.busy || state.sandboxSetup?.pending;
+    el("sandbox-status").textContent = state.sandboxSetup?.pending
+      ? "サンドボックスを準備しています。Windowsの確認画面を確認してください。"
+      : (state.sandboxSetup?.error ??
+        (state.sandboxSetup?.ready
+          ? "サンドボックスの準備が完了しました。"
+          : "Windowsで読み取り専用になってしまう場合は、初回セットアップを行ってください。"));
     el("login").disabled =
       busy || connected || state.busy || state.login.pending;
     el("connect").disabled =
@@ -153,7 +182,11 @@ async function refresh() {
       el("automatic").checked = state.connectionPolicy.automatic;
       el("network").checked = state.connectionPolicy.networkAccess;
     }
-    const signature = JSON.stringify([state.tasks, state.approvals]);
+    const signature = JSON.stringify([
+      state.tasks,
+      state.approvals,
+      state.commandApprovals,
+    ]);
     if (signature !== taskSignature) {
       taskSignature = signature;
       renderTasks();
@@ -212,6 +245,9 @@ action("folder", async () => {
   const result = await api.request("/folder", {});
   if (result.path) el("workdir").value = result.path;
 });
+action("setup-sandbox", () =>
+  api.request("/setup-sandbox", { workingDirectory: el("workdir").value }),
+);
 action("connect", async () => {
   const input = {
     gatewayUrl: el("gateway").value,
@@ -231,6 +267,24 @@ action("disconnect", async () => {
   el("network").checked = false;
 });
 action("cancel-task", () => api.request("/stop-task", { id: selected }));
+action("pause-task", async () => {
+  el("resume-network").checked = false;
+  await api.request("/pause-task", { id: selected });
+});
+action("resume-task", () =>
+  api.request("/resume-task", {
+    id: selected,
+    networkAccess: el("resume-network").checked,
+  }),
+);
+for (const approved of [true, false])
+  action(approved ? "allow-command" : "deny-command", () => {
+    const command = (state.commandApprovals ?? []).find(
+      (item) => item.taskId === selected,
+    );
+    if (command)
+      return api.request("/approve-command", { id: command.id, approved });
+  });
 for (const approved of [true, false])
   action(approved ? "approve" : "reject", async () => {
     const item = state.approvals.find((item) => item.taskId === selected);

@@ -76,6 +76,9 @@ export class AgentTaskMonitor {
               return result;
             },
             (error) => {
+              if (error?.code === "AGENT_SANDBOX_NOT_READY")
+                record.errorMessage =
+                  "読み取り専用の状態で起動されました。接続を停止し、接続設定のWindowsサンドボックスをセットアップしてから再接続してください。";
               record.state = signal.aborted
                 ? "cancelled"
                 : record.state === "awaiting_approval"

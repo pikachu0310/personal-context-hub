@@ -50,6 +50,16 @@ Windowsのスタートメニューで **IDO Agent** を検索 → **接続設定
 
 ## 認証と作業場所
 
+### 実行権限と一時停止
+
+Windowsでは、作業フォルダーを選び、接続前に **Windowsサンドボックスを設定** を押してください。Windowsの管理者確認が表示されます。設定できない端末では管理者に相談してください。読み取り専用のままの場合、タスクは設定の案内を表示して停止します。
+
+タスクの開始承認に加え、Codexが追加の許可を求めた操作はタスク詳細にコマンド・作業場所・理由を表示します。内容を確認して、その操作だけ許可または拒否してください。未回答は5分で拒否されます。無制限の実行権限には切り替えません。
+
+実行中のタスクは **一時停止** で処理の終了を待ち、外部通信の許可を見直して **再開** できます。同じタスク・作業場所・保存済みCodex会話を引き継ぎます。実行済みの変更や外部への投稿は取り消しません。**タスクを停止** は終了操作です。終了・失敗済みのタスクは表示される `/ido follow` の案内から再依頼してください。アプリを閉じた後に一時停止状態を自動復元する機能はありません。
+
+タスクマネージャーでは **IDO Agent**（詳細タブでは `IDO Agent.exe`）を確認できます。接続設定にもアプリのバージョン・プロセス名・PIDを表示します。Codexの子プロセスは別の名前で表示される場合があります。
+
 - OpenAIの認証は同梱の公式Codexが行い、認証情報はそのPCの接続用 `codex-home` に残します。この接続アプリはパスワード入力欄を持たず、認証ファイルも読みません。接続用Codexでは個人のユーザー設定を共有せず、Apps・フック・プラグインなどの自動利用も無効にします。
 - Botとの接続鍵は別物です。WindowsではCurrentUser DPAPI、Linuxでは所有者だけが読めるファイルへ保存します。中央Botには公開鍵と接続トークンのハッシュだけが残ります。
 - 接続先、作業フォルダー、表示名は端末内のアプリ設定に保存します。参加コードや認証情報はそこへ保存しません。
@@ -71,7 +81,7 @@ PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST=127.0.0.1
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT=8787
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL=wss://agents.example.com/workers
 PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL=https://example.com/agent-join
-PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL=https://example.com/IDO-Agent-Setup-0.2.0.exe
+PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL=https://example.com/IDO-Agent-Setup-0.2.1.exe
 PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS=true
 PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS=
 PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE=false

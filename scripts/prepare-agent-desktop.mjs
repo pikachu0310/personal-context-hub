@@ -53,7 +53,7 @@ const dependencies = Object.fromEntries(
 );
 const manifest = {
   name: "ido-agent",
-  version: "0.2.0",
+  version: "0.2.1",
   description: "Local agent workspace for Discord",
   author: "IDO Agent contributors",
   private: true,

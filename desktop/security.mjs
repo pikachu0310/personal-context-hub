@@ -1,12 +1,16 @@
 const writes = new Set([
   "/invitation",
   "/approve",
+  "/approve-command",
   "/login",
   "/refresh-login",
   "/connect",
   "/stop",
   "/stop-task",
+  "/pause-task",
+  "/resume-task",
   "/folder",
+  "/setup-sandbox",
 ]);
 export function allowedDesktopRequest(path, input) {
   if (path === "/status") return input === undefined;
