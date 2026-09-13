@@ -24,6 +24,8 @@ export function createStudioController({
   initialState = {},
   name = "共有スタジオ",
   hudStore,
+  readArtifacts,
+  previewConfigured,
   previewUrl = (preview) => preview.sharedUrl ?? preview.url,
 }) {
   let journal = structuredClone(initialState.studio?.receipts ?? {});
@@ -72,6 +74,10 @@ export function createStudioController({
       meetingId: session.meetingId,
       revision: session.revision ?? 0,
       connected: !closing,
+      capabilities: {
+        preview: previewConfigured ?? null,
+        files: Boolean(readArtifacts),
+      },
       minutes: safe(session.minutes),
       statements: [...unique.values()]
         .sort(
@@ -346,6 +352,13 @@ export function createStudioController({
   };
   return {
     snapshot,
+    async artifacts(taskId, revision, fileId) {
+      const task = taskFor(taskId);
+      if (!task) fail(404, "対象の作業が見つかりません。");
+      if (!readArtifacts)
+        fail(404, "この接続では成果ファイルを取得できません。");
+      return readArtifacts(task, revision, fileId);
+    },
     command(command, actor) {
       const pending = tail.then(() => execute(command, actor));
       tail = pending.catch(() => {});

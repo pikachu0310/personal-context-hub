@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import { StudioFiles, type StudioRequester } from "./StudioFiles";
 import {
   ArrowRight,
   Check,
@@ -36,6 +43,15 @@ import "./studio.css";
 
 const tokenKey = "idd-studio-session";
 const pendingKey = "idd-studio-pending";
+const draftsKey = "idd-studio-drafts";
+const roomKey = "idd-studio-room";
+function stored<T>(key: string, fallback: T): T {
+  try {
+    return JSON.parse(sessionStorage.getItem(key) ?? "null") ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 const commandId = () =>
   typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -66,6 +82,20 @@ const stageName: Record<string, string> = {
   ASSEMBLE: "会話",
 };
 type Command = Record<string, unknown>;
+type PendingRequest = { command: Command; room: string };
+type RoomDraft = {
+  draft: string;
+  draftTarget?: Command;
+  composerMode: "say" | "ask" | "follow";
+  selectedId: string;
+  compareId: string;
+  title: string;
+  request: string;
+  criteria: string;
+  variants: boolean;
+  variantA: string;
+  variantB: string;
+};
 
 export function Studio() {
   const [token, setToken] = useState(initialToken);
@@ -82,9 +112,10 @@ export function Studio() {
   }>();
   const connectionDialog = useRef<HTMLDialogElement>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [roomId, setRoomId] = useState("");
+  const [roomId, setRoomId] = useState(() => stored<string>(roomKey, ""));
   const [snapshot, setSnapshot] = useState<StudioSnapshot>();
   const [connected, setConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [compareId, setCompareId] = useState("");
   const [stage, setStage] = useState(location.pathname === "/stage");
@@ -104,6 +135,9 @@ export function Studio() {
     "say",
   );
   const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState("");
+  const latestEditor = useRef({ draft, composerMode, draftTarget });
+  latestEditor.current = { draft, composerMode, draftTarget };
   const [error, setError] = useState(() => {
     try {
       return sessionStorage.getItem(pendingKey)
@@ -114,31 +148,43 @@ export function Studio() {
     }
   });
   const [notice, setNotice] = useState("");
-  const [pending, setPending] = useState<
-    { command: Command; room: string } | undefined
-  >(() => {
-    try {
-      return (
-        JSON.parse(sessionStorage.getItem(pendingKey) ?? "null") ?? undefined
+  const [pendingRequests, setPendingRequests] = useState<PendingRequest[]>(
+    () => {
+      const saved = stored<PendingRequest | PendingRequest[] | null>(
+        pendingKey,
+        null,
       );
-    } catch {
-      return undefined;
-    }
-  });
+      return Array.isArray(saved) ? saved : saved?.command ? [saved] : [];
+    },
+  );
+  const pending = pendingRequests.find(
+    (item) => !roomId || item.room === roomId,
+  );
   const rememberPending = (
-    value: { command: Command; room: string } | undefined,
+    value: PendingRequest | undefined,
+    resolvedId?: unknown,
   ) => {
-    try {
-      if (value) sessionStorage.setItem(pendingKey, JSON.stringify(value));
-      else sessionStorage.removeItem(pendingKey);
-    } catch {
-      /* In-memory retry is still available. */
-    }
-    setPending(value);
+    setPendingRequests((previous) => {
+      const next = previous.filter(
+        (item) => item.command.id !== (value?.command.id ?? resolvedId),
+      );
+      if (value) next.push(value);
+      try {
+        if (next.length)
+          sessionStorage.setItem(pendingKey, JSON.stringify(next));
+        else sessionStorage.removeItem(pendingKey);
+      } catch {
+        /* This tab still retains the send IDs in memory. */
+      }
+      return next;
+    });
   };
   const [refresh, setRefresh] = useState(0);
   const createDialog = useRef<HTMLDialogElement>(null);
   const previousRoom = useRef("");
+  const roomDrafts = useRef(stored<Record<string, RoomDraft>>(draftsKey, {}));
+  const [draftRoom, setDraftRoom] = useState("");
+  const preferredSelection = useRef("");
   const task = snapshot?.tasks.find((item) => item.id === selectedId);
   const comparison = snapshot?.tasks.find((item) => item.id === compareId);
   const canOperate = actor?.role === "operator" && connected;
@@ -183,32 +229,70 @@ export function Studio() {
       setNotice("リンク欄を選択してコピーしてください。");
     }
   }
-  async function api(
-    path: string,
-    options: RequestInit = {},
-    accessToken = token,
-  ) {
-    const response = await fetch(path, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        ...options.headers,
-      },
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      if (response.status === 401 && accessToken) {
-        sessionStorage.removeItem(tokenKey);
-        setToken("");
-        setConnected(false);
+  const api = useCallback(
+    async (
+      path: string,
+      options: RequestInit = {},
+      accessToken = token,
+      asBlob = false,
+    ) => {
+      const timeout = new AbortController();
+      const timer = setTimeout(
+        () => timeout.abort(),
+        options.method === "POST" ? 45000 : 15000,
+      );
+      let response: Response;
+      try {
+        response = await fetch(path, {
+          ...options,
+          signal: options.signal
+            ? AbortSignal.any([options.signal, timeout.signal])
+            : timeout.signal,
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+            ...options.headers,
+          },
+        });
+        if (response.ok && asBlob) return await response.blob();
+        const data = await response.json().catch(() => {
+          throw new Error(
+            "応答を読み取れませんでした。接続を確認して再試行してください。",
+          );
+        });
+        if (!response.ok) {
+          if (response.status === 401 && accessToken) {
+            sessionStorage.removeItem(tokenKey);
+            setToken("");
+            setConnected(false);
+            setError(
+              "接続コードでもう一度接続してください。入力中の内容はこのタブに残しています。",
+            );
+          }
+          throw Object.assign(
+            new Error(data.error ?? "接続を確認してください。"),
+            {
+              status: response.status,
+            },
+          );
+        }
+        return data;
+      } catch (failure) {
+        if (timeout.signal.aborted)
+          throw new Error(
+            "応答に時間がかかっています。送信済みの操作は処理が続いている場合があります。",
+          );
+        throw failure;
+      } finally {
+        clearTimeout(timer);
       }
-      throw Object.assign(new Error(data.error ?? "接続を確認してください。"), {
-        status: response.status,
-      });
-    }
-    return data;
-  }
+    },
+    [token],
+  );
+  const requestArtifact: StudioRequester = useCallback(
+    (path, options, asBlob) => api(path, options, token, asBlob),
+    [api, token],
+  );
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
@@ -238,12 +322,22 @@ export function Studio() {
     let timer: ReturnType<typeof setTimeout>;
     const abort = new AbortController();
     if (previousRoom.current !== roomId) {
+      const savedDraft = roomDrafts.current[roomId];
       setSnapshot(undefined);
-      setSelectedId("");
-      setCompareId("");
-      if (pending?.room !== roomId) rememberPending(undefined);
-      setDraft("");
-      setComposerMode("say");
+      setConnected(false);
+      setSelectedId(savedDraft?.selectedId ?? "");
+      setCompareId(savedDraft?.compareId ?? "");
+      setDraft(savedDraft?.draft ?? "");
+      setDraftTarget(savedDraft?.draftTarget);
+      setComposerMode(savedDraft?.composerMode ?? "say");
+      setTitle(savedDraft?.title ?? "");
+      setRequest(savedDraft?.request ?? "");
+      setCriteria(savedDraft?.criteria ?? "");
+      setVariants(savedDraft?.variants ?? false);
+      setVariantA(savedDraft?.variantA ?? "");
+      setVariantB(savedDraft?.variantB ?? "");
+      setDraftRoom(roomId);
+      preferredSelection.current = "";
       previousRoom.current = roomId;
     }
     const poll = async () => {
@@ -255,16 +349,25 @@ export function Studio() {
         if (cancelled) return;
         setSnapshot(data);
         setConnected(true);
+        setConnectionError("");
         setActor(data.actor);
-        setSelectedId((id) =>
-          data.tasks.some((item) => item.id === id)
+        setSelectedId((id) => {
+          if (
+            preferredSelection.current &&
+            data.tasks.some((item) => item.id === preferredSelection.current)
+          ) {
+            const preferred = preferredSelection.current;
+            preferredSelection.current = "";
+            return preferred;
+          }
+          return data.tasks.some((item) => item.id === id)
             ? id
-            : (data.tasks.at(-1)?.id ?? ""),
-        );
+            : (data.tasks.at(-1)?.id ?? "");
+        });
       } catch (failure) {
         if (!cancelled) {
           setConnected(false);
-          setError(
+          setConnectionError(
             (failure as Error).message === "Failed to fetch"
               ? "エンジンとの接続が切れました。入力はこの画面に残っています。"
               : (failure as Error).message,
@@ -280,6 +383,42 @@ export function Studio() {
       clearTimeout(timer);
     };
   }, [token, roomId, refresh]);
+  useEffect(() => {
+    if (!roomId || draftRoom !== roomId) return;
+    roomDrafts.current[roomId] = {
+      draft,
+      draftTarget,
+      composerMode,
+      selectedId,
+      compareId,
+      title,
+      request,
+      criteria,
+      variants,
+      variantA,
+      variantB,
+    };
+    try {
+      sessionStorage.setItem(draftsKey, JSON.stringify(roomDrafts.current));
+      sessionStorage.setItem(roomKey, JSON.stringify(roomId));
+    } catch {
+      /* Keep drafts in this tab even when storage is unavailable. */
+    }
+  }, [
+    roomId,
+    draftRoom,
+    draft,
+    draftTarget,
+    composerMode,
+    selectedId,
+    compareId,
+    title,
+    request,
+    criteria,
+    variants,
+    variantA,
+    variantB,
+  ]);
   async function login(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -305,10 +444,17 @@ export function Studio() {
   }
   async function send(command: Command, retry = false) {
     if (!snapshot || busy || !canOperate) return false;
+    if (pending && !retry && command.type !== "stop") {
+      setError(
+        "前の送信結果が未確認です。「同じ送信を再試行」で受付を確認してください。入力中の内容は残っています。",
+      );
+      return false;
+    }
     const payload = retry
       ? command
       : { ...command, id: commandId(), meetingId: snapshot.meetingId };
     setBusy(true);
+    setBusyAction(String(command.type ?? ""));
     setError("");
     rememberPending({ command: payload, room: roomId });
     try {
@@ -316,9 +462,23 @@ export function Studio() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      rememberPending(undefined);
+      rememberPending(undefined, payload.id);
+      if (retry && ["say", "follow"].includes(String(payload.type))) {
+        const latest = latestEditor.current;
+        if (
+          latest.draft.trim() === payload.text &&
+          (payload.type === "follow"
+            ? latest.composerMode === "follow" &&
+              latest.draftTarget?.taskId === payload.taskId
+            : latest.composerMode === (payload.ask ? "ask" : "say"))
+        ) {
+          setDraft("");
+          setDraftTarget(undefined);
+        }
+      }
       if (result.taskIds) {
         setCreateOpen(false);
+        preferredSelection.current = result.taskIds[0];
         setSelectedId(result.taskIds[0]);
         if (result.taskIds[1]) setCompareId(result.taskIds[1]);
       }
@@ -339,10 +499,11 @@ export function Studio() {
           : "送信結果を確認できませんでした。同じ送信を再試行できます。",
       );
       if (problem.status && problem.status < 500 && problem.status !== 429)
-        rememberPending(undefined);
+        rememberPending(undefined, payload.id);
       return false;
     } finally {
       setBusy(false);
+      setBusyAction("");
     }
   }
   const taskCommand = (type: string): Command => ({
@@ -360,7 +521,12 @@ export function Studio() {
       composerMode === "follow"
         ? { ...(draftTarget ?? taskCommand("follow")), text: value }
         : { type: "say", text: value, ask: composerMode === "ask" };
-    if (await send(command)) {
+    const submittedMode = composerMode;
+    if (
+      (await send(command)) &&
+      latestEditor.current.draft.trim() === value &&
+      latestEditor.current.composerMode === submittedMode
+    ) {
       setDraft("");
       setDraftTarget(undefined);
     }
@@ -560,9 +726,13 @@ export function Studio() {
           </button>
         </div>
       </header>
-      {error && !createOpen && (
+      {(error || connectionError || (pending && !busy)) && !createOpen && (
         <div className="studio-banner" role="alert">
-          <span>{error}</span>
+          <span>
+            {error ||
+              connectionError ||
+              "結果を確認できていない送信があります。同じ送信を再試行できます。"}
+          </span>
           {pending && pending.room === roomId ? (
             <button
               disabled={busy || !canOperate}
@@ -725,12 +895,43 @@ export function Studio() {
                 className={`preview-grid ${comparison ? "is-comparing" : ""} ${mobilePreview ? "phone-width" : ""}`}
               >
                 <Artifact
+                  key={`${roomId}:${task.id}`}
                   task={task}
                   label={comparison ? "A" : undefined}
                   connected={connected}
+                  previewConfigured={snapshot?.capabilities?.preview}
+                  results={
+                    snapshot?.capabilities?.files && task.resultRunRevision ? (
+                      <StudioFiles
+                        key={`${roomId}:${task.id}:${task.resultRunRevision}`}
+                        roomId={roomId}
+                        taskId={task.id}
+                        runRevision={task.resultRunRevision}
+                        request={requestArtifact}
+                      />
+                    ) : undefined
+                  }
                 />
                 {comparison && (
-                  <Artifact task={comparison} label="B" connected={connected} />
+                  <Artifact
+                    key={`${roomId}:${comparison.id}`}
+                    task={comparison}
+                    label="B"
+                    connected={connected}
+                    previewConfigured={snapshot?.capabilities?.preview}
+                    results={
+                      snapshot?.capabilities?.files &&
+                      comparison.resultRunRevision ? (
+                        <StudioFiles
+                          key={`${roomId}:${comparison.id}:${comparison.resultRunRevision}`}
+                          roomId={roomId}
+                          taskId={comparison.id}
+                          runRevision={comparison.resultRunRevision}
+                          request={requestArtifact}
+                        />
+                      ) : undefined
+                    }
+                  />
                 )}
               </div>
               <div className="artifact-bottom">
@@ -741,9 +942,13 @@ export function Studio() {
                       ? "ブラウザ操作を自動確認済み"
                       : currentPreview(task)
                         ? "プレビューを操作して確かめてください"
-                        : ["running", "queued"].includes(task.state)
-                          ? "この版のプレビューを準備しています"
-                          : "現在開けるプレビューはありません"}
+                        : task.preview?.state === "starting"
+                          ? "プレビューを起動しています"
+                          : snapshot?.capabilities?.preview === false
+                            ? "成果ファイルと結果を確認できます"
+                            : ["running", "queued"].includes(task.state)
+                              ? "この版のプレビューを準備しています"
+                              : "現在開けるプレビューはありません"}
                   </span>
                   {currentPreview(task)?.confirmations.length ? (
                     <span className="people-tested">
@@ -754,29 +959,43 @@ export function Studio() {
                   ) : null}
                 </div>
                 <div className="artifact-bottom-actions">
-                  {task.state === "completed" && !currentPreview(task)?.url && (
+                  {task.state === "completed" &&
+                    snapshot?.capabilities?.preview !== false &&
+                    task.resultSpecRevision === task.specRevision &&
+                    !currentPreview(task)?.url && (
+                      <button
+                        className="button-secondary"
+                        disabled={!canOperate || busy}
+                        onClick={() => void send(taskCommand("preview"))}
+                      >
+                        <RefreshCw
+                          size={16}
+                          className={
+                            busy && busyAction === "preview"
+                              ? "spin"
+                              : undefined
+                          }
+                        />
+                        {busy && busyAction === "preview"
+                          ? "プレビューを起動しています"
+                          : "プレビューを開き直す"}
+                      </button>
+                    )}
+                  {snapshot?.capabilities?.preview !== false && (
                     <button
                       className="button-secondary"
-                      disabled={!canOperate || busy}
-                      onClick={() => void send(taskCommand("preview"))}
+                      disabled={
+                        !canOperate ||
+                        busy ||
+                        !currentPreview(task)?.url ||
+                        task.state !== "completed"
+                      }
+                      onClick={() => void send(taskCommand("confirm"))}
                     >
-                      <RefreshCw size={16} />
-                      プレビューを開き直す
+                      <Check size={16} />
+                      この版を試した
                     </button>
                   )}
-                  <button
-                    className="button-secondary"
-                    disabled={
-                      !canOperate ||
-                      busy ||
-                      !currentPreview(task)?.url ||
-                      task.state !== "completed"
-                    }
-                    onClick={() => void send(taskCommand("confirm"))}
-                  >
-                    <Check size={16} />
-                    この版を試した
-                  </button>
                   <button
                     className="button-secondary"
                     disabled={!canOperate || busy}
@@ -969,6 +1188,15 @@ export function Studio() {
                       <summary>検証の記録</summary>
                       <p className="preserve-lines">{task.verification}</p>
                     </details>
+                  )}
+                  {snapshot?.capabilities?.files && task.resultRunRevision && (
+                    <StudioFiles
+                      key={`${roomId}:${task.id}:${task.resultRunRevision}`}
+                      roomId={roomId}
+                      taskId={task.id}
+                      runRevision={task.resultRunRevision}
+                      request={requestArtifact}
+                    />
                   )}
                 </div>
               ) : (
@@ -1241,6 +1469,7 @@ export function Studio() {
             成果の名前 <span className="muted">任意</span>
             <input
               value={title}
+              disabled={busy}
               onChange={(event) => setTitle(event.target.value)}
               maxLength={80}
               placeholder="例：ひらく展示"
@@ -1250,6 +1479,7 @@ export function Studio() {
             実現したいこと
             <textarea
               autoFocus
+              disabled={busy}
               required
               rows={4}
               maxLength={6000}
@@ -1262,6 +1492,7 @@ export function Studio() {
             満たしたい条件 <span className="muted">任意・1行にひとつ</span>
             <textarea
               rows={3}
+              disabled={busy}
               maxLength={2000}
               value={criteria}
               onChange={(event) => setCriteria(event.target.value)}
@@ -1271,6 +1502,7 @@ export function Studio() {
           <label className="variant-toggle">
             <input
               type="checkbox"
+              disabled={busy}
               checked={variants}
               onChange={(event) => setVariants(event.target.checked)}
             />
@@ -1283,6 +1515,7 @@ export function Studio() {
                 案 A
                 <input
                   required
+                  disabled={busy}
                   maxLength={1000}
                   value={variantA}
                   onChange={(event) => setVariantA(event.target.value)}
@@ -1293,6 +1526,7 @@ export function Studio() {
                 案 B
                 <input
                   required
+                  disabled={busy}
                   maxLength={1000}
                   value={variantB}
                   onChange={(event) => setVariantB(event.target.value)}
@@ -1327,10 +1561,14 @@ function Artifact({
   task,
   label,
   connected,
+  previewConfigured,
+  results,
 }: {
   task: StudioTask;
   label?: string;
   connected: boolean;
+  previewConfigured?: boolean | null;
+  results?: React.ReactNode;
 }) {
   const preview = currentPreview(task);
   const [loadedUrl, setLoadedUrl] = useState("");
@@ -1338,6 +1576,7 @@ function Artifact({
   const [copyStatus, setCopyStatus] = useState("");
   const url = preview?.url;
   const building = ["running", "queued"].includes(task.state);
+  const startingPreview = task.preview?.state === "starting";
   const copy = async () => {
     if (!url) return;
     try {
@@ -1365,7 +1604,10 @@ function Artifact({
               <button
                 className="icon-button"
                 aria-label={`${label ?? "成果"}のプレビューを再読み込み`}
-                onClick={() => setReload((value) => value + 1)}
+                onClick={() => {
+                  setLoadedUrl("");
+                  setReload((value) => value + 1);
+                }}
               >
                 <RefreshCw size={14} />
               </button>
@@ -1410,7 +1652,7 @@ function Artifact({
       ) : (
         <div className={`preview-placeholder ${building ? "building" : ""}`}>
           <div className="preview-symbol">
-            {building ? (
+            {building || startingPreview ? (
               <LoaderCircle className="spin" size={30} />
             ) : task.state === "completed" ? (
               <Check size={30} />
@@ -1419,25 +1661,43 @@ function Artifact({
             )}
           </div>
           <p className="eyebrow">
-            {building ? "CODEX IS WORKING" : "WORKSPACE"}
+            {building
+              ? "CODEX IS WORKING"
+              : startingPreview
+                ? "OPENING PREVIEW"
+                : "WORKSPACE"}
           </p>
           <h2>
-            {building
-              ? "会話を、かたちにしています。"
-              : task.state === "completed"
-                ? "作業の結果が届いています。"
-                : task.state === "cancelled"
-                  ? "この作業は停止しました。"
-                  : "続きを、ここから。"}
+            {startingPreview
+              ? "プレビューを起動しています。"
+              : building
+                ? "会話を、かたちにしています。"
+                : task.state === "completed"
+                  ? task.preview?.state === "expired" ||
+                    task.preview?.state === "stopped"
+                    ? "成果のプレビューを開き直せます。"
+                    : "作業の結果が届いています。"
+                  : task.state === "cancelled"
+                    ? "この作業は停止しました。"
+                    : "続きを、ここから。"}
           </h2>
           <p>
-            {building
-              ? "同じ成果への追加指示も、今のうちに送れます。"
-              : task.state === "completed"
-                ? task.preview?.state === "failed"
-                  ? "プレビューの起動を確認できませんでした。仕様タブで結果を確認し、修正を依頼できます。"
-                  : "仕様タブで結果を確認できます。プレビューの設定・状態も確認してください。"
-                : "仕様と会話を残したまま、追加の指示で再開できます。"}
+            {startingPreview
+              ? "表示の準備ができると、この画面に成果が開きます。"
+              : building
+                ? "同じ成果への追加指示も、今のうちに送れます。"
+                : task.state === "completed"
+                  ? task.preview?.state === "failed"
+                    ? "プレビューの起動を確認できませんでした。仕様タブで結果を確認し、修正を依頼できます。"
+                    : task.resultSpecRevision !== task.specRevision
+                      ? "この結果は以前の仕様のものです。追加指示で現在の仕様に合わせて再開できます。"
+                      : task.preview?.state === "expired" ||
+                          task.preview?.state === "stopped"
+                        ? "プレビューの表示は終了しましたが、成果は保存されています。「プレビューを開き直す」で同じ版を表示できます。"
+                        : previewConfigured === false
+                          ? "このプロジェクトではWebプレビューを設定していません。結果と成果ファイルをここで確認できます。"
+                          : "結果と成果ファイルを確認できます。Webアプリの場合はプレビューを開いて試せます。"
+                  : "仕様と会話を残したまま、追加の指示で再開できます。"}
           </p>
           {building && (
             <div className="build-track">
@@ -1449,6 +1709,18 @@ function Artifact({
               <span>みんなに共有</span>
             </div>
           )}
+        </div>
+      )}
+      {!url && task.result && (
+        <div className="artifact-result">
+          {results}
+          <details>
+            <summary>
+              結果の説明を読む · 仕様 {task.resultSpecRevision ?? "未確認"} /
+              実行 {task.resultRunRevision ?? "未確認"}
+            </summary>
+            <p className="preserve-lines">{task.result}</p>
+          </details>
         </div>
       )}
       {!connected && (

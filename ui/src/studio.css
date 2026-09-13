@@ -683,6 +683,121 @@ body {
   min-width: 0;
   border: 1px solid #496266;
 }
+.artifact-frame:has(.artifact-result) {
+  overflow-y: auto;
+}
+.artifact-frame:has(.artifact-result) .preview-placeholder {
+  min-height: 180px;
+  flex: none;
+  gap: 10px;
+  padding: 24px;
+}
+.artifact-frame:has(.artifact-result) .preview-symbol {
+  display: none;
+}
+.artifact-result {
+  --muted: #586c62;
+  padding: 24px;
+  border-top: 1px solid #d0ddd3;
+}
+.artifact-result summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.artifact-result > details {
+  margin-top: 24px;
+}
+.artifact-result .result-files {
+  margin-top: 0;
+}
+.artifact-result > details > p {
+  font-size: 13px;
+  line-height: 1.85;
+}
+.result-files {
+  margin-top: 24px;
+  min-width: 0;
+}
+.result-files > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+.result-files h3 {
+  font-size: 14px;
+}
+.result-files ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.result-files li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid currentColor;
+  border-bottom-color: color-mix(in srgb, currentColor 18%, transparent);
+}
+.result-file-name {
+  flex: 1 1 100px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.result-file-name small {
+  display: block;
+  color: var(--muted);
+}
+.result-file-actions,
+.file-loading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.artifact-result .button-secondary,
+.artifact-result .button-quiet,
+.artifact-result .icon-button {
+  background: #e4ede6;
+  color: #214f40;
+}
+.artifact-result .button-secondary:hover,
+.artifact-result .button-quiet:hover,
+.artifact-result .icon-button:hover {
+  background: #d1e4d7;
+  color: #183e30;
+}
+.result-file-content {
+  margin-top: 16px;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 8px;
+}
+.result-file-content header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+}
+.result-file-content pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.75;
+  margin: 0;
+  padding: 16px;
+  max-height: 380px;
+  overflow-y: auto;
+}
+.file-error p {
+  margin-bottom: 8px;
+}
 .browser-bar {
   height: 41px;
   display: flex;

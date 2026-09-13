@@ -31,6 +31,7 @@ export type StudioSnapshot = {
   meetingId: string;
   revision: number;
   connected: boolean;
+  capabilities?: { preview: boolean | null; files: boolean };
   minutes: string;
   actor: Actor;
   statements: {
