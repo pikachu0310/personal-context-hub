@@ -5,6 +5,7 @@ import { WebSocketServer } from "ws";
 import { identifyVerificationCommand } from "./engine/evidence.mjs";
 import { taskModelSelection } from "./engine/model-policy.mjs";
 import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
+import { VoiceServiceError } from "./engine/errors.mjs";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const OPEN = 1;
@@ -532,10 +533,16 @@ export class AgentWorkerGateway {
     if (message.type === "task_error") {
       this.#settle(
         message.leaseId,
-        gatewayError(
-          "WORKER_TASK_FAILED",
-          String(message.message ?? "Worker task failed."),
-        ),
+        message.code === "AGENT_SANDBOX_NOT_READY"
+          ? new VoiceServiceError(
+              "AGENT_SANDBOX_NOT_READY",
+              "Worker sandbox is read-only",
+              "IDO Agentの実行環境が読み取り専用です。アプリで接続を停止し、接続設定からWindowsサンドボックスをセットアップしてください。完了後に再接続し、このスレッドで続きの実行を依頼してください。",
+            )
+          : gatewayError(
+              "WORKER_TASK_FAILED",
+              String(message.message ?? "Worker task failed."),
+            ),
         true,
       );
     }

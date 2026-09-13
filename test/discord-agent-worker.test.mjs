@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
+import { voiceErrorMessage } from "../src/engine/errors.mjs";
 import { AgentWorkerRegistry } from "../src/discord-agent-worker-registry.mjs";
 import {
   AgentWorkerGateway,
@@ -192,6 +193,20 @@ test("a paired Worker receives a task and returns progress and result", async ()
   assert.equal("privateValue" in task.evidence, false);
   assert.equal("workingDirectory" in task.artifacts, false);
   assert.equal("patchPath" in task.artifacts, false);
+  worker.executor.run = async () => {
+    const error = new Error("private local details");
+    error.code = "AGENT_SANDBOX_NOT_READY";
+    throw error;
+  };
+  await assert.rejects(
+    gateway.runTask({ ...task, id: "failed-sandbox" }),
+    (error) => {
+      assert.equal(error.code, "AGENT_SANDBOX_NOT_READY");
+      assert.match(voiceErrorMessage(error), /Windowsサンドボックス/);
+      assert.doesNotMatch(voiceErrorMessage(error), /private local details/);
+      return true;
+    },
+  );
   await worker.stop();
   await gateway.stop();
 });

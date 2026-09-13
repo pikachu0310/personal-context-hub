@@ -476,6 +476,8 @@ export class DiscordAgentWorker {
       this.#send({
         type: "task_error",
         leaseId: task.leaseId,
+        code:
+          error?.code === "AGENT_SANDBOX_NOT_READY" ? error.code : undefined,
         message: controller.signal.aborted
           ? "Task was cancelled."
           : `Codex Worker failed (${error?.name ?? "Error"}).`,
