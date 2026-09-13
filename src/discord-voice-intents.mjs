@@ -46,3 +46,36 @@ export function isImmediateSpeechStop(text) {
     );
   return Boolean(addressed && speechStop.test(addressed[1]));
 }
+
+export function parseImmediateTaskInstruction(
+  text,
+  { requireWakeWord = false } = {},
+) {
+  const normalized = String(text ?? "").trim();
+  const addressed = normalized.match(
+    /^(?:井戸(?:bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,：:\s]*([\s\S]+)$/iu,
+  );
+  if (requireWakeWord && !addressed) return undefined;
+  const body = addressed?.[1] ?? normalized;
+  if (
+    /[「」『』"`?？]|(?:かも|かな|たら|なら|しないで|停止|中止|キャンセル|止めて)/u.test(
+      body,
+    )
+  )
+    return undefined;
+  if (
+    !/(?:して|戻して|直して|変えて|大きくして|小さくして)(?:ください|下さい|お願い)?[。.!！\s]*$/u.test(
+      body,
+    )
+  )
+    return undefined;
+  const named = body.match(
+    /^(?:タスク(?:id)?\s*)([a-z0-9_-]{4,80})[、,:：\s]*(?:は|を)?/iu,
+  );
+  if (named) return { taskId: named[1] };
+  return /^(?:やっぱり|今の(?:作業|タスク|版)|さっきの(?:作業|タスク|版)|大きすぎる|小さすぎる|少し戻して)/u.test(
+    body,
+  )
+    ? {}
+    : undefined;
+}

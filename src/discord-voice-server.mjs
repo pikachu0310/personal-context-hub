@@ -1,4 +1,10 @@
 import { Readable } from "node:stream";
+import { DiscordLiveBridge } from "./discord-voice-live.mjs";
+import {
+  TaskPreviewManager,
+  formatTaskPreview,
+} from "./discord-voice-preview.mjs";
+import { browserPreviewVerifier } from "./discord-voice-preview-browser.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
 import { VoiceServiceError } from "./discord-voice-errors.mjs";
@@ -155,6 +161,56 @@ export function createDiscordPlayer(
   return play;
 }
 
+export function createDiscordLiveOutput(connection, logger = console) {
+  const player = createAudioPlayer({
+    behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+  });
+  player.on("error", (error) =>
+    logAudioFailure(logger, "live_playback_failed", error),
+  );
+  connection.subscribe(player);
+  let queued = Buffer.alloc(0);
+  let stream;
+  let closed = false;
+  const clear = () => {
+    queued = Buffer.alloc(0);
+    stream?.destroy();
+    stream = new Readable({ read() {}, highWaterMark: 3840 });
+    player.play(createAudioResource(stream, { inputType: StreamType.Raw }));
+  };
+  clear();
+  const timer = setInterval(() => {
+    if (closed || stream.readableLength > 3840) return;
+    const frame = Buffer.alloc(960);
+    queued.copy(frame, 0, 0, Math.min(960, queued.length));
+    queued = queued.subarray(Math.min(960, queued.length));
+    stream.push(ttsPcm24kMonoToDiscordRaw(frame));
+  }, 20);
+  timer.unref();
+  return {
+    append(pcm) {
+      if (closed) return;
+      if (queued.length + pcm.length > 24000 * 2 * 5) {
+        clear();
+        logInfoQuietly(logger, {
+          component: "discord-voice",
+          event: "live_output_overflow",
+        });
+        return;
+      }
+      queued = Buffer.concat([queued, pcm]);
+    },
+    clear,
+    close() {
+      closed = true;
+      clearInterval(timer);
+      queued = Buffer.alloc(0);
+      stream.destroy();
+      player.stop(true);
+    },
+  };
+}
+
 export function subscribeToAllowedSpeaker({
   connection,
   config,
@@ -163,18 +219,18 @@ export function subscribeToAllowedSpeaker({
   logger,
   resolveSpeakerName = (userId) => userId,
   createDecoder = (options) => new prism.opus.Decoder(options),
+  live,
 }) {
   const active = new Set();
   const notify = (content) =>
     Promise.resolve()
       .then(() => postText(content))
       .catch(() => undefined);
+  connection.receiver.speaking.on("end", (userId) => live?.speakerEnd(userId));
   connection.receiver.speaking.on("start", (userId) => {
-    if (
-      (!config.listenToEveryone && userId !== config.allowedUserId) ||
-      active.has(userId)
-    )
-      return;
+    if (!config.listenToEveryone && userId !== config.allowedUserId) return;
+    live?.speakerStart(userId);
+    if (active.has(userId)) return;
     const startedAt = Date.now();
     active.add(userId);
     const opusStream = connection.receiver.subscribe(userId, {
@@ -230,6 +286,7 @@ export function subscribeToAllowedSpeaker({
     decoder.on("data", (chunk) => {
       if (discardedTurn) return;
       try {
+        live?.input(userId, chunk);
         if (segmented) {
           for (const pcm of turnBuffer.push(chunk)) enqueueSegment(pcm);
           return;
@@ -252,7 +309,10 @@ export function subscribeToAllowedSpeaker({
         void notify(AUDIO_RETRY_MESSAGE);
       }
     });
-    const release = () => active.delete(userId);
+    const release = () => {
+      active.delete(userId);
+      live?.speakerEnd(userId);
+    };
     opusStream.once("error", (error) => {
       discardedTurn = true;
       finalized = true;
@@ -416,7 +476,17 @@ export function formatDiscordTaskCard(
   task,
   { state = "queued", threadId, elapsedMs, pendingInstructions = 0 } = {},
 ) {
-  const [icon, label] = DISCORD_TASK_STATES[state] ?? ["🧰", state];
+  const [icon, defaultLabel] = DISCORD_TASK_STATES[state] ?? ["🧰", state];
+  const label =
+    state === "completed" && task.preview
+      ? task.preview.state === "available"
+        ? task.preview.confirmations?.length >= 4
+          ? "4人が試用済み"
+          : task.preview.browserVerified
+            ? "試用版あり"
+            : "起動済み・操作未確認"
+        : "実装処理終了・試用状態を確認"
+      : defaultLabel;
   const id = String(task.id ?? "unknown").replace(/[^a-zA-Z0-9_-]/g, "");
   const title = escapeDiscordMarkdown(
     boundText(String(task.title ?? "").replace(/[\r\n]+/g, " "), 120) ||
@@ -437,6 +507,7 @@ export function formatDiscordTaskCard(
       ? "差分: なし（検証記録を確認できます）"
       : "",
     state === "completed" ? formatVerificationEvidence(task.evidence) : "",
+    task.preview ? formatTaskPreview(task.preview) : "",
   ].join("\n");
 }
 
@@ -518,6 +589,7 @@ export function createDiscordTaskCardUpdater(
             task.appliedRevision === task.artifacts?.runRevision,
           ),
           hasTaskChanges(task.artifacts),
+          task.preview,
         ),
       };
       if (starter) {
@@ -699,6 +771,8 @@ export async function startDiscordVoiceCodex({
   let session;
   let taskQueue;
   let playAudio;
+  let live;
+  let previews;
   let deliveryInterval;
   let loginAttempted = false;
   let serviceClosing = false;
@@ -716,10 +790,12 @@ export async function startDiscordVoiceCodex({
   const stopService = () => {
     if (stopping) return stopping;
     serviceClosing = true;
+    live?.close();
     clearInterval(deliveryInterval);
     playAudio?.dispose?.();
     stopping = (async () => {
       const results = await Promise.allSettled([
+        Promise.resolve().then(() => previews?.close()),
         Promise.resolve().then(() => session?.stop?.()),
         Promise.resolve().then(() => taskQueue?.stop?.()),
         ...pendingOperations,
@@ -730,6 +806,11 @@ export async function startDiscordVoiceCodex({
       const failures = results
         .filter((result) => result.status === "rejected")
         .map((result) => result.reason);
+      try {
+        await codex.close?.();
+      } catch (error) {
+        failures.push(error);
+      }
       try {
         await store?.release();
       } catch (error) {
@@ -860,18 +941,58 @@ export async function startDiscordVoiceCodex({
     );
     playAudio =
       dependencies.playAudio ?? createDiscordPlayer(connection, logger, config);
+    previews = new TaskPreviewManager({
+      command: config.previewCommand,
+      workspaceRoot: config.taskWorkspaceDirectory,
+      codexExecutable: config.codexExecutable,
+      codexHome: config.isolatedCodexHome,
+      sharedUrlTemplate: config.previewSharedUrlTemplate,
+      verify:
+        dependencies.verifyPreview ??
+        browserPreviewVerifier(config.previewChecks, {
+          executablePath: config.previewBrowserExecutable,
+        }),
+      onChange: async (task) => {
+        await task.checkpoint?.();
+        await task.surface?.update?.({
+          state: task.state,
+          pendingInstructions: task.instructions.length,
+        });
+      },
+    });
     taskQueue = config.powerMode
       ? new DiscordVoiceTaskQueue({
-          runTask: (task, options) => codex.runTask(task, options),
+          runTask: async (task, options) => {
+            await previews.stop(task.id, "superseded");
+            const result = await codex.runTask(task, options);
+            try {
+              await previews.start(task, options);
+            } catch {
+              task.preview = { state: "failed", runRevision: task.runRevision };
+            }
+            return result;
+          },
+          confirmPreview: (task, revision, userId) =>
+            previews.confirm(task, revision, userId),
+          invalidatePreview: (task, state = "superseded") =>
+            previews.stop(task.id, state),
+          steerTask: (task, instruction) =>
+            codex.steerTask?.(task, instruction) ?? false,
           postText,
           createTaskThread,
           logger,
           concurrency: config.taskConcurrency,
           maximumPendingTasks: config.maximumPendingTasks,
           taskTimeoutMs: config.stageTimeouts.running_codex,
-          checkpoint: (tasks) => store?.save({ tasks }),
-          onResult: (result, options) =>
-            session?.addTaskResult?.(result, options),
+          checkpoint: async (tasks) => {
+            await store?.save({ tasks });
+            live?.taskState(tasks);
+          },
+          onResult: async (result, options) => {
+            await session?.addTaskResult?.(result, options);
+            if (result.meetingId === session?.meetingId)
+              live?.taskResult(result);
+          },
           applyTask: (task) => codex.applyTask(task),
         })
       : undefined;
@@ -932,6 +1053,27 @@ export async function startDiscordVoiceCodex({
         ? new DiscordVoiceMeetingSession({
             transcribe: audio.transcribe,
             quickReply: audio.quickReply,
+            investigateQuestion: codex.investigateQuestion
+              ? (question, options) =>
+                  codex.investigateQuestion(question, options)
+              : undefined,
+            getRuntimeContext: () => ({
+              voiceStatus: connection.state?.status,
+              manuallyDisconnected,
+              reconnecting,
+              voiceRecoveryFailed,
+              invocationId: /^[a-f0-9]{32}$/i.test(
+                process.env.INVOCATION_ID ?? "",
+              )
+                ? process.env.INVOCATION_ID
+                : undefined,
+              sttModel: config.sttModel,
+              quickReplyModel: config.quickReplyModel,
+              observerModel: config.observerModel,
+              taskModel: config.taskModel,
+              allParticipantsOperate: config.allParticipantsOperate,
+              autonomousTasks: config.autonomousTasks,
+            }),
             observe: (observation, options) =>
               codex.observeMeeting(observation, options),
             upsertLiveTranscript,
@@ -942,6 +1084,18 @@ export async function startDiscordVoiceCodex({
             postText,
             synthesize: audio.synthesize,
             playAudio,
+            speak: (text) => (live?.ready ? live.commentary(text) : undefined),
+            isLive: () => live?.ready === true,
+            stopSpeech: () => live?.silence(),
+            onStatement: (statement) => {
+              if (!live?.ready) return;
+              if (
+                /(?:井戸|いど|コーデックス|codex)/iu.test(statement.text) &&
+                !/(?:読み上げ|音声).*(?:止め|停止)/u.test(statement.text)
+              )
+                live.resume();
+              live.recordStatement(statement);
+            },
             enqueueTask: (task) => taskQueue?.enqueueDurable(task) ?? false,
             controlTask: (control) =>
               taskQueue?.handleVoiceControlDurable(control) ?? false,
@@ -976,6 +1130,60 @@ export async function startDiscordVoiceCodex({
             maximumQueuedTurns: config.maximumQueuedTurns,
             stageTimeouts: config.stageTimeouts,
           });
+    let liveChanging = false;
+    const setLiveMode = async (enabled) => {
+      if (
+        config.voiceMode !== "meeting" ||
+        connection.state?.status !== VoiceConnectionStatus.Ready ||
+        serviceClosing
+      )
+        return "unavailable";
+      if (liveChanging) return "busy";
+      if (enabled && live?.ready) return "live";
+      liveChanging = true;
+      const fallback = () => {
+        playAudio?.dispose?.();
+        playAudio =
+          dependencies.playAudio ??
+          createDiscordPlayer(connection, logger, config);
+        session.dependencies.playAudio = playAudio;
+      };
+      try {
+        live?.close();
+        if (!enabled) {
+          fallback();
+          return "legacy";
+        }
+        await session.silenceSpeech();
+        live = new DiscordLiveBridge({
+          apiKey: config.openaiApiKey,
+          output: createDiscordLiveOutput(connection, logger),
+          logger,
+          onDelegation: () => session.observeNow(),
+          onFailure: () => {
+            fallback();
+            logInfoQuietly(logger, {
+              component: "discord-voice",
+              event: "live_fallback_to_stt_tts",
+            });
+          },
+        });
+        await live.start();
+        live.thinking(session.getContextSnapshot());
+        live.taskState(taskQueue?.list() ?? []);
+        return "live";
+      } catch {
+        fallback();
+        logInfoQuietly(logger, {
+          component: "discord-voice",
+          event: "live_start_failed_using_stt_tts",
+        });
+        return "failed";
+      } finally {
+        liveChanging = false;
+      }
+    };
+    if (config.liveEnabled) await setLiveMode(true);
     if (config.voiceMode === "meeting" && session.minutes)
       await upsertMinutes(
         `📝 **議事録・共有コンテキスト（rev ${session.revision}）**\n${boundText(session.minutes, 1750)}\n全文: /ido context または添付`,
@@ -986,9 +1194,16 @@ export async function startDiscordVoiceCodex({
       session,
       taskQueue,
       resetMeeting: () => codex.resetMeeting?.(),
+      setLiveMode,
       leaveVoice: async () => {
         manuallyDisconnected = true;
+        live?.close();
         session.voicePaused = true;
+        playAudio?.dispose?.();
+        playAudio =
+          dependencies.playAudio ??
+          createDiscordPlayer(connection, logger, config);
+        session.dependencies.playAudio = playAudio;
         await session.silenceSpeech?.();
         connection.disconnect();
       },
@@ -998,7 +1213,8 @@ export async function startDiscordVoiceCodex({
           return "通話: 停止（音声は受信していません）";
         if (manuallyDisconnected)
           return "通話: 退出済み。`/ido join` で接続できます。";
-        if (state === VoiceConnectionStatus.Ready) return "通話: 接続済み";
+        if (state === VoiceConnectionStatus.Ready)
+          return `通話: 接続済み · 音声: ${live?.ready ? "GPT-Live（30分の比較セッション）" : "STT/TTS"}`;
         if (reconnecting) return "通話: 再接続中（音声受信は中断）";
         if (voiceRecoveryFailed || state === VoiceConnectionStatus.Disconnected)
           return "通話: 切断（音声は受信していません）。`/ido reconnect` で再接続を試せます。";
@@ -1077,6 +1293,11 @@ export async function startDiscordVoiceCodex({
       );
     });
     subscribeToAllowedSpeaker({
+      live: {
+        speakerStart: (id) => live?.speakerStart(id),
+        speakerEnd: (id) => live?.speakerEnd(id),
+        input: (id, chunk) => live?.input(id, chunk),
+      },
       connection,
       config,
       session,

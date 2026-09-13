@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { MeetingMemory } from "./discord-voice-memory.mjs";
+import { formatTaskPreview } from "./discord-voice-preview.mjs";
 import { SpeechTurnAssembler } from "./discord-voice-utterances.mjs";
 import { formatVerificationEvidence } from "./discord-voice-evidence.mjs";
+import { requestedVoiceModel } from "./discord-voice-model-policy.mjs";
 import {
   parseImmediateTaskStop,
+  parseImmediateTaskInstruction,
   isImmediateTaskStatus,
   isImmediateSpeechStop,
 } from "./discord-voice-intents.mjs";
@@ -456,6 +460,12 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
         title: boundText(task?.title, 120, "…") || "Codexタスク",
         kind: task?.kind ?? "implementation",
         complexity: task?.complexity ?? "routine",
+        acceptanceCriteria: Array.isArray(task?.acceptanceCriteria)
+          ? task.acceptanceCriteria
+              .slice(0, 5)
+              .map((text) => boundText(text, 500))
+              .filter(Boolean)
+          : [],
         sourceSequences: Array.isArray(task?.sourceSequences)
           ? [
               ...new Set(
@@ -491,6 +501,9 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
     reply,
     tasks,
     taskControls,
+    decisions: Array.isArray(parsed?.decisions)
+      ? parsed.decisions.slice(0, 12)
+      : [],
   };
 }
 
@@ -573,6 +586,16 @@ export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
         request,
         context,
         sourceSequences: [...task.sourceSequences],
+        modelSelection: requestedVoiceModel(request),
+        acceptanceCriteria: task.acceptanceCriteria,
+        sourceStatements: sources.map((statement) => ({
+          meetingId: statement.meetingId,
+          sequence: statement.sequence,
+          userId: statement.sourceUserId ?? statement.userId,
+          speakerName: statement.speakerName,
+          startedAt: statement.startedAt,
+          text: statement.text,
+        })),
       },
     ];
   });
@@ -581,6 +604,9 @@ export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
 export class DiscordVoiceTaskQueue {
   constructor({
     runTask,
+    steerTask,
+    confirmPreview,
+    invalidatePreview = async () => {},
     postText,
     createTaskThread,
     logger = console,
@@ -601,6 +627,9 @@ export class DiscordVoiceTaskQueue {
     this.checkpointTimeoutMs = checkpointTimeoutMs;
     this.tasks = new Map();
     this.runTask = runTask;
+    this.steerTask = steerTask;
+    this.confirmPreviewVersion = confirmPreview;
+    this.invalidatePreview = invalidatePreview;
     this.postText = postText;
     this.createTaskThread = createTaskThread;
     this.logger = logger;
@@ -714,8 +743,17 @@ export class DiscordVoiceTaskQueue {
       receiptFailed:
         task === receiptTask && includeInstruction ? false : task.receiptFailed,
       context: task.context,
+      sourceSequences: structuredClone(task.sourceSequences),
+      sourceStatements: structuredClone(task.sourceStatements),
+      acceptanceCriteria: structuredClone(task.acceptanceCriteria),
       kind: task.kind,
       complexity: task.complexity,
+      modelSelection: structuredClone(task.modelSelection),
+      usage: structuredClone(task.usage),
+      usageHistory: structuredClone(task.usageHistory),
+      specRevision: task.specRevision ?? 1,
+      activeSpecRevision: task.activeSpecRevision,
+      steeredInstructions: structuredClone(task.steeredInstructions ?? []),
       createdAt: task.createdAt,
       meetingId: task.meetingId,
       state: task.state,
@@ -729,6 +767,11 @@ export class DiscordVoiceTaskQueue {
                   id: entry.id,
                   text: entry.text,
                   requestKey: entry.requestKey,
+                  delivery: entry.delivery,
+                  specRevision: entry.specRevision,
+                  modelSelection: entry.modelSelection,
+                  receivedAt: entry.receivedAt,
+                  sourceSequences: entry.sourceSequences,
                 },
           ),
       ),
@@ -756,6 +799,7 @@ export class DiscordVoiceTaskQueue {
       result: task.result,
       resultMetadata: structuredClone(task.resultMetadata),
       artifacts: structuredClone(task.artifacts),
+      preview: structuredClone(task.preview),
       profile: structuredClone(task.profile),
       evidence: structuredClone(task.evidence),
       additionalInstruction: task.additionalInstruction,
@@ -800,6 +844,29 @@ export class DiscordVoiceTaskQueue {
         instructions: structuredClone(record.instructions ?? []),
         executing: false,
       };
+      if (
+        task.preview &&
+        ["starting", "available"].includes(task.preview.state)
+      )
+        task.preview.state = "restart-unverified";
+      for (const entry of task.instructions) {
+        if (entry?.delivery === "sending" || entry?.delivery === "uncertain") {
+          if (!entry.text.startsWith(UNCONFIRMED_INSTRUCTION_PREFIX))
+            entry.text = UNCONFIRMED_INSTRUCTION_PREFIX + entry.text;
+          delete entry.delivery;
+        }
+      }
+      if (["running", "queued", "interrupted"].includes(task.state)) {
+        for (const entry of task.steeredInstructions ?? []) {
+          if (
+            entry.runRevision === task.runRevision &&
+            !task.instructions.some(
+              (instruction) => instruction?.id === entry.id,
+            )
+          )
+            retainInterruptedInstruction(task, entry);
+        }
+      }
       if (
         ["running", "queued", "interrupted"].includes(task.state) &&
         task.additionalInstruction
@@ -906,6 +973,8 @@ export class DiscordVoiceTaskQueue {
         threadId,
         createdAt,
         controlVersion,
+        preview,
+        specRevision,
         resultDeliveryPending,
       }) => ({
         id,
@@ -914,6 +983,10 @@ export class DiscordVoiceTaskQueue {
         resultDeliveryPending: Boolean(resultDeliveryPending),
         createdAt,
         controlVersion: controlVersion ?? 0,
+        preview: preview
+          ? { state: preview.state, runRevision: preview.runRevision }
+          : undefined,
+        specRevision: specRevision ?? 1,
         threadId: surface?.threadId ?? threadId,
       }),
     );
@@ -942,6 +1015,12 @@ export class DiscordVoiceTaskQueue {
         "検証記録: この結果に対応する実行版は未確認",
       currentState: task.state,
       currentRunRevision: task.runRevision,
+      specRevision: task.specRevision ?? 1,
+      resultSpecRevision: task.resultMetadata?.specRevision,
+      superseded: Boolean(
+        task.resultMetadata?.specRevision &&
+        task.resultMetadata.specRevision !== (task.specRevision ?? 1),
+      ),
       threadId: task.surface?.threadId ?? task.threadId,
       meetingId: task.meetingId,
     };
@@ -1025,6 +1104,10 @@ export class DiscordVoiceTaskQueue {
           task.instructions = task.instructions.filter(
             (candidate) => candidate !== entry,
           );
+          task.specRevision = Math.max(
+            task.activeSpecRevision ?? 1,
+            ...task.instructions.map((item) => item.specRevision ?? 1),
+          );
           if (requestKey) delete task.controlReceipts[requestKey];
           if (
             !task.executing &&
@@ -1056,6 +1139,92 @@ export class DiscordVoiceTaskQueue {
       current = task.instructionBarrier;
       await current;
     } while (current !== task.instructionBarrier);
+    await task.steeringPromise;
+  }
+
+  #flushSteering(task) {
+    if (task.steeringPromise) return task.steeringPromise;
+    task.steeringPromise = (async () => {
+      if (!this.steerTask || !task.executing || task.controller?.signal.aborted)
+        return;
+      while (task.instructions.length) {
+        const entry = task.instructions[0];
+        if (
+          entry.pending ||
+          entry.delivery ||
+          task.cancelled ||
+          this.closed ||
+          task.controller?.signal.aborted
+        )
+          break;
+        if (typeof entry === "string") break;
+        // App Server cannot change a model within an active turn. Preserve a
+        // requested switch as the next turn rather than silently ignoring it.
+        if (
+          entry.modelSelection &&
+          entry.modelSelection.model !== task.profile?.model
+        )
+          break;
+        entry.delivery = "sending";
+        try {
+          await this.persist({ strict: true });
+        } catch (error) {
+          delete entry.delivery;
+          throw error;
+        }
+        let accepted;
+        try {
+          accepted = await this.steerTask(task, entry.text);
+        } catch {
+          entry.delivery = "uncertain";
+          if (!entry.text.startsWith(UNCONFIRMED_INSTRUCTION_PREFIX))
+            entry.text = UNCONFIRMED_INSTRUCTION_PREFIX + entry.text;
+          task.controller?.abort(
+            new VoiceServiceError(
+              "TASK_STEERING_UNCONFIRMED",
+              "The worker did not acknowledge the instruction",
+              "追加指示の受け取りを確認できないため作業を中断しました。同じタスクから再開できます。",
+            ),
+          );
+          await this.persist();
+          return;
+        }
+        if (!accepted) {
+          delete entry.delivery;
+          await this.persist();
+          break;
+        }
+        entry.delivery = "accepted";
+        entry.acceptedAt = Date.now();
+        task.activeSpecRevision = entry.specRevision;
+        task.steeredInstructions ??= [];
+        task.steeredInstructions.push({
+          ...entry,
+          runRevision: task.runRevision,
+        });
+        task.steeredInstructions = task.steeredInstructions.slice(-30);
+        task.instructions = task.instructions.filter((item) => item !== entry);
+        if (entry.requestKey && task.controlReceipts?.[entry.requestKey]) {
+          task.controlReceipts[entry.requestKey].disposition = "steered";
+          task.controlReceipts[entry.requestKey].pendingInstructions =
+            task.instructions.length;
+        }
+        try {
+          await this.persist({ strict: true });
+        } catch (error) {
+          task.controller?.abort(error);
+          throw error;
+        }
+        this.#log("power_task_steered", {
+          taskId: task.id,
+          specRevision: entry.specRevision,
+          steeringMs: entry.acceptedAt - entry.receivedAt,
+        });
+      }
+    })().finally(() => {
+      task.steeringPromise = undefined;
+    });
+    return task.steeringPromise;
   }
 
   async applyTask(taskId, expectedRevision) {
@@ -1086,6 +1255,14 @@ export class DiscordVoiceTaskQueue {
       this.#log("task_surface_refresh_failed", { taskId: task.id });
     }
     return true;
+  }
+
+  async confirmPreview(taskId, revision, userId) {
+    const task = this.tasks.get(taskId);
+    if (!task || task.executing || task.state !== "completed") return false;
+    return (
+      (await this.confirmPreviewVersion?.(task, revision, userId)) ?? false
+    );
   }
 
   async retryResultDelivery() {
@@ -1123,6 +1300,11 @@ export class DiscordVoiceTaskQueue {
           delivery.evidence?.runRevision ??
           delivery.artifacts?.runRevision;
         const revisionLabel = revision ? ` (実行 r${revision})` : "";
+        const superseded = () =>
+          Boolean(
+            delivery.specRevision &&
+            delivery.specRevision !== (task.specRevision ?? 1),
+          );
         delivery.id ??= randomUUID();
         await this.persist({ strict: true });
         const surface = task.surface ?? (await this.#loadRestoredSurface(task));
@@ -1133,6 +1315,10 @@ export class DiscordVoiceTaskQueue {
             post(
               "📦 **実行結果**" +
                 revisionLabel +
+                (delivery.specRevision
+                  ? ` · 仕様 v${delivery.specRevision}`
+                  : "") +
+                (superseded() ? " · 最新の訂正は未反映" : "") +
                 "\n" +
                 formatVerificationEvidence(delivery.evidence),
               options,
@@ -1169,7 +1355,7 @@ export class DiscordVoiceTaskQueue {
         stages.push(
           (options) =>
             post(
-              delivery.pendingInstructions
+              delivery.pendingInstructions || superseded()
                 ? "⏭️ **追加指示へ続行** " +
                     task.id +
                     revisionLabel +
@@ -1190,6 +1376,7 @@ export class DiscordVoiceTaskQueue {
             const controlVersion = task.controlVersion ?? 0;
             const isCurrent = () =>
               task.runRevision === revision &&
+              !superseded() &&
               task.state === state &&
               task.state === delivery.state &&
               (task.controlVersion ?? 0) === controlVersion;
@@ -1211,6 +1398,13 @@ export class DiscordVoiceTaskQueue {
                 result: delivery.result,
                 verification: formatVerificationEvidence(delivery.evidence),
                 runRevision: revision,
+                specRevision: delivery.specRevision,
+                sourceSequences: delivery.sourceSequences,
+                preview:
+                  task.preview?.runRevision === revision
+                    ? structuredClone(task.preview)
+                    : undefined,
+                superseded: superseded(),
                 threadId: surface?.threadId ?? task.threadId,
                 artifacts: delivery.artifacts,
                 meetingId: task.meetingId,
@@ -1254,7 +1448,14 @@ export class DiscordVoiceTaskQueue {
 
   #handleTaskInstruction(
     task,
-    { userId, ownerUserId, content, requestKey, expectedControlVersion },
+    {
+      userId,
+      ownerUserId,
+      content,
+      requestKey,
+      expectedControlVersion,
+      sourceSequences,
+    },
   ) {
     if (this.closed || userId !== ownerUserId) return false;
     const instruction = boundText(content, MAX_DISCORD_MESSAGE);
@@ -1267,6 +1468,9 @@ export class DiscordVoiceTaskQueue {
       const discardedInstructions = task.instructions.length;
       task.controlVersion = (task.controlVersion ?? 0) + 1;
       task.cancelled = true;
+      void this.invalidatePreview(task, "stopped").catch(() =>
+        this.#log("preview_stop_failed", { taskId: task.id }),
+      );
       task.state = "cancelled";
       task.instructions.length = 0;
       task.cancelledInstructionCount = discardedInstructions;
@@ -1301,7 +1505,16 @@ export class DiscordVoiceTaskQueue {
     if (task.instructions.length >= 10) return { type: "full" };
     const previousState = task.state;
     const previousCancelled = task.cancelled;
-    const entry = { id: randomUUID(), text: instruction, requestKey };
+    const entry = {
+      id: randomUUID(),
+      text: instruction,
+      requestKey,
+      receivedAt: Date.now(),
+      sourceSequences,
+      specRevision: (task.specRevision ?? 1) + 1,
+      modelSelection: requestedVoiceModel(instruction),
+    };
+    task.specRevision = entry.specRevision;
     task.instructions.push(entry);
     task.state = task.executing ? "running" : "queued";
     task.cancelled = false;
@@ -1316,14 +1529,18 @@ export class DiscordVoiceTaskQueue {
       previousState,
       previousCancelled,
     })
-      .then(() => {
+      .then(async () => {
         if (this.closed || task.cancelled || !task.instructions.includes(entry))
           return;
+        void this.invalidatePreview(task).catch(() =>
+          this.#log("preview_stop_failed", { taskId: task.id }),
+        );
         if (
           task.executing &&
           (task.controller?.signal.aborted || task.workerFailed)
         )
           task.resumeAfterAbort = true;
+        if (task.executing) await this.#flushSteering(task);
         if (!task.executing && !this.queue.includes(task)) {
           if (!task.surface) task.surfacePromise = undefined;
           this.queue.push(task);
@@ -1348,6 +1565,7 @@ export class DiscordVoiceTaskQueue {
       ownerUserId: "voice-owner",
       requestKey: control.requestKey,
       expectedControlVersion: control.expectedControlVersion,
+      sourceSequences: control.sourceSequences,
       content: control.type === "stop" ? "停止" : control.instruction,
     });
   }
@@ -1513,6 +1731,11 @@ export class DiscordVoiceTaskQueue {
         typeof consumedInstruction === "string"
           ? consumedInstruction
           : consumedInstruction?.text;
+      task.modelSelection =
+        consumedInstruction?.modelSelection ?? task.modelSelection;
+      task.activeSpecRevision =
+        consumedInstruction?.specRevision ?? task.specRevision ?? 1;
+      task.flushSteering = () => this.#flushSteering(task);
       await this.persist({ strict: true });
       const isContinuation = Boolean(task.additionalInstruction);
       await withTimeout(
@@ -1591,10 +1814,13 @@ export class DiscordVoiceTaskQueue {
         MAX_CODEX_RESPONSE_CHARACTERS,
       );
       task.result = response;
+      await this.#waitForInstructionReceipts(task);
       task.resultMetadata = {
         runRevision: task.runRevision,
         completedAt: Date.now(),
         verification: formatVerificationEvidence(task.evidence),
+        specRevision: task.activeSpecRevision ?? 1,
+        usage: structuredClone(task.usage),
       };
       workerSucceeded = true;
       task.additionalInstruction = undefined;
@@ -1608,6 +1834,16 @@ export class DiscordVoiceTaskQueue {
       task.resultDeliveries ??= [];
       task.resultDeliveries.push({
         runRevision: task.runRevision,
+        specRevision: task.activeSpecRevision ?? 1,
+        sourceSequences: [
+          ...new Set([
+            ...(task.sourceSequences ?? []),
+            ...(consumedInstruction?.sourceSequences ?? []),
+            ...(task.steeredInstructions ?? [])
+              .filter((entry) => entry.runRevision === task.runRevision)
+              .flatMap((entry) => entry.sourceSequences ?? []),
+          ]),
+        ],
         result: response,
         artifacts: structuredClone(task.artifacts),
         evidence: structuredClone(task.evidence),
@@ -1801,6 +2037,8 @@ export class DiscordVoiceMeetingSession {
     transcribe,
     observe,
     quickReply,
+    investigateQuestion,
+    getRuntimeContext = () => ({}),
     upsertLiveTranscript,
     upsertMinutes,
     archiveTranscript = async () => undefined,
@@ -1808,6 +2046,10 @@ export class DiscordVoiceMeetingSession {
     postText,
     synthesize,
     playAudio,
+    speak,
+    isLive = () => false,
+    stopSpeech = () => {},
+    onStatement = () => {},
     enqueueTask = () => false,
     controlTask = () => false,
     getTaskReceipt = () => undefined,
@@ -1835,6 +2077,8 @@ export class DiscordVoiceMeetingSession {
       transcribe,
       observe,
       quickReply,
+      investigateQuestion,
+      getRuntimeContext,
       upsertLiveTranscript,
       upsertMinutes,
       archiveTranscript,
@@ -1842,6 +2086,10 @@ export class DiscordVoiceMeetingSession {
       postText,
       synthesize,
       playAudio,
+      speak,
+      isLive,
+      stopSpeech,
+      onStatement,
       enqueueTask,
       controlTask,
       getTaskReceipt,
@@ -1869,8 +2117,17 @@ export class DiscordVoiceMeetingSession {
     this.archiveOperations = new WeakMap();
     this.meetingId = initialState.meetingId ?? randomUUID();
     this.statements = initialState.statements ?? [];
+    this.recentConversation =
+      initialState.recentConversation ??
+      this.statements.slice(-20).map((statement) => ({
+        role: "user",
+        sequence: statement.sequence,
+        speakerName: statement.speakerName,
+        text: boundText(statement.text, 1200),
+      }));
     this.sequence = initialState.sequence ?? 0;
     this.minutes = initialState.minutes ?? "";
+    this.memory = new MeetingMemory(initialState.memory);
     this.results = initialState.results ?? [];
     this.pendingTasks = structuredClone(initialState.pendingTasks ?? []).map(
       (task) => ({
@@ -1905,6 +2162,7 @@ export class DiscordVoiceMeetingSession {
     this.speechQueue = Promise.resolve();
     this.pendingSpeechCount = 0;
     this.activeQuickReplies = 0;
+    this.activeInvestigations = 0;
     this.voicePaused = false;
     this.speechController = new AbortController();
     this.silencedThroughSequence = initialState.silencedThroughSequence ?? null;
@@ -1959,7 +2217,9 @@ export class DiscordVoiceMeetingSession {
       revision: this.revision,
       sequence: this.sequence,
       minutes: this.minutes,
+      memory: this.memory.snapshot(),
       statements: this.statements,
+      recentConversation: this.recentConversation,
       results: this.results,
       pendingTasks: structuredClone(this.pendingTasks),
       pendingControls: structuredClone(this.pendingControls),
@@ -2182,8 +2442,24 @@ export class DiscordVoiceMeetingSession {
   }
 
   async #tryImmediateTaskAction(statement) {
+    this.memory.remember(statement);
+    this.dependencies.onStatement(statement);
+    if (
+      !this.recentConversation.some(
+        (item) => item.role === "user" && item.sequence === statement.sequence,
+      )
+    ) {
+      this.recentConversation.push({
+        role: "user",
+        sequence: statement.sequence,
+        speakerName: statement.speakerName,
+        text: boundText(statement.text, 1200),
+      });
+      this.recentConversation = this.recentConversation.slice(-24);
+    }
     if (isImmediateSpeechStop(statement.text))
       return this.#tryImmediateSpeechStop(statement);
+    if (await this.#tryImmediateInstruction(statement)) return true;
     const handled = await (isImmediateTaskStatus(statement.text, {
       explicitlyAsked: statement.requestReply === true,
     })
@@ -2193,8 +2469,94 @@ export class DiscordVoiceMeetingSession {
     return handled;
   }
 
+  getReplyContext(statement) {
+    return {
+      memory: this.memory.context(statement.text, 4),
+      minutes: boundText(this.minutes, 5000),
+      conversation: this.recentConversation.slice(-20),
+      tasks: this.getObservationTaskContext([statement])
+        .activeTasks.slice(0, 20)
+        .map((task) => ({
+          id: task.id,
+          title: task.title,
+          state: task.state,
+          threadId: task.threadId,
+          resultDeliveryPending: task.resultDeliveryPending,
+        })),
+      results: this.getObservationResults([statement]).map((result) => ({
+        ...result,
+        result: boundText(result.result, 2000),
+      })),
+      runtime: this.dependencies.getRuntimeContext(),
+    };
+  }
+
+  async #tryImmediateInstruction(statement) {
+    if (
+      !this.tasksEnabled ||
+      !this.ownerUserId ||
+      statement.taskEligible === false ||
+      statement.handledAction ||
+      !(
+        (this.allParticipantsOperate && statement.userId) ||
+        statement.userId === this.ownerUserId ||
+        this.operatorUserIds.includes(statement.userId)
+      )
+    )
+      return false;
+    const parsed = parseImmediateTaskInstruction(statement.text, {
+      requireWakeWord: this.requireWakeWord,
+    });
+    if (!parsed) return false;
+    const all = this.getActiveTasks();
+    const candidates = all.filter(
+      (task) =>
+        ["running", "queued"].includes(task.state) ||
+        (task.state === "completed" && task.preview?.state === "available"),
+    );
+    const target = parsed.taskId
+      ? all.find(
+          (task) => task.id.toLowerCase() === parsed.taskId.toLowerCase(),
+        )
+      : candidates.length === 1
+        ? candidates[0]
+        : undefined;
+    if (!target) return false; // The observer resolves ambiguous references without racing a guessed target.
+    const control = {
+      type: "instruction",
+      taskId: target.id,
+      instruction: statement.text,
+      sourceSequences: [statement.sequence],
+      expectedControlVersion: target.controlVersion ?? 0,
+      requestKey: `${this.meetingId}:control:instruction:${statement.sequence}`,
+      spokenNotification: "",
+    };
+    statement.handledAction = { type: "instruction", taskId: target.id };
+    statement.taskEligible = false;
+    this.pendingControls.push(control);
+    const startedAt = Date.now();
+    try {
+      const result = await this.#applyMeetingControl(control);
+      control.notification = controlReceiptText(control, result);
+      this.#log("immediate_instruction_received", {
+        taskId: target.id,
+        sequence: statement.sequence,
+        receiptMs: Date.now() - startedAt,
+      });
+      await this.persist();
+      await this.#dispatchPendingControls();
+    } catch {
+      this.#log("immediate_instruction_receipt_pending", {
+        taskId: target.id,
+        sequence: statement.sequence,
+      });
+    }
+    return true;
+  }
+
   #startQuickReply(statement) {
     if (
+      this.dependencies.isLive() ||
       !this.dependencies.quickReply ||
       statement.handledAction ||
       (!statement.requestReply &&
@@ -2218,38 +2580,112 @@ export class DiscordVoiceMeetingSession {
     if (this.activeQuickReplies >= 3) return;
     this.activeQuickReplies++;
     statement.handledAction = { type: "quick_reply", pending: true };
-    if (!this.autonomousTasks) statement.taskEligible = false;
     const startedAt = Date.now();
-    const context = this.getContextSnapshot();
+    const context = this.getReplyContext(statement);
+    const explicitlyAsked =
+      statement.requestReply ||
+      /^(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,\s。！!？?]/iu.test(
+        statement.text,
+      );
     this.#trackOperation(
       (async () => {
         let reply;
+        let investigated = false;
         try {
-          reply = boundText(
-            await withTimeout(
-              (signal) =>
-                this.dependencies.quickReply(
-                  { text: statement.text, context },
-                  { signal },
-                ),
-              15_000,
-              "answering voice question",
-              this.shutdownController.signal,
-            ),
-            1200,
+          const rawDecision = await withTimeout(
+            (signal) =>
+              this.dependencies.quickReply(
+                { text: statement.text, context, explicitlyAsked },
+                { signal },
+              ),
+            15_000,
+            "answering voice question",
+            this.shutdownController.signal,
           );
-          if (!reply) throw new Error("Empty quick reply");
+          const decision =
+            typeof rawDecision === "string"
+              ? { action: "reply", reply: rawDecision }
+              : rawDecision;
+          if (decision?.action === "ignore") {
+            statement.handledAction = { type: "quick_reply", ignored: true };
+            await this.persist();
+            this.#log("meeting_quick_reply_ignored", {
+              sequence: statement.sequence,
+            });
+            return;
+          }
+          if (decision?.action === "investigate") {
+            if (!this.dependencies.investigateQuestion)
+              throw new Error("Question investigation unavailable");
+            investigated = true;
+            statement.taskEligible = false;
+            statement.handledAction = {
+              type: "investigated_reply",
+              pending: true,
+            };
+            this.activeInvestigations++;
+            this.#queueLiveUpdate();
+            try {
+              reply = await withTimeout(
+                (signal) =>
+                  this.dependencies.investigateQuestion(
+                    {
+                      text: statement.text,
+                      context: this.getReplyContext(statement),
+                    },
+                    { signal },
+                  ),
+                this.stageTimeouts.observing ??
+                  Math.min(this.stageTimeouts.running_codex, 120_000),
+                "checking question evidence",
+                this.shutdownController.signal,
+              );
+            } finally {
+              this.activeInvestigations--;
+              this.#queueLiveUpdate();
+            }
+          } else if (decision?.action === "reply") reply = decision.reply;
+          else throw new Error("Invalid reply decision");
+          reply = boundText(reply, investigated ? 5000 : 1200);
+          if (!reply) throw new Error("Empty reply");
+          if (this.closed) return;
           this.#log("meeting_quick_reply_completed", {
             sequence: statement.sequence,
             elapsedMs: Date.now() - startedAt,
+            investigated,
           });
         } catch (error) {
           if (this.closed) return;
-          reply = "返答の生成に失敗しました。もう一度呼びかけてください。";
           this.#log("meeting_quick_reply_failed", {
             errorCode: voiceErrorCode(error),
           });
+          if (investigated || explicitlyAsked) {
+            await this.#saveImmediateReply(
+              statement,
+              {
+                type: "reply",
+                meetingId: statement.meetingId,
+                sourceSequences: [statement.sequence],
+                requestKey: `${statement.meetingId}:question-failed:${statement.sequence}`,
+                notification:
+                  "質問の確認処理に失敗しました。ソースやログの確認結果はまだ得られていません。",
+                spokenNotification: "",
+              },
+              { type: "investigated_reply", failed: true },
+            );
+          } else {
+            statement.handledAction = { type: "quick_reply", ignored: true };
+            await this.persist();
+          }
+          return;
         }
+        this.recentConversation.push({
+          role: "assistant",
+          sequence: statement.sequence,
+          speakerName: "井戸Bot",
+          text: boundText(reply, 1600),
+        });
+        this.recentConversation = this.recentConversation.slice(-24);
         await this.#saveImmediateReply(
           statement,
           {
@@ -2259,10 +2695,10 @@ export class DiscordVoiceMeetingSession {
             requestKey: `${statement.meetingId}:quick:${statement.sequence}`,
             notification: reply,
             spokenNotification: this.#canSpeakFor([statement.sequence])
-              ? speechExcerpt(reply)
+              ? speechExcerpt(investigated ? boundText(reply, 450) : reply)
               : "",
           },
-          { type: "quick_reply" },
+          { type: investigated ? "investigated_reply" : "quick_reply" },
         );
       })().finally(() => {
         this.activeQuickReplies--;
@@ -2315,6 +2751,7 @@ export class DiscordVoiceMeetingSession {
 
   silenceSpeech() {
     if (this.closed) return Promise.resolve(undefined);
+    this.dependencies.stopSpeech();
     const count = this.pendingSpeechCount;
     this.silencedThroughSequence = this.sequence;
     this.speechStopSavePending = true;
@@ -2527,6 +2964,13 @@ export class DiscordVoiceMeetingSession {
     return [
       `会議 ${this.meetingId} · 議事録 rev ${this.revision}`,
       this.minutes,
+      "根拠付きの前提・決定・未決定（会話の解釈）:",
+      JSON.stringify(
+        this.memory.context(
+          pending.map((statement) => statement.text).join("\n"),
+          6,
+        ),
+      ),
       "議事録へ未反映の発言（訂正を含む）:",
       pending.length > recent.length
         ? `古い未反映発言 ${pending.length - recent.length} 件を省略。以下の最新発言を優先。`
@@ -2554,6 +2998,12 @@ export class DiscordVoiceMeetingSession {
       );
     const meetingId = result.meetingId ?? this.meetingId;
     if (meetingId === this.meetingId) {
+      const newer = this.results.find(
+        (previous) =>
+          previous.id === result.id &&
+          (previous.runRevision ?? 0) > (result.runRevision ?? 0),
+      );
+      if (newer) return;
       this.results = this.results.filter(
         (previous) => previous.id !== result.id,
       );
@@ -2587,7 +3037,11 @@ export class DiscordVoiceMeetingSession {
         "** `" +
         result.id +
         "`\n" +
+        (result.specRevision
+          ? `仕様 v${result.specRevision}${result.superseded ? "（最新の訂正は未反映）" : ""}\n`
+          : "") +
         (result.verification ? result.verification + "\n" : "") +
+        (result.preview ? formatTaskPreview(result.preview) + "\n" : "") +
         boundText(result.result, 900) +
         "\n" +
         (result.threadId ? "詳細: <#" + result.threadId + ">" : ""),
@@ -2617,10 +3071,12 @@ export class DiscordVoiceMeetingSession {
       meetingId: this.meetingId,
       minutes: this.minutes,
       statements: this.statements,
+      recentConversation: this.recentConversation,
       results: this.results,
       sequence: this.sequence,
       revision: this.revision,
       silencedThroughSequence: this.silencedThroughSequence,
+      memory: this.memory,
       observationRetryPending: this.observationRetryPending,
       observationFailureMessage: this.observationFailureMessage,
     };
@@ -2636,7 +3092,9 @@ export class DiscordVoiceMeetingSession {
       );
       this.meetingId = randomUUID();
       this.minutes = "";
+      this.memory = new MeetingMemory();
       this.statements = [];
+      this.recentConversation = [];
       this.results = [];
       this.sequence = 0;
       this.silencedThroughSequence = null;
@@ -2736,6 +3194,9 @@ export class DiscordVoiceMeetingSession {
               minutes: this.minutes,
               transcript,
               statements,
+              memory: this.memory.context(
+                statements.map((statement) => statement.text).join("\n"),
+              ),
               ...this.getObservationTaskContext(statements),
               results: this.getObservationResults(statements),
             },
@@ -2749,6 +3210,7 @@ export class DiscordVoiceMeetingSession {
       const observation = parseMeetingObservation(raw, this.minutes);
       const authorizedStatements = statements.map((statement) => ({
         ...statement,
+        sourceUserId: statement.userId,
         userId:
           ((this.allParticipantsOperate && Boolean(statement.userId)) ||
             statement.userId === this.ownerUserId ||
@@ -2788,6 +3250,7 @@ export class DiscordVoiceMeetingSession {
       this.observationRetryPending = false;
       this.observationFailureMessage = "";
       this.minutes = observation.minutes;
+      this.memory.update(observation.decisions, statements);
       this.revision += 1;
       for (const task of tasks) {
         if (this.autonomousTasks)
@@ -3015,6 +3478,10 @@ export class DiscordVoiceMeetingSession {
 
   #queueMeetingSpeech(spoken) {
     if (!spoken || this.closed || this.voicePaused) return Promise.resolve();
+    if (this.dependencies.isLive()) {
+      this.dependencies.speak(spoken);
+      return Promise.resolve();
+    }
     const speechSignal = AbortSignal.any([
       this.shutdownController.signal,
       this.speechController.signal,
@@ -3289,6 +3756,10 @@ export class DiscordVoiceMeetingSession {
       (statement) => !statement.observed,
     );
     const notices = [];
+    if (this.activeInvestigations)
+      notices.push(
+        `質問のソース・実行状態を確認中 ${this.activeInvestigations}件`,
+      );
     if (this.processingConversation)
       notices.push("会話を処理中。続けて話せます");
     else if (this.observationRetryPending && statements.length) {

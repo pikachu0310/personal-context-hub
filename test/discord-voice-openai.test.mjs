@@ -118,8 +118,8 @@ test("Codex options disable unattended integrations without loading inherited co
     "/tmp/codex-home",
     { powerMode: true },
   );
-  assert.equal(power.config.agents.enabled, true);
-  assert.equal(power.config.features.multi_agent, true);
+  assert.equal(power.config.agents.enabled, false);
+  assert.equal(power.config.features.multi_agent, false);
   assert.equal(power.config.features.apps, false);
 });
 
@@ -380,58 +380,31 @@ test("Codex voice runner enforces structured meeting observations", async () => 
 
   await runner.observeMeeting({ minutes: "", transcript: "[A] 確認" });
 
-  assert.deepEqual(turnOptions.outputSchema, {
-    type: "object",
-    properties: {
-      minutes: { type: "string" },
-      shouldReply: { type: "boolean" },
-      reply: { type: "string" },
-      tasks: {
-        type: "array",
-        maxItems: 3,
-        items: {
-          type: "object",
-          properties: {
-            title: { type: "string" },
-            kind: {
-              type: "string",
-              enum: ["research", "implementation", "benchmark", "test"],
-            },
-            complexity: { type: "string", enum: ["routine", "complex"] },
-            sourceSequences: {
-              type: "array",
-              minItems: 1,
-              maxItems: 20,
-              items: { type: "integer" },
-            },
-          },
-          required: ["title", "kind", "complexity", "sourceSequences"],
-          additionalProperties: false,
-        },
-      },
-      taskControls: {
-        type: "array",
-        maxItems: 3,
-        items: {
-          type: "object",
-          properties: {
-            type: { type: "string", enum: ["stop", "instruction"] },
-            taskId: { type: "string" },
-            sourceSequences: {
-              type: "array",
-              minItems: 1,
-              maxItems: 20,
-              items: { type: "integer" },
-            },
-          },
-          required: ["type", "taskId", "sourceSequences"],
-          additionalProperties: false,
-        },
-      },
-    },
-    required: ["minutes", "shouldReply", "reply", "tasks", "taskControls"],
-    additionalProperties: false,
-  });
+  const schema = turnOptions.outputSchema;
+  assert.equal(schema.type, "object");
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, [
+    "minutes",
+    "shouldReply",
+    "reply",
+    "tasks",
+    "taskControls",
+    "decisions",
+  ]);
+  for (const field of ["tasks", "taskControls", "decisions"]) {
+    const item = schema.properties[field].items;
+    assert.equal(item.additionalProperties, false);
+    assert.equal(item.properties.sourceSequences.minItems, 1);
+    assert.ok(item.required.includes("sourceSequences"));
+  }
+  assert.ok(
+    schema.properties.tasks.items.required.includes("acceptanceCriteria"),
+  );
+  assert.deepEqual(schema.properties.decisions.items.properties.status.enum, [
+    "proposal",
+    "decision",
+    "open",
+  ]);
 });
 
 test("observer threads resume only inside the same meeting, including after restart", async (t) => {

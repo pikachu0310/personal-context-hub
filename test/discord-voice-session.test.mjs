@@ -548,6 +548,7 @@ test("meeting transcript formatting preserves speaker order and observation JSON
       reply: "回答",
       tasks: [],
       taskControls: [],
+      decisions: [],
     },
   );
   assert.equal(

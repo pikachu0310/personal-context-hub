@@ -11,7 +11,7 @@
 - `/ido join` と `/ido leave` は設定済み通話への接続・退出を行う。退出中もGatewayと背景作業は継続する。`/ido context` は議事録全文、`/ido quiet` は現在の読み上げを停止する。各操作はguildスラッシュコマンドとして登録する。
 - `PERSONAL_CONTEXT_VOICE_MESSAGE_CONTENT_INTENT=false` では特権Message Content intentを要求せず起動できる。スラッシュコマンドは使えるが、通常のチャンネル投稿を文脈・追加指示として読むにはMessage Content権限が必要。
 - 議事録は先頭に短い要点、添付に全文を持つ編集可能なメッセージとして表示し、可能ならBot自身の議事録メッセージをpinする。
-- 即時応答は議事録生成から独立したResponses API（既定 `gpt-4.1-mini`、`PERSONAL_CONTEXT_VOICE_QUICK_REPLY_MODEL` で変更）へ渡す。ツールを実行しない短い会話用であり、音声認識・回答生成・音声合成の時間は残る。`PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS=true` で、呼びかけのない疑問文も対象にする。
+- 即時応答は議事録生成から独立したResponses API（既定 `gpt-4.1-mini`、`PERSONAL_CONTEXT_VOICE_QUICK_REPLY_MODEL` で変更）で、具体的な回答・実物の確認・無応答を判定する。`PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS=true` でも、人間同士の曖昧な質問や相づちへ汎用的な受領文を返さない。直近の話者別会話を議事録反映後も保持し、議事録・タスク結果・現在の接続状態を別々に渡す。ソース・ログ・成果物の確認が必要なら独立した読み取り専用Codexで調査し、確認中は表示だけを更新して、結果を得てから回答する。音声認識・判定・必要な調査・音声合成の時間は残る。
 - 開発会議で `PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE=true` を指定すると、対象サーバーの参加者全員がコマンド・作業操作を使える。音声も対象にするには全話者受信を有効にする。`PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD=false` で作業依頼の呼びかけ条件を外せる。
 - `PERSONAL_CONTEXT_VOICE_AUTONOMOUS_TASKS=true` では、観測担当が会話中に必要だと判断した作業を明示依頼なしで作成できる。具体的な成果と根拠発言を保持し、既存作業との重複を避ける。公開・送信・購入等への許可を会話から推測しない。
 - STTへ話題の説明や固有名詞一覧を常時渡さない。送信前に無音・DC・ごく短いクリックを信号量で除く。この判定はVADではなく、雑音由来の誤認識すべてを防ぐものではない。「はい」などの認識単語を一律に破棄しない。
