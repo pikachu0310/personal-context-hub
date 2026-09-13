@@ -540,7 +540,8 @@ export function createIdobataMessageHandler({
             "🔐 **個人Codex Workerの接続コード**",
             "1. 下の参加手順を開き、自分のPCで接続画面を起動します。",
             "2. 画面の「OpenAIでログイン」で認証します。パスワードはOpenAI公式ページだけに入力してください。",
-            "3. 次の参加情報を画面の「Discordの参加情報」に貼り付けて読み込み、作業フォルダーを選んで接続します。",
+            "3. 同じPC・同じブラウザで下の「自動入力」を押すと、開いている接続画面へ接続先と参加コードが入ります。接続画面に戻り、作業フォルダーを選んで接続してください。",
+            "ボタンがない・使えない場合は、次の参加情報を接続画面の「Discordの参加情報」に貼り付けて読み込みます。リンク・参加情報は他人に共有しないでください。",
             `\`${encodeAgentInvitation(pairing)}\``,
             `Gateway: \`${pairing.gatewayUrl}\``,
             `コード: \`${pairing.code}\`（約${remaining}分で失効・1回限り）`,
@@ -550,7 +551,7 @@ export function createIdobataMessageHandler({
               : "",
             "Discord・Codex・GitHubのログイン情報をBotへ送らないでください。",
           ].join("\n"),
-          agentGuideComponents(config.agentJoinGuideUrl),
+          agentGuideComponents(config.agentJoinGuideUrl, pairing),
         );
       }
       if (action === "disconnect") {

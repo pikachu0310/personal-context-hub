@@ -7,6 +7,53 @@ const element = (id) => document.getElementById(id);
 let initialized = false;
 let submitting = false;
 let renderedApprovals = "";
+const invitations = new BroadcastChannel("ido-agent-invitation");
+invitations.onmessage = async ({ data }) => {
+  if (
+    !token ||
+    data?.type !== "invitation" ||
+    typeof data.id !== "string" ||
+    !/^[a-f0-9-]{36}$/.test(data.id) ||
+    typeof data.invitation !== "string" ||
+    data.invitation.length > 4096
+  )
+    return;
+  try {
+    await importInvitation(data.invitation);
+    invitations.postMessage({
+      type: "invitation-result",
+      id: data.id,
+      ok: true,
+    });
+  } catch {
+    invitations.postMessage({
+      type: "invitation-result",
+      id: data.id,
+      ok: false,
+    });
+  }
+};
+
+async function importInvitation(invitation) {
+  if (submitting)
+    throw new Error("操作が完了してから、もう一度リンクを開いてください。");
+  submitting = true;
+  try {
+    await update();
+    const result = await request("/invitation", { invitation });
+    element("gateway").value = result.gatewayUrl;
+    element("code").value = result.pairingCode;
+    // Invitations only supply Bot settings; they cannot grant local permissions.
+    element("automatic").checked = false;
+    element("network").checked = false;
+    element("invitation-status").textContent =
+      "Discordの接続先と参加コードを入力しました。接続先と作業フォルダーを確認して「エージェントを接続」を押してください。";
+    element("error").textContent = "";
+  } finally {
+    submitting = false;
+    await update();
+  }
+}
 function showApprovals(approvals) {
   const signature = JSON.stringify(approvals);
   if (signature === renderedApprovals) return;
@@ -141,9 +188,7 @@ action("refresh", () => request("/refresh-login", {}));
 action("import", async () => {
   const invitation = element("invitation").value.trim();
   element("invitation").value = "";
-  const result = await request("/invitation", { invitation });
-  element("gateway").value = result.gatewayUrl;
-  element("code").value = result.pairingCode;
+  await importInvitation(invitation);
 });
 action("folder", async () => {
   const result = await request("/folder", {});

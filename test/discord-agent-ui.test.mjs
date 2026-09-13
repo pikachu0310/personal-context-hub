@@ -149,6 +149,23 @@ test("local UI rejects cross-origin, missing capability, DNS rebinding and overs
     /frame-ancestors 'none'/,
   );
   assert.doesNotMatch(await page.text(), new RegExp(url.hash.slice(1)));
+  for (const path of ["/join", "/join.js"]) {
+    const landing = await fetch(new URL(path, url));
+    assert.equal(landing.status, 200);
+    assert.equal(landing.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(landing.headers.get("cache-control"), "no-store");
+    assert.doesNotMatch(await landing.text(), new RegExp(url.hash.slice(1)));
+  }
+  assert.equal(
+    (
+      await fetch(new URL("/invitation", url), {
+        method: "POST",
+        headers: { Origin: url.origin, "Content-Type": "application/json" },
+        body: JSON.stringify({ invitation: "ido1.example" }),
+      })
+    ).status,
+    403,
+  );
   assert.equal((await call("/login", {})).status, 200);
 });
 
@@ -236,6 +253,14 @@ test("two independent UI participants pair, receive separate tasks and reconnect
   }
 });
 
+test("a fixed UI port rejects a second listener without moving invitations to a different port", async (t) => {
+  const { directory, login, url } = await fixture(t);
+  await assert.rejects(
+    createAgentUi({ directory, login, port: Number(url.port) }),
+    { code: "EADDRINUSE" },
+  );
+});
+
 test("UI fails closed before authentication and on expired pairing without leaking remote errors", async (t) => {
   const { call, login } = await fixture(t, {
     createWorker: () => ({
@@ -298,6 +323,11 @@ test("browser approval gates execution and permission choices are not persisted"
     200,
   );
   assert.equal(executorOptions.networkAccess, false);
+  assert.equal(
+    (await call("/invitation", { invitation: encodeAgentInvitation(pairing) }))
+      .status,
+    409,
+  );
   assert.equal(executorOptions.codexHome, join(directory, "codex-home"));
   const task = workerOptions.executor.run({ id: "task", request: "Run tests" });
   assert.equal(executions, 0);

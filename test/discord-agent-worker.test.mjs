@@ -284,11 +284,16 @@ test("the private Discord command issues a pairing code without a user token", a
     author: { id: owner, username: "alice", bot: false },
     member: { displayName: "Alice" },
     content: "/ido agent connect",
-    channel: { send: async (payload) => replies.push(payload.content) },
+    channel: { send: async (payload) => replies.push(payload) },
   });
   assert.equal(calls[0].ownerUserId, owner);
-  assert.match(replies[0], /PAIR-CODE/);
-  assert.doesNotMatch(replies[0], /token|auth\.json/i);
+  assert.match(replies[0].content, /PAIR-CODE/);
+  assert.doesNotMatch(replies[0].content, /token|auth\.json/i);
+  assert.match(
+    replies[0].components[0].components[0].url,
+    /^http:\/\/127\.0\.0\.1:17879\/join#ido1\./,
+  );
+  assert.deepEqual(replies[0].allowedMentions, { parse: [] });
 });
 
 test("the Worker gateway requires TLS away from loopback", () => {

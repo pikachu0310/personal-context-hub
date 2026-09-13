@@ -27,6 +27,7 @@ const defaultDirectory = join(
 
 export async function createAgentUi({
   directory = defaultDirectory,
+  port = 0,
   login,
   createWorker = (options) => new DiscordAgentWorker(options),
   createExecutor = (options) => new LocalCodexWorkerExecutor(options),
@@ -69,6 +70,14 @@ export async function createAgentUi({
   );
   const script = await readFile(
     new URL("./discord-agent-ui-client.js", import.meta.url),
+    "utf8",
+  );
+  const joinPage = await readFile(
+    new URL("./discord-agent-join.html", import.meta.url),
+    "utf8",
+  );
+  const joinScript = await readFile(
+    new URL("./discord-agent-join-client.js", import.meta.url),
     "utf8",
   );
 
@@ -230,6 +239,12 @@ export async function createAgentUi({
       return send(200, page, "text/html");
     if (request.method === "GET" && request.url === "/client.js")
       return send(200, script, "text/javascript");
+    // The public landing page can only forward an invitation to an already
+    // authorized tab. It never receives the UI capability or any local status.
+    if (request.method === "GET" && request.url === "/join")
+      return send(200, joinPage, "text/html");
+    if (request.method === "GET" && request.url === "/join.js")
+      return send(200, joinScript, "text/javascript");
     if (request.headers.authorization !== `Bearer ${token}`)
       return send(403, { error: "Forbidden" });
     try {
@@ -334,7 +349,7 @@ export async function createAgentUi({
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+    server.listen(port, "127.0.0.1", resolve);
   });
   origin = `http://127.0.0.1:${server.address().port}`;
   void login.refresh();

@@ -10,6 +10,7 @@ import {
   encodeAgentInvitation,
   decodeAgentInvitation,
   agentGuideComponents,
+  agentInvitationUrl,
 } from "../src/discord-agent-onboarding.mjs";
 import { assertPublicWorkerPolicy } from "../src/discord-agent-public-policy.mjs";
 
@@ -40,6 +41,43 @@ test("execution waits for owner approval, rejects replay and respects cancellati
   await aborted;
   assert.equal(consent.describe().length, 0);
   assert.equal(calls, 1);
+});
+
+test("Discord autofill links keep invitation data in the fragment and never include local permissions", () => {
+  const pairing = {
+    gatewayUrl: "wss://agents.example.com/workers",
+    code: "ABCDEFGHIJKL",
+    expiresAt: Date.now() + 60_000,
+    workingDirectory: "/private/repo",
+    automatic: true,
+    networkAccess: true,
+    token: "must-not-include",
+  };
+  const url = new URL(agentInvitationUrl(pairing));
+  assert.equal(url.hostname, "127.0.0.1");
+  assert.equal(url.search, "");
+  assert.equal(url.pathname, "/join");
+  assert.deepEqual(decodeAgentInvitation(url.hash.slice(1)), {
+    gatewayUrl: pairing.gatewayUrl,
+    pairingCode: pairing.code,
+  });
+  const encoded = Buffer.from(url.hash.slice(6), "base64url").toString();
+  assert.doesNotMatch(encoded, /private|automatic|networkAccess|token/);
+  const buttons = agentGuideComponents("https://example.com/join", pairing)[0]
+    .components;
+  assert.equal(buttons[0].url, url.href);
+  assert.equal(buttons[1].url, "https://example.com/join");
+  assert.equal(new URL(buttons[1].url).hash, "");
+  const longPairing = {
+    ...pairing,
+    gatewayUrl: `wss://example.com/${"a".repeat(500)}`,
+  };
+  assert.deepEqual(agentGuideComponents(undefined, longPairing), []);
+  assert.equal(
+    agentGuideComponents("https://example.com/join", longPairing)[0].components
+      .length,
+    1,
+  );
 });
 
 test("approval expires without executing, while explicit session automation executes", async (t) => {
