@@ -339,7 +339,27 @@ export function createEditableDiscordPost(textChannel, { silent = true } = {}) {
 
 export function createMinutesDiscordPost(textChannel, options = {}) {
   let message;
+  let restored = false;
+  let pinAttempted = false;
+  const pin = async () => {
+    if (pinAttempted || message?.pinned) return;
+    pinAttempted = true;
+    await message?.pin?.().catch(() => undefined);
+  };
   return async (content, { minutes = "" } = {}) => {
+    if (!restored) {
+      restored = true;
+      if (options.botUserId && textChannel.messages?.fetch) {
+        const recent = await textChannel.messages
+          .fetch({ limit: 50 })
+          .catch(() => undefined);
+        message = recent?.find(
+          (item) =>
+            item.author?.id === options.botUserId &&
+            item.content?.startsWith("📝 **議事録"),
+        );
+      }
+    }
     const payload = {
       ...createDiscordMessagePayload(content, options),
       files: [
@@ -353,6 +373,7 @@ export function createMinutesDiscordPost(textChannel, options = {}) {
     if (message) {
       try {
         message = await message.edit(payload);
+        await pin();
         return message;
       } catch (error) {
         if (error?.code !== RESTJSONErrorCodes.UnknownMessage) throw error;
@@ -361,7 +382,8 @@ export function createMinutesDiscordPost(textChannel, options = {}) {
     message = await textChannel.send(payload);
     // Pin only our minutes message; if permission is absent, /ido context and
     // the full attachment still make the current minutes available.
-    await message.pin?.().catch(() => undefined);
+    pinAttempted = false;
+    await pin();
     return message;
   };
 }
@@ -747,7 +769,10 @@ export async function startDiscordVoiceCodex({
       textChannel,
       messageOptions,
     );
-    const upsertMinutes = createMinutesDiscordPost(textChannel, messageOptions);
+    const upsertMinutes = createMinutesDiscordPost(textChannel, {
+      ...messageOptions,
+      botUserId: client.user?.id,
+    });
     transcriptArchive =
       config.voiceMode === "meeting"
         ? (dependencies.transcriptArchive ??
@@ -934,6 +959,11 @@ export async function startDiscordVoiceCodex({
             maximumQueuedTurns: config.maximumQueuedTurns,
             stageTimeouts: config.stageTimeouts,
           });
+    if (config.voiceMode === "meeting" && session.minutes)
+      await upsertMinutes(
+        `📝 **議事録・共有コンテキスト（rev ${session.revision}）**\n${boundText(session.minutes, 1750)}\n全文: /ido context または添付`,
+        { minutes: session.minutes },
+      );
     const handleMessage = createIdobataMessageHandler({
       config,
       session,

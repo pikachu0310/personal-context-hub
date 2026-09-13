@@ -10,6 +10,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import test from "node:test";
 import { wrapPcmAsWav } from "../src/discord-voice-audio.mjs";
@@ -21,9 +23,55 @@ import {
   buildCodexEnvironment,
   buildPowerTaskPrompt,
   createOpenAIAudioAdapter,
+  codexWorkspaceTrustDirectories,
+  isSafeIsolatedCodexConfig,
   describePowerTaskEvent,
   prepareIsolatedCodexHome,
 } from "../src/discord-voice-openai.mjs";
+
+test("Codex restart accepts trust for the Git main repository of a linked worktree", async () => {
+  const root = await mkdtemp(join(tmpdir(), "voice-trust-worktree-"));
+  const main = join(root, "main"),
+    worktree = join(root, "linked");
+  const git = (...args) => promisify(execFile)("git", args);
+  try {
+    await git("init", main);
+    await git(
+      "-C",
+      main,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    );
+    await git("-C", main, "worktree", "add", "-b", "fixture-linked", worktree);
+    const directories = await codexWorkspaceTrustDirectories(
+      worktree,
+      join(root, "tasks"),
+    );
+    assert.ok(directories.includes(main));
+    assert.equal(
+      isSafeIsolatedCodexConfig(
+        `[projects.${JSON.stringify(main)}]\ntrust_level = "trusted"`,
+        directories,
+      ),
+      true,
+    );
+    assert.equal(
+      isSafeIsolatedCodexConfig(
+        `[projects.${JSON.stringify(join(root, "unrelated"))}]\ntrust_level = "trusted"`,
+        directories,
+      ),
+      false,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("Codex child reuses app auth without inheriting audio or Bot secrets", () => {
   const environment = buildCodexEnvironment(

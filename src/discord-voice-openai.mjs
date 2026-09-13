@@ -10,6 +10,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { basename, dirname, join, resolve } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import OpenAI, { toFile } from "openai";
@@ -411,6 +413,36 @@ export function isSafeIsolatedCodexConfig(text, trustedDirectories = []) {
   return true;
 }
 
+export async function codexWorkspaceTrustDirectories(
+  workingDirectory,
+  taskWorkspaceDirectory,
+) {
+  const directories = [workingDirectory, taskWorkspaceDirectory].filter(
+    Boolean,
+  );
+  if (!workingDirectory) return directories;
+  try {
+    const { stdout } = await promisify(execFile)(
+      "git",
+      [
+        "-C",
+        workingDirectory,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ],
+      { timeout: 5000 },
+    );
+    const common = stdout.trim();
+    // Codex records trust against the main repository for linked worktrees.
+    // Derive it from Git, never accept arbitrary pre-existing trust entries.
+    if (basename(common) === ".git") directories.push(dirname(common));
+  } catch {
+    // Non-Git workspaces only trust their configured paths.
+  }
+  return directories;
+}
+
 export function createOpenAIAudioAdapter(config, { client } = {}) {
   const openai =
     client ??
@@ -499,10 +531,10 @@ export class CodexVoiceRunner {
       const isolatedCodexHome = await prepareIsolatedCodexHome({
         sourceCodexHome,
         isolatedCodexHome: this.config.isolatedCodexHome,
-        trustedDirectories: [
+        trustedDirectories: await codexWorkspaceTrustDirectories(
           this.config.workingDirectory,
           this.config.taskWorkspaceDirectory,
-        ],
+        ),
       });
       this.codex = new Codex(
         buildCodexOptions(process.env, isolatedCodexHome, {

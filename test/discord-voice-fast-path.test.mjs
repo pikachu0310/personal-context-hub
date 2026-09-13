@@ -214,6 +214,34 @@ test("autonomous task observation authorizes guest context and creates a concret
   await session.stop();
 });
 
+test("minutes restart restores only the Bot's previous entry", async () => {
+  let edits = 0;
+  const own = {
+    author: { id: "bot" },
+    content: "📝 **議事録・共有コンテキスト**",
+    pinned: true,
+    edit: async (payload) => {
+      edits++;
+      assert.equal(payload.files[0].attachment.toString(), "全文");
+      return own;
+    },
+  };
+  const update = createMinutesDiscordPost(
+    {
+      messages: {
+        fetch: async () => [
+          { author: { id: "someone" }, content: own.content },
+          own,
+        ],
+      },
+      send: async () => assert.fail("must restore existing entry"),
+    },
+    { botUserId: "bot" },
+  );
+  await update("要点", { minutes: "全文" });
+  assert.equal(edits, 1);
+});
+
 test("manual voice leave does not auto-rejoin and slash join resumes connection", async () => {
   const commands = [];
   let rejoins = 0;
