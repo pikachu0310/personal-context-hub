@@ -221,7 +221,9 @@ test("removing an allowed owner blocks an already paired credential", async (t) 
     logger: { warn() {} },
   });
   await gateway.start();
-  const pairing = gateway.createPairing({ ownerUserId: "123456789012345678" });
+  const pairing = await gateway.createPairing({
+    ownerUserId: "123456789012345678",
+  });
   const worker = new DiscordAgentWorker({
     gatewayUrl: `ws://127.0.0.1:${gateway.address().port}`,
     pairingCode: pairing.code,
@@ -234,7 +236,7 @@ test("removing an allowed owner blocks an already paired credential", async (t) 
   const credential = await worker.connect();
   await worker.stop();
   allowed = false;
-  assert.throws(() =>
+  await assert.rejects(() =>
     gateway.createPairing({ ownerUserId: "123456789012345678" }),
   );
   const returning = new DiscordAgentWorker({ credential, executor: {} });

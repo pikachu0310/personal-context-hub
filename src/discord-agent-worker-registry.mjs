@@ -122,6 +122,19 @@ export class AgentWorkerRegistry {
     return { code, expiresAt };
   }
 
+  pairingOwner(code) {
+    const pairing = this.pairings.get(
+      digest(
+        String(code ?? "")
+          .trim()
+          .toUpperCase(),
+      ),
+    );
+    return pairing && pairing.expiresAt >= this.now()
+      ? pairing.ownerUserId
+      : undefined;
+  }
+
   completePairing({
     code,
     publicKey,

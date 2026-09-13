@@ -12,7 +12,11 @@ Gatewayは `127.0.0.1:8787` にbindし、同じホストのTLSリバースプロ
 
 ## 参加と失効
 
-`PERSONAL_CONTEXT_VOICE_USER_ID` の運営者と `PERSONAL_CONTEXT_VOICE_OPERATOR_IDS` に明示した開発者だけに操作・登録を許可します。`ALL_PARTICIPANTS_OPERATE=false`、`AUTONOMOUS_TASKS=false`、ホストの `CODEX_SANDBOX=workspace-write` を維持してください。公開WSS設定時にはこれらを起動時に検証します。
+Bot全体の作業操作は `PERSONAL_CONTEXT_VOICE_USER_ID` の運営者と `PERSONAL_CONTEXT_VOICE_OPERATOR_IDS` の担当者に限定します。`ALL_PARTICIPANTS_OPERATE=false`、`AUTONOMOUS_TASKS=false`、ホストの `CODEX_SANDBOX=workspace-write` を維持してください。公開WSS設定時にはこれらを起動時に検証します。
+
+本人のWorker登録は管理権限とは別です。`PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS=true` なら、このBotを設定したDiscordサーバーのメンバーが自分のWorkerを登録できます。参加者のID入力や運営者による個別登録は不要です。参加者のロールで絞る場合は `PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS` にロールIDをカンマ区切りで指定します。指定したうち1つ以上を持つ人だけを許可し、空なら全メンバーを対象にします。Botアカウントとメンバー審査が未完了の人は除外します。これらは本人のエージェント接続だけの設定であり、他人のWorkerやBot全体の操作権限を付与しません。
+
+参加条件は `discord-agent-enrollment-policy.mjs` に集約し、Discordから取得した所属・ロールで評価します。判定結果のキャッシュは最大30秒で、登録・コード引き換え・再接続・受信メッセージ時に確認します。退会・ロール解除後は、再確認時に以前の接続鍵も拒否します。Discordへの確認失敗時は許可しません。`WORKER_ALLOW_GUILD_MEMBERS=false` に戻すと、従来の運営者・操作担当者だけの登録になります。
 
 Discordの `/ido agent connect` は本人専用の応答に限って参加情報を表示します。参加情報には5分間・1回限りのコードを含むので、Forum・GitHub Issue・ログへ転載しないでください。参加ガイドのリンクにはコードやトークンを含めません。`PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL` には公開HTTPSガイドを設定します。
 

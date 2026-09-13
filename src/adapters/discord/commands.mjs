@@ -107,6 +107,7 @@ export function createIdobataSlashHandler({ config, handleMessage }) {
     const send = async (payload) => {
       const content = {
         content: payload.content,
+        components: payload.components ?? [],
         allowedMentions: { parse: [] },
       };
       if (!replied) {
@@ -517,13 +518,13 @@ export function createIdobataMessageHandler({
         return reply(
           "接続コードを公開しないため、Discordの `/ido agent` コマンドを使ってください。",
         );
-      if (!authorized)
+      if (!authorized && !config.workerAllowGuildMembers)
         return reply("このサーバーでWorkerを登録する権限がありません。");
       const action = argument.toLowerCase();
       if (!workerGateway)
         return reply("分散Worker Gatewayはまだ有効になっていません。");
       if (action === "connect") {
-        const pairing = workerGateway.createPairing({
+        const pairing = await workerGateway.createPairing({
           ownerUserId: message.author.id,
           ownerDisplayName:
             message.member?.displayName ??

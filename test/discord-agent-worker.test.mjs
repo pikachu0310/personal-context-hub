@@ -21,6 +21,7 @@ import { createDistributedTaskRunner } from "../src/discord-agent-task-runner.mj
 import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
 import {
   createIdobataMessageHandler,
+  createIdobataSlashHandler,
   IDOBATA_APPLICATION_COMMAND,
 } from "../src/discord-voice-commands.mjs";
 import {
@@ -136,7 +137,7 @@ test("a paired Worker receives a task and returns progress and result", async ()
   });
   await gateway.start();
   const url = `ws://127.0.0.1:${gateway.address().port}`;
-  const pairing = gateway.createPairing({
+  const pairing = await gateway.createPairing({
     ownerUserId: owner,
     ownerDisplayName: "Alice",
     ownerAvatarUrl: "https://cdn.discordapp.com/avatars/123/hash.png",
@@ -242,7 +243,7 @@ test("agent avatars are generated locally and Webhook posts target the Forum thr
   assert.deepEqual(sent[0].allowedMentions, { parse: [] });
 });
 
-test("the private Discord command issues a pairing code without a user token", async () => {
+test("the private Discord slash reply retains pairing and guide buttons without a user token", async () => {
   const group = IDOBATA_APPLICATION_COMMAND.options.find(
     (option) => option.name === "agent",
   );
@@ -253,15 +254,17 @@ test("the private Discord command issues a pairing code without a user token", a
   );
   const replies = [];
   const calls = [];
+  const config = {
+    guildId: "222222222222222222",
+    textChannelId: "333333333333333333",
+    agentCoordinationChannelId: "333333333333333333",
+    codexAgents: [],
+    allParticipantsOperate: true,
+    silentMessages: true,
+    agentJoinGuideUrl: "https://example.com/agent-guide",
+  };
   const handler = createIdobataMessageHandler({
-    config: {
-      guildId: "222222222222222222",
-      textChannelId: "333333333333333333",
-      agentCoordinationChannelId: "333333333333333333",
-      codexAgents: [],
-      allParticipantsOperate: true,
-      silentMessages: true,
-    },
+    config,
     session: {},
     taskQueue: undefined,
     workerGateway: {
@@ -275,16 +278,23 @@ test("the private Discord command issues a pairing code without a user token", a
       },
     },
   });
-  await handler({
+  const slash = createIdobataSlashHandler({ config, handleMessage: handler });
+  await slash({
     id: "interaction-1",
     guildId: "222222222222222222",
     channelId: "333333333333333333",
-    privateReply: true,
-    ownerAvatarUrl: "https://cdn.discordapp.com/avatars/123/hash.png",
-    author: { id: owner, username: "alice", bot: false },
+    isChatInputCommand: () => true,
+    commandName: "ido",
+    options: {
+      getString: () => null,
+      getSubcommandGroup: () => "agent",
+      getSubcommand: () => "connect",
+    },
+    user: { id: owner, username: "alice", bot: false },
     member: { displayName: "Alice" },
-    content: "/ido agent connect",
-    channel: { send: async (payload) => replies.push(payload) },
+    deferReply: async (payload) => assert.equal(payload.flags, 64),
+    editReply: async (payload) => replies.push(payload),
+    followUp: async () => assert.fail("Expected a single private reply"),
   });
   assert.equal(calls[0].ownerUserId, owner);
   assert.match(replies[0].content, /PAIR-CODE/);
@@ -294,6 +304,49 @@ test("the private Discord command issues a pairing code without a user token", a
     /^http:\/\/127\.0\.0\.1:17879\/join#ido1\./,
   );
   assert.deepEqual(replies[0].allowedMentions, { parse: [] });
+  assert.equal(
+    replies[0].components[0].components[1].url,
+    config.agentJoinGuideUrl,
+  );
+});
+
+test("slash follow-ups retain components and remain private with mentions disabled", async () => {
+  const config = { guildId: "guild", textChannelId: "channel" };
+  const button = {
+    type: 1,
+    components: [
+      { type: 2, style: 5, label: "Guide", url: "https://example.com/guide" },
+    ],
+  };
+  const replies = [];
+  const slash = createIdobataSlashHandler({
+    config,
+    handleMessage: async (message) => {
+      await message.channel.send({ content: "First", components: [button] });
+      await message.channel.send({
+        content: "Second",
+        components: [button],
+        allowedMentions: { parse: ["everyone"] },
+      });
+    },
+  });
+  await slash({
+    isChatInputCommand: () => true,
+    commandName: "ido",
+    guildId: "guild",
+    channelId: "channel",
+    options: { getString: () => null, getSubcommand: () => "help" },
+    user: { id: owner },
+    deferReply: async (payload) => assert.equal(payload.flags, 64),
+    editReply: async (payload) => replies.push(payload),
+    followUp: async (payload) => replies.push(payload),
+  });
+  assert.equal(replies.length, 2);
+  for (const reply of replies) {
+    assert.deepEqual(reply.components, [button]);
+    assert.deepEqual(reply.allowedMentions, { parse: [] });
+  }
+  assert.equal(replies[1].flags, 64);
 });
 
 test("the Worker gateway requires TLS away from loopback", () => {

@@ -179,6 +179,22 @@ export function loadDiscordVoiceConfig(env = process.env) {
       false,
     ),
     agentJoinGuideUrl: env.PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL?.trim(),
+    workerAllowGuildMembers: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS",
+      false,
+    ),
+    workerEnrollmentRoleIds: (
+      env.PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS ?? ""
+    )
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => {
+        if (!/^\d{17,20}$/.test(id))
+          throw new Error("Invalid Worker enrollment role ID.");
+        return id;
+      }),
     workerGatewayHost:
       env.PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST?.trim() || "127.0.0.1",
     workerGatewayPort: integer(
@@ -482,6 +498,8 @@ export function describeDiscordVoiceConfig(config) {
     issueForumChannelId: config.issueForumChannelId,
     agentCoordinationChannelId: config.agentCoordinationChannelId,
     workerGatewayEnabled: config.workerGatewayEnabled,
+    workerAllowGuildMembers: config.workerAllowGuildMembers,
+    workerEnrollmentRoleCount: config.workerEnrollmentRoleIds?.length ?? 0,
     workerGatewayHost: config.workerGatewayHost,
     workerGatewayPort: config.workerGatewayPort,
     workerGatewayPublicUrl: config.workerGatewayPublicUrl,

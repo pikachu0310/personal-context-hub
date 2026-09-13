@@ -193,8 +193,8 @@ export class AgentWorkerGateway {
     return this.server?.address?.();
   }
 
-  createPairing(identity) {
-    if (!this.authorizeOwner(identity.ownerUserId))
+  async createPairing(identity) {
+    if (!(await this.authorizeOwner(identity.ownerUserId)))
       throw gatewayError(
         "WORKER_OWNER_DENIED",
         "This owner is not allowed to register a Worker.",
@@ -381,6 +381,14 @@ export class AgentWorkerGateway {
           "Worker challenge expired.",
         );
       if (message.type === "pair") {
+        if (
+          !(await this.authorizeOwner(this.registry.pairingOwner(message.code)))
+        )
+          throw gatewayError(
+            "WORKER_OWNER_DENIED",
+            "Worker owner is no longer allowed to enroll.",
+          );
+        this.#assertActive(socket, session);
         const paired = this.registry.completePairing({
           ...message,
           challenge: session.challenge,
@@ -398,9 +406,9 @@ export class AgentWorkerGateway {
       }
       if (
         message.type !== "authenticate" ||
-        !this.authorizeOwner(
+        !(await this.authorizeOwner(
           this.registry.describe?.(message.agentId)?.ownerUserId,
-        ) ||
+        )) ||
         !this.registry.authenticate({
           ...message,
           challenge: session.challenge,
@@ -410,6 +418,7 @@ export class AgentWorkerGateway {
           "WORKER_AUTH_FAILED",
           "Worker authentication failed.",
         );
+      this.#assertActive(socket, session);
       const worker = this.registry.markOnline(message.agentId, true);
       this.#register(socket, session, message.agentId, worker);
       socket.send(
@@ -420,9 +429,12 @@ export class AgentWorkerGateway {
     }
     // Replaced/revoked sockets must not extend or settle a new connection's lease.
     if (
+      !(await this.authorizeOwner(
+        this.registry.describe(session.agentId)?.ownerUserId,
+      )) ||
       this.connections.get(session.agentId) !== socket ||
       !this.registry.describe(session.agentId) ||
-      !this.authorizeOwner(this.registry.describe(session.agentId)?.ownerUserId)
+      socket.readyState !== 1
     )
       throw gatewayError(
         "WORKER_AUTH_FAILED",
@@ -471,7 +483,20 @@ export class AgentWorkerGateway {
     }
   }
 
+  #assertActive(socket, session) {
+    if (
+      socket.readyState !== 1 ||
+      this.sessions.get(socket) !== session ||
+      (!session.agentId && session.challengeExpiresAt < Date.now())
+    )
+      throw gatewayError(
+        "WORKER_AUTH_FAILED",
+        "Worker session is no longer active.",
+      );
+  }
+
   #register(socket, session, agentId, worker) {
+    this.#assertActive(socket, session);
     clearTimeout(session.challengeTimer);
     const previous = this.connections.get(agentId);
     session.agentId = agentId;

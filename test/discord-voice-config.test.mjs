@@ -16,6 +16,30 @@ const valid = {
   OPENAI_API_KEY: "test-secret-never-print",
 };
 
+test("enrollment roles configure only Worker admission and invalid IDs fail closed", () => {
+  const defaults = loadDiscordVoiceConfig(valid);
+  assert.equal(defaults.workerAllowGuildMembers, false);
+  const config = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS: "true",
+    PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS:
+      "11111111111111111, 22222222222222222",
+    PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE: "false",
+  });
+  assert.deepEqual(config.workerEnrollmentRoleIds, [
+    "11111111111111111",
+    "22222222222222222",
+  ]);
+  assert.equal(config.allParticipantsOperate, false);
+  assert.equal(describeDiscordVoiceConfig(config).workerEnrollmentRoleCount, 2);
+  assert.throws(() =>
+    loadDiscordVoiceConfig({
+      ...valid,
+      PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS: "not-a-role",
+    }),
+  );
+});
+
 test("speech-start silence defaults to one second and is independent of recording silence", () => {
   const config = loadDiscordVoiceConfig(valid);
   assert.equal(config.speechStartSilenceMs, 1_000);

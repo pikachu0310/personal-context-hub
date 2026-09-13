@@ -1,6 +1,7 @@
 import { CodexAgentTeam } from "../discord-agent-team.mjs";
 import { AgentWorkerRegistry } from "../discord-agent-worker-registry.mjs";
 import { AgentWorkerGateway } from "../discord-agent-worker-gateway.mjs";
+import { createWorkerOwnerAuthorizer } from "../discord-agent-enrollment-policy.mjs";
 import { assertPublicWorkerPolicy } from "../discord-agent-public-policy.mjs";
 import { DiscordAgentWebhookPublisher } from "../discord-agent-avatar.mjs";
 import { createDistributedTaskRunner } from "../discord-agent-task-runner.mjs";
@@ -207,11 +208,25 @@ export async function startDiscordVoiceCodex({
           host: config.workerGatewayHost,
           port: config.workerGatewayPort,
           publicUrl: config.workerGatewayPublicUrl,
-          authorizeOwner: (ownerUserId) =>
-            Boolean(ownerUserId) &&
-            (config.allParticipantsOperate ||
-              ownerUserId === config.allowedUserId ||
-              (config.operatorUserIds ?? []).includes(ownerUserId)),
+          authorizeOwner: createWorkerOwnerAuthorizer({
+            config,
+            fetchMember: async (ownerUserId) => {
+              if (!client.isReady()) return undefined;
+              const guild = await client.guilds.fetch(config.guildId);
+              const member = await guild.members.fetch({
+                user: ownerUserId,
+                force: true,
+                cache: false,
+              });
+              return {
+                userId: member.id,
+                guildId: guild.id,
+                roleIds: [...member.roles.cache.keys()],
+                bot: member.user.bot,
+                pending: member.pending,
+              };
+            },
+          }),
           defaultWorkingDirectory: config.workingDirectory,
           heartbeatTimeoutMs: config.workerHeartbeatTimeoutMs,
           leaseTtlMs: config.workerLeaseTtlMs,
