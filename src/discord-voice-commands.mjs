@@ -11,6 +11,7 @@ export const IDOBATA_APPLICATION_COMMAND = {
     ["join", "設定された通話へ接続"],
     ["leave", "通話から退出"],
     ["status", "通話状態・作業一覧", false],
+    ["agents", "接続中のCodexエージェント一覧"],
     ["context", "現在の議事録全文"],
     ["ask", "井戸Botへ質問", true],
     ["quiet", "読み上げを停止"],
@@ -45,6 +46,13 @@ export const IDOBATA_APPLICATION_COMMAND = {
 };
 
 export function createIdobataSlashHandler({ config, handleMessage }) {
+  const commandChannelIds = new Set(
+    [
+      config.textChannelId,
+      config.agentCoordinationChannelId,
+      ...(config.codexAgents ?? []).map(({ channelId }) => channelId),
+    ].filter(Boolean),
+  );
   return async (interaction) => {
     if (
       !interaction.isChatInputCommand?.() ||
@@ -52,9 +60,9 @@ export function createIdobataSlashHandler({ config, handleMessage }) {
       interaction.guildId !== config.guildId
     )
       return false;
-    if (interaction.channelId !== config.textChannelId) {
+    if (!commandChannelIds.has(interaction.channelId)) {
       await interaction.reply({
-        content: `操作は <#${config.textChannelId}> で使ってください。`,
+        content: `操作は <#${config.agentCoordinationChannelId ?? config.textChannelId}> で使ってください。`,
         flags: 64,
         allowedMentions: { parse: [] },
       });
@@ -106,6 +114,7 @@ export const IDOBATA_HELP = [
   "`/ido task 依頼` 実装 · `/ido research 調査内容`",
   "`/ido benchmark 比較内容` · `/ido test 検証内容`",
   "`/ido status ページ番号` 通話状態・作業一覧 · `/ido stop タスクID`",
+  "`/ido agents` 接続中のCodexエージェントと担当Issue数",
   "`/ido result タスクID` 保存済みの結果と検証記録",
   "`/ido quiet` 読み上げ停止",
   "`/ido join` 通話へ接続 · `/ido leave` 通話から退出",
@@ -168,7 +177,7 @@ function taskStatus(tasks, session, argument) {
     ),
     ...ordered.map(
       (task) =>
-        `\`${task.id}\` ${displayTaskState(task.state)}${task.resultDeliveryPending ? "（結果送信待ち）" : ""} · ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 100))}${task.threadId ? ` <#${task.threadId}>` : ""}`,
+        `\`${task.issueId ?? task.id}\` ${displayTaskState(task.state)}${task.resultDeliveryPending ? "（結果送信待ち）" : ""} · ${escapeDiscordMarkdown(boundText(String(task.title ?? "").replace(/\s+/g, " "), 100))}${task.assignedAgentName || task.assignedAgentId ? ` · 担当 ${escapeDiscordMarkdown(task.assignedAgentName ?? task.assignedAgentId)}` : ""}${task.threadId ? ` <#${task.threadId}>` : ""}`,
     ),
   ];
   if (!rows.length)
@@ -193,6 +202,24 @@ function taskStatus(tasks, session, argument) {
   if (page > pages.length)
     return `ページ番号は1〜${pages.length}で指定してください。\`/ido status 1\``;
   return `作業一覧 · ${byId.size}件 · ${page}/${pages.length}ページ\n${pages[page - 1]}${page < pages.length ? `\n次へ: /ido status ${page + 1}` : ""}${page > 1 ? `\n前へ: /ido status ${page - 1}` : ""}`;
+}
+
+function agentStatus(taskQueue) {
+  const agents = taskQueue?.agentTeam?.list?.() ?? [];
+  if (!agents.length) return "接続中のCodexエージェント情報はありません。";
+  const tasks = taskQueue?.list?.() ?? [];
+  return [
+    `🤖 **接続中のCodexエージェント ${agents.length}体**`,
+    ...agents.map((agent) => {
+      const assigned = tasks.filter(
+        ({ assignedAgentId }) => assignedAgentId === agent.id,
+      );
+      const active = assigned.filter(({ state }) =>
+        ["queued", "running"].includes(state),
+      ).length;
+      return `**${escapeDiscordMarkdown(agent.name)}** \`${agent.id}\` · 稼働 ${active}/${agent.maximumConcurrentTasks} · Issue累計 ${assigned.length}件 · 担当 ${agent.capabilities.join(", ") || "指定なし"}`;
+    }),
+  ].join("\n");
 }
 
 export function hasTaskChanges(artifacts) {
@@ -360,6 +387,13 @@ export function createIdobataMessageHandler({
   leaveVoice,
 }) {
   const seen = new Set();
+  const commandChannelIds = new Set(
+    [
+      config.textChannelId,
+      config.agentCoordinationChannelId,
+      ...(config.codexAgents ?? []).map(({ channelId }) => channelId),
+    ].filter(Boolean),
+  );
   return async (message) => {
     if (message.author?.bot || message.guildId !== config.guildId) return false;
     const authorized =
@@ -374,7 +408,7 @@ export function createIdobataMessageHandler({
     const requestKey = message.id
       ? `discord:${message.guildId}:${message.channelId}:${message.id}`
       : undefined;
-    if (message.channelId !== config.textChannelId) {
+    if (!commandChannelIds.has(message.channelId)) {
       if (!authorized) return false;
       const instruction = {
         threadId: message.channelId,
@@ -400,6 +434,7 @@ export function createIdobataMessageHandler({
         flags: config.silentMessages === false ? undefined : 4096,
       });
     if (!match) {
+      if (message.channelId !== config.textChannelId) return false;
       if (content)
         await session.addText?.(content, {
           userId: message.author.id,
@@ -410,6 +445,7 @@ export function createIdobataMessageHandler({
     const command = (match[1] ?? "help").toLowerCase();
     const argument = (match[2] ?? "").trim();
     if (command === "help") return reply(IDOBATA_HELP);
+    if (command === "agents") return reply(agentStatus(taskQueue));
     if (command === "status") {
       return reply(
         [

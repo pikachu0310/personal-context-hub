@@ -299,17 +299,24 @@ export function selectTaskProfile(task, config) {
     ? task.kind
     : "implementation";
   const complex = task.complexity === "complex";
+  const agent = task.assignedAgent;
   return {
     kind,
-    model: complex
-      ? (config.complexTaskModel ?? config.taskModel ?? config.codexModel)
-      : (config.taskModel ?? config.codexModel),
-    modelReasoningEffort: complex
-      ? (config.complexTaskReasoningEffort ??
-        config.taskReasoningEffort ??
-        config.codexReasoningEffort ??
-        "high")
-      : (config.taskReasoningEffort ?? config.codexReasoningEffort ?? "medium"),
+    model:
+      agent?.model ??
+      (complex
+        ? (config.complexTaskModel ?? config.taskModel ?? config.codexModel)
+        : (config.taskModel ?? config.codexModel)),
+    modelReasoningEffort:
+      agent?.reasoningEffort ??
+      (complex
+        ? (config.complexTaskReasoningEffort ??
+          config.taskReasoningEffort ??
+          config.codexReasoningEffort ??
+          "high")
+        : (config.taskReasoningEffort ??
+          config.codexReasoningEffort ??
+          "medium")),
     sandboxMode: "workspace-write",
     networkAccessEnabled: true,
     webSearchMode: "live",

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parseCodexAgents } from "./discord-agent-team.mjs";
 
 const snowflake = /^\d{17,20}$/;
 const codexReasoningEfforts = new Set([
@@ -20,6 +21,14 @@ function required(env, name) {
 
 function requiredSnowflake(env, name) {
   const value = required(env, name);
+  if (!snowflake.test(value))
+    throw new Error(`${name} must be a Discord snowflake.`);
+  return value;
+}
+
+function optionalSnowflake(env, name) {
+  const value = env[name]?.trim();
+  if (!value) return undefined;
   if (!snowflake.test(value))
     throw new Error(`${name} must be a Discord snowflake.`);
   return value;
@@ -129,12 +138,36 @@ export function loadDiscordVoiceConfig(env = process.env) {
     30_000,
     3_600_000,
   );
+  const taskConcurrency = integer(
+    env,
+    "PERSONAL_CONTEXT_VOICE_TASK_CONCURRENCY",
+    2,
+    1,
+    4,
+  );
+  const codexAgents = parseCodexAgents(
+    env.PERSONAL_CONTEXT_VOICE_CODEX_AGENTS,
+    {
+      workingDirectory,
+      model: taskModel,
+      reasoningEffort: taskReasoningEffort,
+      maximumConcurrentTasks: taskConcurrency,
+    },
+  );
   return {
     guildId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_GUILD_ID"),
     voiceChannelId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_CHANNEL_ID"),
     textChannelId: requiredSnowflake(
       env,
       "PERSONAL_CONTEXT_VOICE_TEXT_CHANNEL_ID",
+    ),
+    issueForumChannelId: optionalSnowflake(
+      env,
+      "PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID",
+    ),
+    agentCoordinationChannelId: optionalSnowflake(
+      env,
+      "PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID",
     ),
     allowedUserId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_USER_ID"),
     listenToEveryone: boolean(
@@ -194,6 +227,12 @@ export function loadDiscordVoiceConfig(env = process.env) {
       env,
       "PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT",
       taskReasoningEffort,
+    ),
+    codexAgents,
+    peerReviewEnabled: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_AGENT_PEER_REVIEW",
+      codexAgents.length > 1,
     ),
     immediateReactions: boolean(
       env,
@@ -289,13 +328,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
       1,
       50,
     ),
-    taskConcurrency: integer(
-      env,
-      "PERSONAL_CONTEXT_VOICE_TASK_CONCURRENCY",
-      2,
-      1,
-      4,
-    ),
+    taskConcurrency,
     transcriptionConcurrency: integer(
       env,
       "PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY",
@@ -357,6 +390,8 @@ export function describeDiscordVoiceConfig(config) {
     guildId: config.guildId,
     voiceChannelId: config.voiceChannelId,
     textChannelId: config.textChannelId,
+    issueForumChannelId: config.issueForumChannelId,
+    agentCoordinationChannelId: config.agentCoordinationChannelId,
     allowedUserId: config.allowedUserId,
     listenToEveryone: config.listenToEveryone,
     powerMode: config.powerMode,
@@ -382,6 +417,17 @@ export function describeDiscordVoiceConfig(config) {
     maximumPendingTranscriptions: config.maximumPendingTranscriptions,
     maximumPendingTasks: config.maximumPendingTasks,
     taskConcurrency: config.taskConcurrency,
+    codexAgents: (config.codexAgents ?? []).map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      capabilities: agent.capabilities,
+      maximumConcurrentTasks: agent.maximumConcurrentTasks,
+      workingDirectory: agent.workingDirectory,
+      channelId: agent.channelId,
+      model: agent.model ?? "Codex configured default",
+      reasoningEffort: agent.reasoningEffort,
+    })),
+    peerReviewEnabled: config.peerReviewEnabled,
     transcriptionConcurrency: config.transcriptionConcurrency,
     observationIntervalMs: config.observationIntervalMs,
     codexModel: config.codexModel ?? "Codex configured default",

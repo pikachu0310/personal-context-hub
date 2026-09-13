@@ -35,12 +35,16 @@ function retainInterruptedInstruction(task, entry, uncertain = true) {
   if (!text) return;
   task.instructions.unshift({
     id: typeof entry === "object" ? entry.id : randomUUID(),
+    ...(typeof entry === "object" && entry.source
+      ? { source: structuredClone(entry.source) }
+      : {}),
     text:
       uncertain && !text.startsWith(UNCONFIRMED_INSTRUCTION_PREFIX)
         ? UNCONFIRMED_INSTRUCTION_PREFIX + text
         : text,
   });
   task.additionalInstruction = undefined;
+  task.additionalInstructionSource = undefined;
 }
 const DEFAULT_STAGE_TIMEOUTS = Object.freeze({
   transcribing: 120_000,
@@ -590,6 +594,8 @@ export class DiscordVoiceTaskQueue {
     checkpoint = async () => undefined,
     onResult = async () => undefined,
     applyTask,
+    agentTeam,
+    reviewTask,
     progressIntervalMs = 10_000,
     checkpointTimeoutMs = DEFAULT_STAGE_TIMEOUTS.posting,
   }) {
@@ -597,6 +603,8 @@ export class DiscordVoiceTaskQueue {
     this.stateWriting = Promise.resolve();
     this.onResult = onResult;
     this.applyTaskChanges = applyTask;
+    this.agentTeam = agentTeam;
+    this.reviewTask = reviewTask;
     this.progressIntervalMs = progressIntervalMs;
     this.checkpointTimeoutMs = checkpointTimeoutMs;
     this.tasks = new Map();
@@ -666,6 +674,8 @@ export class DiscordVoiceTaskQueue {
       executing: false,
       state: "queued",
     };
+    queuedTask.issueId ??= queuedTask.id;
+    this.agentTeam?.assign(queuedTask, this.tasks.values());
     this.tasks.set(queuedTask.id, queuedTask);
     queuedTask.checkpoint = () => this.persist();
     queuedTask.acceptancePromise = this.persist({ strict: true }).catch(
@@ -716,6 +726,11 @@ export class DiscordVoiceTaskQueue {
       context: task.context,
       kind: task.kind,
       complexity: task.complexity,
+      issueId: task.issueId,
+      assignedAgentId: task.assignedAgentId,
+      assignedAgentName: task.assignedAgentName,
+      assignedAt: task.assignedAt,
+      assignmentReason: task.assignmentReason,
       createdAt: task.createdAt,
       meetingId: task.meetingId,
       state: task.state,
@@ -729,6 +744,7 @@ export class DiscordVoiceTaskQueue {
                   id: entry.id,
                   text: entry.text,
                   requestKey: entry.requestKey,
+                  source: structuredClone(entry.source),
                 },
           ),
       ),
@@ -753,12 +769,20 @@ export class DiscordVoiceTaskQueue {
       appliedFileState: structuredClone(task.appliedFileState),
       threadId: task.surface?.threadId ?? task.threadId,
       starterId: task.surface?.starterId ?? task.starterId,
+      surfaceType: task.surface?.surfaceType ?? task.surfaceType,
       result: task.result,
       resultMetadata: structuredClone(task.resultMetadata),
       artifacts: structuredClone(task.artifacts),
       profile: structuredClone(task.profile),
       evidence: structuredClone(task.evidence),
       additionalInstruction: task.additionalInstruction,
+      additionalInstructionSource: structuredClone(
+        task.additionalInstructionSource,
+      ),
+      peerReviews: structuredClone(task.peerReviews ?? []),
+      peerReviewCompletedRevisions: structuredClone(
+        task.peerReviewCompletedRevisions ?? [],
+      ),
       resultDeliveryPending: task.resultDeliveryPending,
       resultDeliveries: structuredClone(task.resultDeliveries ?? []),
       runRevision: task.runRevision,
@@ -800,11 +824,16 @@ export class DiscordVoiceTaskQueue {
         instructions: structuredClone(record.instructions ?? []),
         executing: false,
       };
+      task.issueId ??= task.id;
+      this.agentTeam?.assign(task, this.tasks.values());
       if (
         ["running", "queued", "interrupted"].includes(task.state) &&
         task.additionalInstruction
       ) {
-        retainInterruptedInstruction(task, task.additionalInstruction);
+        retainInterruptedInstruction(task, {
+          text: task.additionalInstruction,
+          source: task.additionalInstructionSource,
+        });
       }
       if (["running", "queued"].includes(task.state))
         task.state = "interrupted";
@@ -818,6 +847,9 @@ export class DiscordVoiceTaskQueue {
           result: task.result,
           artifacts: task.artifacts,
           evidence: task.evidence,
+          peerReview: task.peerReviews?.find(
+            ({ runRevision }) => runRevision === task.runRevision,
+          ),
           state: task.state,
           elapsedMs: Date.now() - task.createdAt,
           pendingInstructions: task.instructions.length,
@@ -907,10 +939,16 @@ export class DiscordVoiceTaskQueue {
         createdAt,
         controlVersion,
         resultDeliveryPending,
+        issueId,
+        assignedAgentId,
+        assignedAgentName,
       }) => ({
         id,
+        issueId: issueId ?? id,
         title,
         state,
+        assignedAgentId,
+        assignedAgentName,
         resultDeliveryPending: Boolean(resultDeliveryPending),
         createdAt,
         controlVersion: controlVersion ?? 0,
@@ -932,6 +970,9 @@ export class DiscordVoiceTaskQueue {
     if (!task) return undefined;
     return {
       id: task.id,
+      issueId: task.issueId ?? task.id,
+      assignedAgentId: task.assignedAgentId,
+      assignedAgentName: task.assignedAgentName,
       title: task.title,
       result: task.result,
       runRevision: task.resultMetadata?.runRevision,
@@ -958,6 +999,27 @@ export class DiscordVoiceTaskQueue {
       task,
       this.#handleTaskInstruction(task, message),
       message.requestKey,
+    );
+  }
+
+  async handleAgentMessageDurable({ taskId, agentId, content, requestKey }) {
+    const agent = this.agentTeam?.get(agentId);
+    const task = this.tasks.get(taskId);
+    if (!agent || !task || agent.id === task.assignedAgentId) return false;
+    return this.#awaitControl(
+      task,
+      this.#handleTaskInstruction(task, {
+        userId: `agent:${agent.id}`,
+        ownerUserId: `agent:${agent.id}`,
+        content,
+        requestKey,
+        source: {
+          type: "agent_review",
+          agentId: agent.id,
+          agentName: agent.name,
+        },
+      }),
+      requestKey,
     );
   }
 
@@ -1129,6 +1191,15 @@ export class DiscordVoiceTaskQueue {
         const post = typeof surface === "function" ? surface : surface?.post;
         if (!post) throw new Error("Task result surface is unavailable");
         const stages = [
+          ...(delivery.peerReview?.feedback
+            ? [
+                (options) =>
+                  post(
+                    `🔍 **${boundText(delivery.peerReview.agentName, 80)} から担当エージェントへの質問・指摘**\n${boundText(delivery.peerReview.feedback, MAX_DISCORD_MESSAGE - 100)}`,
+                    options,
+                  ),
+              ]
+            : []),
           (options) =>
             post(
               "📦 **実行結果**" +
@@ -1254,7 +1325,14 @@ export class DiscordVoiceTaskQueue {
 
   #handleTaskInstruction(
     task,
-    { userId, ownerUserId, content, requestKey, expectedControlVersion },
+    {
+      userId,
+      ownerUserId,
+      content,
+      requestKey,
+      expectedControlVersion,
+      source,
+    },
   ) {
     if (this.closed || userId !== ownerUserId) return false;
     const instruction = boundText(content, MAX_DISCORD_MESSAGE);
@@ -1301,7 +1379,12 @@ export class DiscordVoiceTaskQueue {
     if (task.instructions.length >= 10) return { type: "full" };
     const previousState = task.state;
     const previousCancelled = task.cancelled;
-    const entry = { id: randomUUID(), text: instruction, requestKey };
+    const entry = {
+      id: randomUUID(),
+      text: instruction,
+      requestKey,
+      ...(source ? { source: structuredClone(source) } : {}),
+    };
     task.instructions.push(entry);
     task.state = task.executing ? "running" : "queued";
     task.cancelled = false;
@@ -1426,12 +1509,21 @@ export class DiscordVoiceTaskQueue {
       this.active < this.concurrency &&
       this.queue.length
     ) {
-      const task = this.queue.shift();
+      const index = this.agentTeam
+        ? this.queue.findIndex((task) => this.agentTeam.canRun(task))
+        : 0;
+      if (index < 0) break;
+      const [task] = this.queue.splice(index, 1);
+      if (this.agentTeam && !this.agentTeam.start(task)) {
+        this.queue.splice(index, 0, task);
+        break;
+      }
       this.active += 1;
       const execution = this.#execute(task);
       this.running.add(execution);
       void execution.finally(() => {
         this.running.delete(execution);
+        this.agentTeam?.finish(task);
         this.active -= 1;
         this.#drain();
       });
@@ -1513,6 +1605,10 @@ export class DiscordVoiceTaskQueue {
         typeof consumedInstruction === "string"
           ? consumedInstruction
           : consumedInstruction?.text;
+      task.additionalInstructionSource =
+        typeof consumedInstruction === "object"
+          ? structuredClone(consumedInstruction?.source)
+          : undefined;
       await this.persist({ strict: true });
       const isContinuation = Boolean(task.additionalInstruction);
       await withTimeout(
@@ -1591,6 +1687,52 @@ export class DiscordVoiceTaskQueue {
         MAX_CODEX_RESPONSE_CHARACTERS,
       );
       task.result = response;
+      let peerReview;
+      if (
+        this.reviewTask &&
+        !isContinuation &&
+        !(task.peerReviewCompletedRevisions ?? []).includes(task.runRevision)
+      ) {
+        try {
+          const review = await withTimeout(
+            (signal) => this.reviewTask(task, { signal }),
+            this.taskTimeoutMs,
+            "reviewing task with another Codex agent",
+            task.controller.signal,
+          );
+          if (review) {
+            peerReview = review;
+            task.peerReviewCompletedRevisions ??= [];
+            task.peerReviewCompletedRevisions.push(task.runRevision);
+          }
+          if (review?.feedback) {
+            task.peerReviews ??= [];
+            task.peerReviews.push({
+              ...review,
+              runRevision: task.runRevision,
+              createdAt: Date.now(),
+            });
+            if (review.actionable && task.instructions.length < 10) {
+              task.instructions.push({
+                id: randomUUID(),
+                text: review.feedback,
+                requestKey: `peer-review:${task.id}:${task.runRevision}:${review.agentId}`,
+                source: {
+                  type: "agent_review",
+                  agentId: review.agentId,
+                  agentName: review.agentName,
+                },
+              });
+            }
+            await this.persist({ strict: true });
+          }
+        } catch (error) {
+          this.#log("peer_review_failed", {
+            taskId: task.id,
+            errorCode: voiceErrorCode(error),
+          });
+        }
+      }
       task.resultMetadata = {
         runRevision: task.runRevision,
         completedAt: Date.now(),
@@ -1598,6 +1740,7 @@ export class DiscordVoiceTaskQueue {
       };
       workerSucceeded = true;
       task.additionalInstruction = undefined;
+      task.additionalInstructionSource = undefined;
       await this.#waitForInstructionReceipts(task);
       const pendingInstructions = task.instructions.length;
       task.state = task.cancelled
@@ -1611,6 +1754,7 @@ export class DiscordVoiceTaskQueue {
         result: response,
         artifacts: structuredClone(task.artifacts),
         evidence: structuredClone(task.evidence),
+        peerReview: structuredClone(peerReview),
         state: task.state,
         pendingInstructions,
         elapsedMs: Date.now() - task.createdAt,

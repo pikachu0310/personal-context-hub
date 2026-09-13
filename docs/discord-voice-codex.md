@@ -13,6 +13,9 @@
 - 議事録は先頭に短い要点、添付に全文を持つ編集可能なメッセージとして表示し、可能ならBot自身の議事録メッセージをpinする。
 - 即時応答は議事録生成から独立したResponses API（既定 `gpt-4.1-mini`、`PERSONAL_CONTEXT_VOICE_QUICK_REPLY_MODEL` で変更）へ渡す。ツールを実行しない短い会話用であり、音声認識・回答生成・音声合成の時間は残る。`PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS=true` で、呼びかけのない疑問文も対象にする。
 - 開発会議で `PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE=true` を指定すると、対象サーバーの参加者全員がコマンド・作業操作を使える。音声も対象にするには全話者受信を有効にする。`PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD=false` で作業依頼の呼びかけ条件を外せる。
+- `PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` に複数のエージェントを登録すると、音声またはテキストから作ったIssueを担当領域と割当負荷で振り分ける。Issue、担当、割当理由を永続化してから作業を開始し、エージェント別の同時実行上限を守る。
+- `PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` を設定した場合はIssueごとにDiscord Forumスレッドを作り、依頼、進捗、結果、質問、指摘、担当エージェントの回答を集約する。チーム共通・エージェント別テキストチャンネルには担当決定を通知する。
+- 複数エージェント時のpeer reviewでは、別エージェントが完成結果とworktreeをread-onlyで確認する。具体的な質問・指摘はIssueスレッドへ投稿し、担当エージェントの同じCodexスレッドへ、操作権限を増やさないレビュー情報として一度だけ戻す。
 - `PERSONAL_CONTEXT_VOICE_AUTONOMOUS_TASKS=true` では、観測担当が会話中に必要だと判断した作業を明示依頼なしで作成できる。具体的な成果と根拠発言を保持し、既存作業との重複を避ける。公開・送信・購入等への許可を会話から推測しない。
 - STTへ話題の説明や固有名詞一覧を常時渡さない。送信前に無音・DC・ごく短いクリックを信号量で除く。この判定はVADではなく、雑音由来の誤認識すべてを防ぐものではない。「はい」などの認識単語を一律に破棄しない。
 
@@ -21,7 +24,7 @@
 - 1 Guild、1 Voiceチャンネル、1 Textチャンネル、1本人ユーザーを環境変数でallowlistする。開発用には明示設定でVoice内の全参加者を対象にできる。
 - Botは起動時に指定Voiceチャンネルへ参加する。既定では本人だけ、全参加者モードではBot以外の発話者を購読する。
 - 発話終了後に音声を一つのWAVへ変換し、OpenAI Transcriptions APIの`gpt-transcribe`へ送る。
-- 確定した文字起こしを同じTextチャンネルへ記録してから、`@openai/codex-sdk`の同一ローカルthreadへ渡す。
+- 確定した文字起こしを同じTextチャンネルへ記録してから、会議観測用の同一ローカルthreadへ渡す。Issue作業は担当エージェントごとの別threadへ渡す。
 - Codexの最終応答をTextチャンネルへ分割投稿し、`gpt-4o-mini-tts`で生成したPCMをVoiceへ返す。
 - 同時発話は直列queueに積み、再生中も受信する。1ターンの失敗は次のターンを止めない。
 - 会議観測モードでは話者ごとのSTTを並列実行し、確定した発話を一つのライブ文字起こしメッセージへ編集反映する。
@@ -103,7 +106,7 @@
 - Realtime transcriptionによるpartial transcriptと低遅延応答。
 - Realtime APIを用いた発話途中からの応答開始。
 - 明示的な危険操作approval UIと操作別policy。
-- 複数利用者・複数workspace・割り込み発話。
+- エージェントごとの別Codex資格情報、別ホスト実行、割り込み発話。
 
 ## 起動前診断
 

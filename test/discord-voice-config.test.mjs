@@ -102,6 +102,39 @@ test("the conversation deadline can be configured independently and preserves a 
   assert.equal(separate.stageTimeouts.running_codex, 900_000);
 });
 
+test("voice config loads a multi-agent Issue board without exposing secrets", () => {
+  const config = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID: "55555555555555555",
+    PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID: "66666666666666666",
+    PERSONAL_CONTEXT_VOICE_CODEX_AGENTS: JSON.stringify([
+      {
+        id: "frontend",
+        name: "Frontend Codex",
+        capabilities: ["ui", "react"],
+        maximumConcurrentTasks: 1,
+        workingDirectory: valid.PERSONAL_CONTEXT_VOICE_WORKDIR,
+        channelId: "77777777777777777",
+      },
+      {
+        id: "backend",
+        capabilities: ["api"],
+        maximumConcurrentTasks: 1,
+        workingDirectory: valid.PERSONAL_CONTEXT_VOICE_WORKDIR,
+      },
+    ]),
+  });
+  assert.equal(config.codexAgents.length, 2);
+  assert.equal(config.peerReviewEnabled, true);
+  assert.equal(config.issueForumChannelId, "55555555555555555");
+  assert.equal(config.agentCoordinationChannelId, "66666666666666666");
+  assert.equal(config.codexAgents[0].id, "frontend");
+  assert.equal(config.codexAgents[0].channelId, "77777777777777777");
+  const description = describeDiscordVoiceConfig(config);
+  assert.equal(description.codexAgents.length, 2);
+  assert.doesNotMatch(JSON.stringify(description), /test-secret-never-print/);
+});
+
 test("voice config validates Discord targets and redacts the OpenAI key", () => {
   const config = loadDiscordVoiceConfig(valid);
   assert.equal(config.silenceMs, 1_000);

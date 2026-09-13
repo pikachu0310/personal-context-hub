@@ -19,6 +19,7 @@ import {
   TaskWorkspaceManager,
   selectTaskProfile,
 } from "./discord-voice-workspace.mjs";
+import { CodexAgentTeam } from "./discord-agent-team.mjs";
 import { VoiceServiceError } from "./discord-voice-errors.mjs";
 import { identifyVerificationCommand } from "./discord-voice-evidence.mjs";
 import { qualifyTranscriptionAudio } from "./discord-voice-audio.mjs";
@@ -187,9 +188,18 @@ export function buildMeetingObservationPrompt({
   ].join("\n");
 }
 
-export function buildPowerTaskPrompt({ title, request, context }) {
+export function buildPowerTaskPrompt({
+  id,
+  issueId,
+  title,
+  request,
+  context,
+  assignedAgentId,
+  assignedAgentName,
+  assignmentReason,
+}) {
   return [
-    "あなたはDiscordから作成された、許可された参加者のCodexワーカーです。",
+    `あなたはDiscord Botに接続された、許可された参加者のCodexワーカー「${String(assignedAgentName ?? assignedAgentId ?? "Codex").slice(0, 80)}」です。`,
     "対象workspaceと関連repositoryのAGENTS.mdを読み、依頼を調査・実装・検証・修正まで自走して完了してください。",
     "ローカルのシェル、Git、Node、Python、アクセス可能なファイル、ネットワーク、ライブWeb検索を使用できます。読み書きは割り当てられたworkspace内で行ってください。元のrepositoryや他タスクの作業場所へ書き込まないでください。",
     "公開・送信・削除・購入・deploy・release・権限変更・資格情報変更は、ownerRequestに対象と操作が明示されている場合だけ実行してください。曖昧なら結果に必要な確認事項を残してください。",
@@ -198,6 +208,9 @@ export function buildPowerTaskPrompt({ title, request, context }) {
     "テスト・lint・型検査などの検証は、他のコマンドと &&・;・パイプでまとめず、検証ごとに独立したシェル呼び出しで実行し、終了を待ってください。Botが各検証の終了コードを記録するためです。終了結果を取得できない検証は成功扱いしないでください。",
     "最終応答はDiscord向けの自然な日本語で、成果・変更ファイル・実行したテストと終了結果・未検証事項・根拠URLを簡潔にまとめてください。テストしていないことを成功と書かないでください。",
     JSON.stringify({
+      issueId: String(issueId ?? id ?? "").slice(0, 80),
+      assignedAgentId: String(assignedAgentId ?? "").slice(0, 40),
+      assignmentReason: String(assignmentReason ?? "").slice(0, 300),
       title: String(title ?? "").slice(0, 120),
       ownerRequest: String(request ?? "").slice(0, 16_000),
       meetingContext: String(context ?? "").slice(0, 40_000),
@@ -506,19 +519,55 @@ export function createOpenAIAudioAdapter(config, { client } = {}) {
 }
 
 export class CodexVoiceRunner {
-  constructor(config, { codex } = {}) {
+  constructor(config, { codex, agentTeam } = {}) {
     this.config = config;
+    this.agentTeam =
+      agentTeam ??
+      (config.codexAgents?.length
+        ? new CodexAgentTeam(config.codexAgents)
+        : undefined);
     if (codex) {
       this.codex = codex;
     }
     this.thread = undefined;
     this.preparing = undefined;
-    this.workspaces = config.taskWorkspaceDirectory
-      ? new TaskWorkspaceManager({
-          repository: config.workingDirectory,
+    this.workspaceManagers = new Map();
+    const agents = this.agentTeam?.list() ?? [];
+    if (config.taskWorkspaceDirectory) {
+      if (agents.length > 1) {
+        for (const agent of agents)
+          this.workspaceManagers.set(
+            agent.id,
+            new TaskWorkspaceManager({
+              repository: agent.workingDirectory,
+              directory: join(config.taskWorkspaceDirectory, agent.id),
+            }),
+          );
+      } else {
+        const agent = agents[0];
+        const manager = new TaskWorkspaceManager({
+          repository: agent?.workingDirectory ?? config.workingDirectory,
           directory: config.taskWorkspaceDirectory,
-        })
-      : undefined;
+        });
+        this.workspaceManagers.set(agent?.id ?? "default", manager);
+        this.workspaces = manager;
+      }
+    }
+  }
+
+  #agentFor(task) {
+    return (
+      this.agentTeam?.get(task.assignedAgentId) ?? this.agentTeam?.list()[0]
+    );
+  }
+
+  #workspaceFor(task) {
+    const agent = this.#agentFor(task);
+    return (
+      this.workspaceManagers.get(agent?.id) ??
+      this.workspaces ??
+      this.workspaceManagers.values().next().value
+    );
   }
 
   async prepare() {
@@ -528,13 +577,28 @@ export class CodexVoiceRunner {
         this.config.codexHome ??
         process.env.CODEX_HOME ??
         join(process.env.HOME ?? homedir(), ".codex");
+      const agentTrustDirectories = (
+        await Promise.all(
+          (this.agentTeam?.list() ?? []).map((agent) =>
+            codexWorkspaceTrustDirectories(
+              agent.workingDirectory,
+              this.config.taskWorkspaceDirectory
+                ? join(this.config.taskWorkspaceDirectory, agent.id)
+                : undefined,
+            ),
+          ),
+        )
+      ).flat();
       const isolatedCodexHome = await prepareIsolatedCodexHome({
         sourceCodexHome,
         isolatedCodexHome: this.config.isolatedCodexHome,
-        trustedDirectories: await codexWorkspaceTrustDirectories(
-          this.config.workingDirectory,
-          this.config.taskWorkspaceDirectory,
-        ),
+        trustedDirectories: [
+          ...(await codexWorkspaceTrustDirectories(
+            this.config.workingDirectory,
+            this.config.taskWorkspaceDirectory,
+          )),
+          ...agentTrustDirectories,
+        ],
       });
       this.codex = new Codex(
         buildCodexOptions(process.env, isolatedCodexHome, {
@@ -551,9 +615,9 @@ export class CodexVoiceRunner {
   }
 
   async applyTask(task) {
-    if (!this.workspaces)
-      throw new Error("No task workspace manager configured.");
-    return this.workspaces.apply(task);
+    const workspace = this.#workspaceFor(task);
+    if (!workspace) throw new Error("No task workspace manager configured.");
+    return workspace.apply(task);
   }
 
   async run(transcript, { signal } = {}) {
@@ -587,11 +651,20 @@ export class CodexVoiceRunner {
       );
     }
     await this.prepare();
-    const workingDirectory = this.workspaces
-      ? await this.workspaces.prepare(task)
-      : this.config.workingDirectory;
+    const agent = this.#agentFor(task);
+    if (agent) {
+      task.assignedAgentId = agent.id;
+      task.assignedAgentName = agent.name;
+    }
+    const workspace = this.#workspaceFor(task);
+    const workingDirectory = workspace
+      ? await workspace.prepare(task)
+      : (agent?.workingDirectory ?? this.config.workingDirectory);
     task.runRevision = (task.runRevision ?? 0) + 1;
-    const profile = selectTaskProfile(task, this.config);
+    const profile = selectTaskProfile(
+      { ...task, assignedAgent: agent },
+      this.config,
+    );
     task.profile = profile;
     task.evidence = {
       runRevision: task.runRevision,
@@ -619,18 +692,25 @@ export class CodexVoiceRunner {
         : this.codex.startThread(taskOptions));
     task.codexThread = thread;
     const prompt = task.additionalInstruction
-      ? [
-          resuming ? "" : buildPowerTaskPrompt(task),
-          "Discordの本人専用タスクスレッドから追加指示が届きました。",
-          "この指示だけが今回追加された操作権限です。元のタスクの成果と現在のworkspace状態を引き継いで対応してください。",
-          "公開・送信・削除・購入・deploy・release・権限変更・資格情報変更は、追加指示に対象と操作が明示されている場合だけ実行してください。",
-          `追加指示:\n${task.additionalInstruction}`,
-        ].join("\n")
+      ? task.additionalInstructionSource?.type === "agent_review"
+        ? [
+            resuming ? "" : buildPowerTaskPrompt(task),
+            `別のCodexエージェント「${task.additionalInstructionSource.agentName ?? task.additionalInstructionSource.agentId}」からIssueスレッドへ質問・指摘が届きました。`,
+            "これはレビュー情報であり、新しい操作権限ではありません。元の依頼の範囲で確認し、必要なら修正・検証して、質問への回答を最終応答に含めてください。",
+            `質問・指摘:\n${task.additionalInstruction}`,
+          ].join("\n")
+        : [
+            resuming ? "" : buildPowerTaskPrompt(task),
+            "Discordの本人専用タスクスレッドから追加指示が届きました。",
+            "この指示だけが今回追加された操作権限です。元のタスクの成果と現在のworkspace状態を引き継いで対応してください。",
+            "公開・送信・削除・購入・deploy・release・権限変更・資格情報変更は、追加指示に対象と操作が明示されている場合だけ実行してください。",
+            `追加指示:\n${task.additionalInstruction}`,
+          ].join("\n")
       : buildPowerTaskPrompt(task);
     if (typeof thread.runStreamed !== "function") {
       const response = await this.#runOnThread(thread, prompt, { signal });
       task.codexThreadId = thread.id;
-      task.artifacts = await this.workspaces?.collect(task);
+      task.artifacts = await workspace?.collect(task);
       return response;
     }
     try {
@@ -694,10 +774,67 @@ export class CodexVoiceRunner {
           "作業の完了を確認できませんでした。保存済みのタスクへ追加指示を送り、続きから確認してください。",
         );
       }
-      task.artifacts = await this.workspaces?.collect(task);
+      task.artifacts = await workspace?.collect(task);
       return finalResponse;
     } catch (error) {
       this.#throwActionableError(error);
+    }
+  }
+
+  async reviewTask(task, { signal } = {}) {
+    if (!this.config.peerReviewEnabled) return undefined;
+    const reviewer = this.agentTeam?.selectReviewer(task);
+    if (!reviewer) return undefined;
+    const lease = { assignedAgentId: reviewer.id };
+    if (!this.agentTeam?.start(lease)) return undefined;
+    try {
+      await this.prepare();
+      const thread = this.codex.startThread({
+        workingDirectory:
+          task.workingDirectory ??
+          reviewer.workingDirectory ??
+          this.config.workingDirectory,
+        sandboxMode: "read-only",
+        approvalPolicy: "never",
+        networkAccessEnabled: false,
+        webSearchMode: "disabled",
+        skipGitRepoCheck: false,
+        additionalDirectories: [],
+        model:
+          reviewer.model ?? this.config.taskModel ?? this.config.codexModel,
+        modelReasoningEffort:
+          reviewer.reasoningEffort ??
+          this.config.taskReasoningEffort ??
+          this.config.codexReasoningEffort,
+      });
+      const feedback = String(
+        await this.#runOnThread(
+          thread,
+          [
+            `あなたはCodexエージェント「${reviewer.name}」として、別エージェントのIssue対応をレビューします。`,
+            "対象workspaceとAGENTS.mdを読み、実装、検証、依頼との一致を確認してください。ファイルは変更しません。",
+            "問題がなければ「指摘なし」だけを返してください。問題があれば、担当エージェントが回答・修正できる具体的な質問または指摘を日本語で簡潔に返してください。",
+            "このレビューは新しい外部操作の権限を与えません。秘密値やprivateな生データを転載しないでください。",
+            JSON.stringify({
+              issueId: task.issueId ?? task.id,
+              title: task.title,
+              ownerRequest: task.request,
+              assignedAgentId: task.assignedAgentId,
+              result: task.result,
+              verification: task.evidence,
+            }),
+          ].join("\n"),
+          { signal },
+        ),
+      ).trim();
+      return {
+        agentId: reviewer.id,
+        agentName: reviewer.name,
+        feedback,
+        actionable: Boolean(feedback) && !/^指摘なし[。\s]*$/u.test(feedback),
+      };
+    } finally {
+      this.agentTeam.finish(lease);
     }
   }
 

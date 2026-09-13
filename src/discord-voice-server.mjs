@@ -26,6 +26,7 @@ import {
 } from "discord.js";
 import prism from "prism-media";
 import { MeetingStateStore, meetingScope } from "./discord-voice-state.mjs";
+import { CodexAgentTeam } from "./discord-agent-team.mjs";
 import {
   createIdobataMessageHandler,
   createIdobataInteractionHandler,
@@ -408,12 +409,13 @@ export function formatDiscordTaskCard(
       "Codexタスク",
   );
   return [
-    `${icon} **Codexタスク** \`${id || "unknown"}\``,
+    `${icon} **Codexタスク Issue** \`${String(task.issueId ?? id ?? "unknown").replace(/[^a-zA-Z0-9_-]/g, "") || "unknown"}\``,
     `**${title}**`,
     `状態: **${label}**${Number.isFinite(elapsedMs) ? ` · ${formatElapsedTime(elapsedMs)}` : ""}${pendingInstructions > 0 ? ` · 追加指示 **${pendingInstructions}件待機**` : ""}`,
+    `担当エージェント: **${escapeDiscordMarkdown(task.assignedAgentName ?? task.assignedAgentId ?? "Codex")}**${task.assignmentReason ? ` · ${escapeDiscordMarkdown(task.assignmentReason)}` : ""}`,
     task.profile
-      ? `担当: ${task.profile.kind} · ${task.profile.model ?? "default"} / ${task.profile.modelReasoningEffort}`
-      : `担当: ${task.kind ?? "implementation"}`,
+      ? `実行設定: ${task.profile.kind} · ${task.profile.model ?? "default"} / ${task.profile.modelReasoningEffort}`
+      : `種別: ${task.kind ?? "implementation"}`,
     threadId ? `ログ: <#${threadId}>` : "ログスレッドを準備しています…",
     task.artifacts?.runRevision
       ? `実行版: **${task.artifacts.runRevision}**${task.appliedRevision === task.artifacts.runRevision ? " · 反映済み" : ""}`
@@ -477,7 +479,7 @@ export function createDiscordTaskCardUpdater(
   task,
   threadId,
   starter,
-  { silent = true } = {},
+  { silent = true, fallbackChannel = textChannel } = {},
 ) {
   let updating = Promise.resolve();
   const update = (options = {}) => {
@@ -515,7 +517,7 @@ export function createDiscordTaskCardUpdater(
       }
       signal?.throwIfAborted();
       if (isCurrent && !isCurrent()) return starter;
-      starter = await textChannel.send({
+      starter = await fallbackChannel.send({
         ...createDiscordMessagePayload(payload.content, {
           silent,
           idempotencyKey: `task-card:${task.id}:${task.createdAt}:${starter?.id ?? task.starterId ?? "restore"}`,
@@ -536,48 +538,92 @@ export function createDiscordTaskCardUpdater(
   };
 }
 
-export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
+export function createDiscordTaskThread(
+  textChannel,
+  {
+    silent = true,
+    issueForum,
+    coordinationChannel,
+    agentChannels = new Map(),
+  } = {},
+) {
   return async (task) => {
     const creationKey = `task-thread:${task.id}:${task.createdAt}:${task.threadId ?? "initial"}`;
     const title = String(task.title ?? "Codexタスク")
       .replace(/[\r\n]+/g, " ")
       .trim();
-    const starter = await textChannel.send(
-      createDiscordMessagePayload(formatDiscordTaskCard(task), {
-        silent,
-        idempotencyKey: `${creationKey}:card`,
-      }),
-    );
-    if (typeof starter.startThread !== "function") {
-      throw new Error("Configured text channel cannot create task threads.");
-    }
+    let starter;
     let thread;
-    try {
-      thread = await starter.startThread({
-        name: `${task.id} ${title}`.slice(0, 100),
-        autoArchiveDuration: 1_440,
-        reason: "Keep Codex task output separate from meeting minutes",
-      });
-    } catch (error) {
-      // A message and the thread started from it share an ID. The creation
-      // may have succeeded even when its HTTP acknowledgement was lost.
-      const existing = await textChannel.client?.channels
-        ?.fetch(starter.id, { force: true })
-        .catch(() => undefined);
-      if (
-        existing?.isThread?.() &&
-        String(existing.id) === String(starter.id) &&
-        String(existing.parentId) === String(textChannel.id)
-      ) {
-        thread = existing;
-      } else {
-        await starter
-          .edit({
-            content: formatDiscordTaskCard(task, { state: "failed" }),
-            allowedMentions: { parse: [] },
-          })
+    if (issueForum) {
+      const threadName = `${task.issueId ?? task.id} ${title}`.slice(0, 100);
+      try {
+        thread = await issueForum.threads.create({
+          name: threadName,
+          autoArchiveDuration: 1_440,
+          reason: "Create the durable discussion thread for a Codex issue",
+          message: createDiscordMessagePayload(formatDiscordTaskCard(task), {
+            silent,
+            idempotencyKey: `${creationKey}:card`,
+          }),
+        });
+      } catch (error) {
+        const recovered = [];
+        for (const fetchThreads of [
+          () => issueForum.threads.fetchActive?.(),
+          () => issueForum.threads.fetchArchived?.({ limit: 100 }),
+        ]) {
+          const result = await Promise.resolve(fetchThreads()).catch(
+            () => undefined,
+          );
+          const collection = result?.threads ?? result;
+          if (collection?.values) recovered.push(...collection.values());
+        }
+        thread = recovered.find(
+          (candidate) =>
+            String(candidate?.parentId) === String(issueForum.id) &&
+            String(candidate?.name) === threadName,
+        );
+        if (!thread) throw error;
+      }
+      task.surfaceType = "forum";
+      starter = await thread.fetchStarterMessage?.().catch(() => undefined);
+    } else {
+      starter = await textChannel.send(
+        createDiscordMessagePayload(formatDiscordTaskCard(task), {
+          silent,
+          idempotencyKey: `${creationKey}:card`,
+        }),
+      );
+      if (typeof starter.startThread !== "function") {
+        throw new Error("Configured text channel cannot create task threads.");
+      }
+      try {
+        thread = await starter.startThread({
+          name: `${task.id} ${title}`.slice(0, 100),
+          autoArchiveDuration: 1_440,
+          reason: "Keep Codex task output separate from meeting minutes",
+        });
+      } catch (error) {
+        // A message and the thread started from it share an ID. The creation
+        // may have succeeded even when its HTTP acknowledgement was lost.
+        const existing = await textChannel.client?.channels
+          ?.fetch(starter.id, { force: true })
           .catch(() => undefined);
-        throw error;
+        if (
+          existing?.isThread?.() &&
+          String(existing.id) === String(starter.id) &&
+          String(existing.parentId) === String(textChannel.id)
+        ) {
+          thread = existing;
+        } else {
+          await starter
+            .edit({
+              content: formatDiscordTaskCard(task, { state: "failed" }),
+              allowedMentions: { parse: [] },
+            })
+            .catch(() => undefined);
+          throw error;
+        }
       }
     }
     const threadId = String(thread.id ?? "");
@@ -587,7 +633,7 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       task,
       threadId,
       starter,
-      { silent },
+      { silent, fallbackChannel: issueForum ? thread : textChannel },
     );
     const update = card.update;
     const post = (content, { signal, idempotencyKey } = {}) => {
@@ -613,6 +659,36 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
         ].join("\n"),
         { idempotencyKey: `${creationKey}:help` },
       ).catch(() => undefined);
+      const assignment = [
+        `📥 **Issue \`${task.issueId ?? task.id}\` を ${escapeDiscordMarkdown(task.assignedAgentName ?? task.assignedAgentId ?? "Codex")} に割り当てました**`,
+        escapeDiscordMarkdown(title),
+        `議論: <#${threadId}>`,
+        task.assignmentReason
+          ? `理由: ${escapeDiscordMarkdown(task.assignmentReason)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const assignmentChannels = [
+        coordinationChannel,
+        agentChannels.get(task.assignedAgentId),
+      ].filter(
+        (channel, index, channels) =>
+          channel?.send &&
+          channels.findIndex(
+            (candidate) => String(candidate?.id) === String(channel.id),
+          ) === index,
+      );
+      await Promise.allSettled(
+        assignmentChannels.map((channel) =>
+          channel.send(
+            createDiscordMessagePayload(assignment, {
+              silent,
+              idempotencyKey: `${creationKey}:assignment:${channel.id}`,
+            }),
+          ),
+        ),
+      );
     } catch (error) {
       await update({ state: "failed" }).catch(() => undefined);
       throw error;
@@ -623,6 +699,7 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
       update,
       postArtifacts,
       threadId,
+      surfaceType: issueForum ? "forum" : "thread",
       get starterId() {
         return card.starterId;
       },
@@ -674,7 +751,22 @@ export async function startDiscordVoiceCodex({
   // Build local adapters before Discord login so unsafe Codex configuration
   // fails closed without joining or sending to a channel.
   const audio = dependencies.audioAdapter ?? createOpenAIAudioAdapter(config);
-  const codex = dependencies.codexRunner ?? new CodexVoiceRunner(config);
+  const agentTeam =
+    dependencies.agentTeam ??
+    new CodexAgentTeam(
+      config.codexAgents ?? [
+        {
+          id: "default",
+          name: "Codex",
+          capabilities: ["*"],
+          maximumConcurrentTasks: config.taskConcurrency ?? 1,
+          workingDirectory: config.workingDirectory,
+          enabled: true,
+        },
+      ],
+    );
+  const codex =
+    dependencies.codexRunner ?? new CodexVoiceRunner(config, { agentTeam });
   await codex.prepare?.();
   const credential = await (
     dependencies.readCredential ?? readDiscordTokenStore
@@ -743,15 +835,71 @@ export async function startDiscordVoiceCodex({
     await client.login(credential.token);
     await ready;
     const guild = await client.guilds.fetch(config.guildId);
-    const [voiceChannel, textChannel] = await Promise.all([
+    const agentChannelIds = [
+      ...new Set(
+        (config.codexAgents ?? [])
+          .map(({ channelId }) => channelId)
+          .filter(Boolean),
+      ),
+    ];
+    const [
+      voiceChannel,
+      textChannel,
+      issueForum,
+      coordinationChannel,
+      ...agentChannelValues
+    ] = await Promise.all([
       guild.channels.fetch(config.voiceChannelId),
       guild.channels.fetch(config.textChannelId),
+      config.issueForumChannelId
+        ? guild.channels.fetch(config.issueForumChannelId)
+        : undefined,
+      config.agentCoordinationChannelId
+        ? guild.channels.fetch(config.agentCoordinationChannelId)
+        : undefined,
+      ...agentChannelIds.map((channelId) => guild.channels.fetch(channelId)),
     ]);
     if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
       throw new Error("Configured voice channel is not a Guild Voice channel.");
     }
     if (!textChannel?.isTextBased() || typeof textChannel.send !== "function") {
       throw new Error("Configured text channel cannot receive Bot messages.");
+    }
+    if (
+      config.issueForumChannelId &&
+      (!issueForum ||
+        issueForum.type !== ChannelType.GuildForum ||
+        typeof issueForum.threads?.create !== "function")
+    ) {
+      throw new Error(
+        "PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID must identify a Discord Forum channel.",
+      );
+    }
+    if (
+      config.agentCoordinationChannelId &&
+      (!coordinationChannel?.isTextBased?.() ||
+        typeof coordinationChannel.send !== "function")
+    ) {
+      throw new Error(
+        "PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID cannot receive Bot messages.",
+      );
+    }
+    const channelById = new Map(
+      agentChannelIds.map((channelId, index) => [
+        channelId,
+        agentChannelValues[index],
+      ]),
+    );
+    const agentChannels = new Map(
+      (config.codexAgents ?? [])
+        .filter(({ channelId }) => channelId)
+        .map((agent) => [agent.id, channelById.get(agent.channelId)]),
+    );
+    for (const [agentId, channel] of agentChannels) {
+      if (!agentId || !channel?.isTextBased?.() || !channel.send)
+        throw new Error(
+          `Codex agent ${agentId ?? "unknown"} channel is invalid.`,
+        );
     }
     const messageOptions = { silent: config.silentMessages !== false };
     const postText = (content, { idempotencyKey } = {}) =>
@@ -761,10 +909,12 @@ export async function startDiscordVoiceCodex({
           idempotencyKey,
         }),
       );
-    const createTaskThread = createDiscordTaskThread(
-      textChannel,
-      messageOptions,
-    );
+    const createTaskThread = createDiscordTaskThread(textChannel, {
+      ...messageOptions,
+      issueForum,
+      coordinationChannel,
+      agentChannels,
+    });
     const upsertLiveTranscript = createEditableDiscordPost(
       textChannel,
       messageOptions,
@@ -846,6 +996,8 @@ export async function startDiscordVoiceCodex({
     taskQueue = config.powerMode
       ? new DiscordVoiceTaskQueue({
           runTask: (task, options) => codex.runTask(task, options),
+          reviewTask: (task, options) => codex.reviewTask?.(task, options),
+          agentTeam,
           postText,
           createTaskThread,
           logger,
@@ -875,22 +1027,32 @@ export async function startDiscordVoiceCodex({
             throw error;
           });
         if (!thread) throw missingThread();
-        const starter = task.starterId
-          ? await textChannel.messages.fetch(task.starterId).catch((error) => {
-              if (error?.code !== RESTJSONErrorCodes.UnknownMessage)
-                throw error;
-              return undefined;
-            })
-          : undefined;
+        const starter =
+          task.surfaceType === "forum"
+            ? await thread.fetchStarterMessage?.().catch(() => undefined)
+            : task.starterId
+              ? await textChannel.messages
+                  .fetch(task.starterId)
+                  .catch((error) => {
+                    if (error?.code !== RESTJSONErrorCodes.UnknownMessage)
+                      throw error;
+                    return undefined;
+                  })
+              : undefined;
         const card = createDiscordTaskCardUpdater(
           textChannel,
           task,
           task.threadId,
           starter,
-          messageOptions,
+          {
+            ...messageOptions,
+            fallbackChannel:
+              task.surfaceType === "forum" ? thread : textChannel,
+          },
         );
         return {
           threadId: task.threadId,
+          surfaceType: task.surfaceType,
           get starterId() {
             return card.starterId;
           },
@@ -1082,6 +1244,10 @@ export async function startDiscordVoiceCodex({
     if (config.allParticipantsOperate || config.autonomousTasks)
       await postText(
         `⚙️ この会議の設定: ${config.allParticipantsOperate ? "参加者全員が作業を指示・操作できます。" : "設定済みの操作担当者が作業を操作できます。"}${config.autonomousTasks ? "会話から必要な作業を判断してタスク化します。" : ""}${config.answerUnaddressedQuestions ? "呼びかけなしの質問にも応答します。" : ""}`,
+      );
+    if ((config.codexAgents?.length ?? 0) > 1)
+      await postText(
+        `🤖 Codexエージェント ${config.codexAgents.length}体を接続しました。Issueは担当領域と負荷で割り振り、${config.issueForumChannelId ? `<#${config.issueForumChannelId}>` : "タスクスレッド"}で進捗・質問・指摘・回答を共有します。`,
       );
     logInfoQuietly(logger, {
       component: "discord-voice",

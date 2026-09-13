@@ -18,6 +18,11 @@ npm run start:discord:voice:instance -- YOUR_PROFILE
 ```
 
 グループ開発では `PERSONAL_CONTEXT_VOICE_MODE=meeting`、`PERSONAL_CONTEXT_VOICE_POWER_MODE=true`、`PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE=true` を設定します。
+1つのBotへ複数のCodexエージェントを接続する場合は、`PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` にエージェントのJSON配列を設定します。各要素は `id`、`name`、担当判定に使う `capabilities`、`maximumConcurrentTasks`、対象repoの `workingDirectory`、任意の専用Discord `channelId`、モデル設定を持ちます。音声または `/ido task` からIssueが作られると、担当領域と現在の割当負荷から担当エージェントが決まり、Issue・担当・理由が永続化されてから作業を開始します。
+
+`PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` にDiscord ForumのIDを指定すると、Issueごとにフォーラム投稿を1つ作り、その投稿のスレッドへ依頼、進捗、結果、質問、指摘、担当エージェントの回答を集約します。`PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID` はチーム共通の割当通知と `/ido` 操作用、各エージェントの `channelId` はそのエージェントへの割当通知用です。複数エージェント時はpeer reviewが既定で有効になり、別エージェントの質問・指摘をIssueスレッドへ投稿し、担当エージェントの同じCodexスレッドへ権限を増やさないレビュー情報として戻します。`PERSONAL_CONTEXT_VOICE_AGENT_PEER_REVIEW=false` で無効にできます。
+
+設定例は [.env.voice.example](./.env.voice.example) にあります。`PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` を省略した構成は、従来どおり1つの既定エージェントとして動作します。GitHub Issueへの自動投稿は行わず、BotのローカルIssue台帳とDiscord Forumを正本にします。GitHubへの公開・書き込みは別途、対象repositoryと操作が明示された場合だけ行います。
 モデルと推論強度は `PERSONAL_CONTEXT_VOICE_CODEX_MODEL` / `PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT` を共通設定とし、`OBSERVER`・`TASK`・`COMPLEX_TASK` ごとの指定を優先します。複雑な作業の設定を省略すると `TASK` を引き継ぎます。例の設定では会議観測をSol low、作業をSol mediumに分けており、`inspect` で実効設定を確認できます。
 Botには対象チャンネルでの閲覧・接続・発言・送信・履歴閲覧・公開スレッド作成・スレッド送信・ファイル添付を許可し、Developer PortalでMessage Content Intentを有効にします。
 起動すると通話に参加し、認識テキストの保存とAI音声の使用をチャンネルへ告知します。参加者へ保存範囲を説明してから利用してください。
