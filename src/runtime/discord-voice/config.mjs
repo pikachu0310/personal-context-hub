@@ -136,6 +136,14 @@ export function loadDiscordVoiceConfig(env = process.env) {
     3_600_000,
   );
   return {
+    studioPort:
+      env.PERSONAL_CONTEXT_VOICE_STUDIO_PORT === undefined
+        ? undefined
+        : integer(env, "PERSONAL_CONTEXT_VOICE_STUDIO_PORT", 4311, 0, 65535),
+    studioHost: env.PERSONAL_CONTEXT_VOICE_STUDIO_HOST?.trim() || "127.0.0.1",
+    studioPublicOrigin:
+      env.PERSONAL_CONTEXT_VOICE_STUDIO_PUBLIC_ORIGIN?.trim() || undefined,
+    studioName: env.PERSONAL_CONTEXT_VOICE_STUDIO_NAME?.trim() || undefined,
     guildId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_GUILD_ID"),
     voiceChannelId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_CHANNEL_ID"),
     textChannelId: requiredSnowflake(

@@ -1,3 +1,8 @@
+import { startHudServer, createHudStore } from "../hud-server.mjs";
+import { startStudioServer } from "../studio-server.mjs";
+import { createPreviewRelay } from "../preview-relay.mjs";
+import { readStudioAccess } from "../studio-access.mjs";
+import { createStudioController } from "../../adapters/browser/controller.mjs";
 import { DiscordLiveBridge } from "../../providers/live.mjs";
 import {
   createDiscordDiscussionRouter,
@@ -98,6 +103,9 @@ export async function startDiscordVoiceCodex({
   const credential = await (
     dependencies.readCredential ?? readDiscordTokenStore
   )();
+  let hud;
+  const hudStore = createHudStore();
+  let studio, studioController, previewRelay;
   let connection;
   let transcriptArchive;
   let session;
@@ -126,7 +134,9 @@ export async function startDiscordVoiceCodex({
     clearInterval(deliveryInterval);
     playAudio?.dispose?.();
     stopping = (async () => {
+      await studio?.close();
       const results = await Promise.allSettled([
+        Promise.resolve().then(() => studioController?.close()),
         Promise.resolve().then(() => previews?.close()),
         Promise.resolve().then(() => session?.stop?.()),
         Promise.resolve().then(() => taskQueue?.stop?.()),
@@ -135,6 +145,8 @@ export async function startDiscordVoiceCodex({
           ? [Promise.resolve().then(() => transcriptArchive?.stop?.())]
           : []),
       ]);
+      await hud?.close();
+      await previewRelay?.close();
       const failures = results
         .filter((result) => result.status === "rejected")
         .map((result) => result.reason);
@@ -283,6 +295,14 @@ export async function startDiscordVoiceCodex({
     );
     playAudio =
       dependencies.playAudio ?? createDiscordPlayer(connection, logger, config);
+    if (config.studioPort !== undefined) {
+      previewRelay = createPreviewRelay({
+        host: config.studioHost ?? "127.0.0.1",
+        publicHost: config.studioPublicOrigin
+          ? new URL(config.studioPublicOrigin).hostname
+          : "127.0.0.1",
+      });
+    }
     previews = new TaskPreviewManager({
       command: config.previewCommand,
       workspaceRoot: config.taskWorkspaceDirectory,
@@ -295,6 +315,7 @@ export async function startDiscordVoiceCodex({
           executablePath: config.previewBrowserExecutable,
         }),
       onChange: async (task) => {
+        await previewRelay?.expose(task);
         await task.checkpoint?.();
         await task.surface?.update?.({
           state: task.state,
@@ -302,7 +323,25 @@ export async function startDiscordVoiceCodex({
         });
       },
     });
+    const hudPort =
+      config.hudPort ?? process.env.PERSONAL_CONTEXT_VOICE_HUD_PORT;
+    if (hudPort !== undefined && hudPort !== "") {
+      try {
+        hud = await startHudServer({ port: Number(hudPort), store: hudStore });
+        logInfoQuietly(logger, {
+          component: "voice-hud",
+          event: "ready",
+          url: hud.url,
+        });
+      } catch {
+        logInfoQuietly(logger, {
+          component: "voice-hud",
+          event: "unavailable",
+        });
+      }
+    }
     const engine = await createConversationEngine({
+      onEvent: (event) => hudStore.publish(event),
       config,
       audio,
       execution: {
@@ -319,6 +358,7 @@ export async function startDiscordVoiceCodex({
         },
         confirmPreview: (task, revision, userId) =>
           previews.confirm(task, revision, userId),
+        restartPreview: (task) => previews.start(task),
         invalidatePreview: (task, state = "superseded") =>
           previews.stop(task.id, state),
       },
@@ -431,6 +471,38 @@ export async function startDiscordVoiceCodex({
     });
     session = engine.session;
     taskQueue = engine.taskQueue;
+    if (config.studioPort !== undefined) {
+      studioController = createStudioController({
+        engine,
+        store,
+        initialState: saved,
+        hudStore,
+        name: config.studioName ?? "井戸Botの共有スタジオ",
+      });
+      const access =
+        dependencies.studioAccess ??
+        (await readStudioAccess(`${config.statePath}.studio-access.json`));
+      studio = await startStudioServer({
+        rooms: new Map([
+          [
+            "current",
+            {
+              name: config.studioName ?? "井戸Botの共有スタジオ",
+              controller: studioController,
+            },
+          ],
+        ]),
+        port: config.studioPort,
+        host: config.studioHost ?? "127.0.0.1",
+        publicOrigin: config.studioPublicOrigin,
+        ...access,
+      });
+      logInfoQuietly(logger, {
+        component: "voice-studio",
+        event: "ready",
+        url: studio.url,
+      });
+    }
     let liveChanging = false;
     const setLiveMode = async (enabled) => {
       if (
@@ -629,6 +701,8 @@ export async function startDiscordVoiceCodex({
       session,
       taskQueue,
       input: engine.input,
+      hud,
+      studio,
       stop: stopService,
     };
   } catch (error) {

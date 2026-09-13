@@ -1,3 +1,4 @@
+import { safeNotify } from "../../engine/telemetry.mjs";
 import { SpeechStartGate } from "./speech-start.mjs";
 import {
   createThreadParticipantJoiner,
@@ -94,8 +95,8 @@ export function createDiscordPlayer(
   const speechStart = new SpeechStartGate(connection.receiver.speaking, {
     silenceMs: speechStartSilenceMs,
   });
-  const play = serializeAudioPlayback(
-    async (ttsPcm, { signal, beforeStart, canStart } = {}) => {
+  const serializedPlay = serializeAudioPlayback(
+    async (ttsPcm, { signal, beforeStart, canStart, onPlaybackState } = {}) => {
       if (signal?.aborted) throw signal.reason;
       const interruption = new AbortController();
       signal = signal
@@ -116,6 +117,10 @@ export function createDiscordPlayer(
       try {
         const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
         const seconds = raw.length / PCM_BYTES_PER_SECOND;
+        safeNotify(onPlaybackState, {
+          status: "waiting",
+          reason: "speaker_silence",
+        });
         let admitted = false;
         while (!admitted) {
           if (signal.aborted) throw signal.reason;
@@ -138,6 +143,7 @@ export function createDiscordPlayer(
           AudioPlayerStatus.Playing,
           AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
         );
+        safeNotify(onPlaybackState, { status: "running", reason: undefined });
         await entersState(
           player,
           AudioPlayerStatus.Idle,
@@ -155,6 +161,13 @@ export function createDiscordPlayer(
       }
     },
   );
+  const play = (audio, options = {}) => {
+    safeNotify(options.onPlaybackState, {
+      status: "waiting",
+      reason: "playback_queue",
+    });
+    return serializedPlay(audio, options);
+  };
   play.dispose = () => speechStart.dispose();
   return play;
 }

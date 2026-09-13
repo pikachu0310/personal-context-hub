@@ -1,3 +1,4 @@
+import { createTelemetry } from "./telemetry.mjs";
 import { randomUUID } from "node:crypto";
 import {
   VoiceServiceError,
@@ -15,6 +16,7 @@ import {
 import { plainPresentation } from "./output/presentation.mjs";
 export class TurnSession {
   constructor({
+    telemetry = createTelemetry(),
     presentation = plainPresentation,
     speechEnabled = true,
     transcribe,
@@ -26,6 +28,7 @@ export class TurnSession {
     maximumQueuedTurns = 3,
     stageTimeouts = {},
   }) {
+    this.telemetry = telemetry;
     this.presentation = presentation;
     this.speechEnabled = speechEnabled;
     this.dependencies = {
@@ -51,6 +54,7 @@ export class TurnSession {
     if (this.closed) return false;
     if (this.queue.length >= this.maximumQueuedTurns) return false;
     this.queue.push({ id: randomUUID(), wav, metadata, queuedAt: Date.now() });
+    this.#recordQueued(this.queue.at(-1));
     if (!this.processing) this.processingOperation = this.#drain();
     return true;
   }
@@ -68,8 +72,26 @@ export class TurnSession {
       metadata,
       queuedAt: Date.now(),
     });
+    this.#recordQueued(this.queue.at(-1));
     if (!this.processing) this.processingOperation = this.#drain();
     return true;
+  }
+
+  #recordQueued(turn) {
+    if (turn.wav)
+      this.telemetry.emit({
+        stage: "AUDIO",
+        spanId: `audio-${turn.id}`,
+        status: "completed",
+        inputIds: [turn.id],
+      });
+    this.telemetry.emit({
+      stage: turn.wav ? "STT" : "ASSEMBLE",
+      spanId: `queued-${turn.id}`,
+      status: "waiting",
+      reason: "turn_queue",
+      inputIds: [turn.id],
+    });
   }
 
   async #drain() {
@@ -77,6 +99,12 @@ export class TurnSession {
     this.processing = true;
     while (this.queue.length) {
       const turn = this.queue.shift();
+      this.telemetry.emit({
+        stage: turn.wav ? "STT" : "ASSEMBLE",
+        spanId: `queued-${turn.id}`,
+        status: "completed",
+        inputIds: [turn.id],
+      });
       await this.#processTurn(turn);
     }
     this.state = this.closed ? "stopped" : "idle";
@@ -86,6 +114,14 @@ export class TurnSession {
   stop() {
     if (this.closed) return this.processingOperation;
     this.closed = true;
+    for (const turn of this.queue)
+      this.telemetry.emit({
+        stage: turn.wav ? "STT" : "ASSEMBLE",
+        spanId: `queued-${turn.id}`,
+        status: "interrupted",
+        reason: "service_stopped",
+        inputIds: [turn.id],
+      });
     this.queue = [];
     this.stoppedAtStage = this.state;
     this.state = "stopped";
@@ -99,7 +135,13 @@ export class TurnSession {
     return this.processingOperation;
   }
 
-  async #processTurn(turn) {
+  #processTurn(turn) {
+    return this.telemetry.scope({ inputIds: [turn.id] }, () =>
+      this.#processObservedTurn(turn),
+    );
+  }
+
+  async #processObservedTurn(turn) {
     const startedAt = Date.now();
     try {
       this.state = "transcribing";
@@ -117,6 +159,13 @@ export class TurnSession {
         this.#log("discarded", turn, startedAt, { reason: "empty_transcript" });
         return;
       }
+      this.telemetry.emit({
+        stage: "ASSEMBLE",
+        spanId: `input-${turn.id}`,
+        status: "completed",
+        text: transcript,
+        speaker: turn.metadata.speakerName,
+      });
       const transcriptChunks = this.presentation.splitText(
         this.presentation.transcript(transcript),
       );

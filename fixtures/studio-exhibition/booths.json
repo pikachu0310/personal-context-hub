@@ -1,0 +1,7 @@
+[
+  { "id": "sound-canvas", "title": "音で描くキャンバス", "description": "声の高さで光の線が変わる、音と絵の体験。", "status": "ready", "area": "A-01", "category": "アート", "minutes": 3 },
+  { "id": "tiny-city", "title": "手のひらの小さな街", "description": "模型に触れて、街の未来をつくろう。", "status": "ready", "area": "A-02", "category": "ものづくり", "minutes": 5 },
+  { "id": "pocket-space", "title": "ポケットの宇宙", "description": "手元の星をつなぎ、自分だけの星座を見つける。", "status": "preparing", "area": "B-01", "category": "ゲーム", "minutes": 4 },
+  { "id": "paper-forest", "title": "紙から育つ森", "description": "一枚の紙を動かすと、スクリーンの森が育っていく。", "status": "ready", "area": "B-02", "category": "アート", "minutes": 3 },
+  { "id": "wind-machine", "title": "風をつくる装置", "description": "小さなしかけを組み合わせて、風の通り道を探そう。", "status": "preparing", "area": "C-01", "category": "ものづくり", "minutes": 6 }
+]

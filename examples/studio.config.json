@@ -1,0 +1,24 @@
+{
+  "port": 4311,
+  "host": "127.0.0.1",
+  "stateDirectory": "/absolute/path/to/local-studio-state",
+  "projects": [
+    {
+      "id": "exhibition",
+      "name": "展示をみんなでつくる",
+      "description": "来場者がスマートフォンで使う展示案内",
+      "directory": "/absolute/path/to/exhibition-repository",
+      "previewCommand": ["node", "server.mjs", "{port}"],
+      "previewChecks": [
+        {
+          "role": "button",
+          "name": "いま体験できる",
+          "minWidth": 120,
+          "minHeight": 44,
+          "action": "click",
+          "expectText": "体験できる展示"
+        }
+      ]
+    }
+  ]
+}

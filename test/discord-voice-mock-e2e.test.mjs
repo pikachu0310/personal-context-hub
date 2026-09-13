@@ -357,7 +357,7 @@ test("text status reports voice reconnection failure and later recovery without 
     releaseRecovery = resolve;
   });
   const service = await startDiscordVoiceCodex({
-    config: { ...config, powerMode: false },
+    config: { ...config, powerMode: false, hudPort: -1 },
     client,
     logger: {},
     dependencies: {
@@ -468,7 +468,7 @@ test("Discord task actions explain whether work is queued, resumed, or stopped",
   );
 });
 
-test("synthetic participant PCM reaches Codex and a task thread without duplicate parent acknowledgement or speech", async () => {
+test("synthetic participant PCM reaches Codex and a task thread without duplicate parent acknowledgement or speech", async (t) => {
   const turnEvents = [];
   const posts = [];
   const taskThreadPosts = [];
@@ -563,10 +563,14 @@ test("synthetic participant PCM reaches Codex and a task thread without duplicat
 
   const synthesized = Buffer.from("mock-tts-pcm");
   const service = await startDiscordVoiceCodex({
-    config,
+    config: { ...config, hudPort: 0, studioPort: 0 },
     client,
     logger: { info: () => undefined, error: () => undefined },
     dependencies: {
+      studioAccess: {
+        operatorCode: "synthetic-studio-operator-code-00000001",
+        viewerCode: "synthetic-studio-viewer-code-0000000001",
+      },
       audioAdapter: {
         transcribe: async (wav) => {
           turnEvents.push("stt");
@@ -648,6 +652,7 @@ test("synthetic participant PCM reaches Codex and a task thread without duplicat
     },
   });
 
+  t.after(() => service.stop());
   speaking.emit("start", config.allowedUserId);
   decoder.emit("data", Buffer.alloc(48_000));
   decoder.emit("end");
@@ -662,6 +667,33 @@ test("synthetic participant PCM reaches Codex and a task thread without duplicat
     channels: 2,
     frameSize: 960,
   });
+  assert.ok(service.hud?.url);
+  const hudSnapshot = await (
+    await fetch(service.hud.url + "/api/snapshot")
+  ).json();
+  for (const stage of [
+    "AUDIO",
+    "STT",
+    "ASSEMBLE",
+    "OBSERVE",
+    "EXECUTE",
+    "DELIVER",
+  ])
+    assert.ok(
+      hudSnapshot.events.some((event) => event.stage === stage),
+      `HUD missing ${stage}`,
+    );
+  const hudInputs = hudSnapshot.events.find(
+    (event) => event.stage === "ASSEMBLE" && event.text,
+  )?.inputIds;
+  assert.ok(
+    hudSnapshot.events.some(
+      (event) =>
+        event.stage === "DELIVER" &&
+        event.status === "completed" &&
+        event.inputIds.some((id) => hudInputs.includes(id)),
+    ),
+  );
   assert.equal(turnEvents[0], "stt");
   for (const stage of ["codex", "power_task"]) {
     assert.ok(turnEvents.includes(stage));
@@ -679,6 +711,12 @@ test("synthetic participant PCM reaches Codex and a task thread without duplicat
   );
   assert.equal(turnEvents.includes("tts"), false);
   assert.equal(turnEvents.includes("playback"), false);
+  assert.equal(
+    hudSnapshot.events.some((event) =>
+      ["TTS", "PLAYBACK"].includes(event.stage),
+    ),
+    false,
+  );
   assert.equal(
     posts.some(({ content }) => content?.includes("モックタスク完了")),
     false,
@@ -734,6 +772,47 @@ test("synthetic participant PCM reaches Codex and a task thread without duplicat
   });
   assert.equal(taskThreadPosts.at(-1).enforceNonce, true);
   assert.match(taskThreadPosts.at(-1).nonce, /^[a-f0-9]{24}$/);
+  const studioOrigin = new URL(service.studio.url).origin;
+  const login = await (
+    await fetch(studioOrigin + "/api/studio/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "ブラウザの参加者",
+        code: "synthetic-studio-operator-code-00000001",
+      }),
+    })
+  ).json();
+  const studioSnapshot = await (
+    await fetch(studioOrigin + "/api/studio/rooms/current/snapshot", {
+      headers: { Authorization: `Bearer ${login.token}` },
+    })
+  ).json();
+  const sameTask = studioSnapshot.tasks[0];
+  assert.equal(sameTask.id, service.taskQueue.list()[0].id);
+  const response = await fetch(
+    studioOrigin + "/api/studio/rooms/current/commands",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${login.token}`,
+      },
+      body: JSON.stringify({
+        id: "browser-same-task-follow-0001",
+        type: "follow",
+        meetingId: studioSnapshot.meetingId,
+        taskId: sameTask.id,
+        specRevision: sameTask.specRevision,
+        controlVersion: sameTask.controlVersion,
+        text: "ブラウザから同じ作業を修正して",
+      }),
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(service.taskQueue.list().length, 1);
+  assert.equal(service.taskQueue.list()[0].specRevision, 2);
+  assert.equal(service.taskQueue.list()[0].threadId, "55555555555555555");
   await service.stop();
   await service.stop();
   assert.equal(connectionDestroyCalls, 1);
