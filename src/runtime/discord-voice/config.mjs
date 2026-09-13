@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parseCodexAgents } from "../../discord-agent-team.mjs";
 import { automaticVoiceModel } from "../../engine/model-policy.mjs";
 import { parsePreviewCommand } from "../../execution/preview.mjs";
 import { parsePreviewChecks } from "../../execution/preview-browser.mjs";
@@ -19,6 +20,12 @@ function required(env, name) {
   const value = env[name]?.trim();
   if (!value) throw new Error(`${name} is required.`);
   return value;
+}
+
+function optionalSnowflake(env, name) {
+  return String(env[name] ?? "").trim()
+    ? requiredSnowflake(env, name)
+    : undefined;
 }
 
 function requiredSnowflake(env, name) {
@@ -135,6 +142,22 @@ export function loadDiscordVoiceConfig(env = process.env) {
     30_000,
     3_600_000,
   );
+  const taskConcurrency = integer(
+    env,
+    "PERSONAL_CONTEXT_VOICE_TASK_CONCURRENCY",
+    2,
+    1,
+    4,
+  );
+  const codexAgents = parseCodexAgents(
+    env.PERSONAL_CONTEXT_VOICE_CODEX_AGENTS,
+    {
+      workingDirectory,
+      model: taskModel,
+      reasoningEffort: taskReasoningEffort,
+      maximumConcurrentTasks: taskConcurrency,
+    },
+  );
   return {
     studioPort:
       env.PERSONAL_CONTEXT_VOICE_STUDIO_PORT === undefined
@@ -149,6 +172,80 @@ export function loadDiscordVoiceConfig(env = process.env) {
     textChannelId: requiredSnowflake(
       env,
       "PERSONAL_CONTEXT_VOICE_TEXT_CHANNEL_ID",
+    ),
+    issueForumChannelId: optionalSnowflake(
+      env,
+      "PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID",
+    ),
+    agentCoordinationChannelId: optionalSnowflake(
+      env,
+      "PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID",
+    ),
+    workerGatewayEnabled: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_ENABLED",
+      false,
+    ),
+    agentJoinGuideUrl: env.PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL?.trim(),
+    workerAllowGuildMembers: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS",
+      false,
+    ),
+    workerEnrollmentRoleIds: (
+      env.PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS ?? ""
+    )
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => {
+        if (!/^\d{17,20}$/.test(id))
+          throw new Error("Invalid Worker enrollment role ID.");
+        return id;
+      }),
+    workerGatewayHost:
+      env.PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST?.trim() || "127.0.0.1",
+    workerGatewayPort: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT",
+      8787,
+      1,
+      65_535,
+    ),
+    workerGatewayPublicUrl:
+      env.PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL?.trim() ||
+      `ws://${env.PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST?.trim() || "127.0.0.1"}:${integer(
+        env,
+        "PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT",
+        8787,
+        1,
+        65_535,
+      )}`,
+    workerPairingTtlMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_WORKER_PAIRING_TTL_MS",
+      300_000,
+      60_000,
+      900_000,
+    ),
+    workerHeartbeatTimeoutMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_WORKER_HEARTBEAT_TIMEOUT_MS",
+      45_000,
+      15_000,
+      300_000,
+    ),
+    workerLeaseTtlMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_WORKER_LEASE_TTL_MS",
+      120_000,
+      30_000,
+      900_000,
+    ),
+    agentWebhookAvatars: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_AGENT_WEBHOOK_AVATARS",
+      true,
     ),
     allowedUserId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_USER_ID"),
     listenToEveryone: boolean(
@@ -225,6 +322,12 @@ export function loadDiscordVoiceConfig(env = process.env) {
       env,
       "PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT",
       taskReasoningEffort,
+    ),
+    codexAgents,
+    peerReviewEnabled: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_AGENT_PEER_REVIEW",
+      codexAgents.length > 1,
     ),
     immediateReactions: boolean(
       env,
@@ -338,13 +441,7 @@ export function loadDiscordVoiceConfig(env = process.env) {
       1,
       50,
     ),
-    taskConcurrency: integer(
-      env,
-      "PERSONAL_CONTEXT_VOICE_TASK_CONCURRENCY",
-      2,
-      1,
-      4,
-    ),
+    taskConcurrency,
     transcriptionConcurrency: integer(
       env,
       "PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY",
@@ -406,6 +503,18 @@ export function describeDiscordVoiceConfig(config) {
     guildId: config.guildId,
     voiceChannelId: config.voiceChannelId,
     textChannelId: config.textChannelId,
+    issueForumChannelId: config.issueForumChannelId,
+    agentCoordinationChannelId: config.agentCoordinationChannelId,
+    workerGatewayEnabled: config.workerGatewayEnabled,
+    workerAllowGuildMembers: config.workerAllowGuildMembers,
+    workerEnrollmentRoleCount: config.workerEnrollmentRoleIds?.length ?? 0,
+    workerGatewayHost: config.workerGatewayHost,
+    workerGatewayPort: config.workerGatewayPort,
+    workerGatewayPublicUrl: config.workerGatewayPublicUrl,
+    workerPairingTtlMs: config.workerPairingTtlMs,
+    workerHeartbeatTimeoutMs: config.workerHeartbeatTimeoutMs,
+    workerLeaseTtlMs: config.workerLeaseTtlMs,
+    agentWebhookAvatars: config.agentWebhookAvatars,
     allowedUserId: config.allowedUserId,
     listenToEveryone: config.listenToEveryone,
     powerMode: config.powerMode,
@@ -436,6 +545,17 @@ export function describeDiscordVoiceConfig(config) {
     maximumPendingTranscriptions: config.maximumPendingTranscriptions,
     maximumPendingTasks: config.maximumPendingTasks,
     taskConcurrency: config.taskConcurrency,
+    codexAgents: (config.codexAgents ?? []).map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      capabilities: agent.capabilities,
+      maximumConcurrentTasks: agent.maximumConcurrentTasks,
+      workingDirectory: agent.workingDirectory,
+      channelId: agent.channelId,
+      model: agent.model ?? "Codex configured default",
+      reasoningEffort: agent.reasoningEffort,
+    })),
+    peerReviewEnabled: config.peerReviewEnabled,
     transcriptionConcurrency: config.transcriptionConcurrency,
     observationIntervalMs: config.observationIntervalMs,
     codexModel: config.codexModel ?? "Codex configured default",

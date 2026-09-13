@@ -74,10 +74,31 @@ export class MeetingStateStore {
 }
 
 export function meetingScope(config) {
-  return [
+  const base = [
     config.guildId,
     config.voiceChannelId,
     config.textChannelId,
     config.workingDirectory,
+  ].join(":");
+  const agents = config.codexAgents ?? [];
+  const isLegacyDefault =
+    !config.issueForumChannelId &&
+    !config.agentCoordinationChannelId &&
+    agents.length <= 1 &&
+    (!agents[0] ||
+      (agents[0].id === "default" &&
+        agents[0].workingDirectory === config.workingDirectory));
+  if (isLegacyDefault) return base;
+  return [
+    base,
+    config.issueForumChannelId ?? "no-forum",
+    config.agentCoordinationChannelId ?? "no-agent-channel",
+    agents
+      .map(
+        ({ id, workingDirectory, channelId }) =>
+          `${id}@${workingDirectory}@${channelId ?? "no-channel"}`,
+      )
+      .sort()
+      .join(","),
   ].join(":");
 }

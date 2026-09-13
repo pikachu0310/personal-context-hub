@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>井戸Bot · エージェント接続</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+        color: #1c2c30;
+        background: #f1f5f3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 40px 20px;
+      }
+      main {
+        max-width: 640px;
+        margin: auto;
+      }
+      h1 {
+        font-size: 28px;
+        letter-spacing: -0.04em;
+      }
+      p {
+        line-height: 1.8;
+        color: #546462;
+      }
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.12em;
+        color: #316b5c;
+      }
+      section {
+        background: white;
+        border: 1px solid #dbe5df;
+        border-radius: 16px;
+        padding: 24px;
+        margin: 20px 0;
+      }
+      h2 {
+        font-size: 18px;
+        margin: 0 0 16px;
+      }
+      label {
+        display: block;
+        font-size: 14px;
+        margin: 18px 0 8px;
+      }
+      input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #b7c9c1;
+        border-radius: 8px;
+        font: inherit;
+      }
+      input[type="checkbox"] {
+        width: auto;
+        margin-right: 8px;
+      }
+      #approvals article {
+        border: 1px solid #b7c9c1;
+        padding: 16px;
+        border-radius: 8px;
+        margin-top: 12px;
+      }
+      #approvals pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        max-height: 300px;
+        overflow: auto;
+        font: inherit;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        background: #246752;
+        color: white;
+        padding: 12px 18px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #e8f0ec;
+        color: #274a3d;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: wait;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .row input {
+        flex: 1;
+        min-width: 0;
+      }
+      .row button {
+        white-space: nowrap;
+      }
+      .hint {
+        font-size: 13px;
+      }
+      .status {
+        background: #eaf4ee;
+        border-radius: 8px;
+        padding: 12px;
+      }
+      #error {
+        color: #923b2c;
+        white-space: pre-wrap;
+      }
+      a {
+        color: #246752;
+      }
+      footer {
+        font-size: 12px;
+        color: #687b71;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+    <script src="/client.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">IDO BOT / PERSONAL AGENT</div>
+      <h1>自分のCodexを、チームにつなぐ。</h1>
+      <p>
+        このPCで作業するエージェントをDiscordに接続します。<br />OpenAIのログイン情報は、このPCの接続用Codexに保存されます。
+      </p>
+      <section>
+        <h2>1　OpenAIにログイン</h2>
+        <p id="auth-status" role="status">ログイン状態を確認しています…</p>
+        <button id="login">OpenAIでログイン</button>
+        <button id="refresh" class="secondary">ログイン状態を確認</button>
+        <p id="login-fallback" hidden>
+          <a id="login-link" target="_blank" rel="noreferrer noopener"
+            >認証ページが開かなければ、ここをクリック</a
+          >
+        </p>
+      </section>
+      <section>
+        <h2>2　作業場所とDiscordを接続</h2>
+        <p id="invitation-status" class="status" role="status">
+          この画面を開いたまま、同じPC・同じブラウザでDiscordの「自動入力」リンクを開いてください。
+        </p>
+        <label for="invitation"
+          >Discordの参加情報（ido1.から始まる文字列）</label
+        >
+        <div class="row">
+          <input
+            id="invitation"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+          /><button id="import" class="secondary">読み込む</button>
+        </div>
+        <label for="workdir">作業するリポジトリのフォルダー</label>
+        <div class="row">
+          <input
+            id="workdir"
+            placeholder="リポジトリのフォルダーパス"
+            autocomplete="off"
+          /><button id="folder" class="secondary" hidden>選択</button>
+        </div>
+        <label for="gateway">Botの接続先</label>
+        <input
+          id="gateway"
+          type="url"
+          placeholder="wss://agents.example.com"
+          autocomplete="off"
+        />
+        <label for="code">Discordに表示された参加コード</label>
+        <input
+          id="code"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <p class="hint">
+          Discordで
+          <code>/ido agent connect</code>
+          を選ぶと、自分だけに接続先と参加コードが表示されます。登録済みならコードを空欄にして再接続できます。
+        </p>
+        <label for="name">エージェントの表示名（任意）</label
+        ><input id="name" maxlength="80" autocomplete="off" />
+        <p class="hint">
+          タスクを受け取ると、この画面で実行内容を確認できます。変更は分離された作業場所に保存します。
+        </p>
+        <label
+          ><input
+            id="automatic"
+            type="checkbox"
+          />この接続中は、選んだリポジトリのタスクを自動実行する</label
+        >
+        <label
+          ><input
+            id="network"
+            type="checkbox"
+          />タスクからの外部通信を許可する</label
+        >
+        <p class="hint">
+          外部通信を許可すると依存取得や外部サービスへのアクセスが可能になります。許可は保存せず、接続するたびに確認します。
+        </p>
+        <div class="row">
+          <button id="connect">エージェントを接続</button
+          ><button id="stop" class="secondary" disabled>接続を停止</button>
+        </div>
+        <p id="connection-status" class="status" role="status">未接続</p>
+        <p id="error" role="alert"></p>
+      </section>
+      <section id="approval-section" hidden>
+        <h2>実行の確認</h2>
+        <p>
+          Botから届いた依頼です。作業内容を確認して許可してください。確認が間に合わない場合は実行せずに終了します。
+        </p>
+        <div id="approvals"></div>
+      </section>
+      <footer>
+        接続中はこのPCと接続アプリを起動したままにしてください。ページを閉じてもエージェントは動作します。終了時は「接続を停止」を押してください。
+      </footer>
+    </main>
+  </body>
+</html>

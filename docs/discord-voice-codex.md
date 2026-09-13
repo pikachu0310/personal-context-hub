@@ -14,6 +14,12 @@
 - 即時応答は「井戸Bot、…」などの明示的な呼びかけ、または `/ido ask` を対象にする。「あ、」「こんにちは、」などの前置き、名前の繰り返し、文の区切りから始まる呼びかけにも対応する。認識表記の「イドボット」「イドポット」「リドボット」「移動ボット」「コーデックスボット」も直接の呼びかけとして扱う。名前についての相談や引用は対象にしない。この判定は作業の停止・進捗・訂正でも共通に使う。
 - 名前だけの呼びかけや「何か喋って」「聞こえていますか」には短く返事する。この場合は回答生成APIを省略する。具体的な質問は議事録生成から独立したResponses APIへ送る（既定 `gpt-4.1-mini`）。旧設定 `PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS=true` でも呼びかけ条件は外れない。人同士の質問・相談・相づちは通常の会議解析へ回し、作業の受領文や一般的な勧誘を返さない。実装・ログの確認が必要な質問は独立した読み取り専用Codexで確認し、結果を得てから回答する。既存の会話状況表示には直近の呼びかけ判定・回答処理の段階を表示する。
 - 開発会議で `PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE=true` を指定すると、対象サーバーの参加者全員がコマンド・作業操作を使える。音声も対象にするには全話者受信を有効にする。`PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD=false` で作業依頼の呼びかけ条件を外せる。
+- `PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` に複数のエージェントを登録すると、音声またはテキストから作ったIssueを担当領域と割当負荷で振り分ける。Issue、担当、割当理由を永続化してから作業を開始し、エージェント別の同時実行上限を守る。
+- `PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` を設定した場合はIssueごとにDiscord Forumスレッドを作り、依頼、進捗、結果、質問、指摘、担当エージェントの回答を集約する。チーム共通・エージェント別テキストチャンネルには担当決定を通知する。
+- 複数エージェント時のpeer reviewでは、別エージェントが完成結果とworktreeをread-onlyで確認する。具体的な質問・指摘はIssueスレッドへ投稿し、担当エージェントの同じCodexスレッドへ、操作権限を増やさないレビュー情報として一度だけ戻す。
+- 分散Workerを有効にすると、参加者はDiscordのephemeral Slash Commandで短期pairing codeを受け取り、自分のPCから中央Gatewayへ外向き接続する。通常Discord user tokenを取得せず、Codex・GitHub・repository認証はWorker端末から出さない。
+- pairing時にWorkerがEd25519鍵を生成し、中央は公開鍵とWorker token hashだけを保持する。接続ごとのchallenge signature、heartbeat、task leaseで端末を確認し、切断・lease timeout時は別のonline agentへ再割当する。参加者本人のWorkerに固定されたタスクは他人やホストへ振り替えず、本人の再接続を待つ。
+- ForumへのAgent発言はAgent別managed Webhookを使う。ownerのDiscord CDN avatarへ色ringとrobot badgeをlocal合成し、Agent ID・owner・Issueを本文にも明記する。元avatarを外部画像生成serviceへ送らない。
 - `PERSONAL_CONTEXT_VOICE_AUTONOMOUS_TASKS=true` では、直接依頼に加え「この調査はBotに任せよう」のように実行が確定した委任をタスク化する。提案・困りごと・未決定・保留は議事録へ残す。解析結果の実行意思と依頼・委任の根拠発言をコードでも検査し、モデルが作ったタイトルを実行許可へ書き換えない。後から来た保留や既存作業との重複も確認する。公開・送信・購入等への許可を推測しない。
 - 通常の会話は設定間隔で解析し、議事録・過去の回答・作業結果と照合する。呼びかけがない場合も、判断を変える根拠付き訂正や新しい確認結果は回答スレッドへ届けられる。質問の言い換え、回答済みの話題、解析中に別の発言が来た古い回答は送らない。呼びかけのない解析結果は読み上げない。
 - 会話への回答は日付別の「会議の回答」スレッド、作業の結果は各タスクのスレッドへ集約する。実際の発言・コマンドの話者IDを使って関係者を参加させ、モデル出力から参加者IDを作らない。親チャンネルの状態カードと議事録は編集し、再起動時も既存の案内と会話状況を再利用する。作業完了本文や「タスクを追加しました」の重複投稿はしない。
@@ -24,7 +30,7 @@
 - 1 Guild、1 Voiceチャンネル、1 Textチャンネル、1本人ユーザーを環境変数でallowlistする。開発用には明示設定でVoice内の全参加者を対象にできる。
 - Botは起動時に指定Voiceチャンネルへ参加する。既定では本人だけ、全参加者モードではBot以外の発話者を購読する。
 - 発話終了後に音声を一つのWAVへ変換し、OpenAI Transcriptions APIの`gpt-transcribe`へ送る。
-- 確定した文字起こしを同じTextチャンネルへ記録してから、`@openai/codex-sdk`の同一ローカルthreadへ渡す。
+- 確定した文字起こしを同じTextチャンネルへ記録してから、会議観測用の同一ローカルthreadへ渡す。Issue作業は担当エージェントごとの別threadへ渡す。
 - Codexの最終応答をTextチャンネルへ分割投稿し、`gpt-4o-mini-tts`で生成したPCMをVoiceへ返す。
 - 同時発話は直列queueに積み、再生中も受信する。1ターンの失敗は次のターンを止めない。
 - 会議観測モードでは話者ごとのSTTを並列実行し、確定した発話を一つのライブ文字起こしメッセージへ編集反映する。
@@ -107,7 +113,7 @@
 - Realtime transcriptionによるpartial transcriptと低遅延応答。
 - Realtime APIを用いた発話途中からの応答開始。
 - 明示的な危険操作approval UIと操作別policy。
-- 複数利用者・複数workspace・割り込み発話。
+- エージェントごとの別Codex資格情報、別ホスト実行、割り込み発話。
 
 ## 起動前診断
 

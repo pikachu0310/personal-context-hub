@@ -1,3 +1,11 @@
+import { CodexAgentTeam } from "../../discord-agent-team.mjs";
+import { AgentWorkerRegistry } from "../../discord-agent-worker-registry.mjs";
+import { AgentWorkerGateway } from "../../discord-agent-worker-gateway.mjs";
+import { createWorkerOwnerAuthorizer } from "../../discord-agent-enrollment-policy.mjs";
+import { assertPublicWorkerPolicy } from "../../discord-agent-public-policy.mjs";
+import { DiscordAgentWebhookPublisher } from "../../discord-agent-avatar.mjs";
+import { createDistributedTaskRunner } from "../../discord-agent-task-runner.mjs";
+import { CodexVoiceRunner } from "../../execution/codex/runner.mjs";
 import { startHudServer, createHudStore } from "../hud-server.mjs";
 import { startStudioServer } from "../studio-server.mjs";
 import { createPreviewRelay } from "../preview-relay.mjs";
@@ -86,6 +94,7 @@ export async function startDiscordVoiceCodex({
   logger = console,
   dependencies = {},
 } = {}) {
+  assertPublicWorkerPolicy(config);
   const store =
     dependencies.meetingStateStore ??
     (config.meetingStatePath
@@ -95,14 +104,34 @@ export async function startDiscordVoiceCodex({
   // Build local adapters before Discord login so unsafe Codex configuration
   // fails closed without joining or sending to a channel.
   const audio = dependencies.audioAdapter ?? createOpenAIAudioAdapter(config);
+  const agentTeam =
+    dependencies.agentTeam ??
+    new CodexAgentTeam(
+      config.codexAgents ?? [
+        {
+          id: "default",
+          name: "Codex",
+          capabilities: ["*"],
+          maximumConcurrentTasks: config.taskConcurrency ?? 1,
+          workingDirectory: config.workingDirectory,
+          enabled: true,
+        },
+      ],
+    );
+  const codexRunner =
+    dependencies.codexRunner ??
+    (dependencies.executionBackend
+      ? undefined
+      : new CodexVoiceRunner(config, { agentTeam }));
   const execution = bindExecution(
     dependencies.executionBackend ??
-      createCodexBackend(config, { runner: dependencies.codexRunner }),
+      createCodexBackend(config, { runner: codexRunner }),
   );
   await execution.prepare?.();
   const credential = await (
     dependencies.readCredential ?? readDiscordTokenStore
   )();
+  let workerGateway;
   let hud;
   const hudStore = createHudStore();
   let studio, studioController, previewRelay;
@@ -136,6 +165,7 @@ export async function startDiscordVoiceCodex({
     stopping = (async () => {
       await studio?.close();
       const results = await Promise.allSettled([
+        Promise.resolve().then(() => workerGateway?.stop?.()),
         Promise.resolve().then(() => studioController?.close()),
         Promise.resolve().then(() => previews?.close()),
         Promise.resolve().then(() => session?.stop?.()),
@@ -175,6 +205,56 @@ export async function startDiscordVoiceCodex({
   try {
     await store?.acquire();
     saved = await store?.load();
+    const workerRegistry =
+      dependencies.workerRegistry ??
+      new AgentWorkerRegistry({ pairingTtlMs: config.workerPairingTtlMs });
+    workerRegistry.restore(saved?.workers);
+    for (const worker of workerRegistry.snapshot()) {
+      const profile = workerRegistry.describe(worker.agentId);
+      if (profile)
+        agentTeam.upsert({
+          ...profile,
+          workingDirectory: config.workingDirectory,
+          online: false,
+        });
+    }
+    if (config.workerGatewayEnabled) {
+      workerGateway =
+        dependencies.workerGateway ??
+        new AgentWorkerGateway({
+          registry: workerRegistry,
+          agentTeam,
+          host: config.workerGatewayHost,
+          port: config.workerGatewayPort,
+          publicUrl: config.workerGatewayPublicUrl,
+          authorizeOwner: createWorkerOwnerAuthorizer({
+            config,
+            fetchMember: async (ownerUserId) => {
+              if (!client.isReady()) return undefined;
+              const guild = await client.guilds.fetch(config.guildId);
+              const member = await guild.members.fetch({
+                user: ownerUserId,
+                force: true,
+                cache: false,
+              });
+              return {
+                userId: member.id,
+                guildId: guild.id,
+                roleIds: [...member.roles.cache.keys()],
+                bot: member.user.bot,
+                pending: member.pending,
+              };
+            },
+          }),
+          defaultWorkingDirectory: config.workingDirectory,
+          heartbeatTimeoutMs: config.workerHeartbeatTimeoutMs,
+          leaseTtlMs: config.workerLeaseTtlMs,
+          checkpoint: (workers) => store?.save({ workers }),
+          onAvailability: () => taskQueue?.resume?.(),
+          logger,
+        });
+      await workerGateway.start?.();
+    }
     client.on?.(Events.Error, (error) => {
       logAudioFailure(logger, "discord_client_failed", error);
     });
@@ -185,9 +265,29 @@ export async function startDiscordVoiceCodex({
     await client.login(credential.token);
     await ready;
     const guild = await client.guilds.fetch(config.guildId);
-    const [voiceChannel, textChannel] = await Promise.all([
+    const agentChannelIds = [
+      ...new Set(
+        (config.codexAgents ?? [])
+          .map(({ channelId }) => channelId)
+          .filter(Boolean),
+      ),
+    ];
+    const [
+      voiceChannel,
+      textChannel,
+      issueForum,
+      coordinationChannel,
+      ...agentChannelValues
+    ] = await Promise.all([
       guild.channels.fetch(config.voiceChannelId),
       guild.channels.fetch(config.textChannelId),
+      config.issueForumChannelId
+        ? guild.channels.fetch(config.issueForumChannelId)
+        : undefined,
+      config.agentCoordinationChannelId
+        ? guild.channels.fetch(config.agentCoordinationChannelId)
+        : undefined,
+      ...agentChannelIds.map((channelId) => guild.channels.fetch(channelId)),
     ]);
     if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
       throw new Error("Configured voice channel is not a Guild Voice channel.");
@@ -195,7 +295,51 @@ export async function startDiscordVoiceCodex({
     if (!textChannel?.isTextBased() || typeof textChannel.send !== "function") {
       throw new Error("Configured text channel cannot receive Bot messages.");
     }
+    if (
+      config.issueForumChannelId &&
+      (!issueForum ||
+        issueForum.type !== ChannelType.GuildForum ||
+        typeof issueForum.threads?.create !== "function")
+    ) {
+      throw new Error(
+        "PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID must identify a Discord Forum channel.",
+      );
+    }
+    if (
+      config.agentCoordinationChannelId &&
+      (!coordinationChannel?.isTextBased?.() ||
+        typeof coordinationChannel.send !== "function")
+    ) {
+      throw new Error(
+        "PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID cannot receive Bot messages.",
+      );
+    }
+    const channelById = new Map(
+      agentChannelIds.map((channelId, index) => [
+        channelId,
+        agentChannelValues[index],
+      ]),
+    );
+    const agentChannels = new Map(
+      (config.codexAgents ?? [])
+        .filter(({ channelId }) => channelId)
+        .map((agent) => [agent.id, channelById.get(agent.channelId)]),
+    );
+    for (const [agentId, channel] of agentChannels) {
+      if (!agentId || !channel?.isTextBased?.() || !channel.send)
+        throw new Error(
+          `Codex agent ${agentId ?? "unknown"} channel is invalid.`,
+        );
+    }
     const messageOptions = { silent: config.silentMessages !== false };
+    const agentMessagePublisher =
+      issueForum && config.agentWebhookAvatars
+        ? (dependencies.agentMessagePublisher ??
+          new DiscordAgentWebhookPublisher({
+            issueForum,
+            agentTeam,
+          }))
+        : undefined;
     const postText = createDiscordDiscussionRouter({
       textChannel,
       botUserId: client.user?.id,
@@ -212,10 +356,13 @@ export async function startDiscordVoiceCodex({
       botUserId: client.user?.id,
       restorePrefix: "🎙️ **井戸Bot",
     });
-    const createTaskThread = createDiscordTaskThread(
-      textChannel,
-      messageOptions,
-    );
+    const createTaskThread = createDiscordTaskThread(textChannel, {
+      ...messageOptions,
+      issueForum,
+      coordinationChannel,
+      agentChannels,
+      agentMessagePublisher,
+    });
     const upsertLiveTranscript = createEditableDiscordPost(textChannel, {
       ...messageOptions,
       botUserId: client.user?.id,
@@ -323,6 +470,12 @@ export async function startDiscordVoiceCodex({
         });
       },
     });
+    const distributedRunTask = createDistributedTaskRunner({
+      localRunner: (task, options) => execution.runTask(task, options),
+      workerGateway,
+      agentTeam,
+      listTasks: () => taskQueue?.snapshot() ?? [],
+    });
     const hudPort =
       config.hudPort ?? process.env.PERSONAL_CONTEXT_VOICE_HUD_PORT;
     if (hudPort !== undefined && hudPort !== "") {
@@ -346,11 +499,12 @@ export async function startDiscordVoiceCodex({
       audio,
       execution: {
         ...execution,
+        reviewTask: (task, options) => codexRunner?.reviewTask?.(task, options),
         runTask: async (task, options) => {
           await previews.stop(task.id, "superseded");
-          const result = await execution.runTask(task, options);
+          const result = await distributedRunTask(task, options);
           try {
-            await previews.start(task, options);
+            if (!task.remoteExecution) await previews.start(task, options);
           } catch {
             task.preview = { state: "failed", runRevision: task.runRevision };
           }
@@ -366,7 +520,7 @@ export async function startDiscordVoiceCodex({
       initialState: saved,
       transcriptArchive,
       logger,
-      dependencies,
+      dependencies: { ...dependencies, agentTeam },
       hooks: {
         onTaskState: (tasks) => live?.taskState(tasks),
         onTaskResult: (result) => {
@@ -431,24 +585,51 @@ export async function startDiscordVoiceCodex({
             });
           if (!thread) throw missingThread();
           await joinParticipants(thread, taskParticipantIds(task));
-          const starter = task.starterId
-            ? await textChannel.messages
-                .fetch(task.starterId)
-                .catch((error) => {
-                  if (error?.code !== RESTJSONErrorCodes.UnknownMessage)
-                    throw error;
-                  return undefined;
-                })
-            : undefined;
+          const starter =
+            task.surfaceType === "forum"
+              ? await thread.fetchStarterMessage?.().catch(() => undefined)
+              : task.starterId
+                ? await textChannel.messages
+                    .fetch(task.starterId)
+                    .catch((error) => {
+                      if (error?.code !== RESTJSONErrorCodes.UnknownMessage)
+                        throw error;
+                      return undefined;
+                    })
+                : undefined;
           const card = createDiscordTaskCardUpdater(
             textChannel,
             task,
             task.threadId,
             starter,
-            messageOptions,
+            {
+              ...messageOptions,
+              fallbackChannel:
+                task.surfaceType === "forum" ? thread : textChannel,
+            },
           );
+          const postAs = async (agentId, content, options = {}) => {
+            if (options.signal?.aborted) throw options.signal.reason;
+            if (agentMessagePublisher && agentId) {
+              const sent = await agentMessagePublisher
+                .post(agentId, thread, content, {
+                  ...options,
+                  issueId: task.issueId ?? task.id,
+                })
+                .catch(() => undefined);
+              if (sent) return sent;
+            }
+            return thread.send(
+              createDiscordMessagePayload(content, {
+                ...messageOptions,
+                idempotencyKey: options.idempotencyKey,
+              }),
+            );
+          };
           return {
             threadId: task.threadId,
+            surfaceType: task.surfaceType,
+            postAs,
             get starterId() {
               return card.starterId;
             },
@@ -457,13 +638,8 @@ export async function startDiscordVoiceCodex({
               task,
               messageOptions,
             ),
-            post: (content, { idempotencyKey } = {}) =>
-              thread.send(
-                createDiscordMessagePayload(content, {
-                  ...messageOptions,
-                  idempotencyKey,
-                }),
-              ),
+            post: (content, options) =>
+              postAs(task.assignedAgentId, content, options),
             update: card.update,
           };
         },
@@ -563,6 +739,7 @@ export async function startDiscordVoiceCodex({
         { minutes: session.minutes },
       );
     const handleMessage = createIdobataMessageHandler({
+      workerGateway,
       input: engine.input,
       config,
       session,
@@ -629,6 +806,7 @@ export async function startDiscordVoiceCodex({
       },
     });
     const handleInteraction = createIdobataInteractionHandler({
+      workerGateway,
       config,
       taskQueue,
     });
@@ -696,6 +874,8 @@ export async function startDiscordVoiceCodex({
       ...describeDiscordVoiceConfig(config),
     });
     return {
+      workerGateway,
+      agentTeam,
       client,
       connection,
       session,

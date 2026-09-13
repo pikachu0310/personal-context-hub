@@ -125,6 +125,8 @@ export async function createConversationEngine({
     taskQueue = config.powerMode
       ? new TaskQueue({
           presentation,
+          agentTeam: dependencies.agentTeam,
+          reviewTask: execution.reviewTask,
           runTask: (task, options) => execution.runTask(task, options),
           steerTask: execution.steerTask,
           confirmPreview: execution.confirmPreview,

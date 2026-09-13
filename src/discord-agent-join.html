@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>井戸Bot · 参加情報を入力</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, sans-serif;
+        color: #1c2c30;
+        background: #f1f5f3;
+      }
+      body {
+        margin: 0;
+        padding: 40px 20px;
+      }
+      main {
+        max-width: 580px;
+        margin: auto;
+        padding: 24px;
+        background: white;
+        border: 1px solid #dbe5df;
+        border-radius: 16px;
+      }
+      h1 {
+        font-size: 24px;
+      }
+      p {
+        line-height: 1.8;
+      }
+      button {
+        border: 0;
+        border-radius: 8px;
+        background: #246752;
+        color: white;
+        padding: 12px 18px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+    <script src="/join.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Discordの参加情報を接続画面へ</h1>
+      <p id="status" role="status">
+        このPCで開いている接続画面に、接続先と参加コードを入力しています…
+      </p>
+      <p>
+        接続・ログイン・タスク実行は、このリンクから自動で始まりません。接続画面に戻り、接続先と作業フォルダーを確認してください。
+      </p>
+      <button id="retry" hidden>もう一度入力する</button>
+      <button id="show-control">接続画面を表示</button>
+      <p>接続画面がまだない場合は、Discordの「① 接続用.cmdをダウンロード」から取得したファイルを、作業するPCで開いてください。localhostはそのPC専用です。</p>
+    </main>
+  </body>
+</html>

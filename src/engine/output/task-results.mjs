@@ -26,6 +26,18 @@ export async function deliverTaskResults(
       const post = typeof surface === "function" ? surface : surface?.post;
       if (!post) throw new Error("Task result surface is unavailable");
       const stages = [
+        ...(delivery.peerReview?.feedback
+          ? [
+              (options) =>
+                surface?.postAs
+                  ? surface.postAs(
+                      delivery.peerReview.agentId,
+                      presentation.peerReview(delivery.peerReview),
+                      options,
+                    )
+                  : post(presentation.peerReview(delivery.peerReview), options),
+            ]
+          : []),
         (options) =>
           post(
             presentation.resultHeader(
@@ -45,13 +57,14 @@ export async function deliverTaskResults(
           post(presentation.artifacts(delivery.artifacts), options),
         );
         // Production surfaces (including restored ones) attach the exact saved revision.
-        stages.push((options) =>
-          surface?.postArtifacts?.(
-            delivery.artifacts,
-            delivery.evidence,
-            options,
-          ),
-        );
+        if (!delivery.artifacts.remote)
+          stages.push((options) =>
+            surface?.postArtifacts?.(
+              delivery.artifacts,
+              delivery.evidence,
+              options,
+            ),
+          );
       }
       stages.push(
         (options) =>

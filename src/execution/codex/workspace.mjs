@@ -84,9 +84,9 @@ export class TaskWorkspaceManager {
       const actual = await realpath(task.workingDirectory);
       if (actual !== target)
         throw new Error("Task workspace is outside its configured root");
-      const top = (
-        await git(actual, ["rev-parse", "--show-toplevel"])
-      ).stdout.trim();
+      const top = await realpath(
+        (await git(actual, ["rev-parse", "--show-toplevel"])).stdout.trim(),
+      );
       const common = async (cwd) =>
         realpath(
           (
@@ -303,18 +303,21 @@ export function selectTaskProfile(task, config) {
     ? task.kind
     : "implementation";
   const complex = task.complexity === "complex";
+  const agent = task.assignedAgent;
   const selected = taskModelSelection(task);
   return {
     kind,
     model:
       selected?.model ??
       automaticVoiceModel(
-        complex
-          ? (config.complexTaskModel ?? config.taskModel ?? config.codexModel)
-          : (config.taskModel ?? config.codexModel),
+        agent?.model ??
+          (complex
+            ? (config.complexTaskModel ?? config.taskModel ?? config.codexModel)
+            : (config.taskModel ?? config.codexModel)),
       ),
     modelReasoningEffort:
       selected?.reasoningEffort ??
+      agent?.reasoningEffort ??
       (complex
         ? (config.complexTaskReasoningEffort ??
           config.taskReasoningEffort ??

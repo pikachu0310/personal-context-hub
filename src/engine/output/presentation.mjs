@@ -40,8 +40,12 @@ export function createPresentation({
       superseded = false,
     ) =>
       `📦 ${bold("実行結果")}${revisionLabel}${delivery.specRevision ? ` · 仕様 v${delivery.specRevision}` : ""}${superseded ? " · 最新の訂正は未反映" : ""}\n${formatVerificationEvidence(evidence)}`,
+    peerReview: (review) =>
+      `🔍 ${bold(`${escape(review.agentName)} から担当エージェントへの質問・指摘`)}\n${boundText(review.feedback, 1800)}`,
     artifacts: (artifacts) =>
-      `🔬 ${bold("確認用の成果")}\nworkspace: ${artifacts.workingDirectory}\npatch: ${artifacts.patchPath}\n変更状態:\n${boundText(artifacts.status || "差分なし", 900)}\n元の作業場所へは自動反映しません。`,
+      artifacts.remote
+        ? `🔬 ${bold("担当者端末の確認用成果")}\n変更: ${artifacts.hasChanges ? "あり" : "なし"}\n変更状態:\n${boundText(artifacts.status || "差分なし", 900)}${artifacts.patchHash ? `\n差分SHA-256: ${code(artifacts.patchHash)}` : ""}\n${boundText(artifacts.note, 500)}\n差分本体は担当者端末にだけ保持され、Botから自動反映しません。`
+        : `🔬 ${bold("確認用の成果")}\nworkspace: ${artifacts.workingDirectory}\npatch: ${artifacts.patchPath}\n変更状態:\n${boundText(artifacts.status || "差分なし", 900)}\n元の作業場所へは自動反映しません。`,
     taskCompleted: (task, delivery, revisionLabel, superseded = false) =>
       delivery.pendingInstructions || superseded
         ? `⏭️ ${bold("追加指示へ続行")} ${task.id}${revisionLabel}\n残り: ${delivery.pendingInstructions}件`

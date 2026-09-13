@@ -1,0 +1,10 @@
+# Replace the example hostname with a domain resolving to this host.
+# Run Caddy on the same host as the loopback-bound Worker Gateway.
+agents.example.com {
+    handle /workers {
+        reverse_proxy 127.0.0.1:8787
+    }
+    handle {
+        respond "Not found" 404
+    }
+}

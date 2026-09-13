@@ -3,6 +3,12 @@
 // and runTask(request, { signal, onProgress, checkpoint }). The task runner owns
 // authorization, durable acceptance and delivery; the backend owns delegation.
 const stateFields = [
+  "issueId",
+  "assignedAgentId",
+  "assignedAgentName",
+  "assignedAgentTransport",
+  "assignmentReason",
+  "remoteExecution",
   "execution",
   "codexThreadId", // legacy ID kept for old saved-state readers
   "workingDirectory",
@@ -68,6 +74,9 @@ export function bindExecution(backend) {
         specRevision: task.specRevision,
         activeSpecRevision: task.activeSpecRevision,
         additionalInstruction: task.additionalInstruction,
+        additionalInstructionSource: structuredClone(
+          task.additionalInstructionSource,
+        ),
       };
       const result = await backend.runTask(request, {
         signal,

@@ -22,6 +22,20 @@ npm run start:discord:voice:instance -- YOUR_PROFILE
 グループ開発では `PERSONAL_CONTEXT_VOICE_MODE=meeting`、`PERSONAL_CONTEXT_VOICE_POWER_MODE=true`、`PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE=true` を設定します。
 通常のCodex処理はSol lowです。複雑さを理由にAstraへ切り替えません。Astraは作業作成時の `model` 選択か「Astraで実装して」など、その作業で明示された場合だけ使用します。過去の環境設定がAstraでも自動選択には使いません。`OBSERVER`・`TASK`・`COMPLEX_TASK` の推論強度を明示した設定は優先されるため、既存環境のhighやmediumをlowへ変更し、`inspect` で実効設定を確認してください。
 Botには対象チャンネルでの閲覧・接続・発言・送信・履歴閲覧・公開スレッド作成・スレッド送信・ファイル添付を許可し、Developer PortalでMessage Content Intentを有効にします。
+
+1つのBotへ複数のCodexエージェントを接続する場合は、`PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` にエージェントのJSON配列を設定します。各要素は `id`、`name`、担当判定に使う `capabilities`、並行数、対象repo、任意の専用Discordチャンネル、モデル設定を持ちます。Issueは担当領域と現在の負荷から割り当て、担当と理由を保存してから実行します。`PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` を設定するとIssueごとにForum投稿を作り、進捗・質問・指摘・回答を同じスレッドへ集約します。エージェント別アイコンを使う場合はForumでのWebhook管理権限も必要です。
+
+参加者が自分のPCとCodex認証で参加する場合は、Bot側でWorker Gatewayを有効にします。Gatewayはloopbackへbindし、外部公開時はTLS reverse proxyを通した `wss://` URLだけを公開してください。Windowsの参加者は **`Start Agent.cmd` をダブルクリック**し、画面の「OpenAIでログイン」から公式ページで認証します。Discordで `/ido agent connect` を選び、本人だけに表示された接続先と参加コードを画面に入力すると参加できます。[参加手順と主催者の設定](docs/discord-agent-participant.md)を参照してください。
+
+CLIを使う場合の接続方法も残しています。
+
+```powershell
+Copy-Item .env.agent.example .env.agent
+Write-Output '<PAIRING_CODE>' | npm run agent:pair -- --gateway wss://agents.example.com --workdir C:/path/to/repository --capabilities frontend,test --allow-automatic
+```
+
+初回pairing後は `npm run start:discord:agent -- --allow-automatic` で再接続できます。Workerは端末内でEd25519鍵を作り、WindowsではWorker tokenと秘密鍵をCurrentUser DPAPIへ、Linuxではmode `0600` のファイルへ保存します。Codex・Discord・GitHubのcredentialはBotへ送らず、Bot側にはWorker tokenのSHA-256 hashと公開鍵だけを保存します。Codex threadと分離worktreeの対応も担当者端末だけに保存します。`/ido agent disconnect` で登録を失効でき、`/ido agent status` で接続状態を確認できます。
+
 起動すると通話に参加し、認識テキストの保存とAI音声の使用をチャンネルへ告知します。参加者へ保存範囲を説明してから利用してください。
 
 設定済みのテキストチャンネルで、次の流れを試せます。`/ido` は登録されたスラッシュコマンドです。`!ido` と通常のスレッド投稿にはMessage Content Intentが必要です。無効な場合もスラッシュコマンドとカードのボタン・入力フォームは使えます。

@@ -16,6 +16,30 @@ const valid = {
   OPENAI_API_KEY: "test-secret-never-print",
 };
 
+test("enrollment roles configure only Worker admission and invalid IDs fail closed", () => {
+  const defaults = loadDiscordVoiceConfig(valid);
+  assert.equal(defaults.workerAllowGuildMembers, false);
+  const config = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS: "true",
+    PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS:
+      "11111111111111111, 22222222222222222",
+    PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE: "false",
+  });
+  assert.deepEqual(config.workerEnrollmentRoleIds, [
+    "11111111111111111",
+    "22222222222222222",
+  ]);
+  assert.equal(config.allParticipantsOperate, false);
+  assert.equal(describeDiscordVoiceConfig(config).workerEnrollmentRoleCount, 2);
+  assert.throws(() =>
+    loadDiscordVoiceConfig({
+      ...valid,
+      PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS: "not-a-role",
+    }),
+  );
+});
+
 test("speech-start silence defaults to one second and is independent of recording silence", () => {
   const config = loadDiscordVoiceConfig(valid);
   assert.equal(config.speechStartSilenceMs, 1_000);
@@ -132,6 +156,39 @@ test("the conversation deadline can be configured independently and preserves a 
   });
   assert.equal(separate.stageTimeouts.observing, 15_000);
   assert.equal(separate.stageTimeouts.running_codex, 900_000);
+});
+
+test("voice config loads a multi-agent Issue board without exposing secrets", () => {
+  const config = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID: "55555555555555555",
+    PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID: "66666666666666666",
+    PERSONAL_CONTEXT_VOICE_CODEX_AGENTS: JSON.stringify([
+      {
+        id: "frontend",
+        name: "Frontend Codex",
+        capabilities: ["ui", "react"],
+        maximumConcurrentTasks: 1,
+        workingDirectory: valid.PERSONAL_CONTEXT_VOICE_WORKDIR,
+        channelId: "77777777777777777",
+      },
+      {
+        id: "backend",
+        capabilities: ["api"],
+        maximumConcurrentTasks: 1,
+        workingDirectory: valid.PERSONAL_CONTEXT_VOICE_WORKDIR,
+      },
+    ]),
+  });
+  assert.equal(config.codexAgents.length, 2);
+  assert.equal(config.peerReviewEnabled, true);
+  assert.equal(config.issueForumChannelId, "55555555555555555");
+  assert.equal(config.agentCoordinationChannelId, "66666666666666666");
+  assert.equal(config.codexAgents[0].id, "frontend");
+  assert.equal(config.codexAgents[0].channelId, "77777777777777777");
+  const description = describeDiscordVoiceConfig(config);
+  assert.equal(description.codexAgents.length, 2);
+  assert.doesNotMatch(JSON.stringify(description), /test-secret-never-print/);
 });
 
 test("voice config validates Discord targets and redacts the OpenAI key", () => {
@@ -349,4 +406,23 @@ test("voice config keeps the isolated Codex home beside an overridden state file
     PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME: "/tmp/voice-codex-home",
   });
   assert.equal(explicit.isolatedCodexHome, "/tmp/voice-codex-home");
+});
+
+test("voice config exposes only public Worker gateway settings", () => {
+  const config = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_ENABLED: "true",
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST: "127.0.0.1",
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT: "8788",
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL:
+      "wss://agents.example.test",
+    PERSONAL_CONTEXT_VOICE_AGENT_WEBHOOK_AVATARS: "true",
+  });
+  assert.equal(config.workerGatewayEnabled, true);
+  assert.equal(config.workerGatewayPort, 8788);
+  assert.equal(config.workerGatewayPublicUrl, "wss://agents.example.test");
+  assert.equal(config.agentWebhookAvatars, true);
+  const described = describeDiscordVoiceConfig(config);
+  assert.equal(described.workerGatewayEnabled, true);
+  assert.doesNotMatch(JSON.stringify(described), /test-secret-never-print/);
 });
