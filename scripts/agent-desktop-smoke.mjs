@@ -50,6 +50,10 @@ try {
     .getByRole("button", { name: "OpenAIでログイン", exact: true })
     .waitFor();
   await page.screenshot({ path: resolve("dist/desktop/settings-smoke.png") });
+  assert.equal(await page.locator("#automatic-permissions").isChecked(), false);
+  await page.locator("#automatic-permissions").check();
+  assert.equal(await page.locator("#automatic-permissions").isChecked(), true);
+  await page.locator("#automatic-permissions").uncheck();
   await page.locator("#local-tasks").check();
   await page.getByRole("button", { name: /Sample local task/ }).waitFor();
   await page.getByRole("button", { name: /Sample local task/ }).click();
@@ -167,6 +171,7 @@ try {
   await page.locator("#command-approval").waitFor({ state: "hidden" });
   await page.locator("#pause-task").click();
   await page.locator("#resume-network").check();
+  await page.locator("#resume-permissions").check();
   await page.locator("#resume-task").click();
   await page.locator("#resume-controls").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "終了", exact: true }).click();

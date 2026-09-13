@@ -77,6 +77,33 @@ test("command approvals are per operation, expire, and are revoked on task cance
     { decision: "decline" },
   );
   assert.equal(prompts.list().length, 0);
+  assert.deepEqual(
+    await prompts.request(
+      "auto",
+      "item/permissions/requestApproval",
+      { permissions: { network: { enabled: true } } },
+      undefined,
+      { automatic: true },
+    ),
+    { decision: "accept" },
+  );
+  assert.equal(prompts.list().length, 0);
+  assert.deepEqual(
+    await prompts.request("auto", "unknown", {}, undefined, {
+      automatic: true,
+    }),
+    { decision: "decline" },
+  );
+  assert.deepEqual(
+    await prompts.request(
+      "auto",
+      "item/commandExecution/requestApproval",
+      { command: "git status" },
+      controller.signal,
+      { automatic: true },
+    ),
+    { decision: "decline" },
+  );
 });
 
 test("pause waits for the old execution to stop, resumes with explicit permissions, and final stop settles the lease", async () => {

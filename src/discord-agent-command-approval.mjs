@@ -22,18 +22,22 @@ export class AgentCommandApproval {
     for (const entry of this.pending.values())
       if (entry.request.taskId === String(taskId)) entry.finish("decline");
   }
-  request(taskId, method, params, signal) {
+  request(taskId, method, params, signal, { automatic = false } = {}) {
     if (
       signal?.aborted ||
       this.pending.size >= 16 ||
       ![
         "item/commandExecution/requestApproval",
         "item/fileChange/requestApproval",
+        "item/permissions/requestApproval",
       ].includes(method)
     )
       return Promise.resolve({ decision: "decline" });
+    if (automatic === true) return Promise.resolve({ decision: "accept" });
     const baseOperation =
-      params.command ??
+      (method === "item/permissions/requestApproval"
+        ? JSON.stringify(params.permissions ?? {})
+        : params.command) ??
       (params.networkApprovalContext
         ? JSON.stringify(params.networkApprovalContext)
         : params.grantRoot);

@@ -342,6 +342,63 @@ test("UI fails closed before authentication and on expired pairing without leaki
   assert.doesNotMatch(await failed.text(), /秘密/);
 });
 
+test("desktop full approval is local, visible, and reset on reconnect", async (t) => {
+  let workerOptions;
+  const { call, directory } = await fixture(t, {
+    interactiveApprovals: true,
+    createExecutor: (options) => ({
+      run: async (task, { signal }) => {
+        assert.equal(options.networkAccess, false);
+        return options.requestApproval(
+          task.id,
+          "item/permissions/requestApproval",
+          { permissions: { network: { enabled: true } } },
+          signal,
+        );
+      },
+    }),
+    createWorker: (options) => {
+      workerOptions = options;
+      return {
+        authenticated: true,
+        socket: { readyState: 1 },
+        connect: async () => ({}),
+        stop: async () => {},
+      };
+    },
+  });
+  const input = {
+    workingDirectory: process.cwd(),
+    gatewayUrl: "wss://agents.example.com",
+    pairingCode: "example",
+  };
+  assert.equal(
+    (await call("/connect", { ...input, automaticPermissions: true })).status,
+    200,
+  );
+  assert.deepEqual(
+    await workerOptions.executor.run({ id: "full", request: "test" }),
+    { decision: "accept" },
+  );
+  const state = await (await call("/status")).json();
+  assert.equal(state.connectionPolicy.automaticPermissions, true);
+  assert.equal(state.tasks[0].automaticPermissions, true);
+  assert.equal(state.commandApprovals.length, 0);
+  assert.match(state.tasks[0].logs[0].text, /自動承認/);
+  assert.equal(
+    JSON.parse(await readFile(join(directory, "profile.json"), "utf8"))
+      .automaticPermissions,
+    undefined,
+  );
+  await call("/stop", {});
+  await call("/connect", input);
+  assert.equal(
+    (await (await call("/status")).json()).connectionPolicy
+      .automaticPermissions,
+    false,
+  );
+});
+
 test("browser approval gates execution and permission choices are not persisted", async (t) => {
   let workerOptions;
   let executorOptions;

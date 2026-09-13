@@ -77,6 +77,7 @@ export async function createAgentUi({
   let origin;
   let closing = false;
   let pausable;
+  const automaticPermissions = new Map();
   const page = await readFile(
     new URL("./discord-agent-ui.html", assetDirectory),
     "utf8",
@@ -166,7 +167,11 @@ export async function createAgentUi({
       );
       profile = nextProfile;
       connectionPolicy = {
-        automatic: input.automatic === true,
+        automatic:
+          input.automatic === true ||
+          (interactiveApprovals && input.automaticPermissions === true),
+        automaticPermissions:
+          interactiveApprovals && input.automaticPermissions === true,
         networkAccess: input.networkAccess === true,
       };
       const executorOptions = {
@@ -174,8 +179,28 @@ export async function createAgentUi({
         codexHome,
         networkAccess: input.networkAccess === true,
         requestApproval: interactiveApprovals
-          ? (taskId, method, params, signal) =>
-              commandApproval.request(taskId, method, params, signal)
+          ? async (taskId, method, params, signal) => {
+              const automatic =
+                automaticPermissions.get(String(taskId)) === true;
+              const result = await commandApproval.request(
+                taskId,
+                method,
+                params,
+                signal,
+                { automatic },
+              );
+              if (automatic && result.decision === "accept") {
+                const record = taskMonitor.records.get(String(taskId));
+                if (record) {
+                  record.logs.push({
+                    at: Date.now(),
+                    text: `追加権限を自動承認: ${String(params.command ?? JSON.stringify(params.permissions ?? params.networkApprovalContext ?? params.grantRoot ?? method)).slice(0, 1800)}`,
+                  });
+                  if (record.logs.length > 30) record.logs.shift();
+                }
+              }
+              return result;
+            }
           : undefined,
         workspaceDirectory: join(
           directory,
@@ -203,12 +228,22 @@ export async function createAgentUi({
         },
       });
       consent = new AgentExecutionConsent({
-        automatic: input.automatic === true,
+        automatic: connectionPolicy.automatic,
         timeoutMs: approvalTimeoutMs,
         executor: {
           run: (task, options) => {
+            automaticPermissions.set(
+              String(task.id),
+              connectionPolicy.automaticPermissions,
+            );
             taskMonitor.markRunning(task.id);
-            return pausable.run(task, options, input.networkAccess === true);
+            const record = taskMonitor.records.get(String(task.id));
+            if (record)
+              record.automaticPermissions =
+                connectionPolicy.automaticPermissions;
+            return pausable
+              .run(task, options, input.networkAccess === true)
+              .finally(() => automaticPermissions.delete(String(task.id)));
           },
         },
       });
@@ -351,8 +386,18 @@ export async function createAgentUi({
         return send(200, { ok: true });
       }
       if (request.url === "/resume-task") {
+        if (
+          input.automaticPermissions !== undefined &&
+          typeof input.automaticPermissions !== "boolean"
+        )
+          return send(400, { error: "承認設定を確認してください。" });
         if (!pausable?.resume(input.id, input.networkAccess))
           return send(409, { error: "停止完了を待ってから再開してください。" });
+        const automatic =
+          interactiveApprovals && input.automaticPermissions === true;
+        automaticPermissions.set(input.id, automatic);
+        const record = taskMonitor.records.get(input.id);
+        if (record) record.automaticPermissions = automatic;
         return send(200, { ok: true });
       }
       if (request.url === "/approve-command") {

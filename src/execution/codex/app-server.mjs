@@ -177,6 +177,7 @@ export class AppServerCodex extends EventEmitter {
             [
               "item/commandExecution/requestApproval",
               "item/fileChange/requestApproval",
+              "item/permissions/requestApproval",
             ].includes(message.method)
           ) {
             void Promise.resolve()
@@ -190,17 +191,31 @@ export class AppServerCodex extends EventEmitter {
                 if (!this.closed)
                   this.send({
                     id: message.id,
-                    result: {
-                      decision:
-                        result?.decision === "accept" ? "accept" : "decline",
-                    },
+                    result:
+                      message.method === "item/permissions/requestApproval"
+                        ? {
+                            permissions:
+                              result?.decision === "accept"
+                                ? (message.params?.permissions ?? {})
+                                : {},
+                            scope: "turn",
+                          }
+                        : {
+                            decision:
+                              result?.decision === "accept"
+                                ? "accept"
+                                : "decline",
+                          },
                   });
               })
               .catch(() => {
                 if (!this.closed)
                   this.send({
                     id: message.id,
-                    result: { decision: "decline" },
+                    result:
+                      message.method === "item/permissions/requestApproval"
+                        ? { permissions: {}, scope: "turn" }
+                        : { decision: "decline" },
                   });
               });
             return;

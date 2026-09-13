@@ -542,6 +542,7 @@
                   </p>
                   <button id="cancel-task" class="danger">タスクを停止</button>
                   <button id="pause-task">一時停止して権限を見直す</button>
+                  <p id="task-permissions" class="notice"></p>
                   <div id="resume-controls" hidden>
                     <label
                       ><input
@@ -553,6 +554,12 @@
                       同じ作業場所とCodexの会話から続けます。実行済みの変更は取り消しません。
                     </p>
                     <button id="resume-task">この設定で再開</button>
+                    <label
+                      ><input
+                        id="resume-permissions"
+                        type="checkbox"
+                      />追加権限も自動承認する</label
+                    >
                   </div>
                   <p id="retry-help" hidden></p>
                   <p>
@@ -655,13 +662,22 @@
                 <p class="notice">
                   未選択の場合は、タスクごとにこのアプリで実行を確認します。OpenAI・Botへの接続通信は別に行います。
                 </p>
+                <label
+                  ><input
+                    id="automatic-permissions"
+                    type="checkbox"
+                  />全承認：タスク開始・追加権限を自動承認する</label
+                >
+                <p class="notice">
+                  この接続中は、サンドボックス外のコマンド実行・ファイルアクセス・通信の追加許可も自動で返します。承認内容はタスクのアクティビティに表示します。OS・組織の制限やログインは解除しません。設定は保存しません。
+                </p>
                 <button id="connect" class="primary">エージェントを接続</button>
               </div>
             </div>
           </section>
         </div>
         <footer class="footer">
-          <span>このPCで実行 · 自動起動なし</span
+          <span id="permission-status">このPCで実行 · 自動起動なし</span
           ><span>終了すると接続と実行を停止</span>
         </footer>
       </main>

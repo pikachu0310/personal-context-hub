@@ -52,9 +52,13 @@ Windowsのスタートメニューで **IDO Agent** を検索 → **接続設定
 
 ### 実行権限と一時停止
 
+接続設定の **全承認：タスク開始・追加権限を自動承認する** を選ぶと、その接続で受け取るタスクの開始と、コマンド・ファイル操作・通信の追加権限を自動で許可します。サンドボックス外での実行も許可し得る設定です。接続先と依頼内容を信頼できる場合だけ選んでください。追加権限の許可はタスクのアクティビティに記録し、画面下部とタスク詳細にモードを表示します。接続設定には保存せず、次回の接続は個別承認に戻ります。OS・組織の制限やGitHub認証を解除する機能ではありません。
+
+実行中に切り替える場合は **一時停止して権限を見直す** を押し、**追加権限も自動承認する** の選択を見直して再開します。再開後の設定はそのタスクだけに適用し、新しいタスクは接続時の設定を使います。
+
 Windowsでは、作業フォルダーを選び、接続前に **Windowsサンドボックスを設定** を押してください。Windowsの管理者確認が表示されます。設定できない端末では管理者に相談してください。読み取り専用のままの場合、タスクは設定の案内を表示して停止します。
 
-タスクの開始承認に加え、Codexが追加の許可を求めた操作はタスク詳細にコマンド・作業場所・理由を表示します。内容を確認して、その操作だけ許可または拒否してください。未回答は5分で拒否されます。無制限の実行権限には切り替えません。
+個別承認モードでは、タスクの開始承認に加え、Codexが追加の許可を求めた操作をタスク詳細に表示します。コマンド・要求する権限・作業場所・理由を確認して、許可または拒否してください。未回答は5分で拒否します。権限の追加要求は現在の実行ターンに限定して許可し、セッション全体へ恒久的に付与しません。
 
 実行中のタスクは **一時停止** で処理の終了を待ち、外部通信の許可を見直して **再開** できます。同じタスク・作業場所・保存済みCodex会話を引き継ぎます。実行済みの変更や外部への投稿は取り消しません。**タスクを停止** は終了操作です。終了・失敗済みのタスクは表示される `/ido follow` の案内から再依頼してください。アプリを閉じた後に一時停止状態を自動復元する機能はありません。
 
@@ -81,7 +85,7 @@ PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST=127.0.0.1
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT=8787
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL=wss://agents.example.com/workers
 PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL=https://example.com/agent-join
-PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL=https://example.com/IDO-Agent-Setup-0.2.1.exe
+PERSONAL_CONTEXT_VOICE_AGENT_DOWNLOAD_URL=https://example.com/IDO-Agent-Setup-0.2.2.exe
 PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS=true
 PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS=
 PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE=false

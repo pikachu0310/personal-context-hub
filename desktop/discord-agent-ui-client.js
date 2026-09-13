@@ -82,6 +82,9 @@ function renderTasks() {
   );
   el("cancel-task").disabled = !active(task);
   el("pause-task").disabled = task.state !== "running";
+  el("task-permissions").textContent = task.automaticPermissions
+    ? "全承認：サンドボックス外への追加権限も自動承認"
+    : "追加権限は操作ごとに確認";
   el("resume-controls").hidden = task.state !== "paused";
   el("retry-help").hidden = active(task) || task.source !== "discord";
   el("retry-help").textContent =
@@ -153,6 +156,10 @@ async function refresh() {
         : "未ログインです。OpenAIの公式ページでログインしてください。";
     el("login-link").hidden = !state.login.loginUrl;
     const connected = state.connected || state.reconnecting || state.revoked;
+    el("permission-status").textContent = state.connectionPolicy
+      ?.automaticPermissions
+      ? "全承認モード · 追加権限も自動承認中"
+      : "追加権限は個別承認 · このPCで実行";
     el("setup-sandbox").hidden = !state.sandboxSetup?.supported;
     el("setup-sandbox").disabled =
       busy || connected || state.busy || state.sandboxSetup?.pending;
@@ -176,11 +183,14 @@ async function refresh() {
       "folder",
       "automatic",
       "network",
+      "automatic-permissions",
     ])
       el(id).disabled = busy || state.busy || connected;
     if (state.connectionPolicy) {
       el("automatic").checked = state.connectionPolicy.automatic;
       el("network").checked = state.connectionPolicy.networkAccess;
+      el("automatic-permissions").checked =
+        state.connectionPolicy.automaticPermissions === true;
     }
     const signature = JSON.stringify([
       state.tasks,
@@ -240,6 +250,7 @@ action("import", async () => {
   el("code").value = data.pairingCode;
   el("automatic").checked = false;
   el("network").checked = false;
+  el("automatic-permissions").checked = false;
 });
 action("folder", async () => {
   const result = await api.request("/folder", {});
@@ -255,6 +266,7 @@ action("connect", async () => {
     workingDirectory: el("workdir").value,
     name: el("name").value,
     automatic: el("automatic").checked,
+    automaticPermissions: el("automatic-permissions").checked,
     networkAccess: el("network").checked,
   };
   el("code").value = "";
@@ -265,16 +277,19 @@ action("disconnect", async () => {
   await api.request("/stop", {});
   el("automatic").checked = false;
   el("network").checked = false;
+  el("automatic-permissions").checked = false;
 });
 action("cancel-task", () => api.request("/stop-task", { id: selected }));
 action("pause-task", async () => {
   el("resume-network").checked = false;
+  el("resume-permissions").checked = false;
   await api.request("/pause-task", { id: selected });
 });
 action("resume-task", () =>
   api.request("/resume-task", {
     id: selected,
     networkAccess: el("resume-network").checked,
+    automaticPermissions: el("resume-permissions").checked,
   }),
 );
 for (const approved of [true, false])

@@ -100,6 +100,28 @@ test("interactive desktop approvals answer only supported operations and never g
     decision: "decline",
   });
   assert.equal(fake.messages.find((x) => x.id === 803).error.code, -32601);
+  fake.client.options.onApprovalRequest = async () => ({ decision: "accept" });
+  fake.emit({
+    id: 804,
+    method: "item/permissions/requestApproval",
+    params: { permissions: { network: { enabled: true } } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fake.messages.find((x) => x.id === 804).result, {
+    permissions: { network: { enabled: true } },
+    scope: "turn",
+  });
+  fake.client.options.onApprovalRequest = async () => ({ decision: "decline" });
+  fake.emit({
+    id: 805,
+    method: "item/permissions/requestApproval",
+    params: { permissions: { network: { enabled: true } } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fake.messages.find((x) => x.id === 805).result, {
+    permissions: {},
+    scope: "turn",
+  });
   await fake.client.close();
 });
 
