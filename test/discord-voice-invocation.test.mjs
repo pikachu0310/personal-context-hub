@@ -32,6 +32,7 @@ test("vocatives tolerate fillers, greetings, repetition and bounded ASR aliases"
     "井戸Ｂｏｔ：進捗は？",
     "井戸Bot教えて",
     "えーと、井戸Bot、結果は？",
+    "あ、リドボット、何かしゃべって。",
   ])
     assert.equal(isBotAddressed(text), true, text);
   assert.equal(
@@ -64,6 +65,7 @@ test("mentions, quotations, different addressees and unrelated words remain quie
     "井戸Bot、の応答が遅い",
     "「あ。井戸Bot、止めて",
     "あ、井戸Bot、返事してって言っても聞いてないね",
+    "リドボットって認識されたね",
   ])
     assert.equal(isBotAddressed(text), false, text);
 });
