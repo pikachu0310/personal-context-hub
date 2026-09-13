@@ -361,6 +361,8 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
       return JSON.stringify({
         minutes: "- Aliceが案を提示\n- Bobが確認を依頼",
         shouldReply: true,
+        replyReason: "direct_answer",
+        replySourceSequences: [2],
         reply: "二人の案をまとめると、この方針で進められます。",
       });
     },
@@ -384,7 +386,7 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
     speakerName: "Alice",
     startedAt: 1,
   });
-  session.enqueue(Buffer.from("確認してほしい"), {
+  session.enqueue(Buffer.from("井戸Bot、確認してほしい"), {
     userId: "bob-id",
     speakerName: "Bob",
     startedAt: 2,
@@ -403,14 +405,14 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
       .map(({ speakerName, text }) => ({ speakerName, text })),
     [
       { speakerName: "Alice", text: "最初の案です" },
-      { speakerName: "Bob", text: "確認してほしい" },
+      { speakerName: "Bob", text: "井戸Bot、確認してほしい" },
     ],
   );
 
   assert.equal(await session.observeNow(), true);
   assert.equal(observations.length, 1);
   assert.match(observations[0].transcript, /\[Alice\] 最初の案です/);
-  assert.match(observations[0].transcript, /\[Bob\] 確認してほしい/);
+  assert.match(observations[0].transcript, /\[Bob\] 井戸Bot、確認してほしい/);
   assert.match(minutesEdits[0], /議事録/);
   assert.deepEqual(posts, ["二人の案をまとめると、この方針で進められます。"]);
   assert.deepEqual(spoken, [
@@ -492,7 +494,7 @@ test("meeting observation updates minutes without replying to ordinary conversat
   session.stop();
 });
 
-test("meeting mode reacts immediately after a transcript and coalesces concurrent speech", async () => {
+test("meeting mode responds to explicit calls and discards a reply superseded by newer speech", async () => {
   const observations = [];
   const posts = [];
   let releaseFirstObservation;
@@ -508,6 +510,8 @@ test("meeting mode reacts immediately after a transcript and coalesces concurren
       return JSON.stringify({
         minutes: "- 即時観測済み",
         shouldReply: true,
+        replyReason: "direct_answer",
+        replySourceSequences: statements.map((statement) => statement.sequence),
         reply: "すぐ反応しました。",
         tasks: [],
       });
@@ -523,13 +527,20 @@ test("meeting mode reacts immediately after a transcript and coalesces concurren
     scheduleInterval: () => ({ unref: () => undefined }),
     cancelInterval: () => undefined,
   });
-  session.enqueue(Buffer.from("即時反応して"), { speakerName: "Owner" });
+  session.enqueue(Buffer.from("井戸Bot、即時反応して"), {
+    speakerName: "Owner",
+  });
   await eventually(() => typeof releaseFirstObservation === "function");
-  session.enqueue(Buffer.from("続きも拾って"), { speakerName: "Owner" });
+  session.enqueue(Buffer.from("井戸Bot、続きも拾って"), {
+    speakerName: "Owner",
+  });
   await eventually(() => session.statements.length === 2);
   releaseFirstObservation();
-  await eventually(() => posts.length === 2);
-  assert.deepEqual(observations, [["即時反応して"], ["続きも拾って"]]);
+  await eventually(() => posts.length === 1);
+  assert.deepEqual(observations, [
+    ["井戸Bot、即時反応して"],
+    ["井戸Bot、続きも拾って"],
+  ]);
   assert.equal(session.statements.length, 0);
   session.stop();
 });
@@ -552,6 +563,8 @@ test("meeting transcript formatting preserves speaker order and observation JSON
       minutes: "更新済み",
       shouldReply: true,
       reply: "回答",
+      replyReason: undefined,
+      replySourceSequences: [],
       tasks: [],
       taskControls: [],
       decisions: [],
@@ -875,8 +888,18 @@ test("meeting mode dispatches only owner-authorized background tasks", async () 
         shouldReply: false,
         reply: "",
         tasks: [
-          { title: "Ownerの調査", sourceSequences: [1] },
-          { title: "Guestの操作", sourceSequences: [2] },
+          {
+            title: "Ownerの調査",
+            sourceSequences: [1],
+            authorizationSequences: [1],
+            executionIntent: "requested",
+          },
+          {
+            title: "Guestの操作",
+            sourceSequences: [2],
+            authorizationSequences: [2],
+            executionIntent: "requested",
+          },
         ],
       }),
     upsertLiveTranscript: async () => undefined,
@@ -892,7 +915,7 @@ test("meeting mode dispatches only owner-authorized background tasks", async () 
     scheduleInterval: () => ({ unref: () => undefined }),
     cancelInterval: () => undefined,
   });
-  session.enqueue(Buffer.from("調べて"), {
+  session.enqueue(Buffer.from("井戸Bot、調べて"), {
     userId: "owner-id",
     speakerName: "Owner",
     startedAt: 1,
@@ -906,16 +929,16 @@ test("meeting mode dispatches only owner-authorized background tasks", async () 
   assert.equal(await session.observeNow(), true);
   assert.equal(dispatched.length, 1);
   assert.equal(dispatched[0].title, "Ownerの調査");
-  assert.equal(dispatched[0].request, "調べて");
+  assert.equal(dispatched[0].request, "井戸Bot、調べて");
   session.stop();
 });
 
-test("meeting task acknowledgement replaces the generated realtime reply", async () => {
+test("meeting task creation leaves acknowledgement to its task surface without duplicate text or speech", async () => {
   const posts = [];
   const spoken = [];
   const dispatched = [];
   const session = new DiscordVoiceMeetingSession({
-    transcribe: async () => "音声でのタスク提出を検証して",
+    transcribe: async () => "井戸Bot、音声でのタスク提出を検証して",
     observe: async () =>
       JSON.stringify({
         minutes: "- 音声タスクを追加",
@@ -926,6 +949,8 @@ test("meeting task acknowledgement replaces the generated realtime reply", async
           {
             title: "音声でのタスク提出を検証",
             sourceSequences: [1],
+            authorizationSequences: [1],
+            executionIntent: "requested",
           },
         ],
       }),
@@ -948,8 +973,8 @@ test("meeting task acknowledgement replaces the generated realtime reply", async
   await eventually(() => session.statements.length === 1);
   assert.equal(await session.observeNow(), true);
   assert.equal(dispatched.length, 1);
-  assert.deepEqual(posts, ["タスクを追加しました：音声でのタスク提出を検証"]);
-  assert.deepEqual(spoken, ["タスクを追加しました：音声でのタスク提出を検証"]);
+  assert.deepEqual(posts, []);
+  assert.deepEqual(spoken, []);
   session.stop();
 });
 

@@ -432,7 +432,9 @@ test("a correction reaches the active task while meeting observation is still ru
   await session.addText("ボタンの大きさを検討します", { userId: "owner" });
   const observation = session.observeNow();
   await eventually(() => observing);
-  await session.addText("やっぱりボタンを小さくして", { userId: "owner" });
+  await session.addText("井戸Bot、やっぱりボタンを小さくして", {
+    userId: "owner",
+  });
   assert.equal(controls.length, 1);
   assert.equal(controls[0].taskId, "task");
   assert.equal(controls[0].type, "instruction");

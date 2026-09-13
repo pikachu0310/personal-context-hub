@@ -220,6 +220,8 @@ test("participant context cannot authorize work; owner voice needs a direct wake
         tasks: statements.map((s) => ({
           title: "work",
           sourceSequences: [s.sequence],
+          authorizationSequences: [s.sequence],
+          executionIntent: "requested",
         })),
         shouldReply: true,
         reply: "作業を開始しました。",

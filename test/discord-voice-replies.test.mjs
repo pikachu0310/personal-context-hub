@@ -34,6 +34,8 @@ test("a second question is answered while the first answer is still playing, wit
       return JSON.stringify({
         minutes: `会話${observations.length}`,
         shouldReply: true,
+        replyReason: "direct_answer",
+        replySourceSequences: statements.map((statement) => statement.sequence),
         reply: `回答${observations.length}`,
       });
     },
@@ -55,7 +57,7 @@ test("a second question is answered while the first answer is still playing, wit
     }
     assert.fail("next answer was blocked by the previous playback");
   };
-  await session.addText("最初の質問", { userId: "member" });
+  await session.addText("井戸Bot、最初の質問", { userId: "member" });
   let observationCompleted = false;
   const first = session.observeNow().then(() => {
     observationCompleted = true;
@@ -63,7 +65,7 @@ test("a second question is answered while the first answer is still playing, wit
   await eventually(() => spoken.length === 1);
   await session.addText("次の質問", { userId: "member", requestReply: true });
   await eventually(() => posts.length === 2);
-  assert.deepEqual(observations, [["最初の質問"], ["次の質問"]]);
+  assert.deepEqual(observations, [["井戸Bot、最初の質問"], ["次の質問"]]);
   assert.deepEqual(posts, ["回答1", "回答2"]);
   assert.deepEqual(spoken, ["回答1"]);
   assert.equal(observationCompleted, false);
@@ -95,13 +97,15 @@ test(
         return JSON.stringify({
           minutes: "最新の確認",
           shouldReply: true,
+          replyReason: "direct_answer",
+          replySourceSequences: [1],
           reply: "再試行後の回答",
         });
       },
       postText: async (text) => posts.push(text),
     });
     t.after(() => session.stop());
-    await session.addText("質問です", { userId: "member" });
+    await session.addText("井戸Bot、質問です", { userId: "member" });
     assert.equal(await session.observeNow(), false);
     assert.equal(firstSignal.aborted, true);
     assert.equal(firstSignal.reason.code, "STAGE_TIMEOUT");
@@ -143,12 +147,14 @@ test("a reply accepted by Discord but missing its acknowledgement reuses its del
       JSON.stringify({
         minutes: "answer ready",
         shouldReply: true,
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
         reply: "保存する回答",
       }),
     postText,
   });
   t.after(() => original.stop());
-  await original.addText("質問です", { userId: "member" });
+  await original.addText("井戸Bot、質問です", { userId: "member" });
   await original.observeNow();
   const restored = meeting({
     initialState: saved,
@@ -189,6 +195,8 @@ test("a partially delivered conversation answer resumes after restart without re
       JSON.stringify({
         minutes: "質問に回答済み",
         shouldReply: true,
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
         reply: answer,
       }),
     postText: async (text, { idempotencyKey }) => {
@@ -198,7 +206,9 @@ test("a partially delivered conversation answer resumes after restart without re
     },
   });
   t.after(() => original.stop());
-  await original.addText("この案について説明して", { userId: "member" });
+  await original.addText("井戸Bot、この案について説明して", {
+    userId: "member",
+  });
   await original.observeNow();
   assert.deepEqual(delivered, [chunks[0]]);
   const restored = meeting({
@@ -234,6 +244,8 @@ test("a conversation answer waits for a durable save and does not resend text af
       return JSON.stringify({
         minutes: "回答を準備",
         shouldReply: true,
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
         reply: "こちらが回答です。",
       });
     },
@@ -243,7 +255,7 @@ test("a conversation answer waits for a durable save and does not resend text af
     },
   });
   t.after(() => session.stop());
-  await session.addText("この案はどうですか", { userId: "member" });
+  await session.addText("井戸Bot、この案はどうですか", { userId: "member" });
   await session.observeNow();
   assert.deepEqual(posts, []);
   assert.equal(session.pendingControls.length, 1);
@@ -268,6 +280,8 @@ test("a saved answer delivered after a meeting switch keeps its old context and 
       JSON.stringify({
         minutes: "old decision",
         shouldReply: true,
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
         reply: answer,
       }),
     postText: async () => {
@@ -275,7 +289,7 @@ test("a saved answer delivered after a meeting switch keeps its old context and 
     },
   });
   t.after(() => original.stop());
-  await original.addText("以前の会議への質問", { userId: "member" });
+  await original.addText("井戸Bot、以前の会議への質問", { userId: "member" });
   await original.observeNow();
   assert.equal(await original.newMeeting(), true);
   const delivered = [],

@@ -5,6 +5,7 @@ import {
   speakerName,
 } from "../../storage/transcript-format.mjs";
 import { escapeDiscordMarkdown } from "./presentation.mjs";
+import { createThreadParticipantJoiner } from "./discussion-threads.mjs";
 const MAX_DISCORD_ARCHIVE_CHARACTERS = 1_850;
 export function formatDiscordTranscriptBatch(
   statements,
@@ -57,6 +58,7 @@ export function createDiscordTranscriptPublisher({
   let pending = [];
   let flushing = Promise.resolve();
   const threads = new Map();
+  const joinParticipants = createThreadParticipantJoiner();
 
   const resolveThread = async (date) => {
     if (threads.has(date)) return threads.get(date);
@@ -113,6 +115,10 @@ export function createDiscordTranscriptPublisher({
         );
         for (const [date, statements] of grouped) {
           const thread = await resolveThread(date);
+          await joinParticipants(
+            thread,
+            statements.map((statement) => statement.userId),
+          );
           for (const content of formatDiscordTranscriptBatch(statements, {
             timeZone,
           })) {

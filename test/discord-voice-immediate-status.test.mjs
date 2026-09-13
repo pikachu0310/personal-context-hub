@@ -126,6 +126,8 @@ test("status text arrives during an earlier spoken answer while speech remains i
         minutes: "context",
         shouldReply: true,
         reply: "最初の回答です。",
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
       }),
     postText: async (text) => posts.push(text),
     synthesize: async (text) => {
@@ -143,7 +145,7 @@ test("status text arrives during an earlier spoken answer while speech remains i
     release?.();
     await session.stop();
   });
-  await session.addText("案について説明して", { userId: "member" });
+  await session.addText("井戸Bot、案について説明して", { userId: "member" });
   const observation = session.observeNow();
   while (!release) await new Promise((resolve) => setImmediate(resolve));
   const status = session.addText("井戸Bot、進捗を教えて", { userId: "member" });

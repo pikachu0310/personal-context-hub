@@ -97,7 +97,12 @@ test("segmented speech waits for its ending and restores recognition order befor
       JSON.stringify({
         minutes: "青へ訂正",
         tasks: [
-          { title: "青いボタン", sourceSequences: [statements[0].sequence] },
+          {
+            title: "青いボタン",
+            sourceSequences: [statements[0].sequence],
+            authorizationSequences: [statements[0].sequence],
+            executionIntent: "requested",
+          },
         ],
       }),
     enqueueTask: async (task) => {

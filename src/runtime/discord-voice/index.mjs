@@ -1,4 +1,9 @@
 import { DiscordLiveBridge } from "../../providers/live.mjs";
+import {
+  createDiscordDiscussionRouter,
+  createThreadParticipantJoiner,
+  taskParticipantIds,
+} from "../../adapters/discord/discussion-threads.mjs";
 import { TaskPreviewManager } from "../../execution/preview.mjs";
 import { browserPreviewVerifier } from "../../execution/preview-browser.mjs";
 import { createDiscordLiveOutput } from "../../adapters/discord/transport.mjs";
@@ -45,7 +50,6 @@ import {
 import {
   createIdobataMessageHandler,
   createIdobataInteractionHandler,
-  IDOBATA_HELP,
   IDOBATA_APPLICATION_COMMAND,
   createIdobataSlashHandler,
 } from "../../adapters/discord/commands.mjs";
@@ -180,21 +184,31 @@ export async function startDiscordVoiceCodex({
       throw new Error("Configured text channel cannot receive Bot messages.");
     }
     const messageOptions = { silent: config.silentMessages !== false };
-    const postText = (content, { idempotencyKey } = {}) =>
-      textChannel.send(
+    const postText = createDiscordDiscussionRouter({
+      textChannel,
+      botUserId: client.user?.id,
+      getTask: (id) => taskQueue?.list().find((task) => task.id === id),
+      createMessagePayload: (content, { idempotencyKey } = {}) =>
         createDiscordMessagePayload(content, {
           ...messageOptions,
           idempotencyKey,
         }),
-      );
+    });
+    const joinParticipants = createThreadParticipantJoiner();
+    const upsertStatus = createEditableDiscordPost(textChannel, {
+      ...messageOptions,
+      botUserId: client.user?.id,
+      restorePrefix: "🎙️ **井戸Bot",
+    });
     const createTaskThread = createDiscordTaskThread(
       textChannel,
       messageOptions,
     );
-    const upsertLiveTranscript = createEditableDiscordPost(
-      textChannel,
-      messageOptions,
-    );
+    const upsertLiveTranscript = createEditableDiscordPost(textChannel, {
+      ...messageOptions,
+      botUserId: client.user?.id,
+      restorePrefix: "🎙️ **会話ログ・処理状況**",
+    });
     const upsertMinutes = createMinutesDiscordPost(textChannel, {
       ...messageOptions,
       botUserId: client.user?.id,
@@ -349,6 +363,7 @@ export async function startDiscordVoiceCodex({
           transcript: true,
           minutes: true,
           tasks: true,
+          threadedResults: true,
         },
         presentation: discordPresentation,
         postText,
@@ -375,6 +390,7 @@ export async function startDiscordVoiceCodex({
               throw error;
             });
           if (!thread) throw missingThread();
+          await joinParticipants(thread, taskParticipantIds(task));
           const starter = task.starterId
             ? await textChannel.messages
                 .fetch(task.starterId)
@@ -595,18 +611,13 @@ export async function startDiscordVoiceCodex({
         userId,
       createDecoder: dependencies.createDecoder,
     });
-    await postText(
+    await upsertStatus(
       config.voiceMode === "meeting"
-        ? `🎙️ Discord音声Codexを会議観測モードで起動しました。話者別の認識テキストは日付別の会話ログへ保存し、議事録を更新します。${config.immediateReactions ? "発話後すぐに" : `${Math.round(config.observationIntervalMs / 1_000)}秒ごとに`}必要な場合だけ応答します。${config.powerMode ? "操作担当者の作業依頼は、分離した作業場所でバックグラウンド実行します。" : ""}生の音声ファイルは保存しません。返答音声はAI生成です。`
+        ? `🎙️ **井戸Bot・会議の案内**\n即答は明示的な呼びかけ・質問コマンドに限ります。通常の会話は${Math.round(config.observationIntervalMs / 1000)}秒ごとに整理し、必要な確認結果を回答スレッドへ届けます。${config.powerMode ? "作業はBotへの依頼・委任が確定した場合に開始し、結果は各タスクのスレッドへまとめます。" : ""}\n議事録: /ido context · 作業一覧: /ido status · 操作説明: /ido help\n${config.allParticipantsOperate ? "参加者全員が作業を指示・操作できます。" : "設定済みの操作担当者が作業を操作できます。"}認識テキストは日付別の会話ログに保存します。生の音声は保存せず、返答音声はAI生成です。`
         : config.listenToEveryone
           ? "🔊 Discord音声Codexを起動しました。ボイスチャンネル内の全参加者の発話を処理します。返答音声はAI生成です。"
           : "🔊 Discord音声Codexを起動しました。本人allowlistの発話だけを処理します。返答音声はAI生成です。",
     );
-    if (config.voiceMode === "meeting") await postText(IDOBATA_HELP);
-    if (config.allParticipantsOperate || config.autonomousTasks)
-      await postText(
-        `⚙️ この会議の設定: ${config.allParticipantsOperate ? "参加者全員が作業を指示・操作できます。" : "設定済みの操作担当者が作業を操作できます。"}${config.autonomousTasks ? "会話から必要な作業を判断してタスク化します。" : ""}${config.answerUnaddressedQuestions ? "呼びかけなしの質問にも応答します。" : ""}`,
-      );
     logInfoQuietly(logger, {
       component: "discord-voice",
       event: "ready",

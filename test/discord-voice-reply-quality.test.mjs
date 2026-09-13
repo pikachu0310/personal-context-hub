@@ -47,7 +47,8 @@ test("ambiguous human conversation stays recorded without a filler response", as
   });
   try {
     await session.addText("それどうやんの？", { userId: "guest" });
-    await until(() => calls === 1 && session.activeQuickReplies === 0);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls, 0);
     assert.deepEqual(posted, []);
     assert.deepEqual(spoken, []);
     assert.equal(session.recentConversation[0].text, "それどうやんの？");
@@ -88,7 +89,7 @@ test("reply receives recent observed conversation, task evidence and current sta
     await until(() => !session.observing);
     await session.observeNow();
     assert.equal(session.statements.length, 0);
-    await session.addText("その結果は？", { userId: "guest" });
+    await session.addText("井戸Bot、その結果は？", { userId: "guest" });
     await until(() => input && session.activeQuickReplies === 0);
     assert.ok(
       input.context.conversation.some(
@@ -121,7 +122,9 @@ test("question requiring evidence invokes the investigator and never speaks an a
     },
   });
   try {
-    await session.addText("ボットがたまに抜ける理由は？", { userId: "guest" });
+    await session.addText("井戸Bot、ボットがたまに抜ける理由は？", {
+      userId: "guest",
+    });
     await until(() => inspecting);
     assert.deepEqual(posted, []);
     assert.deepEqual(spoken, []);
@@ -153,7 +156,9 @@ test("failed passive routing stays quiet and failed investigation is text only",
       throw new Error("inspection failed");
     },
   });
-  await second.session.addText("Botの切断原因は？", { userId: "guest" });
+  await second.session.addText("井戸Bot、Botの切断原因は？", {
+    userId: "guest",
+  });
   await until(() => second.session.activeQuickReplies === 0);
   assert.equal(second.posted.length, 1);
   assert.deepEqual(second.spoken, []);
@@ -182,7 +187,8 @@ test("routing uses a strict decision contract and suppresses generic acknowledge
   );
   assert.deepEqual(
     await adapter.quickReply({
-      text: "それどうやんの？",
+      text: "井戸Bot、それどうやんの？",
+      explicitlyAsked: true,
       context: { minutes: "既存の議事録", conversation: [] },
     }),
     { action: "ignore", reply: "" },

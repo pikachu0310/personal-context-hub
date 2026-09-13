@@ -626,6 +626,14 @@ export function createIdobataMessageHandler({
         kind: command === "task" ? "implementation" : command,
         complexity: "routine",
         modelSelection: message.modelSelection ?? requestedVoiceModel(argument),
+        sourceStatements: [
+          {
+            userId: message.author.id,
+            speakerName: message.member?.displayName ?? message.author.username,
+            text: argument,
+            meetingId: session.meetingId,
+          },
+        ],
       };
       let accepted;
       try {

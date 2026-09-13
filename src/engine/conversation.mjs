@@ -48,7 +48,11 @@ export async function createConversationEngine({
             hooks.onTaskState?.(tasks);
           },
           onResult: async (result, options) => {
-            await session?.addTaskResult?.(result, options);
+            await session?.addTaskResult?.(result, {
+              ...options,
+              resultAlreadyDelivered:
+                output.capabilities.threadedResults === true,
+            });
             hooks.onTaskResult?.(result);
           },
           applyTask: (task) => execution.applyTask(task),

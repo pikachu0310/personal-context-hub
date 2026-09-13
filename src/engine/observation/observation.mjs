@@ -55,6 +55,12 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
         title: boundText(task?.title, 120, "…") || "Codexタスク",
         kind: task?.kind ?? "implementation",
         complexity: task?.complexity ?? "routine",
+        executionIntent: task?.executionIntent,
+        authorizationSequences: Array.isArray(task?.authorizationSequences)
+          ? [
+              ...new Set(task.authorizationSequences.filter(Number.isInteger)),
+            ].slice(0, 10)
+          : [],
         acceptanceCriteria: Array.isArray(task?.acceptanceCriteria)
           ? task.acceptanceCriteria
               .slice(0, 5)
@@ -94,6 +100,12 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
     minutes,
     shouldReply: parsed?.shouldReply === true && Boolean(reply),
     reply,
+    replyReason: parsed?.replyReason,
+    replySourceSequences: Array.isArray(parsed?.replySourceSequences)
+      ? [
+          ...new Set(parsed.replySourceSequences.filter(Number.isInteger)),
+        ].slice(0, 10)
+      : [],
     tasks,
     taskControls,
     decisions: Array.isArray(parsed?.decisions)

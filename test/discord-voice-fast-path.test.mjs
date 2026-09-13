@@ -36,7 +36,7 @@ test("signal gate rejects silence/DC/clicks but retains short quiet signals", ()
   assert.equal(qualifyTranscriptionAudio(wrapPcmAsWav(pcm)).accepted, true);
 });
 
-test("unaddressed question answers and speaks while minutes observer remains blocked", async () => {
+test("an addressed question answers and speaks while the periodic minutes observer remains blocked", async () => {
   let release;
   const blocked = new Promise((resolve) => {
     release = resolve;
@@ -73,8 +73,11 @@ test("unaddressed question answers and speaks while minutes observer remains blo
   });
   try {
     await session.addText("今日は晴れです", { userId: "guest" });
+    void session.observeNow();
     await until(() => session.observing);
-    await session.addText("選択肢は何がありますか？", { userId: "guest" });
+    await session.addText("井戸Bot、選択肢は何がありますか？", {
+      userId: "guest",
+    });
     await until(() => spoken.length === 1);
     assert.equal(session.observing, true);
     assert.equal(questions.length, 1);
@@ -164,7 +167,7 @@ test("minutes has complete UTF-8 attachment, editable summary, and a pinned entr
   assert.equal(edits[0].files[0].attachment.toString(), minutes + "訂正");
 });
 
-test("autonomous task observation authorizes guest context and creates a concrete task", async () => {
+test("autonomous task observation accepts an agreed guest delegation without rewriting it as authorization", async () => {
   const tasks = [];
   const session = new DiscordVoiceMeetingSession({
     transcribe: async (wav) => wav.toString(),
@@ -176,6 +179,8 @@ test("autonomous task observation authorizes guest context and creates a concret
             title: "入力検証を追加する",
             kind: "implementation",
             sourceSequences: [statements[0].sequence],
+            authorizationSequences: [statements[0].sequence],
+            executionIntent: "agreed",
           },
         ],
       }),
@@ -196,10 +201,12 @@ test("autonomous task observation authorizes guest context and creates a concret
     cancelInterval: () => {},
     logger: { info() {} },
   });
-  await session.addText("入力欄の検証が足りない気がする", { userId: "guest" });
+  await session.addText("入力欄の検証を追加する作業はBotに任せよう。", {
+    userId: "guest",
+  });
   await session.observeNow();
   assert.equal(tasks.length, 1);
-  assert.match(tasks[0].request, /自律実行/);
+  assert.equal(tasks[0].request, "入力欄の検証を追加する作業はBotに任せよう。");
   const prompt = buildMeetingObservationPrompt({
     ownerUserId: "owner",
     allParticipantsOperate: true,
@@ -208,7 +215,7 @@ test("autonomous task observation authorizes guest context and creates a concret
     statements: [{ userId: "guest", text: "入力が不便", sequence: 1 }],
   });
   assert.match(prompt, /"isOwner":true/);
-  assert.match(prompt, /明確な依頼がなくても/);
+  assert.match(prompt, /実行すると決まったBotへの委任/);
   await session.stop();
 });
 

@@ -1,4 +1,8 @@
 import { SpeechStartGate } from "./speech-start.mjs";
+import {
+  createThreadParticipantJoiner,
+  taskParticipantIds,
+} from "./discussion-threads.mjs";
 import { formatTaskPreview } from "../../engine/output/preview.mjs";
 import { Readable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
@@ -350,9 +354,24 @@ export function createDiscordMessagePayload(
   };
 }
 
-export function createEditableDiscordPost(textChannel, { silent = true } = {}) {
+export function createEditableDiscordPost(
+  textChannel,
+  { silent = true, botUserId, restorePrefix } = {},
+) {
   let message;
+  let restored = false;
   return async (content) => {
+    if (!restored) {
+      restored = true;
+      if (botUserId && restorePrefix && textChannel.messages?.fetch) {
+        const recent = await textChannel.messages.fetch({ limit: 100 });
+        message = recent?.find(
+          (item) =>
+            item.author?.id === botUserId &&
+            item.content?.startsWith(restorePrefix),
+        );
+      }
+    }
     const payload = createDiscordMessagePayload(content, { silent });
     if (!message || typeof message.edit !== "function") {
       message = await textChannel.send(payload);
@@ -583,6 +602,7 @@ export function createDiscordTaskCardUpdater(
 }
 
 export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
+  const joinParticipants = createThreadParticipantJoiner();
   return async (task) => {
     const creationKey = `task-thread:${task.id}:${task.createdAt}:${task.threadId ?? "initial"}`;
     const title = String(task.title ?? "Codexタスク")
@@ -628,6 +648,7 @@ export function createDiscordTaskThread(textChannel, { silent = true } = {}) {
     }
     const threadId = String(thread.id ?? "");
     if (!threadId) throw new Error("Created task thread has no channel ID.");
+    await joinParticipants(thread, taskParticipantIds(task));
     const card = createDiscordTaskCardUpdater(
       textChannel,
       task,

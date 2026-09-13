@@ -238,7 +238,7 @@ test("meeting observation prompt requests cumulative minutes and optional replie
   assert.match(prompt, /sourceSequences/);
   assert.match(prompt, /"isOwner":true/);
   assert.match(prompt, /"isOwner":false/);
-  assert.match(prompt, /定型的に「結論」から始めない/);
+  assert.match(prompt, /具体的な答えと根拠を短い1〜3文/);
 });
 
 test("power task prompt authorizes only the owner request", () => {
@@ -389,6 +389,8 @@ test("Codex voice runner enforces structured meeting observations", async () => 
     "minutes",
     "shouldReply",
     "reply",
+    "replyReason",
+    "replySourceSequences",
     "tasks",
     "taskControls",
     "decisions",

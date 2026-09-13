@@ -126,6 +126,10 @@ test("an answer still being generated when speech is stopped is delivered as tex
         minutes: "context",
         shouldReply: true,
         reply: `回答${observations}`,
+        replyReason: "direct_answer",
+        replySourceSequences: _input.statements
+          .filter((statement) => !statement.handledAction)
+          .map((statement) => statement.sequence),
       });
     },
     postText: async (text) => posts.push(text),
@@ -135,7 +139,10 @@ test("an answer still being generated when speech is stopped is delivered as tex
     release?.();
     await session.stop();
   });
-  await session.addText("最初の質問", { userId: "owner", taskEligible: false });
+  await session.addText("井戸Bot、最初の質問", {
+    userId: "owner",
+    taskEligible: false,
+  });
   const observation = session.observeNow();
   await eventually(() => release);
   await session.addText("井戸Bot、読み上げを止めて", { userId: "owner" });
@@ -143,7 +150,10 @@ test("an answer still being generated when speech is stopped is delivered as tex
   await observation;
   assert.ok(posts.includes("回答1"));
   assert.deepEqual(spoken, []);
-  await session.addText("次の質問", { userId: "owner", taskEligible: false });
+  await session.addText("井戸Bot、次の質問", {
+    userId: "owner",
+    taskEligible: false,
+  });
   await session.observeNow();
   assert.deepEqual(spoken, ["回答2"]);
 });
@@ -159,13 +169,15 @@ test("silencing a saved undelivered reply survives restart and resets at a new m
         minutes: "context",
         shouldReply: true,
         reply: "保存済みの回答",
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
       }),
     postText: async () => {
       throw new Error("offline");
     },
   });
   t.after(() => original.stop());
-  await original.addText("質問", { userId: "owner" });
+  await original.addText("井戸Bot、質問", { userId: "owner" });
   await original.observeNow();
   await original.silenceSpeech();
   const posts = [],
@@ -177,6 +189,8 @@ test("silencing a saved undelivered reply survives restart and resets at a new m
         minutes: "new context",
         shouldReply: true,
         reply: "新しい会議の回答",
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
       }),
     postText: async (text) => posts.push(text),
     synthesize: async (text) => spoken.push(text),
@@ -186,7 +200,7 @@ test("silencing a saved undelivered reply survives restart and resets at a new m
   assert.deepEqual(posts, ["保存済みの回答"]);
   assert.deepEqual(spoken, []);
   assert.equal(await restored.newMeeting(), true);
-  await restored.addText("新しい質問", { userId: "owner" });
+  await restored.addText("井戸Bot、新しい質問", { userId: "owner" });
   await restored.observeNow();
   assert.deepEqual(spoken, ["新しい会議の回答"]);
 });
