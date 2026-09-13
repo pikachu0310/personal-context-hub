@@ -20,6 +20,7 @@ function directoryStat() {
 test("readiness rejects invalid meeting and task settings instead of silently using defaults", async () => {
   for (const [field, value] of [
     ["PERSONAL_CONTEXT_VOICE_OPERATOR_IDS", "invalid-operator"],
+    ["PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE", "invalid-boolean"],
     ["PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD", "invalid-boolean"],
     ["PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS", "invalid-boolean"],
     ["PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES", "invalid-boolean"],
@@ -52,6 +53,7 @@ test("offline readiness validates public configuration without reading secrets",
       OPENAI_API_KEY: "must-not-be-observed",
       PERSONAL_CONTEXT_VOICE_OPERATOR_IDS:
         "55555555555555555,66666666666666666",
+      PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE: "true",
       PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD: "false",
       PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS: "false",
       PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES: "false",
@@ -91,6 +93,7 @@ test("offline readiness validates public configuration without reading secrets",
   });
   assert.equal(report.config.openaiApiKeyConfigured, false);
   assert.equal(report.config.operatorUserCount, 2);
+  assert.equal(report.config.allParticipantsOperate, true);
   assert.equal(report.config.requireWakeWord, false);
   assert.equal(report.config.immediateReactions, false);
   assert.equal(report.config.silentMessages, false);
