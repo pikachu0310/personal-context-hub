@@ -1,0 +1,303 @@
+import { createServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+import { AgentBrowserLogin } from "./discord-agent-login.mjs";
+import {
+  DiscordAgentWorker,
+  LocalCodexWorkerExecutor,
+} from "./discord-agent-worker.mjs";
+import {
+  readAgentWorkerCredential,
+  writeAgentWorkerCredential,
+} from "./discord-agent-worker-credentials.mjs";
+
+const exec = promisify(execFile);
+class UiError extends Error {}
+const defaultDirectory = join(
+  process.env.LOCALAPPDATA ?? join(homedir(), ".local", "state"),
+  "personal-context-hub",
+  "agent-ui",
+);
+
+export async function createAgentUi({
+  directory = defaultDirectory,
+  login = new AgentBrowserLogin(),
+  createWorker = (options) => new DiscordAgentWorker(options),
+  createExecutor = (options) => new LocalCodexWorkerExecutor(options),
+  readCredential = readAgentWorkerCredential,
+  writeCredential = writeAgentWorkerCredential,
+  validateRepository = async (path) => {
+    await exec("git", ["-C", path, "rev-parse", "--show-toplevel"], {
+      windowsHide: true,
+      timeout: 10_000,
+    });
+  },
+  connectionTimeoutMs = 30_000,
+} = {}) {
+  const token = randomBytes(32).toString("base64url");
+  let profile = {};
+  try {
+    profile = JSON.parse(
+      await readFile(join(directory, "profile.json"), "utf8"),
+    );
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  let worker;
+  let busy = false;
+  let lastError = "";
+  let origin;
+  const page = await readFile(
+    new URL("./discord-agent-ui.html", import.meta.url),
+    "utf8",
+  );
+  const script = await readFile(
+    new URL("./discord-agent-ui-client.js", import.meta.url),
+    "utf8",
+  );
+
+  const stop = async () => {
+    const previous = worker;
+    worker = undefined;
+    await previous?.stop();
+  };
+  const connect = async (input) => {
+    if (busy || worker) throw new UiError("先に接続を停止してください。");
+    busy = true;
+    lastError = "";
+    let timer;
+    try {
+      if (!(await login.refresh()).authenticated)
+        throw new UiError("先にOpenAIへログインしてください。");
+      if (
+        typeof input.workingDirectory !== "string" ||
+        !input.workingDirectory.trim()
+      )
+        throw new UiError("作業フォルダーを指定してください。");
+      const workingDirectory = resolve(input.workingDirectory.trim());
+      try {
+        await validateRepository(workingDirectory);
+      } catch {
+        throw new UiError("作業フォルダーにGitリポジトリが見つかりません。");
+      }
+      const pairingCode = String(input.pairingCode ?? "").trim();
+      let credential;
+      if (!pairingCode) {
+        try {
+          credential = await readCredential();
+        } catch {
+          throw new UiError("Discordで新しい参加コードを取得してください。");
+        }
+      }
+      const gatewayUrl = String(
+        input.gatewayUrl ?? credential?.gatewayUrl ?? "",
+      ).trim();
+      let url;
+      try {
+        url = new URL(gatewayUrl);
+      } catch {
+        throw new UiError("接続先URLを確認してください。");
+      }
+      if (
+        url.username ||
+        url.password ||
+        url.hash ||
+        !(
+          url.protocol === "wss:" ||
+          (url.protocol === "ws:" &&
+            ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
+        )
+      )
+        throw new UiError("公開接続先はwss://で指定してください。");
+      if (credential && gatewayUrl !== credential.gatewayUrl)
+        throw new UiError("接続先の変更には新しい参加コードが必要です。");
+      const nextProfile = {
+        workingDirectory,
+        gatewayUrl,
+        name: String(input.name ?? "")
+          .trim()
+          .slice(0, 80),
+      };
+      // Persist only local preferences, never the pairing code or credentials.
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      await writeFile(
+        join(directory, "profile.json.tmp"),
+        JSON.stringify(nextProfile),
+        { mode: 0o600 },
+      );
+      await rename(
+        join(directory, "profile.json.tmp"),
+        join(directory, "profile.json"),
+      );
+      profile = nextProfile;
+      worker = createWorker({
+        gatewayUrl,
+        credential,
+        pairingCode: pairingCode || undefined,
+        name: nextProfile.name || undefined,
+        capabilities: ["*"],
+        maximumConcurrentTasks: 1,
+        executor: createExecutor({
+          workingDirectory,
+          workspaceDirectory: join(
+            directory,
+            "workspaces",
+            createHash("sha256")
+              .update(workingDirectory)
+              .digest("hex")
+              .slice(0, 16),
+          ),
+        }),
+        credentialWriter: writeCredential,
+      });
+      await Promise.race([
+        worker.connect(),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new UiError(
+                  "接続がタイムアウトしました。Botの稼働と接続先・参加コードを確認してください。",
+                ),
+              ),
+            connectionTimeoutMs,
+          );
+        }),
+      ]);
+    } catch (error) {
+      await stop();
+      // Remote errors and subprocess output can include untrusted/private data.
+      const safe = error instanceof UiError;
+      lastError = safe
+        ? error.message.slice(0, 200)
+        : "接続できませんでした。接続先と参加コードを確認してください。";
+      throw new UiError(lastError);
+    } finally {
+      clearTimeout(timer);
+      busy = false;
+    }
+  };
+
+  const server = createServer(async (request, response) => {
+    const send = (status, data, type = "application/json") => {
+      response.writeHead(status, {
+        "Content-Type": `${type}; charset=utf-8`,
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy":
+          "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      });
+      response.end(type === "application/json" ? JSON.stringify(data) : data);
+    };
+    if (
+      request.headers.host !== new URL(origin).host ||
+      (request.headers.origin && request.headers.origin !== origin)
+    )
+      return send(403, { error: "Forbidden" });
+    // Even read endpoints require the per-launch capability. The bootstrap URL
+    // keeps it in a fragment so it is not sent in HTTP requests or referrers.
+    if (request.method === "GET" && request.url === "/")
+      return send(200, page, "text/html");
+    if (request.method === "GET" && request.url === "/client.js")
+      return send(200, script, "text/javascript");
+    if (request.headers.authorization !== `Bearer ${token}`)
+      return send(403, { error: "Forbidden" });
+    try {
+      if (request.method === "GET" && request.url === "/status")
+        return send(200, {
+          login: login.state,
+          profile,
+          busy,
+          lastError,
+          connected: Boolean(
+            worker?.socket?.readyState === 1 && worker?.authenticated,
+          ),
+          reconnecting: Boolean(
+            worker && !worker.authenticated && !worker.reconnectDisabled,
+          ),
+          revoked: Boolean(worker?.reconnectDisabled),
+          canPickFolder: process.platform === "win32",
+        });
+      if (
+        request.method !== "POST" ||
+        request.headers.origin !== origin ||
+        request.headers["content-type"] !== "application/json"
+      )
+        return send(403, { error: "Forbidden" });
+      let contents = "";
+      for await (const chunk of request) {
+        contents += chunk;
+        if (Buffer.byteLength(contents) > 16_384)
+          return send(413, { error: "Request too large" });
+      }
+      const input = JSON.parse(contents || "{}");
+      if (request.url === "/login") {
+        if (busy || worker)
+          return send(409, {
+            error: "ログインし直す前に接続を停止してください。",
+          });
+        login.start();
+        return send(200, { ok: true });
+      }
+      if (request.url === "/refresh-login")
+        return send(200, await login.refresh());
+      if (request.url === "/connect") {
+        await connect(input);
+        return send(200, { ok: true });
+      }
+      if (request.url === "/stop") {
+        if (busy)
+          return send(409, {
+            error: "接続処理が完了してから停止してください。",
+          });
+        await stop();
+        return send(200, { ok: true });
+      }
+      if (request.url === "/folder" && process.platform === "win32") {
+        const { stdout } = await exec(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-STA",
+            "-EncodedCommand",
+            Buffer.from(
+              "Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq 'OK') { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Console]::Write($dialog.SelectedPath) }",
+              "utf16le",
+            ).toString("base64"),
+          ],
+          { windowsHide: true, timeout: 120_000 },
+        );
+        return send(200, { path: stdout.trim() });
+      }
+      return send(404, { error: "Not found" });
+    } catch {
+      return send(400, {
+        error:
+          lastError ||
+          "操作に失敗しました。入力内容を確認してもう一度お試しください。",
+      });
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  origin = `http://127.0.0.1:${server.address().port}`;
+  void login.refresh();
+  return {
+    url: `${origin}/#${token}`,
+    async close() {
+      login.stop();
+      await stop();
+      await new Promise((resolve) => {
+        server.close(resolve);
+        server.closeIdleConnections();
+      });
+    },
+  };
+}

@@ -144,9 +144,13 @@ for (const code of [4001, 4002, 4003]) {
       WebSocketClass: WorkerSocket,
       executor: {},
     });
-    void worker.connect();
+    const ready = assert.rejects(
+      worker.connect(),
+      /closed before authentication/,
+    );
     worker.socket.close(code);
     worker.socket.finishClose();
+    await ready;
     t.mock.timers.tick(10_000);
     assert.equal(opened, 1);
     await worker.stop();

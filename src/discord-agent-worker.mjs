@@ -234,6 +234,7 @@ export class DiscordAgentWorker {
   }
 
   #open() {
+    this.authenticated = false;
     this.socket = new this.WebSocketClass(this.gatewayUrl, {
       maxPayload: 256 * 1024,
     });
@@ -253,6 +254,10 @@ export class DiscordAgentWorker {
     });
     this.socket.once("error", (error) => this.rejectReady?.(error));
     this.socket.once("close", (code) => {
+      this.authenticated = false;
+      this.rejectReady?.(
+        new Error(`Worker connection closed before authentication (${code}).`),
+      );
       clearInterval(this.heartbeat);
       for (const controller of this.tasks.values()) controller.abort();
       this.tasks.clear();
@@ -265,14 +270,23 @@ export class DiscordAgentWorker {
     });
   }
   async stop() {
+    this.authenticated = false;
     this.stopping = true;
     clearTimeout(this.reconnectTimer);
     clearInterval(this.heartbeat);
     for (const controller of this.tasks.values()) controller.abort();
     this.tasks.clear();
     if (!this.socket || this.socket.readyState > OPEN) return;
+    if (this.socket.readyState === 0) {
+      this.socket.terminate();
+      return;
+    }
     await new Promise((resolve) => {
-      this.socket.once("close", resolve);
+      const timer = setTimeout(() => this.socket.terminate(), 2_000);
+      this.socket.once("close", () => {
+        clearTimeout(timer);
+        resolve();
+      });
       this.socket.close(1000, "Worker stopped");
     });
   }
@@ -349,6 +363,7 @@ export class DiscordAgentWorker {
   }
 
   #online() {
+    this.authenticated = true;
     clearInterval(this.heartbeat);
     this.heartbeat = setInterval(
       () => this.#send({ type: "heartbeat", at: Date.now() }),

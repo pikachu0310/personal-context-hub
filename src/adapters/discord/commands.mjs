@@ -535,8 +535,8 @@ export function createIdobataMessageHandler({
             "🔐 **個人Codex Workerの接続コード**",
             `Gateway: \`${pairing.gatewayUrl}\``,
             `コード: \`${pairing.code}\`（約${remaining}分で失効・1回限り）`,
-            "自分のPCでコードを標準入力から渡してください:",
-            `\`Write-Output '${pairing.code}' | npm run agent:pair -- --gateway ${pairing.gatewayUrl} --workdir <repository> --capabilities frontend,test\``,
+            "自分のPCで `Start Agent.cmd` をダブルクリックし、「OpenAIでログイン」を選んでください。",
+            "接続画面で作業フォルダーを選び、上のGatewayと参加コードを入力して「エージェントを接続」を押してください。",
             "Discord・Codex・GitHubのログイン情報をBotへ送らないでください。",
           ].join("\n"),
         );
