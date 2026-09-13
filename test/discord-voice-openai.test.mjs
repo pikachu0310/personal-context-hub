@@ -407,7 +407,7 @@ test("Codex voice runner enforces structured meeting observations", async () => 
   ]);
 });
 
-test("observer threads resume only inside the same meeting, including after restart", async (t) => {
+test("meeting observers use fresh bounded context after every cycle and restart", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "codex-meeting-scope-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const config = {
@@ -416,37 +416,58 @@ test("observer threads resume only inside the same meeting, including after rest
     voiceMode: "meeting",
   };
   const starts = [],
-    resumes = [];
-  const makeThread = (id) => ({
-    id,
-    run: async () => ({
-      finalResponse: JSON.stringify({ minutes: "summary", shouldReply: false }),
-    }),
-  });
-  const codex = {
-    startThread: () => {
-      const id = `thread-${starts.length + 1}`;
-      starts.push(id);
-      return makeThread(id);
-    },
-    resumeThread: (id) => {
-      resumes.push(id);
-      return makeThread(id);
-    },
-  };
-  await new CodexVoiceRunner(config, { codex }).observeMeeting({
+    prompts = [],
+    disposed = [];
+  const oldState = JSON.stringify({
+    threadId: "exhausted-thread",
     meetingId: "first",
-    statements: [],
   });
-  const restored = new CodexVoiceRunner(config, { codex });
-  await restored.observeMeeting({ meetingId: "first", statements: [] });
-  assert.deepEqual(resumes, ["thread-1"]);
-  await restored.observeMeeting({ meetingId: "second", statements: [] });
-  assert.deepEqual(starts, ["thread-1", "thread-2"]);
-  assert.equal(
-    JSON.parse(await readFile(config.statePath, "utf8")).meetingId,
-    "second",
+  await writeFile(config.statePath, oldState);
+  const codex = {
+    startThread: (options) => {
+      const id = `thread-${starts.length + 1}`;
+      starts.push(options);
+      return {
+        id,
+        run: async (prompt) => {
+          prompts.push(prompt);
+          return {
+            finalResponse: JSON.stringify({
+              minutes: "summary",
+              shouldReply: false,
+            }),
+          };
+        },
+        dispose: async () => disposed.push(id),
+      };
+    },
+    resumeThread: () =>
+      assert.fail("observer must not resume exhausted history"),
+  };
+  const input = {
+    meetingId: "first",
+    minutes: "ボタンは赤で決定",
+    statements: [{ sequence: 2, text: "次は小さくして" }],
+  };
+  const runner = new CodexVoiceRunner(config, { codex });
+  await runner.observeMeeting(input);
+  await runner.observeMeeting(input);
+  await new CodexVoiceRunner(config, { codex }).observeMeeting(input);
+  assert.equal(starts.length, 3);
+  assert.ok(
+    starts.every(
+      (options) => options.ephemeral && options.sandboxMode === "read-only",
+    ),
   );
+  assert.ok(
+    prompts.every(
+      (prompt) =>
+        prompt.includes(input.minutes) &&
+        prompt.includes(input.statements[0].text),
+    ),
+  );
+  assert.deepEqual(disposed, ["thread-1", "thread-2", "thread-3"]);
+  assert.equal(await readFile(config.statePath, "utf8"), oldState);
 });
 
 test("power tasks run in a separate workspace-bound networked thread", async () => {

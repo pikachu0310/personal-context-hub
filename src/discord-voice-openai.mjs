@@ -707,21 +707,42 @@ export class CodexVoiceRunner {
   }
 
   async observeMeeting(observation, { signal } = {}) {
-    return this.#runPrompt(
-      buildMeetingObservationPrompt({
-        ...observation,
-        ownerUserId: this.config.allowedUserId,
-        powerMode: this.config.powerMode,
-        operatorUserIds: this.config.operatorUserIds ?? [],
-        allParticipantsOperate: this.config.allParticipantsOperate,
-        autonomousTasks: this.config.autonomousTasks,
-      }),
-      {
-        signal,
-        outputSchema: MEETING_OBSERVATION_SCHEMA,
-        meetingId: observation.meetingId,
-      },
-    );
+    await this.prepare();
+    // The durable minutes and sourced statements are the observer's memory.
+    // Replaying them into one ever-growing thread eventually exhausts context
+    // and repeats already-summarized input costs on every meeting cycle.
+    const thread = this.codex.startThread({
+      workingDirectory: this.config.workingDirectory,
+      sandboxMode: "read-only",
+      approvalPolicy: "never",
+      networkAccessEnabled: false,
+      webSearchMode: "disabled",
+      skipGitRepoCheck: false,
+      additionalDirectories: [],
+      model: this.config.observerModel ?? this.config.codexModel,
+      modelReasoningEffort:
+        this.config.observerReasoningEffort ?? this.config.codexReasoningEffort,
+      ephemeral: true,
+    });
+    try {
+      return await this.#runOnThread(
+        thread,
+        buildMeetingObservationPrompt({
+          ...observation,
+          ownerUserId: this.config.allowedUserId,
+          powerMode: this.config.powerMode,
+          operatorUserIds: this.config.operatorUserIds ?? [],
+          allParticipantsOperate: this.config.allParticipantsOperate,
+          autonomousTasks: this.config.autonomousTasks,
+        }),
+        {
+          signal,
+          outputSchema: MEETING_OBSERVATION_SCHEMA,
+        },
+      );
+    } finally {
+      await thread.dispose?.().catch(() => {});
+    }
   }
 
   async runTask(task, { signal, onProgress } = {}) {
