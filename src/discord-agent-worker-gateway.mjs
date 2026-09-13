@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { identifyVerificationCommand } from "./engine/evidence.mjs";
 import { taskModelSelection } from "./engine/model-policy.mjs";
+import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const OPEN = 1;
@@ -101,23 +102,19 @@ function safeArtifacts(value) {
   };
 }
 
-export function validateWorkerGatewayConfig({ host, publicUrl }) {
+export function validateWorkerGatewayConfig({ host, publicUrl, port }) {
   const loopback = ["127.0.0.1", "::1", "localhost"].includes(host);
-  const url = new URL(publicUrl);
-  const publicLoopback = ["127.0.0.1", "[::1]", "localhost"].includes(
-    url.hostname,
-  );
-  if (url.username || url.password || url.hash || url.search)
-    throw new Error(
-      "Worker gateway URL must not contain credentials, queries or fragments.",
-    );
+  const { url } = validateAgentEndpoint(publicUrl);
   if (!loopback)
     throw new Error(
       "Worker gateway must bind to loopback behind a TLS reverse proxy.",
     );
-  if (url.protocol !== "wss:" && !(publicLoopback && url.protocol === "ws:"))
+  if (
+    port !== undefined &&
+    (!Number.isInteger(port) || port < 0 || port > 65535 || port === 17879)
+  )
     throw new Error(
-      "Worker gateway must use wss:// unless it is bound to loopback.",
+      "Worker gateway must use a valid port separate from the participant UI.",
     );
   return { loopback, url };
 }
@@ -141,7 +138,8 @@ export class AgentWorkerGateway {
     maximumMessagesPerWindow = 120,
     authorizeOwner = () => true,
   }) {
-    validateWorkerGatewayConfig({ host, publicUrl });
+    const { url } = validateWorkerGatewayConfig({ host, publicUrl, port });
+    this.path = url.pathname;
     this.registry = registry;
     this.agentTeam = agentTeam;
     this.host = host;
@@ -169,8 +167,29 @@ export class AgentWorkerGateway {
       host: this.host,
       port: this.port,
       maxPayload: MAX_MESSAGE_BYTES,
+      maxFragments: 64,
+      maxBufferedChunks: 256,
+      perMessageDeflate: false,
+      closeTimeout: 1_000,
+      backlog: 32,
       // Browser pages have no reason to talk directly to this machine protocol.
-      verifyClient: ({ origin }) => !origin,
+      verifyClient: ({ req }, done) => {
+        if (req.url !== this.path) return done(false, 404);
+        if (
+          "origin" in req.headers ||
+          "sec-websocket-origin" in req.headers ||
+          "sec-websocket-protocol" in req.headers
+        )
+          return done(false, 401);
+        if (
+          (this.server?.clients?.size ?? this.sessions.size) >=
+            this.maximumConnections ||
+          [...this.sessions.values()].filter((value) => !value.agentId)
+            .length >= this.maximumUnauthenticatedConnections
+        )
+          return done(false, 503);
+        done(true);
+      },
     });
     this.server.on("connection", (socket) => this.#accept(socket));
     await new Promise((resolve, reject) => {
@@ -234,6 +253,7 @@ export class AgentWorkerGateway {
   }
 
   async runTask(task, { signal, onProgress } = {}) {
+    signal?.throwIfAborted();
     const agentId = task.assignedAgentId;
     const socket = this.connections.get(agentId);
     if (!socket || socket.readyState !== OPEN)
@@ -252,16 +272,33 @@ export class AgentWorkerGateway {
     });
     this.pending.set(leaseId, lease);
     const abort = () => {
-      socket.send(JSON.stringify({ type: "cancel", leaseId }));
-      this.#settle(
-        leaseId,
-        signal.reason ?? gatewayError("TASK_CANCELLED", "Task cancelled."),
-        true,
-      );
+      try {
+        if (socket.readyState === OPEN)
+          socket.send(JSON.stringify({ type: "cancel", leaseId }));
+      } catch {
+        /* The cancelled lease is settled even if its socket has failed. */
+      } finally {
+        this.#settle(
+          leaseId,
+          signal.reason ?? gatewayError("TASK_CANCELLED", "Task cancelled."),
+          true,
+        );
+      }
     };
     signal?.addEventListener("abort", abort, { once: true });
     lease.removeAbort = () => signal?.removeEventListener("abort", abort);
-    socket.send(JSON.stringify(safeTask(task, leaseId)));
+    try {
+      socket.send(JSON.stringify(safeTask(task, leaseId)));
+    } catch {
+      this.#settle(
+        leaseId,
+        gatewayError(
+          "WORKER_DISCONNECTED",
+          "Worker could not receive the task.",
+        ),
+        true,
+      );
+    }
     return result;
   }
 
@@ -283,6 +320,9 @@ export class AgentWorkerGateway {
   }
 
   #accept(socket) {
+    // Malformed/oversized frames emit an error before close. They must never
+    // become an unhandled EventEmitter error that brings down the Bot.
+    socket.on("error", () => socket.terminate?.());
     if (
       this.sessions.size >= this.maximumConnections ||
       [...this.sessions.values()].filter((value) => !value.agentId).length >=

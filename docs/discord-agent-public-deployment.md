@@ -6,6 +6,28 @@
 
 公開するのは中央BotのWorker GatewayのWSS接続先と、秘密を含まない参加ガイドだけです。参加者のローカルUI、OpenAI認証のコールバック、Codex App Server、ファイルシステム、Botの資格情報は公開しません。Tailscaleや参加者側のVPNは不要です。
 
+## 主催者のPCで運用する
+
+サーバーを借りず、主催者のPCでBotとWorker Gatewayを動かせます。各参加者のPCでは接続アプリとCodexを動かします。主催者のPCを停止・スリープすると、Botと参加者の接続も止まります。
+
+離れたネットワークからの接続には、Cloudflare Tunnelを通信経路として使う構成を想定しています。トンネルは主催者のPCから外向きに接続し、ルーターの受信ポートを開けずにGatewayへ通信を転送します。PCからはDiscordやOpenAIにも通信します。外部サービスを一切使わずに完結する構成ではありません。[Cloudflare Tunnelの仕組み](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)
+
+転送対象は主催者のPCの `127.0.0.1:8787` だけです。参加者用UIの `127.0.0.1:17879` やOpenAI認証のコールバックは転送しません。トンネル経由でも参加コード・端末鍵・所属確認・実行確認は必要です。WSSはCloudflareでTLSを終端するため、この構成ではCloudflareも通信経路として信頼する必要があります。OpenAIの認証情報は中継するメッセージに含めません。
+
+テスト用のQuick Tunnelは無料ですが、URLは起動時に発行され、稼働保証もありません。常用には正式なトンネルと固定の接続先を用意します。トンネルの準備が完了するまでは、外部PCから接続できるとは扱いません。[テスト用トンネルの条件](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)
+
+参加者は既存の接続画面から参加します。GitHubログインをBot接続の前提にせず、会話や接続確認をGitHubのIssueコメント・コミットへ書き込む通信方式は使いません。GitHubはコード・Issue・PRの管理、Discord Forumは相談・進捗の表示に使います。
+
+### 公開前の設定チェック
+
+Windowsでは `Check Agent Host.cmd` をダブルクリックし、Botが実際に使用する `.env` をファイル選択画面で指定します。BotをWSLで動かす場合はWSL側の設定ファイルを選びます。診断はファイルを読み取るだけで、秘密の値・サーバーID・接続先の実名を表示しません。Botやトンネルの起動、外部通信、設定変更は行いません。Node.js 22以降が必要です。
+
+CLIでは `npm run doctor:discord:agents -- --env-file <Botの.envのパス>` でも同じ検査ができます。この診断は接続に関係する設定だけを対象とします。公開WSSの設定が通っても、TLS・実際の転送先・外部PCからの到達性・Discordの所属・Codexのログインは検証済みになりません。接続先が未設定なら、その不足を独立して表示します。
+
+接続先を `/workers` にする場合、Gatewayもそのパスだけを受け付けます。プロキシはパスを書き換えずに転送してください。クエリ、フラグメント、URL内の認証情報、符号化や正規化で別のパスに見えるURLは、参加情報・画面・Worker・Gatewayの共通ルールで拒否します。
+
+## TLSリバースプロキシを用意する場合
+
 Gatewayは `127.0.0.1:8787` にbindし、同じホストのTLSリバースプロキシから転送します。[Caddy設定例](../deploy/agent-gateway.Caddyfile.example)では公開先を `wss://agents.example.com/workers` とし、このパスだけを転送します。実際のドメインのDNSをホストへ向け、証明書取得のための接続条件を満たしてください。Caddyの[WebSocket転送](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)と[自動HTTPS](https://caddyserver.com/docs/automatic-https)を使います。
 
 このファイルは配置例です。実サーバーのDNS・証明書・ファイアウォール・TLS終端での検証は別途必要です。127.0.0.1へのbindは、同じPCの別プロセスからのアクセスまで拒否するものではありません。
@@ -32,7 +54,9 @@ GitHubへのpush・PR作成・mergeは各自のGitHub権限で行い、差分と
 
 ## 負荷と公開前の確認
 
-Gatewayは接続数200、未認証接続32、各接続のメッセージ120件/10秒、待機メッセージ16件を上限とし、未認証接続を30秒で閉じます。WebSocketメッセージは256 KiBまでです。ブラウザOrigin付きの直接接続も拒否します。これらはアプリの防御であり、回線を埋めるDDoSへの対策にはなりません。公開するホスト側でも接続頻度・リソースを制限してください。
+Gatewayは接続数200、未認証接続32、各接続のメッセージ120件/10秒、待機メッセージ16件を上限とし、未認証接続を30秒で閉じます。接続数超過はWebSocketへ切り替える前に拒否します。WebSocketメッセージは256 KiB、断片は64までで、圧縮は無効です。ブラウザOrigin、用途外のサブプロトコル、設定したパスと異なる要求も拒否します。転送ヘッダーを本人確認に使いません。
+
+不正・過大なフレームはその接続を閉じ、Bot全体を停止させません。切断に応答しない相手は1秒で強制切断します。キャンセル済みのタスクは送らず、送信失敗時にも実行待ちの記録を解放します。これらはアプリの防御であり、回線を埋めるDDoSへの対策にはなりません。公開するホスト側でも接続頻度・リソースを制限してください。
 
 公開前に次を実接続で確認します。
 

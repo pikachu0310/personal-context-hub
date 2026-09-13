@@ -351,3 +351,29 @@ test("browser approval gates execution and permission choices are not persisted"
   assert.equal(disk.automatic, undefined);
   assert.equal(disk.networkAccess, undefined);
 });
+
+test("UI rejects credential-bearing and ambiguous endpoints before creating a Worker", async (t) => {
+  let created = 0;
+  const { call } = await fixture(t, {
+    createWorker: () => {
+      created++;
+      return {};
+    },
+    createExecutor: () => ({}),
+  });
+  for (const gatewayUrl of [
+    "wss://user:secret@example.com",
+    "wss://example.com/workers?secret=value",
+    "wss://example.com/workers#secret",
+    "wss://example.com/a/../workers",
+  ]) {
+    const response = await call("/connect", {
+      gatewayUrl,
+      workingDirectory: process.cwd(),
+      pairingCode: "example",
+    });
+    assert.equal(response.status, 400);
+    assert.doesNotMatch(await response.text(), /secret|example.com/);
+  }
+  assert.equal(created, 0);
+});

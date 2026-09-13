@@ -4,6 +4,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import WebSocket from "ws";
+import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
 import {
   buildCodexOptions,
   buildPowerTaskPrompt,
@@ -217,14 +218,7 @@ export class DiscordAgentWorker {
   }
 
   connect() {
-    if (!/^wss?:\/\//.test(this.gatewayUrl ?? ""))
-      throw new Error("A Worker gateway URL is required.");
-    const url = new URL(this.gatewayUrl);
-    if (
-      url.protocol !== "wss:" &&
-      !["127.0.0.1", "::1", "localhost"].includes(url.hostname)
-    )
-      throw new Error("Worker connections must use wss:// away from loopback.");
+    validateAgentEndpoint(this.gatewayUrl);
     this.stopping = false;
     this.reconnectDisabled = false;
     this.ready = new Promise((resolve, reject) => {
@@ -239,6 +233,10 @@ export class DiscordAgentWorker {
     this.authenticated = false;
     this.socket = new this.WebSocketClass(this.gatewayUrl, {
       maxPayload: 256 * 1024,
+      followRedirects: false,
+      handshakeTimeout: 10_000,
+      closeTimeout: 1_000,
+      perMessageDeflate: false,
     });
     this.socket.on("message", (data) => {
       let message;

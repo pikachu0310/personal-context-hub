@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { AgentBrowserLogin } from "./discord-agent-login.mjs";
+import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
 import { AgentExecutionConsent } from "./discord-agent-execution-consent.mjs";
 import { decodeAgentInvitation } from "./discord-agent-onboarding.mjs";
 import {
@@ -119,23 +120,13 @@ export async function createAgentUi({
       const gatewayUrl = String(
         input.gatewayUrl ?? credential?.gatewayUrl ?? "",
       ).trim();
-      let url;
       try {
-        url = new URL(gatewayUrl);
+        validateAgentEndpoint(gatewayUrl);
       } catch {
-        throw new UiError("接続先URLを確認してください。");
+        throw new UiError(
+          "接続先URLを確認してください。公開接続先はwss://を使い、認証情報・クエリ・#を含めないでください。",
+        );
       }
-      if (
-        url.username ||
-        url.password ||
-        url.hash ||
-        !(
-          url.protocol === "wss:" ||
-          (url.protocol === "ws:" &&
-            ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname))
-        )
-      )
-        throw new UiError("公開接続先はwss://で指定してください。");
       if (credential && gatewayUrl !== credential.gatewayUrl)
         throw new UiError("接続先の変更には新しい参加コードが必要です。");
       const nextProfile = {

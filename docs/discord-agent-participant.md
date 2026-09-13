@@ -43,13 +43,13 @@ CLIから直接接続する場合は `--allow-automatic` または `PERSONAL_CON
 
 別のPCから参加するには、Bot側のWorker Gatewayへインターネットから届く `wss://` 接続先が必要です。これはタスク・進捗・回答の暗号化された通信路であり、OpenAIへのログイン先ではありません。参加者側にVPNの導入は必要ありません。
 
-公開サーバーのHTTPSリバースプロキシから、同じホストの `127.0.0.1:8787` へWebSocketを転送してください。Botのローカル設定には次を指定します。
+主催者のPCを使う場合は、[PC運用の構成](discord-agent-public-deployment.md#主催者のpcで運用する)に沿ってGatewayだけをトンネル経由で接続します。公開サーバーを使う場合はHTTPSリバースプロキシから同じホストの `127.0.0.1:8787` へWebSocketを転送します。どちらもBotのローカル設定には次を指定します。
 
 ```dotenv
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_ENABLED=true
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST=127.0.0.1
 PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT=8787
-PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL=wss://agents.example.com
+PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL=wss://agents.example.com/workers
 PERSONAL_CONTEXT_VOICE_AGENT_JOIN_GUIDE_URL=https://example.com/agent-join
 PERSONAL_CONTEXT_VOICE_WORKER_ALLOW_GUILD_MEMBERS=true
 PERSONAL_CONTEXT_VOICE_WORKER_ENROLLMENT_ROLE_IDS=

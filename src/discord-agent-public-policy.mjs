@@ -5,6 +5,7 @@ export function assertPublicWorkerPolicy(config) {
   if (!config.workerGatewayEnabled) return;
   const { url } = validateWorkerGatewayConfig({
     host: config.workerGatewayHost,
+    port: config.workerGatewayPort,
     publicUrl: config.workerGatewayPublicUrl,
   });
   agentGuideComponents(config.agentJoinGuideUrl);

@@ -166,10 +166,10 @@ test("Gateway rejects browser-origin connections and caps unauthenticated connec
     serverSocket.once("close", resolve),
   );
   const second = new WebSocket(url);
-  assert.equal(
-    await new Promise((resolve) => second.once("close", resolve)),
-    1013,
+  const capacityError = await new Promise((resolve) =>
+    second.once("error", resolve),
   );
+  assert.match(capacityError.message, /503/);
   first.close();
   await new Promise((resolve) => first.once("close", resolve));
   await serverClosed;

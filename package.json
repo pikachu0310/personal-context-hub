@@ -45,6 +45,7 @@
     "smoke:discord:voice:loop": "node scripts/discord-voice-loop-smoke.mjs",
     "smoke:discord:voice:live": "node --env-file-if-exists=.env scripts/discord-voice-live-smoke.mjs",
     "agent:ui": "node scripts/discord-agent-ui.mjs",
+    "doctor:discord:agents": "node scripts/inspect-agent-host.mjs",
     "agent:pair": "node --env-file-if-exists=.env.agent scripts/discord-agent-worker.mjs pair",
     "start:discord:agent": "node --env-file-if-exists=.env.agent scripts/discord-agent-worker.mjs start"
   },
