@@ -31,3 +31,6 @@ nul
 
 # temp
 temp/
+
+# Compiled localhost HUD assets
+ui/dist/

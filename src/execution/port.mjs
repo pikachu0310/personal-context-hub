@@ -50,7 +50,7 @@ export function bindExecution(backend) {
     run: (text, options) => backend.run(text, options),
     observeMeeting: (observation, options) =>
       backend.observeMeeting(observation, options),
-    async runTask(task, { signal, onProgress } = {}) {
+    async runTask(task, { signal, onProgress, onEvent } = {}) {
       const request = {
         ...executionState(task),
         id: task.id,
@@ -72,6 +72,7 @@ export function bindExecution(backend) {
       const result = await backend.runTask(request, {
         signal,
         onProgress,
+        onEvent,
         flushSteering: () => task.flushSteering?.(),
         checkpoint: async (state) => {
           applyState(task, state);

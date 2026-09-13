@@ -1,3 +1,4 @@
+import { startHudServer } from "../hud-server.mjs";
 import { DiscordLiveBridge } from "../../providers/live.mjs";
 import { TaskPreviewManager } from "../../execution/preview.mjs";
 import { browserPreviewVerifier } from "../../execution/preview-browser.mjs";
@@ -94,6 +95,7 @@ export async function startDiscordVoiceCodex({
   const credential = await (
     dependencies.readCredential ?? readDiscordTokenStore
   )();
+  let hud;
   let connection;
   let transcriptArchive;
   let session;
@@ -131,6 +133,7 @@ export async function startDiscordVoiceCodex({
           ? [Promise.resolve().then(() => transcriptArchive?.stop?.())]
           : []),
       ]);
+      await hud?.close();
       const failures = results
         .filter((result) => result.status === "rejected")
         .map((result) => result.reason);
@@ -288,7 +291,25 @@ export async function startDiscordVoiceCodex({
         });
       },
     });
+    const hudPort =
+      config.hudPort ?? process.env.PERSONAL_CONTEXT_VOICE_HUD_PORT;
+    if (hudPort !== undefined && hudPort !== "") {
+      try {
+        hud = await startHudServer({ port: Number(hudPort) });
+        logInfoQuietly(logger, {
+          component: "voice-hud",
+          event: "ready",
+          url: hud.url,
+        });
+      } catch {
+        logInfoQuietly(logger, {
+          component: "voice-hud",
+          event: "unavailable",
+        });
+      }
+    }
     const engine = await createConversationEngine({
+      onEvent: (event) => hud?.store.publish(event),
       config,
       audio,
       execution: {
@@ -618,6 +639,7 @@ export async function startDiscordVoiceCodex({
       session,
       taskQueue,
       input: engine.input,
+      hud,
       stop: stopService,
     };
   } catch (error) {

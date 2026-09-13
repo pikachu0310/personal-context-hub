@@ -1,3 +1,4 @@
+import { safeNotify } from "../../engine/telemetry.mjs";
 import { SpeechStartGate } from "./speech-start.mjs";
 import { formatTaskPreview } from "../../engine/output/preview.mjs";
 import { Readable } from "node:stream";
@@ -90,32 +91,46 @@ export function createDiscordPlayer(
   const speechStart = new SpeechStartGate(connection.receiver.speaking, {
     silenceMs: speechStartSilenceMs,
   });
-  const play = serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
-    if (signal?.aborted) throw signal.reason;
-    const stopOnAbort = () => player.stop(true);
-    signal?.addEventListener("abort", stopOnAbort, { once: true });
-    try {
-      const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
-      const seconds = raw.length / PCM_BYTES_PER_SECOND;
-      await speechStart.runWhenQuiet(
-        () => {
-          const resource = createAudioResource(Readable.from(raw), {
-            inputType: StreamType.Raw,
-          });
-          player.play(resource);
-        },
-        { signal },
-      );
-      await entersState(player, AudioPlayerStatus.Playing, 5_000);
-      await entersState(
-        player,
-        AudioPlayerStatus.Idle,
-        Math.max(10_000, Math.ceil(seconds * 1_000) + 10_000),
-      );
-    } finally {
-      signal?.removeEventListener("abort", stopOnAbort);
-    }
-  });
+  const serializedPlay = serializeAudioPlayback(
+    async (ttsPcm, { signal, onPlaybackState } = {}) => {
+      if (signal?.aborted) throw signal.reason;
+      const stopOnAbort = () => player.stop(true);
+      signal?.addEventListener("abort", stopOnAbort, { once: true });
+      try {
+        const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
+        const seconds = raw.length / PCM_BYTES_PER_SECOND;
+        safeNotify(onPlaybackState, {
+          status: "waiting",
+          reason: "speaker_silence",
+        });
+        await speechStart.runWhenQuiet(
+          () => {
+            const resource = createAudioResource(Readable.from(raw), {
+              inputType: StreamType.Raw,
+            });
+            player.play(resource);
+          },
+          { signal },
+        );
+        await entersState(player, AudioPlayerStatus.Playing, 5_000);
+        safeNotify(onPlaybackState, { status: "running", reason: undefined });
+        await entersState(
+          player,
+          AudioPlayerStatus.Idle,
+          Math.max(10_000, Math.ceil(seconds * 1_000) + 10_000),
+        );
+      } finally {
+        signal?.removeEventListener("abort", stopOnAbort);
+      }
+    },
+  );
+  const play = (audio, options = {}) => {
+    safeNotify(options.onPlaybackState, {
+      status: "waiting",
+      reason: "playback_queue",
+    });
+    return serializedPlay(audio, options);
+  };
   play.dispose = () => speechStart.dispose();
   return play;
 }

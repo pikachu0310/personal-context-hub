@@ -1,3 +1,4 @@
+import { createTelemetry } from "./telemetry.mjs";
 import { MeetingMemory } from "./observation/memory.mjs";
 import { deliverSpeech } from "./output/speech.mjs";
 import { randomUUID } from "node:crypto";
@@ -39,6 +40,7 @@ import {
 } from "./observation/observation.mjs";
 export class MeetingSession {
   constructor({
+    telemetry = createTelemetry(),
     presentation = plainPresentation,
     speechEnabled = true,
     transcribe,
@@ -80,6 +82,7 @@ export class MeetingSession {
     scheduleInterval = setInterval,
     cancelInterval = clearInterval,
   }) {
+    this.telemetry = telemetry;
     this.presentation = presentation;
     this.speechEnabled = speechEnabled;
     this.dependencies = {
@@ -220,8 +223,36 @@ export class MeetingSession {
       metadata,
       queuedAt: Date.now(),
     });
+    this.#recordQueuedAudio(this.audioQueue.at(-1));
     this.#drainTranscriptions();
     return true;
+  }
+
+  #recordQueuedAudio(queued) {
+    if (queued.sequence === undefined || queued.hudRecorded) return;
+    queued.hudRecorded = true;
+    const inputIds = [`${this.meetingId}:I-${queued.sequence}`];
+    this.telemetry.emit({
+      stage: "AUDIO",
+      spanId: `audio-${queued.id}-${queued.metadata.segmentIndex ?? 0}`,
+      status: "completed",
+      at: queued.queuedAt,
+      inputIds,
+    });
+    this.telemetry.emit({
+      stage: "STT",
+      spanId: `stt-wait-${queued.id}-${queued.metadata.segmentIndex ?? 0}`,
+      status: "waiting",
+      reason: "transcription_capacity",
+      inputIds,
+    });
+    this.telemetry.emit({
+      stage: "ASSEMBLE",
+      spanId: `input-${this.meetingId}-${queued.sequence}`,
+      status: "waiting",
+      reason: "transcript_segments",
+      inputIds,
+    });
   }
 
   async persist() {
@@ -463,7 +494,21 @@ export class MeetingSession {
     }
   }
 
-  async #tryImmediateTaskAction(statement) {
+  #tryImmediateTaskAction(statement) {
+    return this.telemetry.scope(
+      { inputIds: [`${this.meetingId}:I-${statement.sequence}`] },
+      () => this.#tryImmediateTaskActionObserved(statement),
+    );
+  }
+
+  async #tryImmediateTaskActionObserved(statement) {
+    this.telemetry.emit({
+      stage: "ASSEMBLE",
+      spanId: `input-${this.meetingId}-${statement.sequence}`,
+      status: "completed",
+      text: statement.text,
+      speaker: statement.speakerName,
+    });
     this.memory.remember(statement);
     this.dependencies.onStatement(statement);
     if (
@@ -1011,7 +1056,19 @@ export class MeetingSession {
     ].join("\n\n");
   }
 
-  async addTaskResult(result, options = {}) {
+  addTaskResult(result, options = {}) {
+    return this.telemetry.scope(
+      {
+        taskId: result.taskId ?? result.id,
+        inputIds: (result.sourceSequences ?? []).map(
+          (n) => `${result.meetingId ?? this.meetingId}:I-${n}`,
+        ),
+      },
+      () => this.#addTaskResultObserved(result, options),
+    );
+  }
+
+  async #addTaskResultObserved(result, options = {}) {
     while (this.resetting) await this.meetingBoundary;
     if (this.closed)
       throw new VoiceServiceError(
@@ -1153,7 +1210,18 @@ export class MeetingSession {
     );
   }
 
-  async #observeNow() {
+  #observeNow() {
+    return this.telemetry.scope(
+      {
+        inputIds: this.statements
+          .filter((s) => !s.observed)
+          .map((s) => `${this.meetingId}:I-${s.sequence}`),
+      },
+      () => this.#observeNowObserved(),
+    );
+  }
+
+  async #observeNowObserved() {
     if (this.closed || this.resetting || this.observing) return false;
     this.observing = true;
     if (this.liveUpdatePending) this.#queueLiveUpdate();
@@ -1496,16 +1564,21 @@ export class MeetingSession {
       this.shutdownController.signal,
       this.speechController.signal,
     ]);
+    const finishWait = this.telemetry.span("TTS", {
+      status: "waiting",
+      reason: "playback_queue",
+    });
     this.pendingSpeechCount++;
     this.speechQueue = this.speechQueue
-      .then(() =>
-        deliverSpeech(spoken, {
+      .then(() => {
+        finishWait(speechSignal.aborted ? "interrupted" : "completed");
+        return deliverSpeech(spoken, {
           synthesize: this.dependencies.synthesize,
           playAudio: this.dependencies.playAudio,
           stageTimeouts: this.stageTimeouts,
           signal: speechSignal,
-        }),
-      )
+        });
+      })
       .catch((error) => {
         if (!this.closed && error?.code !== "SPEECH_STOPPED")
           this.#log("meeting_speech_failed", {
@@ -1603,6 +1676,22 @@ export class MeetingSession {
     if (this.stopping) return this.stopping;
     this.closed = true;
     this.cancelInterval(this.interval);
+    for (const item of this.audioQueue) {
+      this.telemetry.emit({
+        stage: "STT",
+        spanId: `stt-wait-${item.id}-${item.metadata.segmentIndex ?? 0}`,
+        status: "interrupted",
+        reason: "service_stopped",
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+      });
+      this.telemetry.emit({
+        stage: "ASSEMBLE",
+        spanId: `input-${this.meetingId}-${item.sequence}`,
+        status: "interrupted",
+        reason: "service_stopped",
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+      });
+    }
     this.audioQueue = [];
     this.shutdownController.abort(
       new VoiceServiceError(
@@ -1646,6 +1735,13 @@ export class MeetingSession {
       this.audioQueue.length
     ) {
       const item = this.audioQueue.shift();
+      this.#recordQueuedAudio(item);
+      this.telemetry.emit({
+        stage: "STT",
+        spanId: `stt-wait-${item.id}-${item.metadata.segmentIndex ?? 0}`,
+        status: "completed",
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+      });
       this.activeTranscriptions += 1;
       const job = this.#transcribeItem(item);
       this.activeTranscriptionJobs.add(job);
@@ -1657,7 +1753,17 @@ export class MeetingSession {
     }
   }
 
-  async #transcribeItem(item) {
+  #transcribeItem(item) {
+    return this.telemetry.scope(
+      {
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+        parentId: item.metadata.utteranceId,
+      },
+      () => this.#transcribeItemObserved(item),
+    );
+  }
+
+  async #transcribeItemObserved(item) {
     const startedAt = Date.now();
     let accepted = false;
     let segmentSettled = false;
@@ -1737,6 +1843,17 @@ export class MeetingSession {
         });
       }
     } finally {
+      if (!accepted)
+        this.telemetry.emit({
+          stage: "ASSEMBLE",
+          spanId: `input-${this.meetingId}-${item.sequence}`,
+          status: this.closed
+            ? "interrupted"
+            : segmentSettled
+              ? "skipped"
+              : "failed",
+          reason: this.closed ? "service_stopped" : "transcript_unavailable",
+        });
       if (item.metadata.utteranceId && !segmentSettled) {
         this.speechTurns.settle(
           item.metadata.utteranceId,

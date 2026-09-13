@@ -1,4 +1,8 @@
 import {
+  normalizeExecutionEvent,
+  notifyExecutionEvent,
+} from "../telemetry.mjs";
+import {
   chmod,
   lstat,
   mkdir,
@@ -641,7 +645,7 @@ export class CodexVoiceRunner {
     }
   }
 
-  async runTask(task, { signal, onProgress } = {}) {
+  async runTask(task, { signal, onProgress, onEvent } = {}) {
     if (!this.config.powerMode) {
       throw new VoiceServiceError(
         "POWER_MODE_DISABLED",
@@ -705,6 +709,25 @@ export class CodexVoiceRunner {
       task.artifacts = await this.workspaces?.collect(task);
       return response;
     }
+    const observedItems = new Map();
+    const finishObservedItems = () => {
+      for (const item of observedItems.values())
+        notifyExecutionEvent(onEvent, {
+          ...item,
+          status: signal?.aborted
+            ? /TIMEOUT/i.test(signal.reason?.code ?? "")
+              ? "failed"
+              : "interrupted"
+            : "interrupted",
+          reason: signal?.aborted
+            ? /TIMEOUT/i.test(signal.reason?.code ?? "")
+              ? "timeout"
+              : "aborted"
+            : "completion_unprovided",
+        });
+      observedItems.clear();
+    };
+    signal?.addEventListener("abort", finishObservedItems, { once: true });
     try {
       const { events } = await thread.runStreamed(prompt, {
         signal: signal ?? new AbortController().signal,
@@ -712,6 +735,14 @@ export class CodexVoiceRunner {
       let finalResponse = "";
       let turnCompleted = false;
       for await (const event of events) {
+        const observation = normalizeExecutionEvent(event);
+        if (observation && !signal?.aborted) {
+          observation.runId = String(task.runRevision);
+          if (observation.status === "running")
+            observedItems.set(observation.itemId, observation);
+          else observedItems.delete(observation.itemId);
+          notifyExecutionEvent(onEvent, observation);
+        }
         if (event.type === "turn.completed") turnCompleted = true;
         if (event.type === "turn.completed") {
           task.usage = event.usage;
@@ -782,6 +813,9 @@ export class CodexVoiceRunner {
       return finalResponse;
     } catch (error) {
       this.#throwActionableError(error);
+    } finally {
+      finishObservedItems();
+      signal?.removeEventListener("abort", finishObservedItems);
     }
   }
 

@@ -3,7 +3,13 @@ import globals from "globals";
 
 export default [
   {
-    ignores: ["node_modules/**", ".private/**", ".codex_tmp_*/**"],
+    ignores: [
+      "node_modules/**",
+      "ui/node_modules/**",
+      "ui/dist/**",
+      ".private/**",
+      ".codex_tmp_*/**",
+    ],
   },
   js.configs.recommended,
   {

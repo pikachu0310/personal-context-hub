@@ -351,7 +351,7 @@ test("text status reports voice reconnection failure and later recovery without 
     releaseRecovery = resolve;
   });
   const service = await startDiscordVoiceCodex({
-    config: { ...config, powerMode: false },
+    config: { ...config, powerMode: false, hudPort: -1 },
     client,
     logger: {},
     dependencies: {
@@ -557,7 +557,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
 
   const synthesized = Buffer.from("mock-tts-pcm");
   const service = await startDiscordVoiceCodex({
-    config,
+    config: { ...config, hudPort: 0 },
     client,
     logger: { info: () => undefined, error: () => undefined },
     dependencies: {
@@ -649,6 +649,35 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
     channels: 2,
     frameSize: 960,
   });
+  assert.ok(service.hud?.url);
+  const hudSnapshot = await (
+    await fetch(service.hud.url + "/api/snapshot")
+  ).json();
+  for (const stage of [
+    "AUDIO",
+    "STT",
+    "ASSEMBLE",
+    "OBSERVE",
+    "EXECUTE",
+    "DELIVER",
+    "TTS",
+    "PLAYBACK",
+  ])
+    assert.ok(
+      hudSnapshot.events.some((event) => event.stage === stage),
+      `HUD missing ${stage}`,
+    );
+  const hudInputs = hudSnapshot.events.find(
+    (event) => event.stage === "ASSEMBLE" && event.text,
+  )?.inputIds;
+  assert.ok(
+    hudSnapshot.events.some(
+      (event) =>
+        event.stage === "PLAYBACK" &&
+        event.status === "completed" &&
+        event.inputIds.some((id) => hudInputs.includes(id)),
+    ),
+  );
   assert.equal(turnEvents[0], "stt");
   for (const stage of [
     "codex",
