@@ -1,13 +1,11 @@
-const BOT_NAME =
-  "(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)";
-const ADDRESS = new RegExp(
-  `^(?:(?:ねえ|ねぇ|ちょっと|すみません)[、,\\s]+)?${BOT_NAME}(?:[、,\\s。！!？?]+|(?=教えて|聞いて|お願い|調べて|確認して))`,
-  "iu",
-);
+import {
+  parseBotInvocation,
+  invocationAcknowledgement,
+} from "./invocation.mjs";
 const QUOTED = /「[^」]*」|『[^』]*』|"[^"\n]*"|`[^`]*`/gu;
 
 export function isBotAddressed(text) {
-  return ADDRESS.test(String(text ?? "").trim());
+  return Boolean(parseBotInvocation(text));
 }
 
 export function mayReplyImmediately(statement, enabled = true) {
@@ -27,7 +25,8 @@ function explicitDelegation(text) {
   const unquoted = String(text ?? "")
     .replace(QUOTED, "")
     .trim();
-  if (!unquoted || uncertain(unquoted)) return false;
+  if (!unquoted || uncertain(unquoted) || invocationAcknowledgement(unquoted))
+    return false;
   if (isBotAddressed(unquoted))
     return /(?:して|してください|作って|直して|調べて|確認して|進めて|お願い|頼む|任せる|実行)(?:ほしい|ほしいです|くれる|くれますか|もらえる|もらえますか)?[。！!？?\s]*$|(?:して|作って|直して|調べて|進めて)ください/u.test(
       unquoted,

@@ -1,3 +1,4 @@
+import { invocationAcknowledgement } from "./observation/invocation.mjs";
 import { createSpeechTicket } from "./reply/speech-ticket.mjs";
 import { MeetingMemory } from "./observation/memory.mjs";
 import { deliverSpeech } from "./output/speech.mjs";
@@ -482,6 +483,12 @@ export class MeetingSession {
   }
 
   async #tryImmediateTaskAction(statement) {
+    this.#replyDiagnostic(
+      statement,
+      mayReplyImmediately(statement, this.immediateReactions)
+        ? "呼びかけを検出"
+        : "呼びかけなし・通常の会話",
+    );
     this.replyContextRevision++;
     this.memory.remember(statement);
     this.dependencies.onStatement(statement);
@@ -596,6 +603,14 @@ export class MeetingSession {
     return true;
   }
 
+  #replyDiagnostic(statement, decision) {
+    if (statement.meetingId !== this.meetingId) return;
+    if (this.lastReplyDecision?.sequence > statement.sequence) return;
+    this.lastReplyDecision = { sequence: statement.sequence, decision };
+    this.#log("meeting_invocation_decision", this.lastReplyDecision);
+    this.#queueLiveUpdate();
+  }
+
   #startQuickReply(statement) {
     if (
       this.dependencies.isLive() ||
@@ -608,7 +623,11 @@ export class MeetingSession {
         ))
     )
       return;
-    if (this.activeQuickReplies >= 3) return;
+    if (this.activeQuickReplies >= 3) {
+      this.#replyDiagnostic(statement, "返信処理が混雑・会話確認へ");
+      return;
+    }
+    this.#replyDiagnostic(statement, "回答を確認中");
     this.activeQuickReplies++;
     statement.handledAction = { type: "quick_reply", pending: true };
     const startedAt = Date.now();
@@ -619,7 +638,10 @@ export class MeetingSession {
         let reply;
         let investigated = false;
         try {
-          if (this.dependencies.classifyVoiceNeed) {
+          if (
+            this.dependencies.classifyVoiceNeed &&
+            !invocationAcknowledgement(statement.text)
+          ) {
             const need = await withTimeout(
               (signal) =>
                 this.dependencies.classifyVoiceNeed(
@@ -635,6 +657,7 @@ export class MeetingSession {
               decision: need.decision,
             });
             if (need.decision !== "reply") {
+              this.#replyDiagnostic(statement, "音声回答は不要と判定");
               statement.handledAction = { type: "quick_reply", ignored: true };
               await this.persist();
               return;
@@ -655,6 +678,7 @@ export class MeetingSession {
               ? { action: "reply", reply: rawDecision }
               : rawDecision;
           if (decision?.action === "ignore") {
+            this.#replyDiagnostic(statement, "回答を見送り");
             statement.handledAction = { type: "quick_reply", ignored: true };
             await this.persist();
             this.#log("meeting_quick_reply_ignored", {
@@ -663,6 +687,7 @@ export class MeetingSession {
             return;
           }
           if (decision?.action === "investigate") {
+            this.#replyDiagnostic(statement, "資料・ログを確認中");
             if (!this.dependencies.investigateQuestion)
               throw new Error("Question investigation unavailable");
             investigated = true;
@@ -697,6 +722,7 @@ export class MeetingSession {
           reply = boundText(reply, investigated ? 5000 : 1200);
           if (!reply) throw new Error("Empty reply");
           if (this.closed) return;
+          this.#replyDiagnostic(statement, "回答を作成・送信待ち");
           this.#log("meeting_quick_reply_completed", {
             sequence: statement.sequence,
             elapsedMs: Date.now() - startedAt,
@@ -704,6 +730,7 @@ export class MeetingSession {
           });
         } catch (error) {
           if (this.closed) return;
+          this.#replyDiagnostic(statement, "回答処理に失敗");
           this.#log("meeting_quick_reply_failed", {
             errorCode: voiceErrorCode(error),
           });
@@ -1165,6 +1192,7 @@ export class MeetingSession {
       this.recentConversation = [];
       this.results = [];
       this.sequence = 0;
+      this.lastReplyDecision = undefined;
       this.silencedThroughSequence = null;
       this.revision = 0;
       this.observationRetryPending = false;
@@ -1967,6 +1995,10 @@ export class MeetingSession {
       (statement) => !statement.observed,
     );
     const notices = [];
+    if (this.lastReplyDecision)
+      notices.push(
+        `直近の発言 #${this.lastReplyDecision.sequence}: ${this.lastReplyDecision.decision}`,
+      );
     if (this.activeInvestigations)
       notices.push(
         `質問のソース・実行状態を確認中 ${this.activeInvestigations}件`,
