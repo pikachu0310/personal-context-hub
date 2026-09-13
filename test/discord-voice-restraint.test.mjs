@@ -268,6 +268,56 @@ test("participant joining retries failures without repeating successful addition
   assert.equal(tries, 2);
 });
 
+test("late deferrals block dispatch while unrelated conversation does not starve an agreed task", async () => {
+  for (const [later, expected] of [
+    ["今日は晴れですね", 1],
+    ["やっぱり今は保留にしよう", 0],
+  ]) {
+    let release, entered;
+    const started = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const tasks = [];
+    const session = new DiscordVoiceMeetingSession({
+      ownerUserId: "owner",
+      tasksEnabled: true,
+      observe: async () => {
+        entered();
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+        return JSON.stringify({
+          minutes: "入力検証の依頼",
+          tasks: [task],
+          shouldReply: false,
+        });
+      },
+      enqueueTask: async (task) => {
+        tasks.push(task);
+        return true;
+      },
+      postText: async () => {},
+      upsertMinutes: async () => {},
+      upsertLiveTranscript: async () => {},
+      scheduleInterval: () => ({}),
+      cancelInterval: () => {},
+      logger: { info() {} },
+    });
+    try {
+      await session.addText("井戸Bot、入力検証を追加して", { userId: "owner" });
+      const observing = session.observeNow();
+      await started;
+      await session.addText(later, { userId: "owner" });
+      release();
+      await observing;
+      assert.equal(tasks.length, expected, later);
+    } finally {
+      release?.();
+      await session.stop();
+    }
+  }
+});
+
 test("restart edits the existing bot status instead of creating another announcement", async () => {
   const edits = [];
   const message = {

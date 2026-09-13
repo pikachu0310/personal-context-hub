@@ -1276,16 +1276,29 @@ export class MeetingSession {
           )
         )
           continue;
-        // An observation is a snapshot. Re-audit before executing if newer speech arrived.
-        if (
-          this.statements.some(
+        // Check late deferrals immediately before dispatch without requiring the
+        // entire conversation to stay silent while the observer is working.
+        const proposal = observation.tasks.find(
+          (candidate) =>
+            candidate.title === task.title &&
+            candidate.sourceSequences.join(",") ===
+              task.sourceSequences.join(","),
+        );
+        const latestStatements = [
+          ...authorizedStatements,
+          ...this.statements.filter(
             (statement) =>
-              statement.sequence >
-              Math.max(...statements.map((item) => item.sequence)),
-          )
-        ) {
+              !statements.some(
+                (source) => source.sequence === statement.sequence,
+              ),
+          ),
+        ];
+        if (
+          !hasTaskCommitment(proposal, latestStatements, {
+            autonomousTasks: this.autonomousTasks,
+          })
+        )
           continue;
-        }
         task.id = randomUUID().slice(0, 8);
         task.meetingId = this.meetingId;
         task.context = this.getContextSnapshot();
@@ -1364,19 +1377,7 @@ export class MeetingSession {
               ? speechExcerpt(conversationReply)
               : "",
         });
-      const newerSpeech = this.statements.some(
-        (statement) =>
-          statement.sequence >
-          Math.max(...statements.map((item) => item.sequence)),
-      );
-      const remaining = this.statements.filter((item) => !item.observed);
-      const retryBatch =
-        tasks.length &&
-        newerSpeech &&
-        remaining.length <= 20 &&
-        remaining.reduce((sum, item) => sum + item.text.length, 0) <=
-          MAX_MEETING_TRANSCRIPT_CHARACTERS;
-      for (const statement of statements) statement.observed = !retryBatch;
+      for (const statement of statements) statement.observed = true;
       this.statements = this.statements.filter(
         (statement) => !statement.observed || !statement.archived,
       );
