@@ -2079,7 +2079,15 @@ export class MeetingSession {
     try {
       const text = boundText(
         await withTimeout(
-          (signal) => this.dependencies.transcribe(item.wav, { signal }),
+          (signal) =>
+            this.dependencies.transcribe(item.wav, {
+              signal,
+              onDecision: (assessment) =>
+                this.#log("meeting_transcription_assessed", {
+                  sequence: item.sequence,
+                  ...assessment,
+                }),
+            }),
           this.stageTimeouts.transcribing,
           "transcribing meeting audio",
           this.shutdownController.signal,
