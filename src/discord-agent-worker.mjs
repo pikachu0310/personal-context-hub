@@ -7,8 +7,12 @@ import WebSocket from "ws";
 import {
   buildCodexEnvironment,
   buildPowerTaskPrompt,
-} from "./discord-voice-openai.mjs";
-import { TaskWorkspaceManager } from "./discord-voice-workspace.mjs";
+} from "./execution/codex/runner.mjs";
+import {
+  TaskWorkspaceManager,
+  selectTaskProfile,
+} from "./execution/codex/workspace.mjs";
+import { identifyVerificationCommand } from "./engine/evidence.mjs";
 
 const OPEN = 1;
 
@@ -101,8 +105,10 @@ export class LocalCodexWorkerExecutor {
       webSearchMode: "live",
       skipGitRepoCheck: false,
       additionalDirectories: [],
-      model: this.model,
-      modelReasoningEffort: this.reasoningEffort,
+      ...selectTaskProfile(task, {
+        taskModel: this.model,
+        taskReasoningEffort: this.reasoningEffort,
+      }),
     };
     const thread = localState.codexThreadId
       ? this.codex.resumeThread(localState.codexThreadId, options)
@@ -153,6 +159,11 @@ export class LocalCodexWorkerExecutor {
         if (!Number.isInteger(event.item.exit_code))
           evidence.unknownCommands += 1;
         else if (event.item.exit_code !== 0) evidence.failedCommands += 1;
+        const verification = identifyVerificationCommand(
+          event.item.command,
+          event.item.exit_code,
+        );
+        if (verification) evidence.tests.push(verification);
       }
       if (event.item?.type === "file_change")
         evidence.files = [
@@ -213,6 +224,7 @@ export class DiscordAgentWorker {
     )
       throw new Error("Worker connections must use wss:// away from loopback.");
     this.stopping = false;
+    this.reconnectDisabled = false;
     this.ready = new Promise((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
@@ -240,11 +252,12 @@ export class DiscordAgentWorker {
       });
     });
     this.socket.once("error", (error) => this.rejectReady?.(error));
-    this.socket.once("close", () => {
+    this.socket.once("close", (code) => {
       clearInterval(this.heartbeat);
       for (const controller of this.tasks.values()) controller.abort();
       this.tasks.clear();
-      if (!this.stopping && this.credential) {
+      if ([4001, 4002, 4003].includes(code)) this.reconnectDisabled = true;
+      if (!this.stopping && !this.reconnectDisabled && this.credential) {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => this.#open(), 2_000);
         this.reconnectTimer.unref?.();

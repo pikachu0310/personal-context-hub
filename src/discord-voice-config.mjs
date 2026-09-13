@@ -1,5 +1,8 @@
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { automaticVoiceModel } from "./discord-voice-model-policy.mjs";
+import { parsePreviewCommand } from "./discord-voice-preview.mjs";
+import { parsePreviewChecks } from "./discord-voice-preview-browser.mjs";
 import { parseCodexAgents } from "./discord-agent-team.mjs";
 
 const snowflake = /^\d{17,20}$/;
@@ -19,16 +22,14 @@ function required(env, name) {
   return value;
 }
 
-function requiredSnowflake(env, name) {
-  const value = required(env, name);
-  if (!snowflake.test(value))
-    throw new Error(`${name} must be a Discord snowflake.`);
-  return value;
+function optionalSnowflake(env, name) {
+  return String(env[name] ?? "").trim()
+    ? requiredSnowflake(env, name)
+    : undefined;
 }
 
-function optionalSnowflake(env, name) {
-  const value = env[name]?.trim();
-  if (!value) return undefined;
+function requiredSnowflake(env, name) {
+  const value = required(env, name);
   if (!snowflake.test(value))
     throw new Error(`${name} must be a Discord snowflake.`);
   return value;
@@ -119,17 +120,20 @@ export function loadDiscordVoiceConfig(env = process.env) {
   const codexReasoningEffort = reasoningEffort(
     env,
     "PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT",
+    "low",
   );
-  const codexModel =
-    env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined;
-  const taskModel =
+  const codexModel = automaticVoiceModel(
+    env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim(),
+  );
+  const taskModel = automaticVoiceModel(
     env.PERSONAL_CONTEXT_VOICE_TASK_MODEL?.trim() ||
-    codexModel ||
-    "gpt-5.6-sol";
+      codexModel ||
+      "gpt-5.6-sol",
+  );
   const taskReasoningEffort = reasoningEffort(
     env,
     "PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT",
-    codexReasoningEffort ?? "medium",
+    codexReasoningEffort ?? "low",
   );
   const codexTimeoutMs = integer(
     env,
@@ -226,6 +230,21 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     powerMode,
     voiceMode,
+    liveEnabled:
+      voiceMode === "meeting" &&
+      boolean(env, "PERSONAL_CONTEXT_VOICE_LIVE_ENABLED", false),
+    previewCommand: parsePreviewCommand(
+      env.PERSONAL_CONTEXT_VOICE_PREVIEW_COMMAND_JSON,
+    ),
+    previewChecks: parsePreviewChecks(
+      env.PERSONAL_CONTEXT_VOICE_PREVIEW_CHECKS_JSON,
+    ),
+    previewBrowserExecutable:
+      env.PERSONAL_CONTEXT_VOICE_PREVIEW_BROWSER_EXECUTABLE?.trim() ||
+      undefined,
+    previewSharedUrlTemplate:
+      env.PERSONAL_CONTEXT_VOICE_PREVIEW_SHARED_URL_TEMPLATE?.trim() ||
+      undefined,
     operatorUserIds: (env.PERSONAL_CONTEXT_VOICE_OPERATOR_IDS ?? "")
       .split(",")
       .map((id) => id.trim())
@@ -259,10 +278,11 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     meetingStatePath: `${statePath}.meeting.json`,
     taskWorkspaceDirectory: `${statePath}.workspaces`,
-    observerModel:
+    observerModel: automaticVoiceModel(
       env.PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL?.trim() ||
-      codexModel ||
-      "gpt-5.6-sol",
+        codexModel ||
+        "gpt-5.6-sol",
+    ),
     observerReasoningEffort: reasoningEffort(
       env,
       "PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT",
@@ -270,8 +290,9 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     taskModel,
     taskReasoningEffort,
-    complexTaskModel:
+    complexTaskModel: automaticVoiceModel(
       env.PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL?.trim() || taskModel,
+    ),
     complexTaskReasoningEffort: reasoningEffort(
       env,
       "PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT",
@@ -327,6 +348,17 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ttsSpeed: number(env, "PERSONAL_CONTEXT_VOICE_TTS_SPEED", 1, 0.25, 4),
     codexModel,
     codexReasoningEffort,
+    codexTransport: (() => {
+      const transport =
+        env.PERSONAL_CONTEXT_VOICE_CODEX_TRANSPORT?.trim() || "app-server";
+      if (!["app-server", "sdk"].includes(transport))
+        throw new Error(
+          "PERSONAL_CONTEXT_VOICE_CODEX_TRANSPORT must be app-server or sdk.",
+        );
+      return transport;
+    })(),
+    codexExecutable:
+      env.PERSONAL_CONTEXT_VOICE_CODEX_EXECUTABLE?.trim() || undefined,
     codexHome: env.PERSONAL_CONTEXT_VOICE_CODEX_HOME?.trim()
       ? absolutePath(
           env.PERSONAL_CONTEXT_VOICE_CODEX_HOME,
@@ -340,6 +372,13 @@ export function loadDiscordVoiceConfig(env = process.env) {
       "PERSONAL_CONTEXT_VOICE_SILENCE_MS",
       1_000,
       300,
+      5_000,
+    ),
+    speechStartSilenceMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS",
+      1_000,
+      0,
       5_000,
     ),
     minimumAudioMs: integer(
@@ -453,6 +492,10 @@ export function describeDiscordVoiceConfig(config) {
     listenToEveryone: config.listenToEveryone,
     powerMode: config.powerMode,
     voiceMode: config.voiceMode,
+    liveEnabled: config.liveEnabled,
+    previewConfigured: Boolean(config.previewCommand),
+    previewBrowserChecks: config.previewChecks?.length ?? 0,
+    previewSharingConfigured: Boolean(config.previewSharedUrlTemplate),
     operatorUserCount: config.operatorUserIds?.length ?? 0,
     requireWakeWord: config.requireWakeWord,
     immediateReactions: config.immediateReactions,
@@ -471,6 +514,7 @@ export function describeDiscordVoiceConfig(config) {
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
     ttsSpeed: config.ttsSpeed,
+    speechStartSilenceMs: config.speechStartSilenceMs,
     maximumPendingTranscriptions: config.maximumPendingTranscriptions,
     maximumPendingTasks: config.maximumPendingTasks,
     taskConcurrency: config.taskConcurrency,
@@ -503,6 +547,8 @@ export function describeDiscordVoiceConfig(config) {
       reasoningEffort: config.complexTaskReasoningEffort,
     },
     codexHomeConfigured: Boolean(config.codexHome),
+    codexTransport: config.codexTransport,
+    astraPolicy: "explicit-task-only",
     isolatedCodexHomeConfigured: Boolean(config.isolatedCodexHome),
     codexSandbox: config.codexSandbox,
     stageTimeouts: config.stageTimeouts,

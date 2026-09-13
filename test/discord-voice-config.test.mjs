@@ -16,17 +16,49 @@ const valid = {
   OPENAI_API_KEY: "test-secret-never-print",
 };
 
-test("shared model settings reach every role unless that role is explicitly overridden", () => {
+test("speech-start silence defaults to one second and is independent of recording silence", () => {
+  const config = loadDiscordVoiceConfig(valid);
+  assert.equal(config.speechStartSilenceMs, 1_000);
+  assert.equal(describeDiscordVoiceConfig(config).speechStartSilenceMs, 1_000);
+  for (const silence of [0, 750, 5_000]) {
+    const configured = loadDiscordVoiceConfig({
+      ...valid,
+      PERSONAL_CONTEXT_VOICE_SILENCE_MS: "1500",
+      PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS: String(silence),
+    });
+    assert.equal(configured.speechStartSilenceMs, silence);
+    assert.equal(configured.silenceMs, 1_500);
+    assert.equal(
+      describeDiscordVoiceConfig(configured).speechStartSilenceMs,
+      silence,
+    );
+  }
+});
+
+test("speech-start silence rejects invalid delays", () => {
+  for (const silence of ["-1", "5001", "0.5", "invalid"]) {
+    assert.throws(
+      () =>
+        loadDiscordVoiceConfig({
+          ...valid,
+          PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS: silence,
+        }),
+      /PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS must be an integer from 0 through 5000/,
+    );
+  }
+});
+
+test("automatic routing cannot inherit Astra from an old shared or complex profile", () => {
   const shared = loadDiscordVoiceConfig({
     ...valid,
     PERSONAL_CONTEXT_VOICE_CODEX_MODEL: "gpt-6-astra",
     PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT: "high",
   });
-  assert.equal(shared.observerModel, "gpt-6-astra");
+  assert.equal(shared.observerModel, "gpt-5.6-sol");
   assert.equal(shared.observerReasoningEffort, "high");
   assert.equal(
     selectTaskProfile({ complexity: "routine" }, shared).model,
-    "gpt-6-astra",
+    "gpt-5.6-sol",
   );
   assert.equal(
     selectTaskProfile({ complexity: "complex" }, shared).modelReasoningEffort,
@@ -54,7 +86,7 @@ test("shared model settings reach every role unless that role is explicitly over
   );
   assert.equal(
     selectTaskProfile({ complexity: "complex" }, split).model,
-    "gpt-6-astra",
+    "gpt-5.6-sol",
   );
   const effective = describeDiscordVoiceConfig(split);
   assert.deepEqual(effective.observer, {
@@ -62,7 +94,7 @@ test("shared model settings reach every role unless that role is explicitly over
     reasoningEffort: "low",
   });
   assert.deepEqual(effective.complexTask, {
-    model: "gpt-6-astra",
+    model: "gpt-5.6-sol",
     reasoningEffort: "high",
   });
   assert.doesNotMatch(JSON.stringify(effective), /test-secret-never-print/);
@@ -74,7 +106,7 @@ test("complex tasks inherit explicit worker settings and role reasoning values a
     PERSONAL_CONTEXT_VOICE_TASK_MODEL: "gpt-6-astra",
     PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT: "high",
   });
-  assert.equal(configured.complexTaskModel, "gpt-6-astra");
+  assert.equal(configured.complexTaskModel, "gpt-5.6-sol");
   assert.equal(configured.complexTaskReasoningEffort, "high");
   for (const role of ["OBSERVER", "TASK", "COMPLEX_TASK"])
     assert.throws(
@@ -157,7 +189,7 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
   assert.equal(config.maximumPendingTasks, 10);
   assert.equal(config.taskConcurrency, 2);
   assert.equal(config.codexHome, "/mnt/c/Users/example/.codex");
-  assert.equal(config.codexReasoningEffort, undefined);
+  assert.equal(config.codexReasoningEffort, "low");
   assert.match(
     config.isolatedCodexHome,
     /personal-context-hub\/discord-voice-codex-home$/,

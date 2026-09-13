@@ -30,7 +30,9 @@ import {
 } from "../src/discord-voice-openai.mjs";
 
 test("Codex restart accepts trust for the Git main repository of a linked worktree", async () => {
-  const root = await mkdtemp(join(tmpdir(), "voice-trust-worktree-"));
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "voice-trust-worktree-")),
+  );
   const main = join(root, "main"),
     worktree = join(root, "linked");
   const git = (...args) => promisify(execFile)("git", args);
@@ -118,8 +120,8 @@ test("Codex options disable unattended integrations without loading inherited co
     "/tmp/codex-home",
     { powerMode: true },
   );
-  assert.equal(power.config.agents.enabled, true);
-  assert.equal(power.config.features.multi_agent, true);
+  assert.equal(power.config.agents.enabled, false);
+  assert.equal(power.config.features.multi_agent, false);
   assert.equal(power.config.features.apps, false);
 });
 
@@ -380,61 +382,34 @@ test("Codex voice runner enforces structured meeting observations", async () => 
 
   await runner.observeMeeting({ minutes: "", transcript: "[A] 確認" });
 
-  assert.deepEqual(turnOptions.outputSchema, {
-    type: "object",
-    properties: {
-      minutes: { type: "string" },
-      shouldReply: { type: "boolean" },
-      reply: { type: "string" },
-      tasks: {
-        type: "array",
-        maxItems: 3,
-        items: {
-          type: "object",
-          properties: {
-            title: { type: "string" },
-            kind: {
-              type: "string",
-              enum: ["research", "implementation", "benchmark", "test"],
-            },
-            complexity: { type: "string", enum: ["routine", "complex"] },
-            sourceSequences: {
-              type: "array",
-              minItems: 1,
-              maxItems: 20,
-              items: { type: "integer" },
-            },
-          },
-          required: ["title", "kind", "complexity", "sourceSequences"],
-          additionalProperties: false,
-        },
-      },
-      taskControls: {
-        type: "array",
-        maxItems: 3,
-        items: {
-          type: "object",
-          properties: {
-            type: { type: "string", enum: ["stop", "instruction"] },
-            taskId: { type: "string" },
-            sourceSequences: {
-              type: "array",
-              minItems: 1,
-              maxItems: 20,
-              items: { type: "integer" },
-            },
-          },
-          required: ["type", "taskId", "sourceSequences"],
-          additionalProperties: false,
-        },
-      },
-    },
-    required: ["minutes", "shouldReply", "reply", "tasks", "taskControls"],
-    additionalProperties: false,
-  });
+  const schema = turnOptions.outputSchema;
+  assert.equal(schema.type, "object");
+  assert.equal(schema.additionalProperties, false);
+  assert.deepEqual(schema.required, [
+    "minutes",
+    "shouldReply",
+    "reply",
+    "tasks",
+    "taskControls",
+    "decisions",
+  ]);
+  for (const field of ["tasks", "taskControls", "decisions"]) {
+    const item = schema.properties[field].items;
+    assert.equal(item.additionalProperties, false);
+    assert.equal(item.properties.sourceSequences.minItems, 1);
+    assert.ok(item.required.includes("sourceSequences"));
+  }
+  assert.ok(
+    schema.properties.tasks.items.required.includes("acceptanceCriteria"),
+  );
+  assert.deepEqual(schema.properties.decisions.items.properties.status.enum, [
+    "proposal",
+    "decision",
+    "open",
+  ]);
 });
 
-test("observer threads resume only inside the same meeting, including after restart", async (t) => {
+test("meeting observers use fresh bounded context after every cycle and restart", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "codex-meeting-scope-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const config = {
@@ -443,37 +418,58 @@ test("observer threads resume only inside the same meeting, including after rest
     voiceMode: "meeting",
   };
   const starts = [],
-    resumes = [];
-  const makeThread = (id) => ({
-    id,
-    run: async () => ({
-      finalResponse: JSON.stringify({ minutes: "summary", shouldReply: false }),
-    }),
-  });
-  const codex = {
-    startThread: () => {
-      const id = `thread-${starts.length + 1}`;
-      starts.push(id);
-      return makeThread(id);
-    },
-    resumeThread: (id) => {
-      resumes.push(id);
-      return makeThread(id);
-    },
-  };
-  await new CodexVoiceRunner(config, { codex }).observeMeeting({
+    prompts = [],
+    disposed = [];
+  const oldState = JSON.stringify({
+    threadId: "exhausted-thread",
     meetingId: "first",
-    statements: [],
   });
-  const restored = new CodexVoiceRunner(config, { codex });
-  await restored.observeMeeting({ meetingId: "first", statements: [] });
-  assert.deepEqual(resumes, ["thread-1"]);
-  await restored.observeMeeting({ meetingId: "second", statements: [] });
-  assert.deepEqual(starts, ["thread-1", "thread-2"]);
-  assert.equal(
-    JSON.parse(await readFile(config.statePath, "utf8")).meetingId,
-    "second",
+  await writeFile(config.statePath, oldState);
+  const codex = {
+    startThread: (options) => {
+      const id = `thread-${starts.length + 1}`;
+      starts.push(options);
+      return {
+        id,
+        run: async (prompt) => {
+          prompts.push(prompt);
+          return {
+            finalResponse: JSON.stringify({
+              minutes: "summary",
+              shouldReply: false,
+            }),
+          };
+        },
+        dispose: async () => disposed.push(id),
+      };
+    },
+    resumeThread: () =>
+      assert.fail("observer must not resume exhausted history"),
+  };
+  const input = {
+    meetingId: "first",
+    minutes: "ボタンは赤で決定",
+    statements: [{ sequence: 2, text: "次は小さくして" }],
+  };
+  const runner = new CodexVoiceRunner(config, { codex });
+  await runner.observeMeeting(input);
+  await runner.observeMeeting(input);
+  await new CodexVoiceRunner(config, { codex }).observeMeeting(input);
+  assert.equal(starts.length, 3);
+  assert.ok(
+    starts.every(
+      (options) => options.ephemeral && options.sandboxMode === "read-only",
+    ),
   );
+  assert.ok(
+    prompts.every(
+      (prompt) =>
+        prompt.includes(input.minutes) &&
+        prompt.includes(input.statements[0].text),
+    ),
+  );
+  assert.deepEqual(disposed, ["thread-1", "thread-2", "thread-3"]);
+  assert.equal(await readFile(config.statePath, "utf8"), oldState);
 });
 
 test("power tasks run in a separate workspace-bound networked thread", async () => {

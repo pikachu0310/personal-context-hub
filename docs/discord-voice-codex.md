@@ -11,7 +11,7 @@
 - `/ido join` と `/ido leave` は設定済み通話への接続・退出を行う。退出中もGatewayと背景作業は継続する。`/ido context` は議事録全文、`/ido quiet` は現在の読み上げを停止する。各操作はguildスラッシュコマンドとして登録する。
 - `PERSONAL_CONTEXT_VOICE_MESSAGE_CONTENT_INTENT=false` では特権Message Content intentを要求せず起動できる。スラッシュコマンドは使えるが、通常のチャンネル投稿を文脈・追加指示として読むにはMessage Content権限が必要。
 - 議事録は先頭に短い要点、添付に全文を持つ編集可能なメッセージとして表示し、可能ならBot自身の議事録メッセージをpinする。
-- 即時応答は議事録生成から独立したResponses API（既定 `gpt-4.1-mini`、`PERSONAL_CONTEXT_VOICE_QUICK_REPLY_MODEL` で変更）へ渡す。ツールを実行しない短い会話用であり、音声認識・回答生成・音声合成の時間は残る。`PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS=true` で、呼びかけのない疑問文も対象にする。
+- 即時応答は議事録生成から独立したResponses API（既定 `gpt-4.1-mini`、`PERSONAL_CONTEXT_VOICE_QUICK_REPLY_MODEL` で変更）で、具体的な回答・実物の確認・無応答を判定する。`PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS=true` でも、人間同士の曖昧な質問や相づちへ汎用的な受領文を返さない。直近の話者別会話を議事録反映後も保持し、議事録・タスク結果・現在の接続状態を別々に渡す。ソース・ログ・成果物の確認が必要なら独立した読み取り専用Codexで調査し、確認中は表示だけを更新して、結果を得てから回答する。音声認識・判定・必要な調査・音声合成の時間は残る。
 - 開発会議で `PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE=true` を指定すると、対象サーバーの参加者全員がコマンド・作業操作を使える。音声も対象にするには全話者受信を有効にする。`PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD=false` で作業依頼の呼びかけ条件を外せる。
 - `PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` に複数のエージェントを登録すると、音声またはテキストから作ったIssueを担当領域と割当負荷で振り分ける。Issue、担当、割当理由を永続化してから作業を開始し、エージェント別の同時実行上限を守る。
 - `PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` を設定した場合はIssueごとにDiscord Forumスレッドを作り、依頼、進捗、結果、質問、指摘、担当エージェントの回答を集約する。チーム共通・エージェント別テキストチャンネルには担当決定を通知する。
@@ -69,6 +69,7 @@
 - Discord受信: Opus 48kHz stereoをPCMへdecodeし、無音1,000msを発話終端とする。
 - STT入力: PCMを16-bit 48kHz stereo WAVへ包み、最大90秒・25MB未満に制限する。短すぎる発話は破棄する。
 - TTS出力: 指定速度（0.25〜4倍、既定1倍）の24kHz mono signed 16-bit little-endian PCMを48kHz stereoへ決定的に変換し、Discordへ再生する。
+- 発話開始: 文字起こし対象のallowlistにかかわらず、受信側で全参加者の発話終了を確認し、無音が既定1,000ms続くまで待つ。再生直前にも確認し、待機中に誰かが話し始めたら無音の待機時間を数え直す。`PERSONAL_CONTEXT_VOICE_SPEECH_START_SILENCE_MS`で0〜5,000msに設定でき、録音終端の`PERSONAL_CONTEXT_VOICE_SILENCE_MS`とは独立する。0でも発話中の参加者がいなくなるまで待つ。この制御は再生開始だけに適用し、再生途中の自動中断や回答の破棄は行わない。
 - Discord client、Voice connection、受信stream、再生playerの`error`はプロセスへ伝播させず、秘密を含まないerror種別だけを構造化ログへ残す。
 - Decode後のPCMが不完全なsample frameでもプロセスを落とさず、その発話だけを破棄して固定文で再入力を案内する。
 - 応答本文が長い場合、Textには全文を分割投稿し、音声は先頭1,200文字までを自然な区切りで読む。

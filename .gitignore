@@ -31,3 +31,6 @@ AGENTS.override.md
 # Local Codex scratch work and Windows device-name artifacts are not project files.
 .codex_tmp_*/
 nul
+
+# temp
+temp/

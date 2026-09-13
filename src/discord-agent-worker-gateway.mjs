@@ -1,5 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
+import { identifyVerificationCommand } from "./engine/evidence.mjs";
+import { taskModelSelection } from "./engine/model-policy.mjs";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const OPEN = 1;
@@ -21,6 +23,16 @@ function safeTask(task, leaseId) {
     context: String(task.context ?? "").slice(0, 20_000),
     kind: task.kind,
     complexity: task.complexity,
+    modelSelection: taskModelSelection(task),
+    activeSpecRevision: task.activeSpecRevision,
+    acceptanceCriteria: task.acceptanceCriteria
+      ?.slice(0, 10)
+      .map((criterion) => String(criterion).slice(0, 500)),
+    sourceStatements: task.sourceStatements?.slice(0, 20).map((statement) => ({
+      sequence: statement.sequence,
+      text: String(statement.text ?? "").slice(0, 2000),
+      speakerName: String(statement.speakerName ?? "").slice(0, 100),
+    })),
     additionalInstruction: task.additionalInstruction,
     additionalInstructionSource: task.additionalInstructionSource,
   };
@@ -55,7 +67,17 @@ function safeEvidence(value) {
     failedCommands: boundedInteger(value.failedCommands),
     unknownCommands: boundedInteger(value.unknownCommands),
     tests: Array.isArray(value.tests)
-      ? value.tests.map((item) => String(item).slice(0, 500)).slice(0, 100)
+      ? value.tests
+          .slice(0, 100)
+          .map((item) =>
+            identifyVerificationCommand(
+              typeof item?.command === "string"
+                ? item.command.slice(0, 500)
+                : "",
+              item?.scope === "command_exit" ? item.exitCode : undefined,
+            ),
+          )
+          .filter(Boolean)
       : [],
     files: Array.isArray(value.files)
       ? value.files.map((item) => String(item).slice(0, 500)).slice(0, 100)
@@ -231,7 +253,7 @@ export class AgentWorkerGateway {
         gatewayError("WORKER_GATEWAY_STOPPED", "Worker gateway stopped."),
         true,
       );
-    for (const socket of this.connections.values())
+    for (const socket of this.server?.clients ?? this.connections.values())
       socket.close(1001, "Server stopped");
     this.connections.clear();
     if (!this.server) return;
@@ -246,6 +268,14 @@ export class AgentWorkerGateway {
       challengeExpiresAt: Date.now() + 30_000,
       agentId: undefined,
     };
+    session.challengeTimer = setTimeout(
+      () => {
+        if (!session.agentId && socket.readyState === OPEN)
+          socket.close(4008, "Worker challenge expired");
+      },
+      Math.max(0, session.challengeExpiresAt - Date.now()),
+    );
+    session.challengeTimer.unref?.();
     socket.send(
       JSON.stringify({
         type: "challenge",
@@ -271,9 +301,10 @@ export class AgentWorkerGateway {
       });
     });
     socket.on("close", () => {
+      clearTimeout(session.challengeTimer);
       if (!session.agentId) return;
-      if (this.connections.get(session.agentId) === socket)
-        this.connections.delete(session.agentId);
+      if (this.connections.get(session.agentId) !== socket) return;
+      this.connections.delete(session.agentId);
       this.registry.markOnline(session.agentId, false);
       this.agentTeam?.setOnline(session.agentId, false);
       this.#rejectAgent(
@@ -373,11 +404,12 @@ export class AgentWorkerGateway {
   }
 
   #register(socket, session, agentId, worker) {
+    clearTimeout(session.challengeTimer);
     const previous = this.connections.get(agentId);
-    if (previous && previous !== socket)
-      previous.close(4001, "Replaced by a new connection");
     session.agentId = agentId;
     this.connections.set(agentId, socket);
+    if (previous && previous !== socket)
+      previous.close(4001, "Replaced by a new connection");
     this.agentTeam?.upsert({
       ...worker,
       id: agentId,
