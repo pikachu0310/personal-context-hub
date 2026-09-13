@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
-import { isImmediateTaskStatus } from "../src/discord-voice-intents.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
+import { isImmediateTaskStatus } from "../src/engine/observation/intents.mjs";
 const noop = async () => undefined;
 const meeting = (options = {}) =>
   new DiscordVoiceMeetingSession({

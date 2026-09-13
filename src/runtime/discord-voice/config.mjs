@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { automaticVoiceModel } from "./discord-voice-model-policy.mjs";
-import { parsePreviewCommand } from "./discord-voice-preview.mjs";
-import { parsePreviewChecks } from "./discord-voice-preview-browser.mjs";
+import { automaticVoiceModel } from "../../engine/model-policy.mjs";
+import { parsePreviewCommand } from "../../execution/preview.mjs";
+import { parsePreviewChecks } from "../../execution/preview-browser.mjs";
 
 const snowflake = /^\d{17,20}$/;
 const codexReasoningEfforts = new Set([

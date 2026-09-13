@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   describeDiscordVoiceConfig,
   loadDiscordVoiceConfig,
-} from "../src/discord-voice-config.mjs";
-import { selectTaskProfile } from "../src/discord-voice-workspace.mjs";
+} from "../src/runtime/discord-voice/config.mjs";
+import { selectTaskProfile } from "../src/execution/codex/workspace.mjs";
 
 const valid = {
   PERSONAL_CONTEXT_VOICE_GUILD_ID: "11111111111111111",

@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceTaskQueue,
-} from "../src/discord-voice-session.mjs";
-import { createIdobataMessageHandler } from "../src/discord-voice-commands.mjs";
+} from "../src/adapters/discord/sessions.mjs";
+import { createIdobataMessageHandler } from "../src/adapters/discord/commands.mjs";
 
 const noop = async () => undefined;
 

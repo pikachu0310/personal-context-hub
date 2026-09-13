@@ -8,8 +8,8 @@ import {
   accountFolderPrefix,
   parseThunderbirdAccounts,
   parseThunderbirdProfiles,
-} from "../src/thunderbird-config.mjs";
-import { ThunderbirdMailClient } from "../src/thunderbird-mail-client.mjs";
+} from "../src/integrations/thunderbird/config.mjs";
+import { ThunderbirdMailClient } from "../src/integrations/thunderbird/client.mjs";
 
 const prefs = `
 user_pref("mail.server.server2.hostname", "imap.gmail.com");

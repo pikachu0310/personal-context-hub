@@ -15,8 +15,8 @@ import {
   buildCodexOptions,
   buildCodexPrompt,
   prepareIsolatedCodexHome,
-} from "../src/discord-voice-openai.mjs";
-import { DiscordVoiceSession } from "../src/discord-voice-session.mjs";
+} from "../src/execution/codex/runner.mjs";
+import { DiscordVoiceSession } from "../src/adapters/discord/sessions.mjs";
 
 async function eventually(check, timeoutMs = 1_000) {
   const deadline = Date.now() + timeoutMs;

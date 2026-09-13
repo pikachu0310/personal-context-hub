@@ -3,9 +3,9 @@ import test from "node:test";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceTaskQueue,
-} from "../src/discord-voice-session.mjs";
-import { parseImmediateTaskStop } from "../src/discord-voice-intents.mjs";
-import { serializeAudioPlayback } from "../src/discord-voice-server.mjs";
+} from "../src/adapters/discord/sessions.mjs";
+import { parseImmediateTaskStop } from "../src/engine/observation/intents.mjs";
+import { serializeAudioPlayback } from "../src/adapters/discord/transport.mjs";
 const noop = async () => undefined;
 const eventually = async (check) => {
   for (let i = 0; i < 200; i++) {

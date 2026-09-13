@@ -4,8 +4,8 @@ import {
   DISCORD_RPC_SCOPES,
   readDiscordRpcCredentialStore,
   writeDiscordRpcCredentialStore,
-} from "./discord-rpc-config.mjs";
-import { DiscordRpcTransport } from "./discord-rpc-transport.mjs";
+} from "./config.mjs";
+import { DiscordRpcTransport } from "./transport.mjs";
 
 const TOKEN_EXPIRY_SKEW_MS = 60 * 1000;
 const TEXT_CHANNEL_TYPES = new Set([0, 5, 10, 11, 12, 15, 16]);

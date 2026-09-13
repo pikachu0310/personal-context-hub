@@ -2,7 +2,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "node:url";
 
-const serverPath = fileURLToPath(new URL("../src/server.mjs", import.meta.url));
+const serverPath = fileURLToPath(
+  new URL("../src/integrations/traq/server.mjs", import.meta.url),
+);
 const startScriptPath = fileURLToPath(
   new URL("./start-traq-mcp.sh", import.meta.url),
 );

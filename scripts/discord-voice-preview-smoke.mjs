@@ -1,8 +1,8 @@
 import { mkdtemp, mkdir, copyFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { TaskPreviewManager } from "../src/discord-voice-preview.mjs";
-import { browserPreviewVerifier } from "../src/discord-voice-preview-browser.mjs";
+import { TaskPreviewManager } from "../src/execution/preview.mjs";
+import { browserPreviewVerifier } from "../src/execution/preview-browser.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "idd-preview-smoke-"));
 const workspace = join(root, "demo");

@@ -8,7 +8,7 @@ import {
   getTokenStoreDescription,
   readTokenStore,
 } from "./config.mjs";
-import { exchangeAuthorizationCode } from "./traq-client.mjs";
+import { exchangeAuthorizationCode } from "./client.mjs";
 
 function parseClientId(argv) {
   const index = argv.indexOf("--client-id");

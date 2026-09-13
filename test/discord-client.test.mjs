@@ -6,7 +6,7 @@ import {
   buildDiscordSearchParams,
   DiscordClient,
   encodeDiscordEmoji,
-} from "../src/discord-client.mjs";
+} from "../src/integrations/discord-bot/client.mjs";
 
 test("buildDiscordSearchParams preserves repeated official search filters", () => {
   const params = buildDiscordSearchParams({

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requestedVoiceModel } from "../src/discord-voice-model-policy.mjs";
-import { selectTaskProfile } from "../src/discord-voice-workspace.mjs";
-import { authorizeMeetingTasks } from "../src/discord-voice-session.mjs";
+import { requestedVoiceModel } from "../src/engine/model-policy.mjs";
+import { selectTaskProfile } from "../src/execution/codex/workspace.mjs";
+import { authorizeMeetingTasks } from "../src/engine/observation/observation.mjs";
 
 test("Astra requires an explicit participant model request, not a mention or inferred complexity", () => {
   for (const text of [

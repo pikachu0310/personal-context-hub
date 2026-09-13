@@ -1,6 +1,16 @@
 # 会話パイプラインと実行レイヤー
 
-`src` は以下の責務に分かれています。traQ、Thunderbird、Discord Bot MCP、Discord RPCは独立した連携機能として既存のエントリーポイントを維持します。
+`src` は以下の責務に分かれています。各モジュールは担当するレイヤーから直接importし、ルート直下には互換用の再exportファイルを置きません。
+
+traQ、Thunderbird、Discord Bot MCP、Discord RPCは `src/integrations/` 配下の独立した連携機能です。
+
+| ディレクトリ               | 内容・起動入口                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------- |
+| `integrations/traq`        | traQ MCP。`server.mjs`、`client.mjs`、`config.mjs`、`auth.mjs`                     |
+| `integrations/thunderbird` | 読み取り専用メールMCP。`server.mjs`、`client.mjs`、`config.mjs`                    |
+| `integrations/discord-bot` | Discord Bot MCP。`server.mjs`、`client.mjs`、`config.mjs`                          |
+| `integrations/discord-rpc` | Discord Desktop RPC MCP。`server.mjs`、`client.mjs`、`config.mjs`、`transport.mjs` |
+| `runtime/discord-voice`    | VoiceのCLI入口 `server.mjs`、組み立て `index.mjs`、設定・診断                      |
 
 | レイヤー                            | 責務                                                                                    |
 | ----------------------------------- | --------------------------------------------------------------------------------------- |
@@ -72,7 +82,9 @@ runtimeは`bindExecution(backend)`の戻り値をengineへ渡します。単一C
 
 ## 互換性と検証
 
-既存のCLI、環境変数、ルートの`discord-voice-*` importは互換エントリーポイントとして維持します。新しいコードは各責務のモジュールを直接importします。会議状態のversion 1、scope、DiscordのthreadId/starterId、配送ステップ番号、冪等キーを維持し、既存状態の削除や移行コマンドは不要です。出力アダプター変更時の保存先・配送先の移行は自動化しません。未配送の結果がある状態で分割・配送ルールを変更しないでください。
+既存のnpmコマンド、`scripts/` の起動スクリプト、環境変数は維持します。旧 `src/discord-voice-*` の再exportは削除し、テストと診断スクリプトも各責務のモジュールを直接importします。Discord表示を注入するセッションクラスは `adapters/discord/sessions.mjs` にあります。独自の起動設定で旧 `src/*.mjs` を直接指定している場合は、上表の起動入口へ更新してください。
+
+会議状態のversion 1、scope、DiscordのthreadId/starterId、配送ステップ番号、冪等キーを維持し、既存状態の削除や移行コマンドは不要です。出力アダプター変更時の保存先・配送先の移行は自動化しません。未配送の結果がある状態で分割・配送ルールを変更しないでください。
 
 - `npm run verify`: 再帰的な構文確認、lint、format、全テスト・coverage、依存監査。
 - `npm run smoke:discord:voice:mock`: Discord・Codex・音声APIを模擬した既存E2E。

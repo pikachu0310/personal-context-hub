@@ -2,8 +2,8 @@ import { stat } from "node:fs/promises";
 import {
   describeDiscordVoiceConfig,
   loadDiscordVoiceConfig,
-} from "./discord-voice-config.mjs";
-import { voiceErrorCode } from "./discord-voice-errors.mjs";
+} from "./config.mjs";
+import { voiceErrorCode } from "../../engine/errors.mjs";
 
 const PUBLIC_REQUIRED_ENVIRONMENT = Object.freeze([
   "PERSONAL_CONTEXT_VOICE_GUILD_ID",
@@ -109,13 +109,14 @@ function copyConfigurationEnvironment(env, mode) {
 }
 
 async function prepareCodexByDefault(config) {
-  const { CodexVoiceRunner } = await import("./discord-voice-openai.mjs");
+  const { CodexVoiceRunner } = await import("../../execution/codex/runner.mjs");
   const codex = new CodexVoiceRunner(config);
   await codex.prepare();
 }
 
 async function readCredentialByDefault() {
-  const { readDiscordTokenStore } = await import("./discord-config.mjs");
+  const { readDiscordTokenStore } =
+    await import("../../integrations/discord-bot/config.mjs");
   return readDiscordTokenStore();
 }
 

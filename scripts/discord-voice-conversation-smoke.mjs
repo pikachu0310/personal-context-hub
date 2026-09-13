@@ -5,22 +5,20 @@ import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import {
-  CodexVoiceRunner,
-  createOpenAIAudioAdapter,
-} from "../src/discord-voice-openai.mjs";
-import { loadDiscordVoiceConfig } from "../src/discord-voice-config.mjs";
-import { ttsPcm24kMonoToDiscordRaw } from "../src/discord-voice-audio.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
+import { createOpenAIAudioAdapter } from "../src/providers/openai-audio.mjs";
+import { loadDiscordVoiceConfig } from "../src/runtime/discord-voice/config.mjs";
+import { ttsPcm24kMonoToDiscordRaw } from "../src/adapters/discord/audio-format.mjs";
 import {
   subscribeToAllowedSpeaker,
   createDiscordArtifactPoster,
   createDiscordMessagePayload,
-} from "../src/discord-voice-server.mjs";
+} from "../src/adapters/discord/transport.mjs";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceTaskQueue,
-} from "../src/discord-voice-session.mjs";
-import { MeetingStateStore } from "../src/discord-voice-state.mjs";
+} from "../src/adapters/discord/sessions.mjs";
+import { MeetingStateStore } from "../src/storage/meeting-state.mjs";
 
 // Uses real Codex and speech APIs with synthetic input in a temporary repository.
 // Discord transport and audio playback are simulated; no participant is recorded.

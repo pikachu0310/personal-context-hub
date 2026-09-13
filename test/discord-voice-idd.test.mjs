@@ -15,18 +15,18 @@ import { promisify } from "node:util";
 import {
   TaskWorkspaceManager,
   selectTaskProfile,
-} from "../src/discord-voice-workspace.mjs";
-import { MeetingStateStore } from "../src/discord-voice-state.mjs";
-import { isSafeIsolatedCodexConfig } from "../src/discord-voice-openai.mjs";
+} from "../src/execution/codex/workspace.mjs";
+import { MeetingStateStore } from "../src/storage/meeting-state.mjs";
+import { isSafeIsolatedCodexConfig } from "../src/execution/codex/runner.mjs";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceTaskQueue,
-} from "../src/discord-voice-session.mjs";
+} from "../src/adapters/discord/sessions.mjs";
 import {
   createIdobataMessageHandler,
   createIdobataInteractionHandler,
   taskControls,
-} from "../src/discord-voice-commands.mjs";
+} from "../src/adapters/discord/commands.mjs";
 
 const exec = promisify(execFile);
 const noop = async () => undefined;

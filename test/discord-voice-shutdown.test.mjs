@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceTaskQueue,
-} from "../src/discord-voice-session.mjs";
+} from "../src/adapters/discord/sessions.mjs";
 const noop = async () => undefined;
 const tick = () => new Promise((resolve) => setTimeout(resolve, 5));
 async function eventually(check) {

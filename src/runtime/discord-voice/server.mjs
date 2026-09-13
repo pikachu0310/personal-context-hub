@@ -1,8 +1,6 @@
-// Stable CLI and compatibility exports.
+// Discord Voice CLI entry point.
 import { pathToFileURL } from "node:url";
-import { startDiscordVoiceCodex } from "./runtime/discord-voice.mjs";
-export { startDiscordVoiceCodex };
-export * from "./adapters/discord/transport.mjs";
+import { startDiscordVoiceCodex } from "./index.mjs";
 
 if (
   process.argv[1] &&

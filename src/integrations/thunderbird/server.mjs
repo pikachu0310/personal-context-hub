@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { ThunderbirdMailClient } from "./thunderbird-mail-client.mjs";
+import { ThunderbirdMailClient } from "./client.mjs";
 
 const client = new ThunderbirdMailClient();
 const server = new McpServer(
