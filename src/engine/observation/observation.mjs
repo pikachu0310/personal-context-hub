@@ -1,3 +1,4 @@
+import { requestedVoiceModel } from "../model-policy.mjs";
 import {
   boundText,
   boundRecentText,
@@ -54,6 +55,12 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
         title: boundText(task?.title, 120, "…") || "Codexタスク",
         kind: task?.kind ?? "implementation",
         complexity: task?.complexity ?? "routine",
+        acceptanceCriteria: Array.isArray(task?.acceptanceCriteria)
+          ? task.acceptanceCriteria
+              .slice(0, 5)
+              .map((text) => boundText(text, 500))
+              .filter(Boolean)
+          : [],
         sourceSequences: Array.isArray(task?.sourceSequences)
           ? [
               ...new Set(
@@ -89,6 +96,9 @@ export function parseMeetingObservation(value, fallbackMinutes = "") {
     reply,
     tasks,
     taskControls,
+    decisions: Array.isArray(parsed?.decisions)
+      ? parsed.decisions.slice(0, 12)
+      : [],
   };
 }
 
@@ -171,6 +181,16 @@ export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
         request,
         context,
         sourceSequences: [...task.sourceSequences],
+        modelSelection: requestedVoiceModel(request),
+        acceptanceCriteria: task.acceptanceCriteria,
+        sourceStatements: sources.map((statement) => ({
+          meetingId: statement.meetingId,
+          sequence: statement.sequence,
+          userId: statement.sourceUserId ?? statement.userId,
+          speakerName: statement.speakerName,
+          startedAt: statement.startedAt,
+          text: statement.text,
+        })),
       },
     ];
   });

@@ -6,7 +6,7 @@ Discordの会話を共有コンテキストへ整理し、Codexの調査・実�
 
 ## 最初の5分
 
-Node.js 22以降、Discord Bot、音声API用のOpenAI API key、Codexへのログインが必要です。
+Node.js 22以降、Discord Bot、音声API用のOpenAI API key、Codexへのログインが必要です。実行途中の訂正とプレビューにはCodex CLI 0.154.0以降を使います。
 `.env.voice.example` を参考に、対象サーバー・通話・テキストチャンネル・操作担当者・作業repoを指定します。
 実際の設定と認証情報はGit管理外へ置いてください。
 
@@ -18,17 +18,17 @@ npm run start:discord:voice:instance -- YOUR_PROFILE
 ```
 
 グループ開発では `PERSONAL_CONTEXT_VOICE_MODE=meeting`、`PERSONAL_CONTEXT_VOICE_POWER_MODE=true`、`PERSONAL_CONTEXT_VOICE_LISTEN_TO_EVERYONE=true` を設定します。
-モデルと推論強度は `PERSONAL_CONTEXT_VOICE_CODEX_MODEL` / `PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT` を共通設定とし、`OBSERVER`・`TASK`・`COMPLEX_TASK` ごとの指定を優先します。複雑な作業の設定を省略すると `TASK` を引き継ぎます。例の設定では会議観測をSol low、作業をSol mediumに分けており、`inspect` で実効設定を確認できます。
+通常のCodex処理はSol lowです。複雑さを理由にAstraへ切り替えません。Astraは作業作成時の `model` 選択か「Astraで実装して」など、その作業で明示された場合だけ使用します。過去の環境設定がAstraでも自動選択には使いません。`OBSERVER`・`TASK`・`COMPLEX_TASK` の推論強度を明示した設定は優先されるため、既存環境のhighやmediumをlowへ変更し、`inspect` で実効設定を確認してください。
 Botには対象チャンネルでの閲覧・接続・発言・送信・履歴閲覧・公開スレッド作成・スレッド送信・ファイル添付を許可し、Developer PortalでMessage Content Intentを有効にします。
 起動すると通話に参加し、認識テキストの保存とAI音声の使用をチャンネルへ告知します。参加者へ保存範囲を説明してから利用してください。
 
-設定済みのテキストチャンネルで、次の流れを試せます。`!ido` はテキストコマンドです。`/ido` も同じ意味で受け付けます。
+設定済みのテキストチャンネルで、次の流れを試せます。`/ido` は登録されたスラッシュコマンドです。`!ido` と通常のスレッド投稿にはMessage Content Intentが必要です。無効な場合もスラッシュコマンドとカードのボタン・入力フォームは使えます。
 
 1. 「決定: ボタンは青にする」と書くか話す。議事録・前提・決定事項・未解決点・TODOを更新します。
 2. `!ido task ボタンを青に変更してテストして`。専用スレッドと独立した作業場所を作ります。
 3. 会話を続けながら `!ido benchmark AとBを同じ条件で比較して`。既定では2件まで並行実行します。
-4. タスクカードの「追加指示」から変更を伝えます。「停止」はそのタスクだけを止めます。
-5. 結果と添付patch・検証記録を確認し、「差分を反映」で元の作業場所へ反映します。そのrepoの通常の起動コマンドで動作を試せます。
+4. タスクカードの「追加指示」から変更を伝えます。App Server接続では実行中のターンにも訂正を届けます。モデルの切り替えは次のターンで行います。「停止」はそのタスクだけを止めます。
+5. プレビューを設定したWebアプリはカードのURLから試せます。「この版を試した」で試用報告を残し、感想は同じタスクへの追加指示で伝えます。添付patchと検証記録を確認し、「差分を反映」で元の作業場所へ反映できます。
 
 声で依頼するときは「井戸Bot、〜して」または「Codex、〜して」と呼びかけます。
 既定では呼びかけを含む操作担当者の明確な依頼だけを作業候補にします。認識誤りがある場合はテキストコマンドを使えます。
@@ -51,16 +51,27 @@ Botには対象チャンネルでの閲覧・接続・発言・送信・履歴�
 | `!ido test 検証内容`       | テスト・検証                                                               |
 | `!ido status [ページ番号]` | 通話状態と作業一覧。進行中・受付待ちを先に表示し、過去の作業もページで確認 |
 | `!ido result ID`           | 保存済みの結果と対応する検証記録。現在の作業状態も表示                     |
-| `!ido follow ID 追加指示`  | 同じCodexセッションへ追加。実行中は後続として待機                          |
+| `!ido follow ID 追加指示`  | 同じCodexセッションへ追加。App Serverでは実行中にも受け渡し                |
 | `!ido stop ID`             | 指定タスクを中断し、待機中の追加指示も破棄                                 |
 | `!ido quiet`               | 現在と待機中の読み上げを停止                                               |
+| `/ido live on` / `off`     | GPT-Liveを30分間比較し、元のSTT/TTS方式へ戻す                              |
 | `!ido reconnect`           | 通話へ再接続。進行中の作業と会議の文脈を保持                               |
 | `!ido apply ID 実行版`     | 確認した実行版の差分を元の作業場所へ反映                                   |
 | `!ido new`                 | 会議の境界を切り替える。過去ログ・作業は保持                               |
 
+## 試用版と音声方式
+
+Webプレビューは `.env.voice.example` の `PREVIEW_COMMAND_JSON` と `PREVIEW_CHECKS_JSON` で起動コマンドと操作条件を指定します。起動コマンドは運用者の設定からだけ読み、Codexのworkspace権限を使って別プロセスで実行します。Bot tokenやAPI keyは渡しません。Chromiumで指定した表示・クリック・入力を確認し、実行版に対応するスクリーンショットをローカルの成果物へ保存します。
+
+カードは「起動済み」「自動操作を確認」「人の試用報告」を分けます。localhostの起動だけでは4人が試せるとは表示しません。別端末へ共有する場合は、別途許可・設定したprivateな転送先を `PREVIEW_SHARED_URL_TEMPLATE` へ指定し、各人が同じ版を試して報告します。訂正すると旧プレビューを停止し、新しい実行版で起動します。プレビューは1時間で終了し、Bot再起動後に古いリンクを稼働中扱いしません。
+
+`/ido live on` はGPT-Liveのclient delegationを使う30分の比較セッションです。声は1セッションへ混ぜ、話者のID・権限は並行する話者別STTとBotの状態で確認します。人が話し始めると再生待ち音声を破棄します。Liveの切断や期限終了時はSTT/TTSへ戻り、開発作業は続けます。生音声の保存は有効にしません。従来方式とLive方式の多人数での品質は、同じ会話で比較してください。
+
 ## 並行作業と復旧
 
-- 観測・即答は既定でSol low、作業はSol medium。別モデルは `PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL`、`PERSONAL_CONTEXT_VOICE_TASK_MODEL`、`PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL` で指定できます。
+- Codexの観測・質問調査・開発は既定でSol low。従来方式の短い質問判定は4.1-mini、STT/TTSとLiveには音声用モデルを使います。Astra highの指定は該当タスク内だけで有効です。
+- 会議の前提・決定・提案には根拠発言と時刻を残します。直近200発言・最大12万文字から関連する発言を選び、決定の解釈と一緒に渡します。これは保存済み全文を毎回読む方式ではありません。訂正には仕様版を付け、古い仕様の結果を最新扱いしません。
+- `PERSONAL_CONTEXT_VOICE_CODEX_TRANSPORT=app-server` が既定です。途中の指示が受け取られたか不明な場合は二重送信せず中断します。`sdk` に戻すと従来の接続を利用できますが、追加指示は後続ターンとして待機します。
 - 作業ごとに対象repoからGit worktreeを作り、開始時の追跡済みローカル変更を引き継ぎます。未追跡ファイル・ignoredファイル・credentialsはコピーしません。未コミットの新しいソースを含めたい場合は、先に対象repoでレビューして追跡対象にしてください。
 - ワーカーは `workspace-write` sandboxで動きます。元のrepoや別タスクの作業場所を変更せず、ネットワークと公式資料の検索を利用できます。共有ホスト上のプロセスであり、秘密ファイルへの読み取りまで隔離するコンテナではありません。
 - patchは前回反映した時点（未反映なら開始時点）からの差分です。反映後に追加修正を依頼し、次の差分を再び反映できます。反映時にはHEAD・ローカル変更・前回追加したファイル・保存した差分の一致を確認し、本人の変更や競合があれば停止します。添付の実行版を指定するか、その版の反映ボタンを使います。自動commit・push・merge・deployは行いません。
@@ -90,6 +101,13 @@ npm run smoke:discord:voice:audio
 # 合成音声の依頼→実装・検証→結果への質問→回答の復旧→差分反映
 npm run smoke:discord:voice:conversation
 npm run smoke:discord:voice:cancel
+
+# Chromiumの操作を含む試用→訂正→再試用。loopは実Codexを使用
+npm run smoke:discord:voice:preview
+npm run smoke:discord:voice:loop
+
+# 合成音声でLiveの委任と音声出力を確認。Discordには接続しない
+npm run smoke:discord:voice:live
 ```
 
 実Codexのsmokeは、一時repo内で「加算バグの修正とテスト」と「Array.includes / Set.hasの比較」を並行実行します。
@@ -100,7 +118,7 @@ npm run smoke:discord:voice:cancel
 
 2026-09-12のローカル実機検証では、実Codexの並行作業と独立したテスト、合成音声のTTS→STTが通過しました。
 Discordの実通話・実投稿・ボタン操作は別の実機確認が必要です。mockの成功をDiscord接続の成功として扱いません。
-Codex連携は[公式SDK](https://learn.chatgpt.com/docs/codex-sdk)、音声受信は[@discordjs/voice](https://discord.js.org/docs/packages/voice/0.19.2)を使用しています。Discordの音声受信にはライブラリ側のサポート上の制約があり、環境ごとの実通話確認が必要です。
+Codex連携は[App Server](https://learn.chatgpt.com/docs/app-server)を既定とし、[公式SDK](https://learn.chatgpt.com/docs/codex-sdk)も退避用に残しています。プレビューは[Codexの権限プロファイル](https://learn.chatgpt.com/docs/permissions)を使います。音声受信は[@discordjs/voice](https://discord.js.org/docs/packages/voice/0.19.2)を使用しています。Discordの音声受信にはライブラリ側のサポート上の制約があり、環境ごとの実通話確認が必要です。
 
 このrepoは旧personal-context-hubから分岐しており、以下に既存の連携・設定資料を保持しています。
 

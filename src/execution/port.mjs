@@ -16,6 +16,8 @@ const stateFields = [
   "profile",
   "evidence",
   "runRevision",
+  "usage",
+  "usageHistory",
 ];
 export function executionState(task) {
   return Object.fromEntries(
@@ -33,6 +35,17 @@ export function bindExecution(backend) {
   if (!backend) throw new TypeError("execution backend is required");
   return {
     prepare: () => backend.prepare?.(),
+    close: () => backend.close?.(),
+    investigateQuestion: backend.investigateQuestion
+      ? (question, options) => backend.investigateQuestion(question, options)
+      : undefined,
+    steerTask: backend.steerTask
+      ? (task, instruction) =>
+          backend.steerTask(
+            { id: task.id, ...executionState(task) },
+            instruction,
+          )
+      : undefined,
     resetMeeting: () => backend.resetMeeting?.(),
     run: (text, options) => backend.run(text, options),
     observeMeeting: (observation, options) =>
@@ -49,11 +62,17 @@ export function bindExecution(backend) {
         kind: task.kind,
         complexity: task.complexity,
         sourceSequences: structuredClone(task.sourceSequences),
+        sourceStatements: structuredClone(task.sourceStatements),
+        acceptanceCriteria: structuredClone(task.acceptanceCriteria),
+        modelSelection: structuredClone(task.modelSelection),
+        specRevision: task.specRevision,
+        activeSpecRevision: task.activeSpecRevision,
         additionalInstruction: task.additionalInstruction,
       };
       const result = await backend.runTask(request, {
         signal,
         onProgress,
+        flushSteering: () => task.flushSteering?.(),
         checkpoint: async (state) => {
           applyState(task, state);
           await task.checkpoint?.();

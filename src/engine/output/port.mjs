@@ -30,6 +30,9 @@ export function normalizeOutput(output) {
   return {
     capabilities,
     presentation: output.presentation,
+    speak: capabilities.audio ? method("speak") : undefined,
+    isLive: capabilities.audio ? method("isLive") : undefined,
+    stopSpeech: capabilities.audio ? method("stopSpeech") : undefined,
     postText: method("postText"),
     playAudio: capabilities.audio ? method("playAudio") : undefined,
     upsertLiveTranscript: capabilities.transcript

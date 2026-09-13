@@ -26,6 +26,130 @@ function queue(options = {}) {
   });
 }
 
+test("durably accepted corrections steer an active worker and complete only the new specification", async (t) => {
+  let finish,
+    workerTask,
+    runs = 0;
+  const writes = [],
+    steers = [];
+  const tasks = queue({
+    checkpoint: async (snapshot) => writes.push(structuredClone(snapshot)),
+    runTask: async (task) => {
+      runs++;
+      workerTask = task;
+      task.runRevision = 1;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+    steerTask: async (task, text) => {
+      assert.equal(writes.at(-1)[0].instructions[0].delivery, "sending");
+      steers.push(text);
+      return true;
+    },
+  });
+  t.after(() => tasks.stop());
+  await tasks.enqueueDurable({
+    id: "steer",
+    title: "button",
+    request: "larger",
+  });
+  await eventually(() => finish);
+  await tasks.handleTaskMessageDurable({
+    taskId: "steer",
+    userId: "owner",
+    ownerUserId: "owner",
+    content: "少し小さくして",
+    requestKey: "correction",
+  });
+  await eventually(() => workerTask.steeredInstructions?.length === 1);
+  finish("smaller button");
+  await eventually(
+    () => tasks.getTaskResult("steer")?.currentState === "completed",
+  );
+  assert.deepEqual(steers, ["少し小さくして"]);
+  assert.equal(runs, 1);
+  assert.equal(tasks.getTaskResult("steer").resultSpecRevision, 2);
+  assert.equal(tasks.getTaskResult("steer").superseded, false);
+});
+
+test("an ambiguous steer acknowledgement aborts and preserves the instruction for manual recovery", async (t) => {
+  let workerTask, workerSignal;
+  const tasks = queue({
+    runTask: async (task, { signal }) => {
+      workerTask = task;
+      workerSignal = signal;
+      return new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        }),
+      );
+    },
+    steerTask: async () => {
+      throw new Error("transport lost after send");
+    },
+  });
+  t.after(() => tasks.stop());
+  await tasks.enqueueDurable({ id: "uncertain", title: "button" });
+  await eventually(() => workerTask);
+  await tasks.handleTaskMessageDurable({
+    taskId: "uncertain",
+    userId: "owner",
+    ownerUserId: "owner",
+    content: "訂正して",
+    requestKey: "correction",
+  });
+  await eventually(() => workerTask.state === "failed");
+  assert.equal(workerSignal.aborted, true);
+  assert.equal(tasks.snapshot()[0].instructions[0].delivery, "uncertain");
+});
+
+test("a second correction arriving during acknowledgement is delivered in the same run", async (t) => {
+  let finish, acknowledge;
+  const steers = [];
+  const tasks = queue({
+    runTask: async (task) => {
+      task.runRevision = 1;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    },
+    steerTask: async (_task, text) => {
+      steers.push(text);
+      if (steers.length === 1)
+        await new Promise((resolve) => {
+          acknowledge = resolve;
+        });
+      return true;
+    },
+  });
+  t.after(async () => {
+    acknowledge?.();
+    finish?.("done");
+    await tasks.stop();
+  });
+  await tasks.enqueueDurable({ id: "rapid", title: "button" });
+  await eventually(() => finish);
+  const first = tasks.handleTaskMessageDurable(
+    instruction("rapid", "小さくして", "first"),
+  );
+  await eventually(() => acknowledge);
+  const second = tasks.handleTaskMessageDurable(
+    instruction("rapid", "赤にして", "second"),
+  );
+  await eventually(() => tasks.snapshot()[0].instructions.length === 2);
+  acknowledge();
+  await Promise.all([first, second]);
+  await eventually(() => steers.length === 2);
+  finish("small red button");
+  await eventually(
+    () => tasks.getTaskResult("rapid")?.currentState === "completed",
+  );
+  assert.deepEqual(steers, ["小さくして", "赤にして"]);
+  assert.equal(tasks.getTaskResult("rapid").resultSpecRevision, 3);
+  assert.equal(tasks.getTaskResult("rapid").superseded, false);
+});
+
 for (const initialState of ["cancelled", "failed"]) {
   test(`a stalled ${initialState} notice does not hold a worker slot or overwrite a resumed task`, async (t) => {
     let releaseNotice,
@@ -281,6 +405,41 @@ function meeting(options = {}) {
     ...options,
   });
 }
+
+test("a correction reaches the active task while meeting observation is still running", async (t) => {
+  let finishObservation,
+    observing = false;
+  const controls = [];
+  const session = meeting({
+    getTasks: () => [{ id: "task", state: "running" }],
+    controlTask: async (control) => {
+      controls.push(control);
+      return { persisted: true };
+    },
+    observe: async () => {
+      observing = true;
+      return new Promise((resolve) => {
+        finishObservation = resolve;
+      });
+    },
+  });
+  t.after(async () => {
+    finishObservation?.(
+      JSON.stringify({ minutes: "会議", shouldReply: false }),
+    );
+    await session.stop();
+  });
+  await session.addText("ボタンの大きさを検討します", { userId: "owner" });
+  const observation = session.observeNow();
+  await eventually(() => observing);
+  await session.addText("やっぱりボタンを小さくして", { userId: "owner" });
+  assert.equal(controls.length, 1);
+  assert.equal(controls[0].taskId, "task");
+  assert.equal(controls[0].type, "instruction");
+  finishObservation(JSON.stringify({ minutes: "会議", shouldReply: false }));
+  await observation;
+  assert.equal(controls.length, 1);
+});
 
 test("voice control retains its concrete target across a save failure and restart", async (t) => {
   let state,

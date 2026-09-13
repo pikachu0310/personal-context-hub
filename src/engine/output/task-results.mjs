@@ -15,6 +15,11 @@ export async function deliverTaskResults(
         delivery.evidence?.runRevision ??
         delivery.artifacts?.runRevision;
       const revisionLabel = revision ? ` (実行 r${revision})` : "";
+      const superseded = () =>
+        Boolean(
+          delivery.specRevision &&
+          delivery.specRevision !== (task.specRevision ?? 1),
+        );
       delivery.id ??= randomUUID();
       await persist({ strict: true });
       const surface = task.surface ?? (await loadSurface(task));
@@ -23,7 +28,12 @@ export async function deliverTaskResults(
       const stages = [
         (options) =>
           post(
-            presentation.resultHeader(revisionLabel, delivery.evidence),
+            presentation.resultHeader(
+              revisionLabel,
+              delivery.evidence,
+              delivery,
+              superseded(),
+            ),
             options,
           ),
         ...presentation
@@ -46,7 +56,12 @@ export async function deliverTaskResults(
       stages.push(
         (options) =>
           post(
-            presentation.taskCompleted(task, delivery, revisionLabel),
+            presentation.taskCompleted(
+              task,
+              delivery,
+              revisionLabel,
+              superseded(),
+            ),
             options,
           ),
         (options) => {
@@ -54,6 +69,7 @@ export async function deliverTaskResults(
           const controlVersion = task.controlVersion ?? 0;
           const isCurrent = () =>
             task.runRevision === revision &&
+            !superseded() &&
             task.state === state &&
             task.state === delivery.state &&
             (task.controlVersion ?? 0) === controlVersion;
@@ -75,6 +91,13 @@ export async function deliverTaskResults(
               result: delivery.result,
               verification: formatVerificationEvidence(delivery.evidence),
               runRevision: revision,
+              specRevision: delivery.specRevision,
+              sourceSequences: delivery.sourceSequences,
+              preview:
+                task.preview?.runRevision === revision
+                  ? structuredClone(task.preview)
+                  : undefined,
+              superseded: superseded(),
               threadId: surface?.threadId ?? task.threadId,
               artifacts: delivery.artifacts,
               meetingId: task.meetingId,

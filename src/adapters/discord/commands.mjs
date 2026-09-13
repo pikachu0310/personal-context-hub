@@ -1,5 +1,6 @@
 import { boundText } from "../../engine/shared.mjs";
 import { splitDiscordText, escapeDiscordMarkdown } from "./presentation.mjs";
+import { requestedVoiceModel } from "../../engine/model-policy.mjs";
 
 export const IDOBATA_APPLICATION_COMMAND = {
   name: "ido",
@@ -11,6 +12,7 @@ export const IDOBATA_APPLICATION_COMMAND = {
     ["context", "現在の議事録全文"],
     ["ask", "井戸Botへ質問", true],
     ["quiet", "読み上げを停止"],
+    ["live", "GPT-Liveの30分比較セッションをon/off", true],
     ["help", "コマンド一覧"],
     ["task", "実装を依頼", true],
     ["research", "調査を依頼", true],
@@ -35,6 +37,20 @@ export const IDOBATA_APPLICATION_COMMAND = {
               required,
               max_length: 1800,
             },
+            ...(["task", "research", "benchmark", "test"].includes(name)
+              ? [
+                  {
+                    type: 3,
+                    name: "model",
+                    description: "通常はSol low。Astraは指定した作業だけで使用",
+                    required: false,
+                    choices: [
+                      { name: "Sol low（通常）", value: "sol" },
+                      { name: "Astra high（この作業のみ）", value: "astra" },
+                    ],
+                  },
+                ]
+              : []),
           ],
         }
       : {}),
@@ -71,12 +87,19 @@ export function createIdobataSlashHandler({ config, handleMessage }) {
       return interaction.followUp({ ...content, flags: 64 });
     };
     try {
+      const selected = interaction.options.getString("model");
       const result = await handleMessage({
         id: interaction.id,
         guildId: interaction.guildId,
         channelId: interaction.channelId,
         author: interaction.user,
         member: interaction.member,
+        modelSelection:
+          selected === "astra"
+            ? { model: "gpt-6-astra", reasoningEffort: "high", explicit: true }
+            : selected === "sol"
+              ? { model: "gpt-5.6-sol", reasoningEffort: "low", explicit: true }
+              : undefined,
         content: `/ido ${interaction.options.getSubcommand()} ${interaction.options.getString("input") ?? ""}`,
         channel: { send },
       });
@@ -105,11 +128,14 @@ export const IDOBATA_HELP = [
   "`/ido status ページ番号` 通話状態・作業一覧 · `/ido stop タスクID`",
   "`/ido result タスクID` 保存済みの結果と検証記録",
   "`/ido quiet` 読み上げ停止",
+  "`/ido live on` GPT-Liveを30分比較 · `off` 元に戻す",
   "`/ido join` 通話へ接続 · `/ido leave` 通話から退出",
   "`/ido follow タスクID 追加指示` · `/ido new` 新しい会議",
   "`/ido apply タスクID 実行版` 確認した差分を作業場所へ反映",
   "作業・中断・新規会議の操作権限は、このBotの設定に従います。",
   "作業結果は専用スレッドとこの会話へ戻ります。",
+  "通常の作業はSol low。Astraは作業作成時のmodel指定か「Astraで〜して」と明示した作業だけで使用します。",
+  "追加指示は実行中にも届きます。試用版がある場合はカードのURLから開き、「この版を試した」で報告できます。",
 ].join("\n");
 
 const displayTaskState = (state) =>
@@ -213,11 +239,23 @@ export function taskControls(
   revision,
   applied = false,
   hasChanges,
+  preview,
 ) {
   return [
     {
       type: 1,
       components: [
+        ...(preview?.state === "available"
+          ? [
+              {
+                type: 2,
+                style: 2,
+                label: "この版を試した",
+                custom_id: `ido:tried:${taskId}:${preview.runRevision}`,
+                disabled: state !== "completed",
+              },
+            ]
+          : []),
         {
           type: 2,
           style: 2,
@@ -255,7 +293,7 @@ export function taskControls(
 export function createIdobataInteractionHandler({ config, taskQueue }) {
   return async (interaction) => {
     const match = String(interaction.customId ?? "").match(
-      /^ido:(follow|instruction|stop|apply):([a-zA-Z0-9_-]+)(?::([1-9][0-9]*))?$/,
+      /^ido:(follow|instruction|stop|apply|tried):([a-zA-Z0-9_-]+)(?::([1-9][0-9]*))?$/,
     );
     if (!match || interaction.guildId !== config.guildId) return false;
     const reply = (content) =>
@@ -270,6 +308,20 @@ export function createIdobataInteractionHandler({ config, taskQueue }) {
     const [, action, taskId, revision] = match;
     if (!taskQueue?.tasks.has(taskId))
       return reply("タスクが見つかりません。作業一覧を確認してください。");
+    if (action === "tried") {
+      await interaction.deferReply({ flags: 64 });
+      try {
+        return interaction.editReply(
+          (await taskQueue.confirmPreview(taskId, Number(revision), userId))
+            ? "この実行版を試したという報告を保存しました。気づいた点は「追加指示」で同じ作業へ伝えられます。"
+            : "この試用版は停止済みか更新されています。最新のタスクカードから試してください。",
+        );
+      } catch {
+        return interaction.editReply(
+          "試用報告を保存できませんでした。もう一度試してください。",
+        );
+      }
+    }
     if (action === "follow")
       return interaction.showModal({
         custom_id: `ido:instruction:${taskId}`,
@@ -356,6 +408,7 @@ export function createIdobataMessageHandler({
   getVoiceStatus = () => "",
   reconnectVoice,
   leaveVoice,
+  setLiveMode,
 }) {
   const seen = new Set();
   return async (message) => {
@@ -479,6 +532,22 @@ export function createIdobataMessageHandler({
         "通話から退出しました。`/ido join` で戻れます。背景の作業は続行します。",
       );
     }
+    if (command === "live") {
+      if (!setLiveMode || !["on", "off"].includes(argument))
+        return reply(
+          "`/ido live on` で30分間の比較を開始、`/ido live off` で元の音声方式へ戻します。",
+        );
+      const result = await setLiveMode(argument === "on");
+      return reply(
+        result === "live"
+          ? "GPT-Liveで30分間の比較を開始しました。切断・期限終了時は元の音声方式へ戻ります。作業は通常Sol lowです。"
+          : result === "legacy"
+            ? "元のSTT/TTS方式へ戻しました。"
+            : result === "busy"
+              ? "音声方式を切り替えています。"
+              : "GPT-Liveを開始できませんでした。通話接続とAPIの利用可否を確認してください。",
+      );
+    }
     if (command === "reconnect" || command === "join") {
       if (!reconnectVoice)
         return reply("この接続では通話の再接続を操作できません。");
@@ -556,6 +625,7 @@ export function createIdobataMessageHandler({
         meetingId: session.meetingId,
         kind: command === "task" ? "implementation" : command,
         complexity: "routine",
+        modelSelection: message.modelSelection ?? requestedVoiceModel(argument),
       };
       let accepted;
       try {

@@ -40,16 +40,21 @@
     "smoke:discord:voice:idd": "node --env-file-if-exists=.env scripts/discord-voice-idd-smoke.mjs",
     "smoke:discord:voice:audio": "node --env-file-if-exists=.env scripts/discord-voice-audio-smoke.mjs",
     "smoke:discord:voice:conversation": "node --env-file-if-exists=.env scripts/discord-voice-conversation-smoke.mjs",
-    "smoke:discord:voice:cancel": "node --env-file-if-exists=.env scripts/discord-voice-cancel-smoke.mjs"
+    "smoke:discord:voice:cancel": "node --env-file-if-exists=.env scripts/discord-voice-cancel-smoke.mjs",
+    "smoke:discord:voice:preview": "node scripts/discord-voice-preview-smoke.mjs",
+    "smoke:discord:voice:loop": "node scripts/discord-voice-loop-smoke.mjs",
+    "smoke:discord:voice:live": "node --env-file-if-exists=.env scripts/discord-voice-live-smoke.mjs"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@openai/codex-sdk": "^0.149.0",
     "discord.js": "^14.27.0",
-    "openai": "^7.5.0",
+    "openai": "^7.15.0",
     "opusscript": "^0.0.8",
+    "playwright": "^1.63.0",
     "prism-media": "^1.3.5",
+    "ws": "^8.21.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

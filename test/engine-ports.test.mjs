@@ -467,3 +467,98 @@ test("stopping one delegated task aborts only that execution", async () => {
     await close(engine);
   }
 });
+
+test("active Codex steering crosses the data boundary without losing specification, model or usage state", async () => {
+  let worker,
+    finish,
+    closed = false;
+  const steering = [];
+  const runner = {
+    async runTask(task) {
+      worker = task;
+      task.runRevision = 1;
+      task.profile = { model: "gpt-5.6-sol", modelReasoningEffort: "low" };
+      task.codexThread = { id: "active-thread", steer: async () => true };
+      task.codexThreadId = task.codexThread.id;
+      await task.checkpoint();
+      await task.flushSteering();
+      await new Promise((resolve) => {
+        finish = resolve;
+      });
+      task.usage = { input_tokens: 10, output_tokens: 5 };
+      task.usageHistory = [{ runRevision: 1, usage: task.usage }];
+      return "corrected result";
+    },
+    async steerTask(task, text) {
+      assert.equal(task, worker);
+      assert.equal(typeof task.codexThread.steer, "function");
+      steering.push(text);
+      return true;
+    },
+    async investigateQuestion(question) {
+      return `evidence:${question.text}`;
+    },
+    async close() {
+      closed = true;
+    },
+  };
+  const port = bindExecution(createCodexBackend({}, { runner }));
+  const engine = await createConversationEngine({
+    config: { ...config, powerMode: true },
+    execution: port,
+    output: { postText: async () => {} },
+    logger,
+  });
+  try {
+    await engine.taskQueue.enqueueDurable({
+      id: "steering",
+      title: "task",
+      request: "implement",
+      specRevision: 1,
+      modelSelection: { model: "gpt-5.6-sol", reasoning: "low" },
+      sourceSequences: [1],
+      sourceStatements: [{ sequence: 1, text: "implement" }],
+      acceptanceCriteria: ["passes checks"],
+    });
+    await eventually(() => Boolean(finish));
+    assert.deepEqual(worker.acceptanceCriteria, ["passes checks"]);
+    assert.equal(worker.modelSelection.model, "gpt-5.6-sol");
+    assert.equal(worker.activeSpecRevision, 1);
+    for (const content of ["correct once", "correct twice"]) {
+      await engine.taskQueue.handleTaskMessageDurable({
+        taskId: "steering",
+        userId: "operator",
+        ownerUserId: "operator",
+        content,
+        requestKey: content,
+      });
+    }
+    await eventually(() => steering.length === 2);
+    finish();
+    await eventually(
+      () =>
+        engine.taskQueue.getTaskResult("steering")?.currentState ===
+        "completed",
+    );
+    const saved = engine.taskQueue.snapshot()[0];
+    assert.equal(saved.activeSpecRevision, 3);
+    assert.equal(saved.resultMetadata.specRevision, 3);
+    assert.equal(saved.execution.threadId, "active-thread");
+    assert.equal(saved.codexThread, undefined);
+    assert.deepEqual(saved.usage, { input_tokens: 10, output_tokens: 5 });
+    assert.equal(saved.usageHistory.length, 1);
+    assert.equal(
+      await port.steerTask({ id: "steering" }, "after completion"),
+      false,
+    );
+    assert.equal(
+      await port.investigateQuestion({ text: "why" }),
+      "evidence:why",
+    );
+  } finally {
+    finish?.();
+    await close(engine);
+    await port.close();
+  }
+  assert.equal(closed, true);
+});

@@ -1,3 +1,5 @@
+import { SpeechStartGate } from "./speech-start.mjs";
+import { formatTaskPreview } from "../../engine/output/preview.mjs";
 import { Readable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
 import { formatVerificationEvidence } from "../../engine/evidence.mjs";
@@ -73,7 +75,11 @@ export function serializeAudioPlayback(play) {
   };
 }
 
-export function createDiscordPlayer(connection, logger = console) {
+export function createDiscordPlayer(
+  connection,
+  logger = console,
+  { speechStartSilenceMs = 1_000 } = {},
+) {
   const player = createAudioPlayer({
     behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
   });
@@ -81,17 +87,25 @@ export function createDiscordPlayer(connection, logger = console) {
     logAudioFailure(logger, "playback_failed", error);
   });
   connection.subscribe(player);
-  return serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
+  const speechStart = new SpeechStartGate(connection.receiver.speaking, {
+    silenceMs: speechStartSilenceMs,
+  });
+  const play = serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
     if (signal?.aborted) throw signal.reason;
     const stopOnAbort = () => player.stop(true);
     signal?.addEventListener("abort", stopOnAbort, { once: true });
     try {
       const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
       const seconds = raw.length / PCM_BYTES_PER_SECOND;
-      const resource = createAudioResource(Readable.from(raw), {
-        inputType: StreamType.Raw,
-      });
-      player.play(resource);
+      await speechStart.runWhenQuiet(
+        () => {
+          const resource = createAudioResource(Readable.from(raw), {
+            inputType: StreamType.Raw,
+          });
+          player.play(resource);
+        },
+        { signal },
+      );
       await entersState(player, AudioPlayerStatus.Playing, 5_000);
       await entersState(
         player,
@@ -102,6 +116,58 @@ export function createDiscordPlayer(connection, logger = console) {
       signal?.removeEventListener("abort", stopOnAbort);
     }
   });
+  play.dispose = () => speechStart.dispose();
+  return play;
+}
+
+export function createDiscordLiveOutput(connection, logger = console) {
+  const player = createAudioPlayer({
+    behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+  });
+  player.on("error", (error) =>
+    logAudioFailure(logger, "live_playback_failed", error),
+  );
+  connection.subscribe(player);
+  let queued = Buffer.alloc(0);
+  let stream;
+  let closed = false;
+  const clear = () => {
+    queued = Buffer.alloc(0);
+    stream?.destroy();
+    stream = new Readable({ read() {}, highWaterMark: 3840 });
+    player.play(createAudioResource(stream, { inputType: StreamType.Raw }));
+  };
+  clear();
+  const timer = setInterval(() => {
+    if (closed || stream.readableLength > 3840) return;
+    const frame = Buffer.alloc(960);
+    queued.copy(frame, 0, 0, Math.min(960, queued.length));
+    queued = queued.subarray(Math.min(960, queued.length));
+    stream.push(ttsPcm24kMonoToDiscordRaw(frame));
+  }, 20);
+  timer.unref();
+  return {
+    append(pcm) {
+      if (closed) return;
+      if (queued.length + pcm.length > 24000 * 2 * 5) {
+        clear();
+        logInfoQuietly(logger, {
+          component: "discord-voice",
+          event: "live_output_overflow",
+        });
+        return;
+      }
+      queued = Buffer.concat([queued, pcm]);
+    },
+    clear,
+    close() {
+      closed = true;
+      clearInterval(timer);
+      queued = Buffer.alloc(0);
+      stream.destroy();
+      player.stop(true);
+    },
+  };
 }
 
 export function subscribeToAllowedSpeaker({
@@ -112,18 +178,18 @@ export function subscribeToAllowedSpeaker({
   logger,
   resolveSpeakerName = (userId) => userId,
   createDecoder = (options) => new prism.opus.Decoder(options),
+  live,
 }) {
   const active = new Set();
   const notify = (content) =>
     Promise.resolve()
       .then(() => postText(content))
       .catch(() => undefined);
+  connection.receiver.speaking.on("end", (userId) => live?.speakerEnd(userId));
   connection.receiver.speaking.on("start", (userId) => {
-    if (
-      (!config.listenToEveryone && userId !== config.allowedUserId) ||
-      active.has(userId)
-    )
-      return;
+    if (!config.listenToEveryone && userId !== config.allowedUserId) return;
+    live?.speakerStart(userId);
+    if (active.has(userId)) return;
     const startedAt = Date.now();
     active.add(userId);
     const opusStream = connection.receiver.subscribe(userId, {
@@ -179,6 +245,7 @@ export function subscribeToAllowedSpeaker({
     decoder.on("data", (chunk) => {
       if (discardedTurn) return;
       try {
+        live?.input(userId, chunk);
         if (segmented) {
           for (const pcm of turnBuffer.push(chunk)) enqueueSegment(pcm);
           return;
@@ -201,7 +268,10 @@ export function subscribeToAllowedSpeaker({
         void notify(AUDIO_RETRY_MESSAGE);
       }
     });
-    const release = () => active.delete(userId);
+    const release = () => {
+      active.delete(userId);
+      live?.speakerEnd(userId);
+    };
     opusStream.once("error", (error) => {
       discardedTurn = true;
       finalized = true;
@@ -365,7 +435,17 @@ export function formatDiscordTaskCard(
   task,
   { state = "queued", threadId, elapsedMs, pendingInstructions = 0 } = {},
 ) {
-  const [icon, label] = DISCORD_TASK_STATES[state] ?? ["🧰", state];
+  const [icon, defaultLabel] = DISCORD_TASK_STATES[state] ?? ["🧰", state];
+  const label =
+    state === "completed" && task.preview
+      ? task.preview.state === "available"
+        ? task.preview.confirmations?.length >= 4
+          ? "4人が試用済み"
+          : task.preview.browserVerified
+            ? "試用版あり"
+            : "起動済み・操作未確認"
+        : "実装処理終了・試用状態を確認"
+      : defaultLabel;
   const id = String(task.id ?? "unknown").replace(/[^a-zA-Z0-9_-]/g, "");
   const title = escapeDiscordMarkdown(
     boundText(String(task.title ?? "").replace(/[\r\n]+/g, " "), 120) ||
@@ -386,6 +466,7 @@ export function formatDiscordTaskCard(
       ? "差分: なし（検証記録を確認できます）"
       : "",
     state === "completed" ? formatVerificationEvidence(task.evidence) : "",
+    task.preview ? formatTaskPreview(task.preview) : "",
   ].join("\n");
 }
 
@@ -467,6 +548,7 @@ export function createDiscordTaskCardUpdater(
             task.appliedRevision === task.artifacts?.runRevision,
           ),
           hasTaskChanges(task.artifacts),
+          task.preview,
         ),
       };
       if (starter) {

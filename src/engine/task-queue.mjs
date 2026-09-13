@@ -1,3 +1,4 @@
+import { requestedVoiceModel } from "./model-policy.mjs";
 import { deliverTaskResults } from "./output/task-results.mjs";
 import { randomUUID } from "node:crypto";
 import {
@@ -32,6 +33,9 @@ export class TaskQueue {
   constructor({
     presentation = plainPresentation,
     runTask,
+    steerTask,
+    confirmPreview,
+    invalidatePreview = async () => {},
     postText,
     createTaskThread,
     logger = console,
@@ -53,6 +57,9 @@ export class TaskQueue {
     this.checkpointTimeoutMs = checkpointTimeoutMs;
     this.tasks = new Map();
     this.runTask = runTask;
+    this.steerTask = steerTask;
+    this.confirmPreviewVersion = confirmPreview;
+    this.invalidatePreview = invalidatePreview;
     this.postText = postText;
     this.createTaskThread = createTaskThread;
     this.logger = logger;
@@ -166,11 +173,19 @@ export class TaskQueue {
       receiptFailed:
         task === receiptTask && includeInstruction ? false : task.receiptFailed,
       context: task.context,
+      sourceSequences: structuredClone(task.sourceSequences),
+      sourceStatements: structuredClone(task.sourceStatements),
+      acceptanceCriteria: structuredClone(task.acceptanceCriteria),
       kind: task.kind,
       complexity: task.complexity,
+      modelSelection: structuredClone(task.modelSelection),
+      usage: structuredClone(task.usage),
+      usageHistory: structuredClone(task.usageHistory),
+      specRevision: task.specRevision ?? 1,
+      activeSpecRevision: task.activeSpecRevision,
+      steeredInstructions: structuredClone(task.steeredInstructions ?? []),
       createdAt: task.createdAt,
       meetingId: task.meetingId,
-      sourceSequences: structuredClone(task.sourceSequences),
       state: task.state,
       instructions: structuredClone(
         task.instructions
@@ -182,6 +197,11 @@ export class TaskQueue {
                   id: entry.id,
                   text: entry.text,
                   requestKey: entry.requestKey,
+                  delivery: entry.delivery,
+                  specRevision: entry.specRevision,
+                  modelSelection: entry.modelSelection,
+                  receivedAt: entry.receivedAt,
+                  sourceSequences: entry.sourceSequences,
                 },
           ),
       ),
@@ -211,6 +231,7 @@ export class TaskQueue {
       result: task.result,
       resultMetadata: structuredClone(task.resultMetadata),
       artifacts: structuredClone(task.artifacts),
+      preview: structuredClone(task.preview),
       profile: structuredClone(task.profile),
       evidence: structuredClone(task.evidence),
       additionalInstruction: task.additionalInstruction,
@@ -255,6 +276,29 @@ export class TaskQueue {
         instructions: structuredClone(record.instructions ?? []),
         executing: false,
       };
+      if (
+        task.preview &&
+        ["starting", "available"].includes(task.preview.state)
+      )
+        task.preview.state = "restart-unverified";
+      for (const entry of task.instructions) {
+        if (entry?.delivery === "sending" || entry?.delivery === "uncertain") {
+          if (!entry.text.startsWith(UNCONFIRMED_INSTRUCTION_PREFIX))
+            entry.text = UNCONFIRMED_INSTRUCTION_PREFIX + entry.text;
+          delete entry.delivery;
+        }
+      }
+      if (["running", "queued", "interrupted"].includes(task.state)) {
+        for (const entry of task.steeredInstructions ?? []) {
+          if (
+            entry.runRevision === task.runRevision &&
+            !task.instructions.some(
+              (instruction) => instruction?.id === entry.id,
+            )
+          )
+            retainInterruptedInstruction(task, entry);
+        }
+      }
       if (
         ["running", "queued", "interrupted"].includes(task.state) &&
         task.additionalInstruction
@@ -361,6 +405,8 @@ export class TaskQueue {
         threadId,
         createdAt,
         controlVersion,
+        preview,
+        specRevision,
         resultDeliveryPending,
       }) => ({
         id,
@@ -369,6 +415,10 @@ export class TaskQueue {
         resultDeliveryPending: Boolean(resultDeliveryPending),
         createdAt,
         controlVersion: controlVersion ?? 0,
+        preview: preview
+          ? { state: preview.state, runRevision: preview.runRevision }
+          : undefined,
+        specRevision: specRevision ?? 1,
         threadId: surface?.threadId ?? threadId,
       }),
     );
@@ -397,6 +447,12 @@ export class TaskQueue {
         "検証記録: この結果に対応する実行版は未確認",
       currentState: task.state,
       currentRunRevision: task.runRevision,
+      specRevision: task.specRevision ?? 1,
+      resultSpecRevision: task.resultMetadata?.specRevision,
+      superseded: Boolean(
+        task.resultMetadata?.specRevision &&
+        task.resultMetadata.specRevision !== (task.specRevision ?? 1),
+      ),
       threadId: task.surface?.threadId ?? task.threadId,
       meetingId: task.meetingId,
     };
@@ -480,6 +536,10 @@ export class TaskQueue {
           task.instructions = task.instructions.filter(
             (candidate) => candidate !== entry,
           );
+          task.specRevision = Math.max(
+            task.activeSpecRevision ?? 1,
+            ...task.instructions.map((item) => item.specRevision ?? 1),
+          );
           if (requestKey) delete task.controlReceipts[requestKey];
           if (
             !task.executing &&
@@ -511,6 +571,92 @@ export class TaskQueue {
       current = task.instructionBarrier;
       await current;
     } while (current !== task.instructionBarrier);
+    await task.steeringPromise;
+  }
+
+  #flushSteering(task) {
+    if (task.steeringPromise) return task.steeringPromise;
+    task.steeringPromise = (async () => {
+      if (!this.steerTask || !task.executing || task.controller?.signal.aborted)
+        return;
+      while (task.instructions.length) {
+        const entry = task.instructions[0];
+        if (
+          entry.pending ||
+          entry.delivery ||
+          task.cancelled ||
+          this.closed ||
+          task.controller?.signal.aborted
+        )
+          break;
+        if (typeof entry === "string") break;
+        // App Server cannot change a model within an active turn. Preserve a
+        // requested switch as the next turn rather than silently ignoring it.
+        if (
+          entry.modelSelection &&
+          entry.modelSelection.model !== task.profile?.model
+        )
+          break;
+        entry.delivery = "sending";
+        try {
+          await this.persist({ strict: true });
+        } catch (error) {
+          delete entry.delivery;
+          throw error;
+        }
+        let accepted;
+        try {
+          accepted = await this.steerTask(task, entry.text);
+        } catch {
+          entry.delivery = "uncertain";
+          if (!entry.text.startsWith(UNCONFIRMED_INSTRUCTION_PREFIX))
+            entry.text = UNCONFIRMED_INSTRUCTION_PREFIX + entry.text;
+          task.controller?.abort(
+            new VoiceServiceError(
+              "TASK_STEERING_UNCONFIRMED",
+              "The worker did not acknowledge the instruction",
+              "追加指示の受け取りを確認できないため作業を中断しました。同じタスクから再開できます。",
+            ),
+          );
+          await this.persist();
+          return;
+        }
+        if (!accepted) {
+          delete entry.delivery;
+          await this.persist();
+          break;
+        }
+        entry.delivery = "accepted";
+        entry.acceptedAt = Date.now();
+        task.activeSpecRevision = entry.specRevision;
+        task.steeredInstructions ??= [];
+        task.steeredInstructions.push({
+          ...entry,
+          runRevision: task.runRevision,
+        });
+        task.steeredInstructions = task.steeredInstructions.slice(-30);
+        task.instructions = task.instructions.filter((item) => item !== entry);
+        if (entry.requestKey && task.controlReceipts?.[entry.requestKey]) {
+          task.controlReceipts[entry.requestKey].disposition = "steered";
+          task.controlReceipts[entry.requestKey].pendingInstructions =
+            task.instructions.length;
+        }
+        try {
+          await this.persist({ strict: true });
+        } catch (error) {
+          task.controller?.abort(error);
+          throw error;
+        }
+        this.#log("power_task_steered", {
+          taskId: task.id,
+          specRevision: entry.specRevision,
+          steeringMs: entry.acceptedAt - entry.receivedAt,
+        });
+      }
+    })().finally(() => {
+      task.steeringPromise = undefined;
+    });
+    return task.steeringPromise;
   }
 
   async applyTask(taskId, expectedRevision) {
@@ -541,6 +687,14 @@ export class TaskQueue {
       this.#log("task_surface_refresh_failed", { taskId: task.id });
     }
     return true;
+  }
+
+  async confirmPreview(taskId, revision, userId) {
+    const task = this.tasks.get(taskId);
+    if (!task || task.executing || task.state !== "completed") return false;
+    return (
+      (await this.confirmPreviewVersion?.(task, revision, userId)) ?? false
+    );
   }
 
   async retryResultDelivery() {
@@ -588,7 +742,14 @@ export class TaskQueue {
 
   #handleTaskInstruction(
     task,
-    { userId, ownerUserId, content, requestKey, expectedControlVersion },
+    {
+      userId,
+      ownerUserId,
+      content,
+      requestKey,
+      expectedControlVersion,
+      sourceSequences,
+    },
   ) {
     if (this.closed || userId !== ownerUserId) return false;
     const instruction = boundText(content, this.presentation.maximumText);
@@ -601,6 +762,9 @@ export class TaskQueue {
       const discardedInstructions = task.instructions.length;
       task.controlVersion = (task.controlVersion ?? 0) + 1;
       task.cancelled = true;
+      void this.invalidatePreview(task, "stopped").catch(() =>
+        this.#log("preview_stop_failed", { taskId: task.id }),
+      );
       task.state = "cancelled";
       task.instructions.length = 0;
       task.cancelledInstructionCount = discardedInstructions;
@@ -635,7 +799,16 @@ export class TaskQueue {
     if (task.instructions.length >= 10) return { type: "full" };
     const previousState = task.state;
     const previousCancelled = task.cancelled;
-    const entry = { id: randomUUID(), text: instruction, requestKey };
+    const entry = {
+      id: randomUUID(),
+      text: instruction,
+      requestKey,
+      receivedAt: Date.now(),
+      sourceSequences,
+      specRevision: (task.specRevision ?? 1) + 1,
+      modelSelection: requestedVoiceModel(instruction),
+    };
+    task.specRevision = entry.specRevision;
     task.instructions.push(entry);
     task.state = task.executing ? "running" : "queued";
     task.cancelled = false;
@@ -650,14 +823,18 @@ export class TaskQueue {
       previousState,
       previousCancelled,
     })
-      .then(() => {
+      .then(async () => {
         if (this.closed || task.cancelled || !task.instructions.includes(entry))
           return;
+        void this.invalidatePreview(task).catch(() =>
+          this.#log("preview_stop_failed", { taskId: task.id }),
+        );
         if (
           task.executing &&
           (task.controller?.signal.aborted || task.workerFailed)
         )
           task.resumeAfterAbort = true;
+        if (task.executing) await this.#flushSteering(task);
         if (!task.executing && !this.queue.includes(task)) {
           if (!task.surface) task.surfacePromise = undefined;
           this.queue.push(task);
@@ -682,6 +859,7 @@ export class TaskQueue {
       ownerUserId: "voice-owner",
       requestKey: control.requestKey,
       expectedControlVersion: control.expectedControlVersion,
+      sourceSequences: control.sourceSequences,
       content: control.type === "stop" ? "停止" : control.instruction,
     });
   }
@@ -846,6 +1024,11 @@ export class TaskQueue {
         typeof consumedInstruction === "string"
           ? consumedInstruction
           : consumedInstruction?.text;
+      task.modelSelection =
+        consumedInstruction?.modelSelection ?? task.modelSelection;
+      task.activeSpecRevision =
+        consumedInstruction?.specRevision ?? task.specRevision ?? 1;
+      task.flushSteering = () => this.#flushSteering(task);
       await this.persist({ strict: true });
       const isContinuation = Boolean(task.additionalInstruction);
       await withTimeout(
@@ -924,10 +1107,13 @@ export class TaskQueue {
         MAX_RESPONSE_CHARACTERS,
       );
       task.result = response;
+      await this.#waitForInstructionReceipts(task);
       task.resultMetadata = {
         runRevision: task.runRevision,
         completedAt: Date.now(),
         verification: formatVerificationEvidence(task.evidence),
+        specRevision: task.activeSpecRevision ?? 1,
+        usage: structuredClone(task.usage),
       };
       workerSucceeded = true;
       task.additionalInstruction = undefined;
@@ -941,6 +1127,16 @@ export class TaskQueue {
       task.resultDeliveries ??= [];
       task.resultDeliveries.push({
         runRevision: task.runRevision,
+        specRevision: task.activeSpecRevision ?? 1,
+        sourceSequences: [
+          ...new Set([
+            ...(task.sourceSequences ?? []),
+            ...(consumedInstruction?.sourceSequences ?? []),
+            ...(task.steeredInstructions ?? [])
+              .filter((entry) => entry.runRevision === task.runRevision)
+              .flatMap((entry) => entry.sourceSequences ?? []),
+          ]),
+        ],
         result: response,
         artifacts: structuredClone(task.artifacts),
         evidence: structuredClone(task.evidence),

@@ -1,3 +1,4 @@
+import { formatTaskPreview } from "./preview.mjs";
 import { boundText, formatElapsedTime } from "../shared.mjs";
 import { formatVerificationEvidence } from "../evidence.mjs";
 
@@ -32,12 +33,17 @@ export function createPresentation({
         maximum,
       ),
     transcript: (text) => `🎙️ ${bold("聞き取った内容")}\n${text}`,
-    resultHeader: (revisionLabel, evidence) =>
-      `📦 ${bold("実行結果")}${revisionLabel}\n${formatVerificationEvidence(evidence)}`,
+    resultHeader: (
+      revisionLabel,
+      evidence,
+      delivery = {},
+      superseded = false,
+    ) =>
+      `📦 ${bold("実行結果")}${revisionLabel}${delivery.specRevision ? ` · 仕様 v${delivery.specRevision}` : ""}${superseded ? " · 最新の訂正は未反映" : ""}\n${formatVerificationEvidence(evidence)}`,
     artifacts: (artifacts) =>
       `🔬 ${bold("確認用の成果")}\nworkspace: ${artifacts.workingDirectory}\npatch: ${artifacts.patchPath}\n変更状態:\n${boundText(artifacts.status || "差分なし", 900)}\n元の作業場所へは自動反映しません。`,
-    taskCompleted: (task, delivery, revisionLabel) =>
-      delivery.pendingInstructions
+    taskCompleted: (task, delivery, revisionLabel, superseded = false) =>
+      delivery.pendingInstructions || superseded
         ? `⏭️ ${bold("追加指示へ続行")} ${task.id}${revisionLabel}\n残り: ${delivery.pendingInstructions}件`
         : `✅ ${bold("Codexタスク完了")} ${task.id}${revisionLabel}\n${escape(task.title)}\n所要時間: ${formatElapsedTime(delivery.elapsedMs)}`,
     taskStarted: (task, continuation) =>
@@ -56,7 +62,7 @@ export function createPresentation({
     meetingResult: (result, previous) =>
       previous
         ? `📦 以前の会議のタスクが完了しました: ${escape(result.title)}${reference(result.threadId)}`
-        : `📦 ${bold(escape(result.title))} ${code(result.id)}\n${result.verification ? result.verification + "\n" : ""}${boundText(result.result, 900)}\n${result.threadId ? "詳細:" + reference(result.threadId) : ""}`,
+        : `📦 ${bold(escape(result.title))} ${code(result.id)}\n${result.specRevision ? `仕様 v${result.specRevision}${result.superseded ? "（最新の訂正は未反映）" : ""}\n` : ""}${result.verification ? result.verification + "\n" : ""}${result.preview ? formatTaskPreview(result.preview) + "\n" : ""}${boundText(result.result, 900)}\n${result.threadId ? "詳細:" + reference(result.threadId) : ""}`,
     minutes: (revision, minutes) =>
       `📝 ${bold(`議事録・共有コンテキスト（rev ${revision}）`)}\n${boundText(minutes, 1750)}\n${contextHelp}`,
     replyContext: (context, text) => `↩️ ${bold(context)}\n${text}`,

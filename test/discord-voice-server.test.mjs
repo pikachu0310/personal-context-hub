@@ -57,7 +57,10 @@ test("voice player contains playback errors and rejects pre-cancelled work", asy
   let player;
   const logs = [];
   const play = createDiscordPlayer(
-    { subscribe: (created) => (player = created) },
+    {
+      subscribe: (created) => (player = created),
+      receiver: { speaking: new EventEmitter() },
+    },
     { error: (entry) => logs.push(entry) },
   );
   assert.doesNotThrow(() =>
@@ -93,6 +96,92 @@ test("voice player contains playback errors and rejects pre-cancelled work", asy
     ["add", "abort"],
     ["remove", "abort"],
   ]);
+});
+
+test("playback checks every participant after synthesis and again after a queued response", async (t) => {
+  const speaking = new EventEmitter();
+  let player;
+  const play = createDiscordPlayer(
+    {
+      subscribe: (created) => (player = created),
+      receiver: { speaking },
+    },
+    {},
+    { speechStartSilenceMs: 20 },
+  );
+  t.after(() => play.dispose());
+  let starts = 0;
+  const reachedPlayback = new Error("playback reached");
+  player.play = (resource) => {
+    resource.playStream.destroy();
+    starts++;
+    // A new person starts while the next response is still in the queue.
+    if (starts === 1) speaking.emit("start", "another-participant");
+    throw reachedPlayback;
+  };
+  speaking.emit("start", "participant-outside-transcription-allowlist");
+  const first = assert.rejects(play(Buffer.alloc(1920)), reachedPlayback);
+  const second = assert.rejects(play(Buffer.alloc(1920)), reachedPlayback);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(starts, 0);
+  speaking.emit("end", "participant-outside-transcription-allowlist");
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(starts, 1);
+  const endedAt = performance.now();
+  speaking.emit("end", "another-participant");
+  await second;
+  assert.ok(performance.now() - endedAt >= 20);
+  assert.equal(starts, 2);
+});
+
+test("cancelling playback while waiting for human speech never starts audio and leaves the queue usable", async (t) => {
+  const speaking = new EventEmitter();
+  let player;
+  const play = createDiscordPlayer(
+    {
+      subscribe: (created) => (player = created),
+      receiver: { speaking },
+    },
+    {},
+    { speechStartSilenceMs: 0 },
+  );
+  t.after(() => play.dispose());
+  let starts = 0;
+  const reachedPlayback = new Error("playback reached");
+  player.play = (resource) => {
+    resource.playStream.destroy();
+    starts++;
+    throw reachedPlayback;
+  };
+  speaking.emit("start", "participant");
+  const controller = new AbortController();
+  const cancelled = assert.rejects(
+    play(Buffer.alloc(1920), { signal: controller.signal }),
+    /cancelled while waiting/,
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort(new Error("cancelled while waiting"));
+  await cancelled;
+  assert.equal(starts, 0);
+  speaking.emit("end", "participant");
+  await assert.rejects(play(Buffer.alloc(1920)), reachedPlayback);
+  assert.equal(starts, 1);
+});
+
+test("disposing playback releases a pending speech wait and its receiver listeners", async () => {
+  const speaking = new EventEmitter();
+  const play = createDiscordPlayer({
+    subscribe: () => undefined,
+    receiver: { speaking },
+  });
+  speaking.emit("start", "participant");
+  const pending = assert.rejects(play(Buffer.alloc(1920)), /gate closed/);
+  await new Promise((resolve) => setImmediate(resolve));
+  play.dispose();
+  await pending;
+  assert.equal(speaking.listenerCount("start"), 0);
+  assert.equal(speaking.listenerCount("end"), 0);
 });
 
 test("voice receiver subscribes only to the configured owner", () => {

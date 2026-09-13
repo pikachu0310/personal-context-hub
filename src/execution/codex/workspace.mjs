@@ -11,6 +11,10 @@ import {
 } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import {
+  automaticVoiceModel,
+  taskModelSelection,
+} from "../../engine/model-policy.mjs";
 
 const exec = promisify(execFile);
 const git = (cwd, args, options = {}) =>
@@ -299,17 +303,24 @@ export function selectTaskProfile(task, config) {
     ? task.kind
     : "implementation";
   const complex = task.complexity === "complex";
+  const selected = taskModelSelection(task);
   return {
     kind,
-    model: complex
-      ? (config.complexTaskModel ?? config.taskModel ?? config.codexModel)
-      : (config.taskModel ?? config.codexModel),
-    modelReasoningEffort: complex
-      ? (config.complexTaskReasoningEffort ??
-        config.taskReasoningEffort ??
-        config.codexReasoningEffort ??
-        "high")
-      : (config.taskReasoningEffort ?? config.codexReasoningEffort ?? "medium"),
+    model:
+      selected?.model ??
+      automaticVoiceModel(
+        complex
+          ? (config.complexTaskModel ?? config.taskModel ?? config.codexModel)
+          : (config.taskModel ?? config.codexModel),
+      ),
+    modelReasoningEffort:
+      selected?.reasoningEffort ??
+      (complex
+        ? (config.complexTaskReasoningEffort ??
+          config.taskReasoningEffort ??
+          config.codexReasoningEffort ??
+          "low")
+        : (config.taskReasoningEffort ?? config.codexReasoningEffort ?? "low")),
     sandboxMode: "workspace-write",
     networkAccessEnabled: true,
     webSearchMode: "live",

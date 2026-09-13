@@ -17,6 +17,7 @@ export async function createConversationEngine({
   transcriptArchive,
   logger = console,
   dependencies = {},
+  hooks = {},
 }) {
   const output = normalizeOutput(suppliedOutput);
   const {
@@ -33,15 +34,23 @@ export async function createConversationEngine({
       ? new TaskQueue({
           presentation,
           runTask: (task, options) => execution.runTask(task, options),
+          steerTask: execution.steerTask,
+          confirmPreview: execution.confirmPreview,
+          invalidatePreview: execution.invalidatePreview,
           postText,
           createTaskThread,
           logger,
           concurrency: config.taskConcurrency,
           maximumPendingTasks: config.maximumPendingTasks,
           taskTimeoutMs: config.stageTimeouts?.running_codex,
-          checkpoint: (tasks) => store?.save({ tasks }),
-          onResult: (result, options) =>
-            session?.addTaskResult?.(result, options),
+          checkpoint: async (tasks) => {
+            await store?.save({ tasks });
+            hooks.onTaskState?.(tasks);
+          },
+          onResult: async (result, options) => {
+            await session?.addTaskResult?.(result, options);
+            hooks.onTaskResult?.(result);
+          },
           applyTask: (task) => execution.applyTask(task),
         })
       : undefined;
@@ -55,6 +64,12 @@ export async function createConversationEngine({
             speechEnabled: output.capabilities.audio,
             transcribe: audio.transcribe?.bind(audio),
             quickReply: audio.quickReply?.bind(audio),
+            investigateQuestion: execution.investigateQuestion,
+            getRuntimeContext: hooks.getRuntimeContext,
+            onStatement: hooks.onStatement,
+            speak: output.speak,
+            isLive: output.isLive,
+            stopSpeech: output.stopSpeech,
             observe: (observation, options) =>
               execution.observeMeeting(observation, options),
             upsertLiveTranscript,

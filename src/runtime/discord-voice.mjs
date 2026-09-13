@@ -1,3 +1,7 @@
+import { DiscordLiveBridge } from "../providers/live.mjs";
+import { TaskPreviewManager } from "../execution/preview.mjs";
+import { browserPreviewVerifier } from "../execution/preview-browser.mjs";
+import { createDiscordLiveOutput } from "../adapters/discord/transport.mjs";
 import { createDiscordTranscriptPublisher } from "../adapters/discord/transcript-publisher.mjs";
 import { createConversationEngine } from "../engine/conversation.mjs";
 import { createCodexBackend } from "../execution/codex/backend.mjs";
@@ -83,7 +87,7 @@ export async function startDiscordVoiceCodex({
     dependencies.executionBackend ??
       createCodexBackend(config, { runner: dependencies.codexRunner }),
   );
-  await execution.prepare();
+  await execution.prepare?.();
   const credential = await (
     dependencies.readCredential ?? readDiscordTokenStore
   )();
@@ -91,6 +95,9 @@ export async function startDiscordVoiceCodex({
   let transcriptArchive;
   let session;
   let taskQueue;
+  let playAudio;
+  let live;
+  let previews;
   let deliveryInterval;
   let loginAttempted = false;
   let serviceClosing = false;
@@ -108,9 +115,12 @@ export async function startDiscordVoiceCodex({
   const stopService = () => {
     if (stopping) return stopping;
     serviceClosing = true;
+    live?.close();
     clearInterval(deliveryInterval);
+    playAudio?.dispose?.();
     stopping = (async () => {
       const results = await Promise.allSettled([
+        Promise.resolve().then(() => previews?.close()),
         Promise.resolve().then(() => session?.stop?.()),
         Promise.resolve().then(() => taskQueue?.stop?.()),
         ...pendingOperations,
@@ -121,6 +131,11 @@ export async function startDiscordVoiceCodex({
       const failures = results
         .filter((result) => result.status === "rejected")
         .map((result) => result.reason);
+      try {
+        await execution.close?.();
+      } catch (error) {
+        failures.push(error);
+      }
       try {
         await store?.release();
       } catch (error) {
@@ -249,17 +264,82 @@ export async function startDiscordVoiceCodex({
       VoiceConnectionStatus.Ready,
       20_000,
     );
-    const playAudio =
-      dependencies.playAudio ?? createDiscordPlayer(connection, logger);
+    playAudio =
+      dependencies.playAudio ?? createDiscordPlayer(connection, logger, config);
+    previews = new TaskPreviewManager({
+      command: config.previewCommand,
+      workspaceRoot: config.taskWorkspaceDirectory,
+      codexExecutable: config.codexExecutable,
+      codexHome: config.isolatedCodexHome,
+      sharedUrlTemplate: config.previewSharedUrlTemplate,
+      verify:
+        dependencies.verifyPreview ??
+        browserPreviewVerifier(config.previewChecks, {
+          executablePath: config.previewBrowserExecutable,
+        }),
+      onChange: async (task) => {
+        await task.checkpoint?.();
+        await task.surface?.update?.({
+          state: task.state,
+          pendingInstructions: task.instructions.length,
+        });
+      },
+    });
     const engine = await createConversationEngine({
       config,
       audio,
-      execution,
+      execution: {
+        ...execution,
+        runTask: async (task, options) => {
+          await previews.stop(task.id, "superseded");
+          const result = await execution.runTask(task, options);
+          try {
+            await previews.start(task, options);
+          } catch {
+            task.preview = { state: "failed", runRevision: task.runRevision };
+          }
+          return result;
+        },
+        confirmPreview: (task, revision, userId) =>
+          previews.confirm(task, revision, userId),
+        invalidatePreview: (task, state = "superseded") =>
+          previews.stop(task.id, state),
+      },
       store,
       initialState: saved,
       transcriptArchive,
       logger,
       dependencies,
+      hooks: {
+        onTaskState: (tasks) => live?.taskState(tasks),
+        onTaskResult: (result) => {
+          if (result.meetingId === session?.meetingId) live?.taskResult(result);
+        },
+        getRuntimeContext: () => ({
+          voiceStatus: connection.state?.status,
+          manuallyDisconnected,
+          reconnecting,
+          voiceRecoveryFailed,
+          invocationId: /^[a-f0-9]{32}$/i.test(process.env.INVOCATION_ID ?? "")
+            ? process.env.INVOCATION_ID
+            : undefined,
+          sttModel: config.sttModel,
+          quickReplyModel: config.quickReplyModel,
+          observerModel: config.observerModel,
+          taskModel: config.taskModel,
+          allParticipantsOperate: config.allParticipantsOperate,
+          autonomousTasks: config.autonomousTasks,
+        }),
+        onStatement: (statement) => {
+          if (!live?.ready) return;
+          if (
+            /(?:井戸|いど|コーデックス|codex)/iu.test(statement.text) &&
+            !/(?:読み上げ|音声).*(?:止め|停止)/u.test(statement.text)
+          )
+            live.resume();
+          live.recordStatement(statement);
+        },
+      },
       output: {
         capabilities: {
           audio: true,
@@ -273,6 +353,9 @@ export async function startDiscordVoiceCodex({
         upsertLiveTranscript,
         upsertMinutes,
         playAudio,
+        speak: (text) => (live?.ready ? live.commentary(text) : undefined),
+        isLive: () => live?.ready === true,
+        stopSpeech: () => live?.silence(),
         restoreTaskSurface: async (task) => {
           const missingThread = () =>
             new VoiceServiceError(
@@ -329,6 +412,60 @@ export async function startDiscordVoiceCodex({
     });
     session = engine.session;
     taskQueue = engine.taskQueue;
+    let liveChanging = false;
+    const setLiveMode = async (enabled) => {
+      if (
+        config.voiceMode !== "meeting" ||
+        connection.state?.status !== VoiceConnectionStatus.Ready ||
+        serviceClosing
+      )
+        return "unavailable";
+      if (liveChanging) return "busy";
+      if (enabled && live?.ready) return "live";
+      liveChanging = true;
+      const fallback = () => {
+        playAudio?.dispose?.();
+        playAudio =
+          dependencies.playAudio ??
+          createDiscordPlayer(connection, logger, config);
+        session.dependencies.playAudio = playAudio;
+      };
+      try {
+        live?.close();
+        if (!enabled) {
+          fallback();
+          return "legacy";
+        }
+        await session.silenceSpeech();
+        live = new DiscordLiveBridge({
+          apiKey: config.openaiApiKey,
+          output: createDiscordLiveOutput(connection, logger),
+          logger,
+          onDelegation: () => session.observeNow(),
+          onFailure: () => {
+            fallback();
+            logInfoQuietly(logger, {
+              component: "discord-voice",
+              event: "live_fallback_to_stt_tts",
+            });
+          },
+        });
+        await live.start();
+        live.thinking(session.getContextSnapshot());
+        live.taskState(taskQueue?.list() ?? []);
+        return "live";
+      } catch {
+        fallback();
+        logInfoQuietly(logger, {
+          component: "discord-voice",
+          event: "live_start_failed_using_stt_tts",
+        });
+        return "failed";
+      } finally {
+        liveChanging = false;
+      }
+    };
+    if (config.liveEnabled) await setLiveMode(true);
     if (config.voiceMode === "meeting" && session.minutes)
       await upsertMinutes(
         `📝 **議事録・共有コンテキスト（rev ${session.revision}）**\n${boundText(session.minutes, 1750)}\n全文: /ido context または添付`,
@@ -339,10 +476,17 @@ export async function startDiscordVoiceCodex({
       config,
       session,
       taskQueue,
-      resetMeeting: () => execution.resetMeeting(),
+      resetMeeting: () => execution.resetMeeting?.(),
+      setLiveMode,
       leaveVoice: async () => {
         manuallyDisconnected = true;
+        live?.close();
         session.voicePaused = true;
+        playAudio?.dispose?.();
+        playAudio =
+          dependencies.playAudio ??
+          createDiscordPlayer(connection, logger, config);
+        session.dependencies.playAudio = playAudio;
         await session.silenceSpeech?.();
         connection.disconnect();
       },
@@ -352,7 +496,8 @@ export async function startDiscordVoiceCodex({
           return "通話: 停止（音声は受信していません）";
         if (manuallyDisconnected)
           return "通話: 退出済み。`/ido join` で接続できます。";
-        if (state === VoiceConnectionStatus.Ready) return "通話: 接続済み";
+        if (state === VoiceConnectionStatus.Ready)
+          return `通話: 接続済み · 音声: ${live?.ready ? "GPT-Live（30分の比較セッション）" : "STT/TTS"}`;
         if (reconnecting) return "通話: 再接続中（音声受信は中断）";
         if (voiceRecoveryFailed || state === VoiceConnectionStatus.Disconnected)
           return "通話: 切断（音声は受信していません）。`/ido reconnect` で再接続を試せます。";
@@ -431,6 +576,11 @@ export async function startDiscordVoiceCodex({
       );
     });
     subscribeToAllowedSpeaker({
+      live: {
+        speakerStart: (id) => live?.speakerStart(id),
+        speakerEnd: (id) => live?.speakerEnd(id),
+        input: (id, chunk) => live?.input(id, chunk),
+      },
       connection,
       config,
       session: engine.input,

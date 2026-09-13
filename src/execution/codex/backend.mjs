@@ -8,14 +8,29 @@ export function createCodexBackend(
   config,
   { runner = new CodexVoiceRunner(config) } = {},
 ) {
+  const activeWorkers = new Map();
   return {
     prepare: () => runner.prepare?.(),
+    close: () => runner.close?.(),
+    investigateQuestion: runner.investigateQuestion
+      ? (question, options) => runner.investigateQuestion(question, options)
+      : undefined,
+    steerTask: async (request, instruction) => {
+      const worker = activeWorkers.get(request.id);
+      return worker
+        ? ((await runner.steerTask?.(worker, instruction)) ?? false)
+        : false;
+    },
     resetMeeting: () => runner.resetMeeting?.(),
     run: (text, options) => runner.run(text, options),
     observeMeeting: (observation, options) =>
       runner.observeMeeting(observation, options),
-    async runTask(request, { checkpoint, ...options } = {}) {
+    async runTask(request, { checkpoint, flushSteering, ...options } = {}) {
       const worker = structuredClone(request);
+      if (activeWorkers.has(request.id))
+        throw new Error("Task execution is already active");
+      activeWorkers.set(request.id, worker);
+      worker.flushSteering = flushSteering;
       worker.codexThreadId ??= worker.execution?.threadId;
       const snapshot = () => {
         worker.codexThreadId ??= worker.codexThread?.id;
@@ -28,7 +43,11 @@ export function createCodexBackend(
         return { text, state: snapshot() };
       } finally {
         // Interrupted runs also retain the resume handle and verification state.
-        await checkpoint?.(snapshot());
+        try {
+          await checkpoint?.(snapshot());
+        } finally {
+          activeWorkers.delete(request.id);
+        }
       }
     },
     async applyTask(request) {
