@@ -77,3 +77,33 @@ test("preview refuses an unrelated workspace and a shell string instead of argv"
     /configured task root/,
   );
 });
+
+test("concurrent stop and close wait until the preview process has exited", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "preview-stop-"));
+  const workspace = join(root, "task");
+  await mkdir(workspace);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  const signals = [];
+  child.kill = (signal) => signals.push(signal);
+  const manager = new TaskPreviewManager({
+    command: ["node", "{port}"],
+    workspaceRoot: root,
+    fetchUrl: async () => ({ ok: true }),
+    spawnProcess: () => child,
+  });
+  const task = { id: "task", workingDirectory: workspace, runRevision: 1 };
+  await manager.start(task);
+  const completed = [];
+  const stop = manager.stop(task.id).then(() => completed.push("stop"));
+  const close = manager.close().then(() => completed.push("close"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(completed, []);
+  assert.deepEqual(signals, ["SIGTERM"]);
+  child.signalCode = "SIGTERM";
+  child.emit("close");
+  await Promise.all([stop, close]);
+  assert.equal(completed.length, 2);
+});

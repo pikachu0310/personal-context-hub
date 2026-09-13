@@ -7,6 +7,8 @@ import { browserPreviewVerifier } from "../src/discord-voice-preview-browser.mjs
 const root = await mkdtemp(join(tmpdir(), "idd-preview-smoke-"));
 const workspace = join(root, "demo");
 await mkdir(workspace);
+const codexHome = join(root, "codex-home");
+await mkdir(codexHome);
 for (const file of ["server.mjs", "ui.json"])
   await copyFile(
     new URL(`../fixtures/idd-preview/${file}`, import.meta.url),
@@ -24,7 +26,7 @@ const manager = new TaskPreviewManager({
   workspaceRoot: root,
   codexExecutable:
     process.env.PERSONAL_CONTEXT_VOICE_CODEX_EXECUTABLE ?? "codex",
-  codexHome: process.env.PERSONAL_CONTEXT_VOICE_ISOLATED_CODEX_HOME,
+  codexHome,
   verify: browserPreviewVerifier(
     [
       {
