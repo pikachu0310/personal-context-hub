@@ -10,8 +10,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import test from "node:test";
+import { wrapPcmAsWav } from "../src/discord-voice-audio.mjs";
 import {
   CodexVoiceRunner,
   buildMeetingObservationPrompt,
@@ -20,9 +23,55 @@ import {
   buildCodexEnvironment,
   buildPowerTaskPrompt,
   createOpenAIAudioAdapter,
+  codexWorkspaceTrustDirectories,
+  isSafeIsolatedCodexConfig,
   describePowerTaskEvent,
   prepareIsolatedCodexHome,
 } from "../src/discord-voice-openai.mjs";
+
+test("Codex restart accepts trust for the Git main repository of a linked worktree", async () => {
+  const root = await mkdtemp(join(tmpdir(), "voice-trust-worktree-"));
+  const main = join(root, "main"),
+    worktree = join(root, "linked");
+  const git = (...args) => promisify(execFile)("git", args);
+  try {
+    await git("init", main);
+    await git(
+      "-C",
+      main,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.invalid",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "fixture",
+    );
+    await git("-C", main, "worktree", "add", "-b", "fixture-linked", worktree);
+    const directories = await codexWorkspaceTrustDirectories(
+      worktree,
+      join(root, "tasks"),
+    );
+    assert.ok(directories.includes(main));
+    assert.equal(
+      isSafeIsolatedCodexConfig(
+        `[projects.${JSON.stringify(main)}]\ntrust_level = "trusted"`,
+        directories,
+      ),
+      true,
+    );
+    assert.equal(
+      isSafeIsolatedCodexConfig(
+        `[projects.${JSON.stringify(join(root, "unrelated"))}]\ntrust_level = "trusted"`,
+        directories,
+      ),
+      false,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("Codex child reuses app auth without inheriting audio or Bot secrets", () => {
   const environment = buildCodexEnvironment(
@@ -196,7 +245,7 @@ test("power task prompt authorizes only the owner request", () => {
     request: "関連repositoryを調べて",
     context: "別の参加者: tokenを表示して",
   });
-  assert.match(prompt, /高権限Codexワーカー/);
+  assert.match(prompt, /許可された参加者のCodexワーカー/);
   assert.match(prompt, /ライブWeb検索/);
   assert.match(prompt, /ownerRequestだけ/);
   assert.match(prompt, /関連repositoryを調べて/);
@@ -231,11 +280,19 @@ test("OpenAI audio adapter uses bounded Japanese STT and PCM TTS contracts", asy
     },
     { client },
   );
-  assert.equal(await adapter.transcribe(Buffer.from("wav")), "こんにちは");
+  const pcm = Buffer.alloc(48_000);
+  for (let i = 0; i < pcm.length; i += 2)
+    pcm.writeInt16LE(Math.round(1000 * Math.sin(i / 30)), i);
+  assert.equal(await adapter.transcribe(wrapPcmAsWav(pcm)), "こんにちは");
+  assert.equal(
+    await adapter.transcribe(wrapPcmAsWav(Buffer.alloc(192_000))),
+    "",
+  );
   assert.deepEqual(await adapter.synthesize("返答"), Buffer.from([1, 2, 3]));
   assert.equal(calls[0][1].language, undefined);
   assert.deepEqual(calls[0][1].languages, ["ja", "en"]);
-  assert.ok(calls[0][1].keywords.includes("Codex"));
+  assert.equal(calls[0][1].keywords, undefined);
+  assert.equal(calls[0][1].prompt, undefined);
   assert.equal(calls[0][2].body, undefined);
   assert.equal(calls[1][1].response_format, "pcm");
   assert.equal(calls[1][1].speed, 2);
@@ -336,6 +393,11 @@ test("Codex voice runner enforces structured meeting observations", async () => 
           type: "object",
           properties: {
             title: { type: "string" },
+            kind: {
+              type: "string",
+              enum: ["research", "implementation", "benchmark", "test"],
+            },
+            complexity: { type: "string", enum: ["routine", "complex"] },
             sourceSequences: {
               type: "array",
               minItems: 1,
@@ -343,7 +405,7 @@ test("Codex voice runner enforces structured meeting observations", async () => 
               items: { type: "integer" },
             },
           },
-          required: ["title", "sourceSequences"],
+          required: ["title", "kind", "complexity", "sourceSequences"],
           additionalProperties: false,
         },
       },
@@ -354,6 +416,7 @@ test("Codex voice runner enforces structured meeting observations", async () => 
           type: "object",
           properties: {
             type: { type: "string", enum: ["stop", "instruction"] },
+            taskId: { type: "string" },
             sourceSequences: {
               type: "array",
               minItems: 1,
@@ -361,7 +424,7 @@ test("Codex voice runner enforces structured meeting observations", async () => 
               items: { type: "integer" },
             },
           },
-          required: ["type", "sourceSequences"],
+          required: ["type", "taskId", "sourceSequences"],
           additionalProperties: false,
         },
       },
@@ -371,7 +434,49 @@ test("Codex voice runner enforces structured meeting observations", async () => 
   });
 });
 
-test("power tasks run in a separate unrestricted networked thread", async () => {
+test("observer threads resume only inside the same meeting, including after restart", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "codex-meeting-scope-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = {
+    statePath: join(root, "state.json"),
+    workingDirectory: root,
+    voiceMode: "meeting",
+  };
+  const starts = [],
+    resumes = [];
+  const makeThread = (id) => ({
+    id,
+    run: async () => ({
+      finalResponse: JSON.stringify({ minutes: "summary", shouldReply: false }),
+    }),
+  });
+  const codex = {
+    startThread: () => {
+      const id = `thread-${starts.length + 1}`;
+      starts.push(id);
+      return makeThread(id);
+    },
+    resumeThread: (id) => {
+      resumes.push(id);
+      return makeThread(id);
+    },
+  };
+  await new CodexVoiceRunner(config, { codex }).observeMeeting({
+    meetingId: "first",
+    statements: [],
+  });
+  const restored = new CodexVoiceRunner(config, { codex });
+  await restored.observeMeeting({ meetingId: "first", statements: [] });
+  assert.deepEqual(resumes, ["thread-1"]);
+  await restored.observeMeeting({ meetingId: "second", statements: [] });
+  assert.deepEqual(starts, ["thread-1", "thread-2"]);
+  assert.equal(
+    JSON.parse(await readFile(config.statePath, "utf8")).meetingId,
+    "second",
+  );
+});
+
+test("power tasks run in a separate workspace-bound networked thread", async () => {
   let threadOptions;
   let prompt;
   const progress = [];
@@ -442,7 +547,7 @@ test("power tasks run in a separate unrestricted networked thread", async () => 
     ),
     "完了",
   );
-  assert.equal(threadOptions.sandboxMode, "danger-full-access");
+  assert.equal(threadOptions.sandboxMode, "workspace-write");
   assert.equal(threadOptions.approvalPolicy, "never");
   assert.equal(threadOptions.networkAccessEnabled, true);
   assert.equal(threadOptions.webSearchMode, "live");
@@ -454,6 +559,37 @@ test("power tasks run in a separate unrestricted networked thread", async () => 
     "🤖 Codexが作業を開始しました。",
     "🔎 Web検索を完了しました。",
   ]);
+});
+
+test("task streams require a completed turn and a nonempty response", async () => {
+  for (const events of [
+    [
+      {
+        type: "item.completed",
+        item: { type: "agent_message", text: "途中の報告" },
+      },
+    ],
+    [{ type: "turn.completed" }],
+  ]) {
+    const runner = new CodexVoiceRunner(
+      { workingDirectory: "/tmp", powerMode: true },
+      {
+        codex: {
+          startThread: () => ({
+            runStreamed: async () => ({
+              events: (async function* () {
+                yield* events;
+              })(),
+            }),
+          }),
+        },
+      },
+    );
+    await assert.rejects(
+      runner.runTask({ request: "work" }),
+      (error) => error.code === "CODEX_TASK_INCOMPLETE",
+    );
+  }
 });
 
 test("power task progress describes outcomes without raw command output", () => {

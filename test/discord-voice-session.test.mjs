@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { VoiceServiceError } from "../src/discord-voice-errors.mjs";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceSession,
@@ -339,6 +340,7 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
   const posts = [];
   const spoken = [];
   const observations = [];
+  const archived = [];
   const timer = { unref: () => undefined };
   const session = new DiscordVoiceMeetingSession({
     transcribe: async (wav) => {
@@ -358,6 +360,7 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
     },
     upsertLiveTranscript: async (content) => liveEdits.push(content),
     upsertMinutes: async (content) => minutesEdits.push(content),
+    archiveTranscript: async (statement) => archived.push({ ...statement }),
     postText: async (content) => posts.push(content),
     synthesize: async (content) => (
       spoken.push(content),
@@ -388,6 +391,15 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
   );
   assert.equal(peak, 2);
   assert.deepEqual(posts, []);
+  assert.deepEqual(
+    archived
+      .sort((left, right) => left.startedAt - right.startedAt)
+      .map(({ speakerName, text }) => ({ speakerName, text })),
+    [
+      { speakerName: "Alice", text: "最初の案です" },
+      { speakerName: "Bob", text: "確認してほしい" },
+    ],
+  );
 
   assert.equal(await session.observeNow(), true);
   assert.equal(observations.length, 1);
@@ -401,6 +413,44 @@ test("meeting mode transcribes speakers in parallel, edits one live view, and ob
   ]);
   assert.equal(session.statements.length, 0);
   session.stop();
+});
+
+test("meeting mode retains and retries a recognized statement until archival succeeds", async () => {
+  let archiveAttempts = 0;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => "失われてはいけない発言",
+    observe: async () =>
+      JSON.stringify({
+        minutes: "- 発言を保存済み",
+        shouldReply: false,
+        reply: "",
+      }),
+    upsertLiveTranscript: async () => undefined,
+    upsertMinutes: async () => undefined,
+    archiveTranscript: async () => {
+      archiveAttempts += 1;
+      if (archiveAttempts === 1) throw new Error("temporary disk error");
+    },
+    postText: async () => undefined,
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => undefined,
+    logger: { info: () => undefined },
+    scheduleInterval: () => ({ unref: () => undefined }),
+    cancelInterval: () => undefined,
+  });
+
+  session.enqueue(Buffer.from("wav"), {
+    userId: "alice-id",
+    speakerName: "Alice",
+  });
+  await eventually(
+    () => session.statements.length === 1 && session.archiveFailures === 1,
+  );
+  assert.equal(session.statements[0].archived, false);
+  assert.equal(await session.observeNow(), true);
+  assert.equal(archiveAttempts, 2);
+  assert.equal(session.statements.length, 0);
+  await session.stop();
 });
 
 test("meeting observation updates minutes without replying to ordinary conversation", async () => {
@@ -564,7 +614,7 @@ test("meeting task controls accept only attributed owner speech", () => {
       statements,
       "owner-id",
     ),
-    [{ type: "stop", instruction: "そのタスクを止めて" }],
+    [{ type: "stop", instruction: "そのタスクを止めて", sourceSequences: [1] }],
   );
 });
 
@@ -632,7 +682,7 @@ test("power task queue runs work separately and posts bounded lifecycle updates"
   await queue.stop();
 });
 
-test("stopping the task queue marks an active Discord task as cancelled", async () => {
+test("stopping the service leaves an active Discord task interrupted", async () => {
   const states = [];
   const threadPosts = [];
   const queue = new DiscordVoiceTaskQueue({
@@ -651,7 +701,11 @@ test("stopping the task queue marks an active Discord task as cancelled", async 
   assert.equal(queue.enqueue({ title: "長い処理", request: "続けて" }), true);
   await eventually(() => states.includes("running"));
   await queue.stop();
-  assert.ok(threadPosts.some((content) => content.includes("タスク中止")));
+  assert.ok(states.includes("interrupted"));
+  assert.equal(
+    threadPosts.some((content) => content.includes("タスク中止")),
+    false,
+  );
 });
 
 test("owner thread messages continue the same power task and can cancel it", async () => {
@@ -923,13 +977,93 @@ test("meeting mode coalesces overload into the editable status instead of postin
   session.stop();
 });
 
+test("a slow live view skips superseded updates while retaining every utterance in the archive", async (t) => {
+  const posted = [],
+    archived = [];
+  let releaseFirstPost;
+  const firstPost = new Promise((resolve) => {
+    releaseFirstPost = resolve;
+  });
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => undefined,
+    observe: async () =>
+      assert.fail("publishing the live view cannot invoke Codex"),
+    upsertLiveTranscript: async (content) => {
+      posted.push(content);
+      if (posted.length === 1) await firstPost;
+    },
+    archiveTranscript: async (statement) => archived.push(statement.text),
+    upsertMinutes: async () => undefined,
+    postText: async () => assert.fail("the live view must not send answers"),
+    synthesize: async () => undefined,
+    playAudio: async () => undefined,
+    logger: {},
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+  });
+  t.after(async () => {
+    releaseFirstPost();
+    await session.stop();
+  });
+  await eventually(() => posted.length === 1);
+  for (let i = 0; i < 20; i++)
+    await session.addText(`発言${i}`, {
+      userId: "member",
+      speakerName: "Alice",
+    });
+  assert.equal(posted.length, 1);
+  releaseFirstPost();
+  await session.liveUpdate;
+  assert.equal(posted.length, 2);
+  assert.match(posted[1], /発言19/);
+  assert.equal(archived.length, 20);
+  assert.equal(session.statements.length, 20);
+});
+
+test("an idle observation recovers a failed live view update without running Codex or requiring another utterance", async (t) => {
+  let offline = true;
+  let updates = 0;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async () => undefined,
+    observe: async () => assert.fail("idle recovery must not invoke Codex"),
+    upsertLiveTranscript: async () => {
+      if (offline) throw new Error("temporary Discord outage");
+      updates += 1;
+    },
+    upsertMinutes: async () => undefined,
+    postText: async () =>
+      assert.fail("live view recovery must not post a response"),
+    synthesize: async () => undefined,
+    playAudio: async () => undefined,
+    logger: {},
+    scheduleInterval: () => 0,
+    cancelInterval: () => {},
+  });
+  t.after(() => session.stop());
+  await session.liveUpdate;
+  offline = false;
+  assert.equal(await session.observeNow(), false);
+  await session.liveUpdate;
+  assert.equal(updates, 1);
+  await session.observeNow();
+  await session.liveUpdate;
+  assert.equal(updates, 1);
+});
+
 test("meeting mode retains statements when an observation is invalid and retries later", async () => {
   let attempts = 0;
   const minutesEdits = [];
+  const liveEdits = [];
   const session = new DiscordVoiceMeetingSession({
-    transcribe: async () => "再試行対象",
+    transcribe: async () => "再試行対象" + "長い会話の内容です。".repeat(250),
     observe: async () => {
       attempts += 1;
+      if (attempts === 3)
+        throw new VoiceServiceError(
+          "CODEX_AUTH_EXPIRED",
+          "private authentication error must not appear in Discord",
+          "Codexの認証期限が切れています。ローカル管理者が再認証してください。",
+        );
       return attempts === 1
         ? "invalid"
         : JSON.stringify({
@@ -938,8 +1072,11 @@ test("meeting mode retains statements when an observation is invalid and retries
             reply: "",
           });
     },
-    upsertLiveTranscript: async () => undefined,
-    upsertMinutes: async (content) => minutesEdits.push(content),
+    upsertLiveTranscript: async (content) => liveEdits.push(content),
+    upsertMinutes: async (content) => {
+      if (attempts === 2) throw new Error("temporary minutes outage");
+      minutesEdits.push(content);
+    },
     postText: async () => assert.fail("retry must not post a warning"),
     synthesize: async () => Buffer.alloc(2),
     playAudio: async () => undefined,
@@ -951,8 +1088,37 @@ test("meeting mode retains statements when an observation is invalid and retries
   await eventually(() => session.statements.length === 1);
   assert.equal(await session.observeNow(), false);
   assert.equal(session.statements.length, 1);
+  await session.liveUpdate;
+  assert.match(liveEdits.at(-1), /再試行対象/);
+  assert.match(liveEdits.at(-1), /会話の確認に失敗。次の確認で再試行します/);
+  assert.doesNotMatch(liveEdits.at(-1), /会話を処理中/);
+  assert.equal(await session.observeNow(), false);
+  assert.equal(session.statements.length, 1);
+  await session.liveUpdate;
+  assert.match(liveEdits.at(-1), /次の確認で再試行/);
+  assert.equal(await session.observeNow(), false);
+  await session.liveUpdate;
+  assert.match(liveEdits.at(-1), /認証期限が切れています/);
+  assert.match(liveEdits.at(-1), /再試行対象/);
+  assert.doesNotMatch(
+    liveEdits.at(-1),
+    /private authentication error|発話を待っています/,
+  );
   assert.equal(await session.observeNow(), true);
   assert.equal(session.statements.length, 0);
+  await session.liveUpdate;
+  assert.doesNotMatch(
+    liveEdits.at(-1),
+    /会話の確認に失敗|会話を処理中|認証期限/,
+  );
+  assert.ok(liveEdits.every((content) => content.length <= 1900));
+  const processingEdits = liveEdits.filter((content) =>
+    /会話を処理中/.test(content),
+  );
+  assert.ok(processingEdits.length >= 3);
+  assert.ok(
+    processingEdits.every((content) => !/会話の確認に失敗/.test(content)),
+  );
   assert.match(minutesEdits[0], /再試行で回収済み/);
   session.stop();
 });

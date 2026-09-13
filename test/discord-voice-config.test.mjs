@@ -4,6 +4,7 @@ import {
   describeDiscordVoiceConfig,
   loadDiscordVoiceConfig,
 } from "../src/discord-voice-config.mjs";
+import { selectTaskProfile } from "../src/discord-voice-workspace.mjs";
 
 const valid = {
   PERSONAL_CONTEXT_VOICE_GUILD_ID: "11111111111111111",
@@ -15,6 +16,92 @@ const valid = {
   OPENAI_API_KEY: "test-secret-never-print",
 };
 
+test("shared model settings reach every role unless that role is explicitly overridden", () => {
+  const shared = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT: "high",
+  });
+  assert.equal(shared.observerModel, "gpt-6-astra");
+  assert.equal(shared.observerReasoningEffort, "high");
+  assert.equal(
+    selectTaskProfile({ complexity: "routine" }, shared).model,
+    "gpt-6-astra",
+  );
+  assert.equal(
+    selectTaskProfile({ complexity: "complex" }, shared).modelReasoningEffort,
+    "high",
+  );
+  const split = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT: "high",
+    PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL: "gpt-5.6-sol",
+    PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT: "low",
+    PERSONAL_CONTEXT_VOICE_TASK_MODEL: "gpt-5.6-sol",
+    PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT: "medium",
+    PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT: "high",
+  });
+  assert.equal(split.observerReasoningEffort, "low");
+  assert.equal(
+    selectTaskProfile({ complexity: "routine" }, split).model,
+    "gpt-5.6-sol",
+  );
+  assert.equal(
+    selectTaskProfile({ complexity: "routine" }, split).modelReasoningEffort,
+    "medium",
+  );
+  assert.equal(
+    selectTaskProfile({ complexity: "complex" }, split).model,
+    "gpt-6-astra",
+  );
+  const effective = describeDiscordVoiceConfig(split);
+  assert.deepEqual(effective.observer, {
+    model: "gpt-5.6-sol",
+    reasoningEffort: "low",
+  });
+  assert.deepEqual(effective.complexTask, {
+    model: "gpt-6-astra",
+    reasoningEffort: "high",
+  });
+  assert.doesNotMatch(JSON.stringify(effective), /test-secret-never-print/);
+});
+
+test("complex tasks inherit explicit worker settings and role reasoning values are validated", () => {
+  const configured = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_TASK_MODEL: "gpt-6-astra",
+    PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT: "high",
+  });
+  assert.equal(configured.complexTaskModel, "gpt-6-astra");
+  assert.equal(configured.complexTaskReasoningEffort, "high");
+  for (const role of ["OBSERVER", "TASK", "COMPLEX_TASK"])
+    assert.throws(
+      () =>
+        loadDiscordVoiceConfig({
+          ...valid,
+          [`PERSONAL_CONTEXT_VOICE_${role}_REASONING_EFFORT`]: "invalid",
+        }),
+      /REASONING_EFFORT/,
+    );
+});
+
+test("the conversation deadline can be configured independently and preserves a shorter legacy deadline", () => {
+  const shorter = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS: "30000",
+  });
+  assert.equal(shorter.stageTimeouts.observing, 30_000);
+  const separate = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS: "900000",
+    PERSONAL_CONTEXT_VOICE_OBSERVER_TIMEOUT_MS: "15000",
+  });
+  assert.equal(separate.stageTimeouts.observing, 15_000);
+  assert.equal(separate.stageTimeouts.running_codex, 900_000);
+});
+
 test("voice config validates Discord targets and redacts the OpenAI key", () => {
   const config = loadDiscordVoiceConfig(valid);
   assert.equal(config.silenceMs, 1_000);
@@ -24,6 +111,12 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
   assert.equal(config.voiceMode, "turn");
   assert.equal(config.immediateReactions, true);
   assert.equal(config.silentMessages, true);
+  assert.equal(config.transcriptArchiveDiscord, true);
+  assert.equal(config.transcriptArchiveFlushIntervalMs, 60_000);
+  assert.match(
+    config.transcriptArchiveDirectory,
+    /personal-context-hub\/discord-voice-transcripts$/,
+  );
   assert.equal(config.ttsSpeed, 1);
   assert.equal(config.observationIntervalMs, 60_000);
   assert.equal(config.transcriptionConcurrency, 4);
@@ -37,6 +130,7 @@ test("voice config validates Discord targets and redacts the OpenAI key", () => 
     /personal-context-hub\/discord-voice-codex-home$/,
   );
   assert.equal(config.stageTimeouts.running_codex, 900_000);
+  assert.equal(config.stageTimeouts.observing, 60_000);
   const description = describeDiscordVoiceConfig(config);
   assert.equal(description.openaiApiKeyConfigured, true);
   assert.equal(description.codexHomeConfigured, true);
@@ -54,6 +148,9 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
     PERSONAL_CONTEXT_VOICE_MODE: "meeting",
     PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS: "false",
     PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES: "false",
+    PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DISCORD: "false",
+    PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR: "/tmp/voice-transcripts",
+    PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_FLUSH_INTERVAL_MS: "45000",
     PERSONAL_CONTEXT_VOICE_OBSERVATION_INTERVAL_MS: "45000",
     PERSONAL_CONTEXT_VOICE_TRANSCRIPTION_CONCURRENCY: "6",
     PERSONAL_CONTEXT_VOICE_MAXIMUM_PENDING_TRANSCRIPTIONS: "80",
@@ -69,6 +166,9 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   assert.equal(config.voiceMode, "meeting");
   assert.equal(config.immediateReactions, false);
   assert.equal(config.silentMessages, false);
+  assert.equal(config.transcriptArchiveDiscord, false);
+  assert.equal(config.transcriptArchiveDirectory, "/tmp/voice-transcripts");
+  assert.equal(config.transcriptArchiveFlushIntervalMs, 45_000);
   assert.equal(config.ttsSpeed, 2);
   assert.equal(config.observationIntervalMs, 45_000);
   assert.equal(config.transcriptionConcurrency, 6);
@@ -84,6 +184,8 @@ test("voice config accepts all-speaker mode and TTS speed", () => {
   assert.equal(description.voiceMode, "meeting");
   assert.equal(description.powerMode, true);
   assert.equal(description.silentMessages, false);
+  assert.equal(description.transcriptArchiveDiscord, false);
+  assert.equal(description.transcriptArchiveFlushIntervalMs, 45_000);
   assert.equal(description.ttsSpeed, 2);
   assert.equal(description.codexModel, "gpt-5.6-sol");
   assert.equal(description.codexReasoningEffort, "high");

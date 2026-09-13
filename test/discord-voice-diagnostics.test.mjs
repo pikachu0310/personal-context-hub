@@ -17,6 +17,31 @@ function directoryStat() {
   return { isDirectory: () => true };
 }
 
+test("readiness rejects invalid meeting and task settings instead of silently using defaults", async () => {
+  for (const [field, value] of [
+    ["PERSONAL_CONTEXT_VOICE_OPERATOR_IDS", "invalid-operator"],
+    ["PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD", "invalid-boolean"],
+    ["PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS", "invalid-boolean"],
+    ["PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES", "invalid-boolean"],
+    ["PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT", "invalid-effort"],
+    ["PERSONAL_CONTEXT_VOICE_OBSERVER_TIMEOUT_MS", "1"],
+    ["PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT", "invalid-effort"],
+    ["PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT", "invalid-effort"],
+    ["PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR", "relative/path"],
+    ["PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DISCORD", "invalid-boolean"],
+    ["PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_FLUSH_INTERVAL_MS", "1"],
+  ]) {
+    const report = await inspectDiscordVoiceReadiness({
+      mode: "offline",
+      env: { ...publicEnvironment, [field]: value },
+      statPath: async () => directoryStat(),
+    });
+    assert.equal(report.ready, false, field);
+    assert.equal(report.checks.configuration, "failed", field);
+    assert.equal(report.issues[0].field, field);
+  }
+});
+
 test("offline readiness validates public configuration without reading secrets", async () => {
   let credentialReads = 0;
   let codexPreparations = 0;
@@ -25,6 +50,21 @@ test("offline readiness validates public configuration without reading secrets",
     env: {
       ...publicEnvironment,
       OPENAI_API_KEY: "must-not-be-observed",
+      PERSONAL_CONTEXT_VOICE_OPERATOR_IDS:
+        "55555555555555555,66666666666666666",
+      PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD: "false",
+      PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS: "false",
+      PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES: "false",
+      PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL: "custom-observer",
+      PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT: "minimal",
+      PERSONAL_CONTEXT_VOICE_TASK_MODEL: "custom-worker",
+      PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT: "high",
+      PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL: "custom-complex-worker",
+      PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT: "xhigh",
+      PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR:
+        "/tmp/custom-transcript-archive",
+      PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DISCORD: "false",
+      PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_FLUSH_INTERVAL_MS: "12000",
     },
     readCredential: async () => {
       credentialReads += 1;
@@ -50,6 +90,28 @@ test("offline readiness validates public configuration without reading secrets",
     codexIsolation: "skipped",
   });
   assert.equal(report.config.openaiApiKeyConfigured, false);
+  assert.equal(report.config.operatorUserCount, 2);
+  assert.equal(report.config.requireWakeWord, false);
+  assert.equal(report.config.immediateReactions, false);
+  assert.equal(report.config.silentMessages, false);
+  assert.deepEqual(report.config.observer, {
+    model: "custom-observer",
+    reasoningEffort: "minimal",
+  });
+  assert.deepEqual(report.config.task, {
+    model: "custom-worker",
+    reasoningEffort: "high",
+  });
+  assert.deepEqual(report.config.complexTask, {
+    model: "custom-complex-worker",
+    reasoningEffort: "xhigh",
+  });
+  assert.equal(
+    report.config.transcriptArchiveDirectory,
+    "/tmp/custom-transcript-archive",
+  );
+  assert.equal(report.config.transcriptArchiveDiscord, false);
+  assert.equal(report.config.transcriptArchiveFlushIntervalMs, 12000);
   assert.deepEqual(report.issues, []);
   assert.doesNotMatch(JSON.stringify(report), /must-not-be-observed/);
 });

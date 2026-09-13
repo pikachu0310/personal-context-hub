@@ -58,6 +58,15 @@ function absolutePath(value, name) {
   return resolve(value);
 }
 
+function reasoningEffort(env, name, fallback) {
+  const value = env[name]?.trim().toLowerCase() || fallback;
+  if (value && !codexReasoningEfforts.has(value))
+    throw new Error(
+      `${name} must be minimal, low, medium, high, xhigh, max, or ultra.`,
+    );
+  return value;
+}
+
 export function loadDiscordVoiceConfig(env = process.env) {
   const workingDirectory = absolutePath(
     required(env, "PERSONAL_CONTEXT_VOICE_WORKDIR"),
@@ -98,17 +107,28 @@ export function loadDiscordVoiceConfig(env = process.env) {
   if (!new Set(["turn", "meeting"]).has(voiceMode)) {
     throw new Error("PERSONAL_CONTEXT_VOICE_MODE must be turn or meeting.");
   }
-  const codexReasoningEffort =
-    env.PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT?.trim().toLowerCase() ||
-    undefined;
-  if (
-    codexReasoningEffort &&
-    !codexReasoningEfforts.has(codexReasoningEffort)
-  ) {
-    throw new Error(
-      "PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT must be minimal, low, medium, high, xhigh, max, or ultra.",
-    );
-  }
+  const codexReasoningEffort = reasoningEffort(
+    env,
+    "PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT",
+  );
+  const codexModel =
+    env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined;
+  const taskModel =
+    env.PERSONAL_CONTEXT_VOICE_TASK_MODEL?.trim() ||
+    codexModel ||
+    "gpt-5.6-sol";
+  const taskReasoningEffort = reasoningEffort(
+    env,
+    "PERSONAL_CONTEXT_VOICE_TASK_REASONING_EFFORT",
+    codexReasoningEffort ?? "medium",
+  );
+  const codexTimeoutMs = integer(
+    env,
+    "PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS",
+    900_000,
+    30_000,
+    3_600_000,
+  );
   return {
     guildId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_GUILD_ID"),
     voiceChannelId: requiredSnowflake(env, "PERSONAL_CONTEXT_VOICE_CHANNEL_ID"),
@@ -124,11 +144,69 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     powerMode,
     voiceMode,
+    operatorUserIds: (env.PERSONAL_CONTEXT_VOICE_OPERATOR_IDS ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => {
+        if (!snowflake.test(id))
+          throw new Error(
+            "PERSONAL_CONTEXT_VOICE_OPERATOR_IDS must contain Discord snowflakes.",
+          );
+        return id;
+      }),
+    requireWakeWord: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_REQUIRE_WAKE_WORD",
+      true,
+    ),
+    allParticipantsOperate: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_ALL_PARTICIPANTS_OPERATE",
+      false,
+    ),
+    autonomousTasks: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_AUTONOMOUS_TASKS",
+      false,
+    ),
+    answerUnaddressedQuestions: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_ANSWER_UNADDRESSED_QUESTIONS",
+      false,
+    ),
+    meetingStatePath: `${statePath}.meeting.json`,
+    taskWorkspaceDirectory: `${statePath}.workspaces`,
+    observerModel:
+      env.PERSONAL_CONTEXT_VOICE_OBSERVER_MODEL?.trim() ||
+      codexModel ||
+      "gpt-5.6-sol",
+    observerReasoningEffort: reasoningEffort(
+      env,
+      "PERSONAL_CONTEXT_VOICE_OBSERVER_REASONING_EFFORT",
+      codexReasoningEffort ?? "low",
+    ),
+    taskModel,
+    taskReasoningEffort,
+    complexTaskModel:
+      env.PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_MODEL?.trim() || taskModel,
+    complexTaskReasoningEffort: reasoningEffort(
+      env,
+      "PERSONAL_CONTEXT_VOICE_COMPLEX_TASK_REASONING_EFFORT",
+      taskReasoningEffort,
+    ),
     immediateReactions: boolean(
       env,
       "PERSONAL_CONTEXT_VOICE_IMMEDIATE_REACTIONS",
       true,
     ),
+    messageContentIntent: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_MESSAGE_CONTENT_INTENT",
+      true,
+    ),
+    quickReplyModel:
+      env.PERSONAL_CONTEXT_VOICE_QUICK_REPLY_MODEL?.trim() || "gpt-4.1-mini",
     silentMessages: boolean(
       env,
       "PERSONAL_CONTEXT_VOICE_SILENT_MESSAGES",
@@ -136,11 +214,30 @@ export function loadDiscordVoiceConfig(env = process.env) {
     ),
     workingDirectory,
     statePath,
+    transcriptArchiveDirectory:
+      env.PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR?.trim()
+        ? absolutePath(
+            env.PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR,
+            "PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DIR",
+          )
+        : join(dirname(statePath), "discord-voice-transcripts"),
+    transcriptArchiveDiscord: boolean(
+      env,
+      "PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_DISCORD",
+      true,
+    ),
+    transcriptArchiveFlushIntervalMs: integer(
+      env,
+      "PERSONAL_CONTEXT_VOICE_TRANSCRIPT_ARCHIVE_FLUSH_INTERVAL_MS",
+      60_000,
+      10_000,
+      3_600_000,
+    ),
     sttModel: env.PERSONAL_CONTEXT_VOICE_STT_MODEL?.trim() || "gpt-transcribe",
     ttsModel: env.PERSONAL_CONTEXT_VOICE_TTS_MODEL?.trim() || "gpt-4o-mini-tts",
     ttsVoice: env.PERSONAL_CONTEXT_VOICE_TTS_VOICE?.trim() || "marin",
     ttsSpeed: number(env, "PERSONAL_CONTEXT_VOICE_TTS_SPEED", 1, 0.25, 4),
-    codexModel: env.PERSONAL_CONTEXT_VOICE_CODEX_MODEL?.trim() || undefined,
+    codexModel,
     codexReasoningEffort,
     codexHome: env.PERSONAL_CONTEXT_VOICE_CODEX_HOME?.trim()
       ? absolutePath(
@@ -221,12 +318,13 @@ export function loadDiscordVoiceConfig(env = process.env) {
         5_000,
         600_000,
       ),
-      running_codex: integer(
+      running_codex: codexTimeoutMs,
+      observing: integer(
         env,
-        "PERSONAL_CONTEXT_VOICE_CODEX_TIMEOUT_MS",
-        900_000,
-        30_000,
-        3_600_000,
+        "PERSONAL_CONTEXT_VOICE_OBSERVER_TIMEOUT_MS",
+        Math.min(codexTimeoutMs, 60_000),
+        5_000,
+        300_000,
       ),
       posting: integer(
         env,
@@ -263,10 +361,20 @@ export function describeDiscordVoiceConfig(config) {
     listenToEveryone: config.listenToEveryone,
     powerMode: config.powerMode,
     voiceMode: config.voiceMode,
+    operatorUserCount: config.operatorUserIds?.length ?? 0,
+    requireWakeWord: config.requireWakeWord,
     immediateReactions: config.immediateReactions,
+    allParticipantsOperate: config.allParticipantsOperate,
+    autonomousTasks: config.autonomousTasks,
+    answerUnaddressedQuestions: config.answerUnaddressedQuestions,
+    quickReplyModel: config.quickReplyModel,
+    messageContentIntent: config.messageContentIntent,
     silentMessages: config.silentMessages,
     workingDirectory: config.workingDirectory,
     statePath: config.statePath,
+    transcriptArchiveDirectory: config.transcriptArchiveDirectory,
+    transcriptArchiveDiscord: config.transcriptArchiveDiscord,
+    transcriptArchiveFlushIntervalMs: config.transcriptArchiveFlushIntervalMs,
     sttModel: config.sttModel,
     ttsModel: config.ttsModel,
     ttsVoice: config.ttsVoice,
@@ -279,6 +387,18 @@ export function describeDiscordVoiceConfig(config) {
     codexModel: config.codexModel ?? "Codex configured default",
     codexReasoningEffort:
       config.codexReasoningEffort ?? "Codex configured default",
+    observer: {
+      model: config.observerModel,
+      reasoningEffort: config.observerReasoningEffort,
+    },
+    task: {
+      model: config.taskModel,
+      reasoningEffort: config.taskReasoningEffort,
+    },
+    complexTask: {
+      model: config.complexTaskModel,
+      reasoningEffort: config.complexTaskReasoningEffort,
+    },
     codexHomeConfigured: Boolean(config.codexHome),
     isolatedCodexHomeConfigured: Boolean(config.isolatedCodexHome),
     codexSandbox: config.codexSandbox,

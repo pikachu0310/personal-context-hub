@@ -562,6 +562,11 @@ test("voice server logs in, validates targets, joins undeafened, and announces A
       error: (entry) => transportLogs.push(entry),
     },
     dependencies: {
+      meetingStateStore: {
+        load: async () => ({}),
+        acquire: async () => undefined,
+        release: async () => calls.push(["release-state"]),
+      },
       readCredential: async () => ({ token: "bot-test-token" }),
       joinVoiceChannel: (options) => (joins.push(options), connection),
       entersState: async () => connection,
@@ -598,11 +603,22 @@ test("voice server logs in, validates targets, joins undeafened, and announces A
     ],
   );
   assert.doesNotMatch(JSON.stringify(transportLogs), /secret/);
-  await service.stop();
-  await service.stop();
+  const stopSession = service.session.stop.bind(service.session);
+  service.session.stop = async () => {
+    await stopSession();
+    calls.push(["session-stop"]);
+    throw new Error("session cleanup failure");
+  };
+  const stopping = service.stop();
+  assert.equal(service.stop(), stopping);
+  await assert.rejects(stopping, AggregateError);
   assert.equal(service.session.state, "stopped");
   assert.equal(calls.filter(([kind]) => kind === "disconnect").length, 1);
   assert.equal(calls.filter(([kind]) => kind === "destroy").length, 1);
+  assert.ok(
+    calls.findIndex(([kind]) => kind === "release-state") >
+      calls.findIndex(([kind]) => kind === "session-stop"),
+  );
 });
 
 test("voice startup failure destroys a logged-in client and partial connection", async () => {
