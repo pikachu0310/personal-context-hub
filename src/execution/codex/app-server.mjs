@@ -293,6 +293,7 @@ class AppServerThread {
           this.resuming ? "thread/resume" : "thread/start",
           {
             ...(this.resuming ? { threadId: this.id, excludeTurns: true } : {}),
+            ...(!this.resuming && options.ephemeral ? { ephemeral: true } : {}),
             cwd: options.workingDirectory,
             model: options.model,
             sandbox: options.sandboxMode ?? "workspace-write",
@@ -324,6 +325,12 @@ class AppServerThread {
       if (typeof error.code === "number") return false;
       throw error;
     }
+  }
+
+  async dispose() {
+    if (!this.id) return;
+    await this.client.request("thread/unsubscribe", { threadId: this.id });
+    this.client.threadUsage.delete(this.id);
   }
 
   async interrupt() {
