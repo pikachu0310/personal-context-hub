@@ -134,7 +134,7 @@ export async function startStudioServer({
               : {}),
           });
         const match = url.pathname.match(
-          /^\/api\/studio\/rooms\/([a-zA-Z0-9_-]+)\/(snapshot|commands)$/,
+          /^\/api\/studio\/rooms\/([a-zA-Z0-9_-]+)\/(snapshot|commands|artifacts|files)$/,
         );
         const room = match && rooms.get(match[1]);
         if (!room) throw new StudioError(404, "部屋が見つかりません。");
@@ -143,6 +143,29 @@ export async function startStudioServer({
             ...room.controller.snapshot(),
             actor: session.actor,
           });
+        if (["artifacts", "files"].includes(match[2]) && req.method === "GET") {
+          const fileId = url.searchParams.get("fileId");
+          if (match[2] === "files" && !/^[a-f0-9]{24}$/.test(fileId ?? ""))
+            throw new StudioError(
+              400,
+              "取得する成果ファイルを選んでください。",
+            );
+          const artifact = await room.controller.artifacts(
+            url.searchParams.get("taskId"),
+            Number(url.searchParams.get("runRevision")),
+            match[2] === "files" ? fileId : undefined,
+          );
+          if (match[2] === "artifacts") return send(res, 200, artifact);
+          res
+            .writeHead(200, {
+              "Content-Type": "application/octet-stream",
+              "Content-Disposition": `attachment; filename="result"; filename*=UTF-8''${encodeURIComponent(artifact.name).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16)}`)}`,
+              "Content-Length": artifact.data.length,
+              "Content-Security-Policy": "default-src 'none'; sandbox",
+            })
+            .end(artifact.data);
+          return;
+        }
         if (match[2] === "commands" && req.method === "POST")
           return send(
             res,

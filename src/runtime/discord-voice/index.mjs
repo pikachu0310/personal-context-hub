@@ -11,6 +11,7 @@ import { startStudioServer } from "../studio-server.mjs";
 import { createPreviewRelay } from "../preview-relay.mjs";
 import { readStudioAccess } from "../studio-access.mjs";
 import { createStudioController } from "../../adapters/browser/controller.mjs";
+import { createStudioArtifactReader } from "../studio-artifacts.mjs";
 import { DiscordLiveBridge } from "../../providers/live.mjs";
 import {
   createDiscordDiscussionRouter,
@@ -666,6 +667,10 @@ export async function startDiscordVoiceCodex({
         initialState: saved,
         hudStore,
         name: config.studioName ?? "井戸Botの共有スタジオ",
+        previewConfigured: Boolean(config.previewCommand),
+        readArtifacts: createStudioArtifactReader({
+          workspaceRoot: config.taskWorkspaceDirectory,
+        }),
       });
       const access =
         dependencies.studioAccess ??

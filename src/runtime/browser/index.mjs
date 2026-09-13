@@ -14,6 +14,7 @@ import {
   parsePreviewChecks,
 } from "../../execution/preview-browser.mjs";
 import { createStudioController } from "../../adapters/browser/controller.mjs";
+import { createStudioArtifactReader } from "../studio-artifacts.mjs";
 import { createHudStore } from "../hud-server.mjs";
 import { startStudioServer } from "../studio-server.mjs";
 import { createPreviewRelay } from "../preview-relay.mjs";
@@ -203,6 +204,10 @@ export async function startBrowserStudio({
         initialState: saved,
         hudStore,
         name: project.name ?? project.id,
+        previewConfigured: Boolean(project.previewCommand),
+        readArtifacts: createStudioArtifactReader({
+          workspaceRoot: engineConfig.taskWorkspaceDirectory,
+        }),
       }));
       rooms.set(project.id, {
         name: project.name ?? project.id,
