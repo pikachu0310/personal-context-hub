@@ -915,6 +915,27 @@ export async function startDiscordVoiceCodex({
         ? new DiscordVoiceMeetingSession({
             transcribe: audio.transcribe,
             quickReply: audio.quickReply,
+            investigateQuestion: codex.investigateQuestion
+              ? (question, options) =>
+                  codex.investigateQuestion(question, options)
+              : undefined,
+            getRuntimeContext: () => ({
+              voiceStatus: connection.state?.status,
+              manuallyDisconnected,
+              reconnecting,
+              voiceRecoveryFailed,
+              invocationId: /^[a-f0-9]{32}$/i.test(
+                process.env.INVOCATION_ID ?? "",
+              )
+                ? process.env.INVOCATION_ID
+                : undefined,
+              sttModel: config.sttModel,
+              quickReplyModel: config.quickReplyModel,
+              observerModel: config.observerModel,
+              taskModel: config.taskModel,
+              allParticipantsOperate: config.allParticipantsOperate,
+              autonomousTasks: config.autonomousTasks,
+            }),
             observe: (observation, options) =>
               codex.observeMeeting(observation, options),
             upsertLiveTranscript,
