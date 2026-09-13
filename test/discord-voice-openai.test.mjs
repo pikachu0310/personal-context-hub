@@ -30,7 +30,9 @@ import {
 } from "../src/discord-voice-openai.mjs";
 
 test("Codex restart accepts trust for the Git main repository of a linked worktree", async () => {
-  const root = await mkdtemp(join(tmpdir(), "voice-trust-worktree-"));
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "voice-trust-worktree-")),
+  );
   const main = join(root, "main"),
     worktree = join(root, "linked");
   const git = (...args) => promisify(execFile)("git", args);

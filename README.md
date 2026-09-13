@@ -342,3 +342,14 @@ private addresses, local profile names, and copied source data.
 
 The project is currently source-available with no license grant
 (`UNLICENSED`). Add a license only after the copyright holder chooses one.
+
+## 処理レイヤーと拡張
+
+音声・テキスト入力、会話エンジン、実行バックエンド、出力を分離しています。
+`src/engine` はDiscordやCodex SDKに依存せず、`src/runtime` がDiscord入出力、
+OpenAI音声API、単一Codexバックエンド、保存先を組み立てます。
+テキストのみの出力では音声合成を呼び出しません。
+
+新しいデバイスや複数エージェントへの委譲は、入出力アダプターまたは実行バックエンドを
+差し替えて追加できます。現在の実接続はDiscordと単一Codexバックエンドです。
+[責務・インターフェース・互換性・拡張手順](docs/architecture.md)を参照してください。
