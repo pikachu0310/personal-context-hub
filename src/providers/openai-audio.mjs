@@ -18,23 +18,52 @@ export function createOpenAIAudioAdapter(config, { client } = {}) {
       ),
     });
   return {
-    async transcribe(wav, { signal } = {}) {
-      if (!qualifyTranscriptionAudio(wav).accepted) return "";
+    async transcribe(wav, { signal, onDecision } = {}) {
+      const audio = qualifyTranscriptionAudio(wav);
+      const report = (decision, extra = {}) =>
+        onDecision?.({
+          decision,
+          model: config.sttModel,
+          audioDurationMs: Math.round(
+            ((wav.length - 44) /
+              (wav.readUInt32LE(24) * wav.readUInt16LE(22) * 2)) *
+              1000,
+          ),
+          activeSignalMs: Math.round(audio.activeMs),
+          ...extra,
+        });
+      if (!audio.accepted) {
+        report("insufficient_audio_signal");
+        return "";
+      }
+      // Vocabulary hints were emitted as unspoken calls and even as the entire
+      // glossary on 2026-09-14. Supply audio and language only: no prompt,
+      // keywords, previous transcript or example request to complete from.
       const request = {
         file: await toFile(wav, "discord-turn.wav", { type: "audio/wav" }),
         model: config.sttModel,
       };
-      if (config.sttModel !== "gpt-4o-transcribe-diarize")
-        request.prompt =
-          "日本語と英語の開発会議。固有名詞: 井戸Bot（いどぼっと）、Codex（コーデックス）、GitHub Issue（イシュー）、タスク。";
-      const options = { signal };
       if (config.sttModel === "gpt-transcribe") {
         request.languages = ["ja", "en"];
       } else {
         request.language = "ja";
       }
-      const result = await openai.audio.transcriptions.create(request, options);
-      return result.text;
+      const result = await openai.audio.transcriptions.create(request, {
+        signal,
+      });
+      // gpt-transcribe explicitly returns [] when it cannot reliably detect a
+      // language. Nonempty generated text is not sufficient evidence of speech.
+      if (Array.isArray(result.languages) && result.languages.length === 0) {
+        report("no_language_detected", {
+          transcriptCharacters: result.text?.length ?? 0,
+        });
+        return "";
+      }
+      const text = result.text?.trim() ?? "";
+      report(text ? "accepted" : "empty_transcript", {
+        transcriptCharacters: text.length,
+      });
+      return text;
     },
     async classifyVoiceNeed(input, { signal } = {}) {
       const response = await openai.responses.create(
