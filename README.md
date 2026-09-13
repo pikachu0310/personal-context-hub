@@ -23,8 +23,20 @@ npm run start:discord:voice:instance -- YOUR_PROFILE
 `PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` にDiscord ForumのIDを指定すると、Issueごとにフォーラム投稿を1つ作り、その投稿のスレッドへ依頼、進捗、結果、質問、指摘、担当エージェントの回答を集約します。`PERSONAL_CONTEXT_VOICE_AGENT_CHANNEL_ID` はチーム共通の割当通知と `/ido` 操作用、各エージェントの `channelId` はそのエージェントへの割当通知用です。複数エージェント時はpeer reviewが既定で有効になり、別エージェントの質問・指摘をIssueスレッドへ投稿し、担当エージェントの同じCodexスレッドへ権限を増やさないレビュー情報として戻します。`PERSONAL_CONTEXT_VOICE_AGENT_PEER_REVIEW=false` で無効にできます。
 
 設定例は [.env.voice.example](./.env.voice.example) にあります。`PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` を省略した構成は、従来どおり1つの既定エージェントとして動作します。GitHub Issueへの自動投稿は行わず、BotのローカルIssue台帳とDiscord Forumを正本にします。GitHubへの公開・書き込みは別途、対象repositoryと操作が明示された場合だけ行います。
+各参加者が自分のPCとCodex認証で参加する場合は、Bot側で `PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_ENABLED=true` を設定します。Gatewayはloopbackへbindし、外部公開時はTLS reverse proxyを通した `wss://` URLを `PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL` に設定してください。平文の `ws://` はloopbackでだけ許可されます。BotにはForumの `Manage Webhooks` 権限も付与します。
+
+参加者はDiscordで `/ido agent connect` を実行し、本人だけに表示された1回限りのコードを自分のPCで標準入力から渡します。
+
+```powershell
+Copy-Item .env.agent.example .env.agent
+Write-Output '<PAIRING_CODE>' | npm run agent:pair -- --gateway wss://agents.example.com --workdir C:/path/to/repository --capabilities frontend,test
+```
+
+初回pairing後は `npm run start:discord:agent` で再接続できます。Workerは端末内でEd25519鍵を作り、WindowsではWorker tokenと秘密鍵をCurrentUser DPAPIへ保存します。Linuxではmode `0600` のlocal credential fileを使います。Codex、Discord、GitHubのtokenやrepository credentialはBotへ送らず、Bot側にはWorker tokenのSHA-256 hashと公開鍵だけを保存します。Codex threadと分離worktreeの対応も担当者端末だけに保存し、中央Gatewayから任意のlocal Codex threadを指定して再開することはできません。`/ido agent disconnect` で自分の登録を失効でき、`/ido agent status` で接続状態を確認できます。
+
+Forum内のAgent発言は、中央Botが管理するAgent別Webhookから送ります。使用者のDiscord CDN avatarへ担当色のringとrobot badgeをBot内で合成し、`Agent ID`、owner、Issue番号を本文にも付けます。画像生成serviceへ元画像を送信しません。人間の発言は本人の通常Discord表示のままです。
 モデルと推論強度は `PERSONAL_CONTEXT_VOICE_CODEX_MODEL` / `PERSONAL_CONTEXT_VOICE_CODEX_REASONING_EFFORT` を共通設定とし、`OBSERVER`・`TASK`・`COMPLEX_TASK` ごとの指定を優先します。複雑な作業の設定を省略すると `TASK` を引き継ぎます。例の設定では会議観測をSol low、作業をSol mediumに分けており、`inspect` で実効設定を確認できます。
-Botには対象チャンネルでの閲覧・接続・発言・送信・履歴閲覧・公開スレッド作成・スレッド送信・ファイル添付を許可し、Developer PortalでMessage Content Intentを有効にします。
+Botには対象チャンネルでの閲覧・接続・発言・送信・履歴閲覧・公開スレッド作成・スレッド送信・ファイル添付を許可し、エージェント別アイコンを使う場合はWebhook管理も許可し、Developer PortalでMessage Content Intentを有効にします。
 起動すると通話に参加し、認識テキストの保存とAI音声の使用をチャンネルへ告知します。参加者へ保存範囲を説明してから利用してください。
 
 設定済みのテキストチャンネルで、次の流れを試せます。`!ido` はテキストコマンドです。`/ido` も同じ意味で受け付けます。

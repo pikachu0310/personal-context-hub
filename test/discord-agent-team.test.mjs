@@ -111,3 +111,36 @@ test("Per-agent concurrency keeps another agent runnable", () => {
   assert.equal(team.canRun(first), true);
   assert.equal(team.selectReviewer(first).id, "two");
 });
+
+test("online personal Workers are preferred and offline work is reassigned", () => {
+  const team = new CodexAgentTeam([
+    {
+      id: "default",
+      name: "Host Codex",
+      capabilities: ["*"],
+      maximumConcurrentTasks: 1,
+      workingDirectory: root,
+      transport: "local",
+      online: true,
+      enabled: true,
+    },
+  ]);
+  team.upsert({
+    id: "member-123456789012345678",
+    name: "Alice Codex",
+    capabilities: ["*"],
+    maximumConcurrentTasks: 1,
+    workingDirectory: root,
+    transport: "remote",
+    online: true,
+    enabled: true,
+  });
+  const task = { id: "distributed", title: "README", request: "更新" };
+  team.assign(task);
+  assert.equal(task.assignedAgentId, "member-123456789012345678");
+  assert.equal(task.assignedAgentTransport, "remote");
+  team.setOnline(task.assignedAgentId, false);
+  team.reassign(task, [], [task.assignedAgentId]);
+  assert.equal(task.assignedAgentId, "default");
+  assert.equal(task.assignedAgentTransport, "local");
+});

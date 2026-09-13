@@ -8,41 +8,57 @@ export const IDOBATA_APPLICATION_COMMAND = {
   name: "ido",
   description: "井戸Botの通話・議事録・作業を操作",
   options: [
-    ["join", "設定された通話へ接続"],
-    ["leave", "通話から退出"],
-    ["status", "通話状態・作業一覧", false],
-    ["agents", "接続中のCodexエージェント一覧"],
-    ["context", "現在の議事録全文"],
-    ["ask", "井戸Botへ質問", true],
-    ["quiet", "読み上げを停止"],
-    ["help", "コマンド一覧"],
-    ["task", "実装を依頼", true],
-    ["research", "調査を依頼", true],
-    ["benchmark", "比較を依頼", true],
-    ["test", "検証を依頼", true],
-    ["stop", "タスクIDを指定して停止", true],
-    ["result", "タスクIDを指定して結果表示", true],
-    ["follow", "タスクIDと追加指示を指定", true],
-    ["apply", "タスクIDと実行版を指定して反映", true],
-    ["new", "新しい会議"],
-  ].map(([name, description, required]) => ({
-    type: 1,
-    name,
-    description,
-    ...(required !== undefined
-      ? {
-          options: [
-            {
-              type: 3,
-              name: "input",
-              description: "内容・ID・ページ番号",
-              required,
-              max_length: 1800,
-            },
-          ],
-        }
-      : {}),
-  })),
+    {
+      type: 2,
+      name: "agent",
+      description: "自分のCodex Workerを接続・切断",
+      options: [
+        {
+          type: 1,
+          name: "connect",
+          description: "この端末用の接続コードを発行",
+        },
+        { type: 1, name: "disconnect", description: "自分のWorker登録を失効" },
+        { type: 1, name: "status", description: "自分のWorker接続状態" },
+      ],
+    },
+    ...[
+      ["join", "設定された通話へ接続"],
+      ["leave", "通話から退出"],
+      ["status", "通話状態・作業一覧", false],
+      ["agents", "接続中のCodexエージェント一覧"],
+      ["context", "現在の議事録全文"],
+      ["ask", "井戸Botへ質問", true],
+      ["quiet", "読み上げを停止"],
+      ["help", "コマンド一覧"],
+      ["task", "実装を依頼", true],
+      ["research", "調査を依頼", true],
+      ["benchmark", "比較を依頼", true],
+      ["test", "検証を依頼", true],
+      ["stop", "タスクIDを指定して停止", true],
+      ["result", "タスクIDを指定して結果表示", true],
+      ["follow", "タスクIDと追加指示を指定", true],
+      ["apply", "タスクIDと実行版を指定して反映", true],
+      ["new", "新しい会議"],
+    ].map(([name, description, required]) => ({
+      type: 1,
+      name,
+      description,
+      ...(required !== undefined
+        ? {
+            options: [
+              {
+                type: 3,
+                name: "input",
+                description: "内容・ID・ページ番号",
+                required,
+                max_length: 1800,
+              },
+            ],
+          }
+        : {}),
+    })),
+  ],
 };
 
 export function createIdobataSlashHandler({ config, handleMessage }) {
@@ -88,7 +104,17 @@ export function createIdobataSlashHandler({ config, handleMessage }) {
         channelId: interaction.channelId,
         author: interaction.user,
         member: interaction.member,
-        content: `/ido ${interaction.options.getSubcommand()} ${interaction.options.getString("input") ?? ""}`,
+        privateReply: true,
+        ownerAvatarUrl:
+          interaction.member?.displayAvatarURL?.({
+            extension: "png",
+            size: 256,
+          }) ??
+          interaction.user?.displayAvatarURL?.({
+            extension: "png",
+            size: 256,
+          }),
+        content: `/ido ${interaction.options.getSubcommandGroup?.(false) ? `${interaction.options.getSubcommandGroup(false)} ` : ""}${interaction.options.getSubcommand()} ${interaction.options.getString("input") ?? ""}`,
         channel: { send },
       });
       if (!replied)
@@ -115,6 +141,7 @@ export const IDOBATA_HELP = [
   "`/ido benchmark 比較内容` · `/ido test 検証内容`",
   "`/ido status ページ番号` 通話状態・作業一覧 · `/ido stop タスクID`",
   "`/ido agents` 接続中のCodexエージェントと担当Issue数",
+  "`/ido agent connect` 自分のPCのCodex Workerを安全に接続",
   "`/ido result タスクID` 保存済みの結果と検証記録",
   "`/ido quiet` 読み上げ停止",
   "`/ido join` 通話へ接続 · `/ido leave` 通話から退出",
@@ -206,7 +233,6 @@ function taskStatus(tasks, session, argument) {
 
 function agentStatus(taskQueue) {
   const agents = taskQueue?.agentTeam?.list?.() ?? [];
-  if (!agents.length) return "接続中のCodexエージェント情報はありません。";
   const tasks = taskQueue?.list?.() ?? [];
   return [
     `🤖 **接続中のCodexエージェント ${agents.length}体**`,
@@ -217,7 +243,7 @@ function agentStatus(taskQueue) {
       const active = assigned.filter(({ state }) =>
         ["queued", "running"].includes(state),
       ).length;
-      return `**${escapeDiscordMarkdown(agent.name)}** \`${agent.id}\` · 稼働 ${active}/${agent.maximumConcurrentTasks} · Issue累計 ${assigned.length}件 · 担当 ${agent.capabilities.join(", ") || "指定なし"}`;
+      return `**${escapeDiscordMarkdown(agent.name)}** \`${agent.id}\` · ${agent.transport === "remote" ? (agent.online ? "Worker接続中" : "Workerオフライン") : "Botホスト"} · 稼働 ${active}/${agent.maximumConcurrentTasks} · Issue累計 ${assigned.length}件 · 担当 ${agent.capabilities.join(", ") || "指定なし"}`;
     }),
   ].join("\n");
 }
@@ -385,6 +411,7 @@ export function createIdobataMessageHandler({
   getVoiceStatus = () => "",
   reconnectVoice,
   leaveVoice,
+  workerGateway,
 }) {
   const seen = new Set();
   const commandChannelIds = new Set(
@@ -444,6 +471,65 @@ export function createIdobataMessageHandler({
     }
     const command = (match[1] ?? "help").toLowerCase();
     const argument = (match[2] ?? "").trim();
+    if (command === "agent") {
+      if (!message.privateReply)
+        return reply(
+          "接続コードを公開しないため、Discordの `/ido agent` コマンドを使ってください。",
+        );
+      if (!authorized)
+        return reply("このサーバーでWorkerを登録する権限がありません。");
+      const action = argument.toLowerCase();
+      if (!workerGateway)
+        return reply("分散Worker Gatewayはまだ有効になっていません。");
+      if (action === "connect") {
+        const pairing = workerGateway.createPairing({
+          ownerUserId: message.author.id,
+          ownerDisplayName:
+            message.member?.displayName ??
+            message.author.globalName ??
+            message.author.username,
+          ownerAvatarUrl: message.ownerAvatarUrl,
+        });
+        const remaining = Math.max(
+          1,
+          Math.ceil((pairing.expiresAt - Date.now()) / 60_000),
+        );
+        return reply(
+          [
+            "🔐 **個人Codex Workerの接続コード**",
+            `Gateway: \`${pairing.gatewayUrl}\``,
+            `コード: \`${pairing.code}\`（約${remaining}分で失効・1回限り）`,
+            "自分のPCでコードを標準入力から渡してください:",
+            `\`Write-Output '${pairing.code}' | npm run agent:pair -- --gateway ${pairing.gatewayUrl} --workdir <repository> --capabilities frontend,test\``,
+            "Discord・Codex・GitHubのログイン情報をBotへ送らないでください。",
+          ].join("\n"),
+        );
+      }
+      if (action === "disconnect") {
+        const revoked = await workerGateway.revokeOwner(message.author.id);
+        return reply(
+          revoked.length
+            ? `自分のWorker ${revoked.length}件を切断し、接続資格を失効しました。`
+            : "接続中の自分のWorkerはありません。",
+        );
+      }
+      if (action === "status") {
+        const workers = workerGateway.statusForOwner(message.author.id);
+        return reply(
+          workers.length
+            ? workers
+                .map(
+                  (worker) =>
+                    `**${escapeDiscordMarkdown(worker.name)}** \`${worker.agentId}\` · ${worker.online ? "接続中" : "オフライン"} · ${worker.capabilities.join(", ") || "担当未設定"}`,
+                )
+                .join("\n")
+            : "登録済みの自分のWorkerはありません。",
+        );
+      }
+      return reply(
+        "`/ido agent connect`、`disconnect`、`status`のいずれかを選んでください。",
+      );
+    }
     if (command === "help") return reply(IDOBATA_HELP);
     if (command === "agents") return reply(agentStatus(taskQueue));
     if (command === "status") {

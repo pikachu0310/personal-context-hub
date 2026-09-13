@@ -16,6 +16,9 @@
 - `PERSONAL_CONTEXT_VOICE_CODEX_AGENTS` に複数のエージェントを登録すると、音声またはテキストから作ったIssueを担当領域と割当負荷で振り分ける。Issue、担当、割当理由を永続化してから作業を開始し、エージェント別の同時実行上限を守る。
 - `PERSONAL_CONTEXT_VOICE_ISSUE_FORUM_CHANNEL_ID` を設定した場合はIssueごとにDiscord Forumスレッドを作り、依頼、進捗、結果、質問、指摘、担当エージェントの回答を集約する。チーム共通・エージェント別テキストチャンネルには担当決定を通知する。
 - 複数エージェント時のpeer reviewでは、別エージェントが完成結果とworktreeをread-onlyで確認する。具体的な質問・指摘はIssueスレッドへ投稿し、担当エージェントの同じCodexスレッドへ、操作権限を増やさないレビュー情報として一度だけ戻す。
+- 分散Workerを有効にすると、参加者はDiscordのephemeral Slash Commandで短期pairing codeを受け取り、自分のPCから中央Gatewayへ外向き接続する。通常Discord user tokenを取得せず、Codex・GitHub・repository認証はWorker端末から出さない。
+- pairing時にWorkerがEd25519鍵を生成し、中央は公開鍵とWorker token hashだけを保持する。接続ごとのchallenge signature、heartbeat、task leaseで端末を確認し、切断・lease timeout時は別のonline agentへ再割当する。
+- ForumへのAgent発言はAgent別managed Webhookを使う。ownerのDiscord CDN avatarへ色ringとrobot badgeをlocal合成し、Agent ID・owner・Issueを本文にも明記する。元avatarを外部画像生成serviceへ送らない。
 - `PERSONAL_CONTEXT_VOICE_AUTONOMOUS_TASKS=true` では、観測担当が会話中に必要だと判断した作業を明示依頼なしで作成できる。具体的な成果と根拠発言を保持し、既存作業との重複を避ける。公開・送信・購入等への許可を会話から推測しない。
 - STTへ話題の説明や固有名詞一覧を常時渡さない。送信前に無音・DC・ごく短いクリックを信号量で除く。この判定はVADではなく、雑音由来の誤認識すべてを防ぐものではない。「はい」などの認識単語を一律に破棄しない。
 

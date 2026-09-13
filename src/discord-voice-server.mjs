@@ -27,6 +27,10 @@ import {
 import prism from "prism-media";
 import { MeetingStateStore, meetingScope } from "./discord-voice-state.mjs";
 import { CodexAgentTeam } from "./discord-agent-team.mjs";
+import { AgentWorkerRegistry } from "./discord-agent-worker-registry.mjs";
+import { AgentWorkerGateway } from "./discord-agent-worker-gateway.mjs";
+import { DiscordAgentWebhookPublisher } from "./discord-agent-avatar.mjs";
+import { createDistributedTaskRunner } from "./discord-agent-task-runner.mjs";
 import {
   createIdobataMessageHandler,
   createIdobataInteractionHandler,
@@ -545,6 +549,7 @@ export function createDiscordTaskThread(
     issueForum,
     coordinationChannel,
     agentChannels = new Map(),
+    agentMessagePublisher,
   } = {},
 ) {
   return async (task) => {
@@ -636,21 +641,35 @@ export function createDiscordTaskThread(
       { silent, fallbackChannel: issueForum ? thread : textChannel },
     );
     const update = card.update;
-    const post = (content, { signal, idempotencyKey } = {}) => {
+    const postSystem = (content, { signal, idempotencyKey } = {}) => {
       if (signal?.aborted) return Promise.reject(signal.reason);
       return thread.send(
         createDiscordMessagePayload(content, { silent, idempotencyKey }),
       );
     };
+    const postAs = async (agentId, content, options = {}) => {
+      if (agentMessagePublisher && agentId) {
+        const sent = await agentMessagePublisher
+          .post(agentId, thread, content, {
+            ...options,
+            issueId: task.issueId ?? task.id,
+          })
+          .catch(() => undefined);
+        if (sent) return sent;
+      }
+      return postSystem(content, options);
+    };
+    const post = (content, options = {}) =>
+      postAs(task.assignedAgentId, content, options);
     try {
       await update({ state: "queued" });
       const request = escapeDiscordMarkdown(
         boundText(task.request, 1_200) || "依頼内容を取得できませんでした。",
       );
-      await post(`🧾 **依頼内容**\n${request}`, {
+      await postSystem(`🧾 **依頼内容**\n${request}`, {
         idempotencyKey: `${creationKey}:request`,
       });
-      await post(
+      await postSystem(
         [
           "💡 **このスレッドで操作できます**",
           "追加指示: そのままメッセージを送信",
@@ -696,6 +715,7 @@ export function createDiscordTaskThread(
     const postArtifacts = createDiscordArtifactPoster(thread, task, { silent });
     return {
       post,
+      postAs,
       update,
       postArtifacts,
       threadId,
@@ -775,6 +795,7 @@ export async function startDiscordVoiceCodex({
   let transcriptArchive;
   let session;
   let taskQueue;
+  let workerGateway;
   let deliveryInterval;
   let loginAttempted = false;
   let serviceClosing = false;
@@ -797,6 +818,7 @@ export async function startDiscordVoiceCodex({
       const results = await Promise.allSettled([
         Promise.resolve().then(() => session?.stop?.()),
         Promise.resolve().then(() => taskQueue?.stop?.()),
+        Promise.resolve().then(() => workerGateway?.stop?.()),
         ...pendingOperations,
         ...(!session
           ? [Promise.resolve().then(() => transcriptArchive?.stop?.())]
@@ -825,6 +847,37 @@ export async function startDiscordVoiceCodex({
   try {
     await store?.acquire();
     saved = await store?.load();
+    const workerRegistry =
+      dependencies.workerRegistry ??
+      new AgentWorkerRegistry({ pairingTtlMs: config.workerPairingTtlMs });
+    workerRegistry.restore(saved?.workers);
+    for (const worker of workerRegistry.snapshot()) {
+      const profile = workerRegistry.describe(worker.agentId);
+      if (profile)
+        agentTeam.upsert({
+          ...profile,
+          workingDirectory: config.workingDirectory,
+          online: false,
+        });
+    }
+    if (config.workerGatewayEnabled) {
+      workerGateway =
+        dependencies.workerGateway ??
+        new AgentWorkerGateway({
+          registry: workerRegistry,
+          agentTeam,
+          host: config.workerGatewayHost,
+          port: config.workerGatewayPort,
+          publicUrl: config.workerGatewayPublicUrl,
+          defaultWorkingDirectory: config.workingDirectory,
+          heartbeatTimeoutMs: config.workerHeartbeatTimeoutMs,
+          leaseTtlMs: config.workerLeaseTtlMs,
+          checkpoint: (workers) => store?.save({ workers }),
+          onAvailability: () => taskQueue?.resume?.(),
+          logger,
+        });
+      await workerGateway.start?.();
+    }
     client.on?.(Events.Error, (error) => {
       logAudioFailure(logger, "discord_client_failed", error);
     });
@@ -902,6 +955,14 @@ export async function startDiscordVoiceCodex({
         );
     }
     const messageOptions = { silent: config.silentMessages !== false };
+    const agentMessagePublisher =
+      issueForum && config.agentWebhookAvatars
+        ? (dependencies.agentMessagePublisher ??
+          new DiscordAgentWebhookPublisher({
+            issueForum,
+            agentTeam,
+          }))
+        : undefined;
     const postText = (content, { idempotencyKey } = {}) =>
       textChannel.send(
         createDiscordMessagePayload(content, {
@@ -914,6 +975,7 @@ export async function startDiscordVoiceCodex({
       issueForum,
       coordinationChannel,
       agentChannels,
+      agentMessagePublisher,
     });
     const upsertLiveTranscript = createEditableDiscordPost(
       textChannel,
@@ -993,9 +1055,15 @@ export async function startDiscordVoiceCodex({
     );
     const playAudio =
       dependencies.playAudio ?? createDiscordPlayer(connection, logger);
+    const runAssignedTask = createDistributedTaskRunner({
+      localRunner: (task, options) => codex.runTask(task, options),
+      workerGateway,
+      agentTeam,
+      listTasks: () => taskQueue?.list?.() ?? [],
+    });
     taskQueue = config.powerMode
       ? new DiscordVoiceTaskQueue({
-          runTask: (task, options) => codex.runTask(task, options),
+          runTask: runAssignedTask,
           reviewTask: (task, options) => codex.reviewTask?.(task, options),
           agentTeam,
           postText,
@@ -1131,6 +1199,7 @@ export async function startDiscordVoiceCodex({
       session,
       taskQueue,
       resetMeeting: () => codex.resetMeeting?.(),
+      workerGateway,
       leaveVoice: async () => {
         manuallyDisconnected = true;
         session.voicePaused = true;
@@ -1245,6 +1314,10 @@ export async function startDiscordVoiceCodex({
       await postText(
         `⚙️ この会議の設定: ${config.allParticipantsOperate ? "参加者全員が作業を指示・操作できます。" : "設定済みの操作担当者が作業を操作できます。"}${config.autonomousTasks ? "会話から必要な作業を判断してタスク化します。" : ""}${config.answerUnaddressedQuestions ? "呼びかけなしの質問にも応答します。" : ""}`,
       );
+    if (workerGateway)
+      await postText(
+        "🔐 個人Codex Worker Gatewayを起動しました。参加者は `/ido agent connect` から自分の端末を登録できます。ログイン情報は共有しません。",
+      );
     if ((config.codexAgents?.length ?? 0) > 1)
       await postText(
         `🤖 Codexエージェント ${config.codexAgents.length}体を接続しました。Issueは担当領域と負荷で割り振り、${config.issueForumChannelId ? `<#${config.issueForumChannelId}>` : "タスクスレッド"}で進捗・質問・指摘・回答を共有します。`,
@@ -1259,6 +1332,7 @@ export async function startDiscordVoiceCodex({
       connection,
       session,
       taskQueue,
+      workerGateway,
       stop: stopService,
     };
   } catch (error) {

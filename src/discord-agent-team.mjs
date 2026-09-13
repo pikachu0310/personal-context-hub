@@ -77,6 +77,20 @@ function normalizeAgent(agent, index, defaults) {
     model: String(agent.model ?? defaults.model ?? "").trim() || undefined,
     reasoningEffort,
     enabled: agent.enabled !== false,
+    transport: agent.transport === "remote" ? "remote" : "local",
+    online: agent.online !== false,
+    ownerUserId: optionalSnowflake(
+      agent.ownerUserId,
+      `Codex agent ${id} ownerUserId`,
+    ),
+    ownerDisplayName:
+      String(agent.ownerDisplayName ?? "")
+        .trim()
+        .slice(0, 80) || undefined,
+    ownerAvatarUrl:
+      String(agent.ownerAvatarUrl ?? "")
+        .trim()
+        .slice(0, 2_048) || undefined,
   });
 }
 
@@ -142,13 +156,38 @@ export class CodexAgentTeam {
     return [...this.agents.values()];
   }
 
+  upsert(agent) {
+    if (!agent?.id) throw new Error("A Codex agent id is required.");
+    const current = this.agents.get(agent.id);
+    const normalized = Object.freeze({
+      ...current,
+      ...agent,
+      capabilities: normalizeCapabilities(agent.capabilities),
+      maximumConcurrentTasks: Math.max(
+        1,
+        Math.min(4, Number(agent.maximumConcurrentTasks) || 1),
+      ),
+      enabled: agent.enabled !== false,
+      online: agent.online !== false,
+    });
+    this.agents.set(normalized.id, normalized);
+    if (!this.active.has(normalized.id)) this.active.set(normalized.id, 0);
+    return normalized;
+  }
+
+  setOnline(id, online) {
+    const agent = this.agents.get(id);
+    if (!agent) return undefined;
+    return this.upsert({ ...agent, online: Boolean(online) });
+  }
+
   get(id) {
     return this.agents.get(id);
   }
 
-  assign(task, existingTasks = []) {
+  assign(task, existingTasks = [], { force = false, exclude = [] } = {}) {
     const existing = this.get(task.assignedAgentId);
-    if (existing) {
+    if (existing && existing.online !== false && !force) {
       task.assignedAgentName = existing.name;
       task.issueId ??= task.id;
       return existing;
@@ -162,7 +201,15 @@ export class CodexAgentTeam {
           load.get(candidate.assignedAgentId) + 1,
         );
     }
-    const candidates = this.list().map((agent) => ({
+    const excluded = new Set(exclude);
+    const eligible = this.list().filter(
+      (agent) =>
+        agent.enabled !== false &&
+        agent.online !== false &&
+        !excluded.has(agent.id),
+    );
+    if (!eligible.length) return undefined;
+    const candidates = eligible.map((agent) => ({
       agent,
       affinity: capabilityScore(agent, task),
       load: load.get(agent.id) ?? 0,
@@ -173,6 +220,8 @@ export class CodexAgentTeam {
     const ranked = (available.length ? available : candidates).sort(
       (left, right) =>
         right.affinity - left.affinity ||
+        Number(right.agent.transport === "remote") -
+          Number(left.agent.transport === "remote") ||
         left.load / left.agent.maximumConcurrentTasks -
           right.load / right.agent.maximumConcurrentTasks ||
         left.agent.id.localeCompare(right.agent.id),
@@ -181,6 +230,8 @@ export class CodexAgentTeam {
     task.issueId ??= task.id;
     task.assignedAgentId = selected.agent.id;
     task.assignedAgentName = selected.agent.name;
+    task.assignedAgentTransport = selected.agent.transport ?? "local";
+    task.assignedAgentOwnerUserId = selected.agent.ownerUserId;
     task.assignedAt ??= Date.now();
     task.assignmentReason = selected.affinity
       ? `担当領域が依頼に一致（score ${selected.affinity}、割当済み ${selected.load}件）`
@@ -188,9 +239,18 @@ export class CodexAgentTeam {
     return selected.agent;
   }
 
+  reassign(task, existingTasks = [], exclude = []) {
+    return this.assign(task, existingTasks, { force: true, exclude });
+  }
+
   selectReviewer(task) {
     return this.list()
-      .filter(({ id }) => id !== task.assignedAgentId)
+      .filter(
+        ({ id, transport, online }) =>
+          id !== task.assignedAgentId &&
+          transport !== "remote" &&
+          online !== false,
+      )
       .sort(
         (left, right) =>
           capabilityScore(right, task) - capabilityScore(left, task) ||
@@ -203,7 +263,9 @@ export class CodexAgentTeam {
   canRun(task) {
     const agent = this.get(task.assignedAgentId);
     return Boolean(
-      agent && (this.active.get(agent.id) ?? 0) < agent.maximumConcurrentTasks,
+      agent &&
+      agent.online !== false &&
+      (this.active.get(agent.id) ?? 0) < agent.maximumConcurrentTasks,
     );
   }
 

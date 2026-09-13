@@ -80,9 +80,9 @@ export class TaskWorkspaceManager {
       const actual = await realpath(task.workingDirectory);
       if (actual !== target)
         throw new Error("Task workspace is outside its configured root");
-      const top = (
-        await git(actual, ["rev-parse", "--show-toplevel"])
-      ).stdout.trim();
+      const top = await realpath(
+        (await git(actual, ["rev-parse", "--show-toplevel"])).stdout.trim(),
+      );
       const common = async (cwd) =>
         realpath(
           (

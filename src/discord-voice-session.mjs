@@ -729,8 +729,12 @@ export class DiscordVoiceTaskQueue {
       issueId: task.issueId,
       assignedAgentId: task.assignedAgentId,
       assignedAgentName: task.assignedAgentName,
+      assignedAgentTransport: task.assignedAgentTransport,
+      assignedAgentOwnerUserId: task.assignedAgentOwnerUserId,
       assignedAt: task.assignedAt,
       assignmentReason: task.assignmentReason,
+      reassignments: structuredClone(task.reassignments ?? []),
+      remoteExecution: task.remoteExecution,
       createdAt: task.createdAt,
       meetingId: task.meetingId,
       state: task.state,
@@ -1131,6 +1135,8 @@ export class DiscordVoiceTaskQueue {
       (task.applied &&
         (!task.appliedRevision ||
           task.appliedRevision === task.artifacts?.runRevision)) ||
+      task.remoteExecution ||
+      task.artifacts?.remote ||
       !this.applyTaskChanges
     )
       return false;
@@ -1189,12 +1195,17 @@ export class DiscordVoiceTaskQueue {
         await this.persist({ strict: true });
         const surface = task.surface ?? (await this.#loadRestoredSurface(task));
         const post = typeof surface === "function" ? surface : surface?.post;
+        const postAs =
+          typeof surface === "object" && surface?.postAs
+            ? surface.postAs
+            : (_agentId, content, options) => post(content, options);
         if (!post) throw new Error("Task result surface is unavailable");
         const stages = [
           ...(delivery.peerReview?.feedback
             ? [
                 (options) =>
-                  post(
+                  postAs(
+                    delivery.peerReview.agentId,
                     `🔍 **${boundText(delivery.peerReview.agentName, 80)} から担当エージェントへの質問・指摘**\n${boundText(delivery.peerReview.feedback, MAX_DISCORD_MESSAGE - 100)}`,
                     options,
                   ),
@@ -1212,7 +1223,27 @@ export class DiscordVoiceTaskQueue {
             (chunk) => (options) => post(chunk, options),
           ),
         ];
-        if (delivery.artifacts) {
+        if (delivery.artifacts?.remote) {
+          stages.push((options) =>
+            post(
+              [
+                "🔬 **担当者端末の確認用成果**",
+                `変更: ${delivery.artifacts.hasChanges ? "あり" : "なし"}`,
+                delivery.artifacts.status
+                  ? `変更状態:\n${boundText(delivery.artifacts.status, 900)}`
+                  : undefined,
+                delivery.artifacts.patchHash
+                  ? `差分SHA-256: \`${delivery.artifacts.patchHash}\``
+                  : undefined,
+                boundText(delivery.artifacts.note, 500),
+                "差分本体は担当者端末にだけ保持され、Botから自動反映しません。",
+              ]
+                .filter(Boolean)
+                .join("\n"),
+              options,
+            ),
+          );
+        } else if (delivery.artifacts) {
           stages.push((options) =>
             post(
               "🔬 **確認用の成果**\n" +
@@ -1509,25 +1540,43 @@ export class DiscordVoiceTaskQueue {
       this.active < this.concurrency &&
       this.queue.length
     ) {
+      if (this.agentTeam) {
+        for (const queued of this.queue) {
+          const assigned = this.agentTeam.get(queued.assignedAgentId);
+          if (assigned?.online !== false) continue;
+          this.agentTeam.reassign(queued, this.tasks.values(), [
+            queued.assignedAgentId,
+          ]);
+        }
+      }
       const index = this.agentTeam
         ? this.queue.findIndex((task) => this.agentTeam.canRun(task))
         : 0;
       if (index < 0) break;
       const [task] = this.queue.splice(index, 1);
-      if (this.agentTeam && !this.agentTeam.start(task)) {
+      const agentLease = this.agentTeam
+        ? { assignedAgentId: task.assignedAgentId }
+        : undefined;
+      if (this.agentTeam && !this.agentTeam.start(agentLease)) {
         this.queue.splice(index, 0, task);
         break;
       }
+      task.agentExecutionLease = agentLease;
       this.active += 1;
       const execution = this.#execute(task);
       this.running.add(execution);
       void execution.finally(() => {
         this.running.delete(execution);
-        this.agentTeam?.finish(task);
+        this.agentTeam?.finish(task.agentExecutionLease ?? agentLease);
+        delete task.agentExecutionLease;
         this.active -= 1;
         this.#drain();
       });
     }
+  }
+
+  resume() {
+    this.#drain();
   }
 
   async #execute(task) {

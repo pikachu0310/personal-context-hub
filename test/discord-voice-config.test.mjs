@@ -351,3 +351,22 @@ test("voice config keeps the isolated Codex home beside an overridden state file
   });
   assert.equal(explicit.isolatedCodexHome, "/tmp/voice-codex-home");
 });
+
+test("voice config exposes only public Worker gateway settings", () => {
+  const config = loadDiscordVoiceConfig({
+    ...valid,
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_ENABLED: "true",
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_HOST: "127.0.0.1",
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PORT: "8788",
+    PERSONAL_CONTEXT_VOICE_WORKER_GATEWAY_PUBLIC_URL:
+      "wss://agents.example.test",
+    PERSONAL_CONTEXT_VOICE_AGENT_WEBHOOK_AVATARS: "true",
+  });
+  assert.equal(config.workerGatewayEnabled, true);
+  assert.equal(config.workerGatewayPort, 8788);
+  assert.equal(config.workerGatewayPublicUrl, "wss://agents.example.test");
+  assert.equal(config.agentWebhookAvatars, true);
+  const described = describeDiscordVoiceConfig(config);
+  assert.equal(described.workerGatewayEnabled, true);
+  assert.doesNotMatch(JSON.stringify(described), /test-secret-never-print/);
+});
