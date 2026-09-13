@@ -1,12 +1,9 @@
 import assert from "node:assert/strict";
-import { createOpenAIAudioAdapter } from "../src/discord-voice-openai.mjs";
-import {
-  wrapPcmAsWav,
-  PcmSegmentBuffer,
-  ttsPcm24kMonoToDiscordRaw,
-} from "../src/discord-voice-audio.mjs";
-import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
-import { loadDiscordVoiceConfig } from "../src/discord-voice-config.mjs";
+import { createOpenAIAudioAdapter } from "../src/providers/openai-audio.mjs";
+import { wrapPcmAsWav, PcmSegmentBuffer } from "../src/engine/input/audio.mjs";
+import { ttsPcm24kMonoToDiscordRaw } from "../src/adapters/discord/audio-format.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
+import { loadDiscordVoiceConfig } from "../src/runtime/discord-voice/config.mjs";
 
 // Uses only synthetic speech. Never joins Discord or captures a participant.
 const config = loadDiscordVoiceConfig();

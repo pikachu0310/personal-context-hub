@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
-import { isImmediateTaskStatus } from "../src/discord-voice-intents.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
+import { isImmediateTaskStatus } from "../src/engine/observation/intents.mjs";
 const noop = async () => undefined;
 const meeting = (options = {}) =>
   new DiscordVoiceMeetingSession({
@@ -126,6 +126,8 @@ test("status text arrives during an earlier spoken answer while speech remains i
         minutes: "context",
         shouldReply: true,
         reply: "最初の回答です。",
+        replyReason: "direct_answer",
+        replySourceSequences: [1],
       }),
     postText: async (text) => posts.push(text),
     synthesize: async (text) => {
@@ -143,7 +145,7 @@ test("status text arrives during an earlier spoken answer while speech remains i
     release?.();
     await session.stop();
   });
-  await session.addText("案について説明して", { userId: "member" });
+  await session.addText("井戸Bot、案について説明して", { userId: "member" });
   const observation = session.observeNow();
   while (!release) await new Promise((resolve) => setImmediate(resolve));
   const status = session.addText("井戸Bot、進捗を教えて", { userId: "member" });

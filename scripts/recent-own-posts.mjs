@@ -1,4 +1,4 @@
-import { TraqClient } from "../src/traq-client.mjs";
+import { TraqClient } from "../src/integrations/traq/client.mjs";
 
 const client = new TraqClient();
 const me = await client.whoami();

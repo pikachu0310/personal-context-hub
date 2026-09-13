@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
-import { TaskWorkspaceManager } from "../src/discord-voice-workspace.mjs";
-import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
-import { taskControls } from "../src/discord-voice-commands.mjs";
+import { TaskWorkspaceManager } from "../src/execution/codex/workspace.mjs";
+import { DiscordVoiceTaskQueue } from "../src/adapters/discord/sessions.mjs";
+import { taskControls } from "../src/adapters/discord/commands.mjs";
 
 const exec = promisify(execFile);
 async function fixture(t) {

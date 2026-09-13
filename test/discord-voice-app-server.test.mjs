@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import test from "node:test";
-import { AppServerCodex } from "../src/discord-voice-app-server.mjs";
+import { AppServerCodex } from "../src/execution/codex/app-server.mjs";
 
 function server({ handle, requestTimeoutMs = 1000 } = {}) {
   const child = new EventEmitter();

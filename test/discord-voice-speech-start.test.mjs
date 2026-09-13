@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
-import { SpeechStartGate } from "../src/discord-voice-speech-start.mjs";
+import { SpeechStartGate } from "../src/adapters/discord/speech-start.mjs";
 
 function fixture(t, { users = [], silenceMs } = {}) {
   let time = 0;

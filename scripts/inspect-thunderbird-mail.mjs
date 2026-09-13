@@ -1,4 +1,4 @@
-import { ThunderbirdMailClient } from "../src/thunderbird-mail-client.mjs";
+import { ThunderbirdMailClient } from "../src/integrations/thunderbird/client.mjs";
 
 const client = new ThunderbirdMailClient();
 const status = client.profileStatus();

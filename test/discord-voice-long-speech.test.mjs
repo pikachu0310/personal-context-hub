@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
-import { PcmSegmentBuffer } from "../src/discord-voice-audio.mjs";
-import { SpeechTurnAssembler } from "../src/discord-voice-utterances.mjs";
-import { buildMeetingObservationPrompt } from "../src/discord-voice-openai.mjs";
-import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
-import { subscribeToAllowedSpeaker } from "../src/discord-voice-server.mjs";
+import { PcmSegmentBuffer } from "../src/engine/input/audio.mjs";
+import { SpeechTurnAssembler } from "../src/engine/input/utterances.mjs";
+import { buildMeetingObservationPrompt } from "../src/execution/codex/runner.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
+import { subscribeToAllowedSpeaker } from "../src/adapters/discord/transport.mjs";
 const noop = async () => undefined;
 
 test("late corrections survive both observation prompt construction and oversized utterance context", () => {
@@ -97,7 +97,12 @@ test("segmented speech waits for its ending and restores recognition order befor
       JSON.stringify({
         minutes: "青へ訂正",
         tasks: [
-          { title: "青いボタン", sourceSequences: [statements[0].sequence] },
+          {
+            title: "青いボタン",
+            sourceSequences: [statements[0].sequence],
+            authorizationSequences: [statements[0].sequence],
+            executionIntent: "requested",
+          },
         ],
       }),
     enqueueTask: async (task) => {

@@ -4,13 +4,11 @@ import { promisify } from "node:util";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
-import { createDiscordArtifactPoster } from "../src/discord-voice-server.mjs";
-import { MeetingStateStore } from "../src/discord-voice-state.mjs";
-import {
-  DiscordVoiceTaskQueue,
-  authorizeMeetingTasks,
-} from "../src/discord-voice-session.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
+import { createDiscordArtifactPoster } from "../src/adapters/discord/transport.mjs";
+import { MeetingStateStore } from "../src/storage/meeting-state.mjs";
+import { DiscordVoiceTaskQueue } from "../src/adapters/discord/sessions.mjs";
+import { authorizeMeetingTasks } from "../src/engine/observation/observation.mjs";
 
 // Real Codex integration test: only synthetic data in a new temporary repository.
 // Intentionally retain the workspaces and report so a person can inspect the evidence.

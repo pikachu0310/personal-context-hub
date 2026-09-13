@@ -9,8 +9,8 @@ import {
   createDiscordTaskThread,
   formatDiscordTaskAction,
   formatDiscordTaskCard,
-  startDiscordVoiceCodex,
-} from "../src/discord-voice-server.mjs";
+} from "../src/adapters/discord/transport.mjs";
+import { startDiscordVoiceCodex } from "../src/runtime/discord-voice/index.mjs";
 
 test("task creation recovers lost card, thread, and request acknowledgements in the same Discord thread", async () => {
   const acceptedCards = new Map();
@@ -312,7 +312,13 @@ test("text status reports voice reconnection failure and later recovery without 
     isTextBased: () => true,
     send: async ({ content }) => {
       posts.push(content);
-      return { edit: async () => {} };
+      return {
+        edit: async () => {},
+        startThread: async () => ({
+          id: "discussion",
+          send: async ({ content }) => posts.push(content),
+        }),
+      };
     },
   };
   const client = new EventEmitter();
@@ -351,7 +357,7 @@ test("text status reports voice reconnection failure and later recovery without 
     releaseRecovery = resolve;
   });
   const service = await startDiscordVoiceCodex({
-    config: { ...config, powerMode: false },
+    config: { ...config, powerMode: false, hudPort: -1 },
     client,
     logger: {},
     dependencies: {
@@ -462,7 +468,7 @@ test("Discord task actions explain whether work is queued, resumed, or stopped",
   );
 });
 
-test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and playback", async () => {
+test("synthetic participant PCM reaches Codex and a task thread without duplicate parent acknowledgement or speech", async (t) => {
   const turnEvents = [];
   const posts = [];
   const taskThreadPosts = [];
@@ -511,7 +517,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
           return message;
         },
         startThread: async ({ name, autoArchiveDuration }) => {
-          assert.match(name, /モック作業/);
+          assert.match(name, /モック作業|会議の回答 /);
           assert.equal(autoArchiveDuration, 1_440);
           return {
             id: "55555555555555555",
@@ -557,17 +563,21 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
 
   const synthesized = Buffer.from("mock-tts-pcm");
   const service = await startDiscordVoiceCodex({
-    config,
+    config: { ...config, hudPort: 0, studioPort: 0 },
     client,
     logger: { info: () => undefined, error: () => undefined },
     dependencies: {
+      studioAccess: {
+        operatorCode: "synthetic-studio-operator-code-00000001",
+        viewerCode: "synthetic-studio-viewer-code-0000000001",
+      },
       audioAdapter: {
         transcribe: async (wav) => {
           turnEvents.push("stt");
           assert.equal(wav.subarray(0, 4).toString("ascii"), "RIFF");
           assert.equal(wav.subarray(8, 12).toString("ascii"), "WAVE");
           assert.equal(wav.readUInt32LE(40), 48_000);
-          return "モック発話";
+          return "井戸Bot、モック作業を実装して";
         },
         synthesize: async (text) => {
           turnEvents.push("tts");
@@ -579,17 +589,24 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
         prepare: async () => undefined,
         observeMeeting: async ({ transcript }) => {
           turnEvents.push("codex");
-          assert.equal(transcript, "[Owner] モック発話");
+          assert.equal(transcript, "[Owner] 井戸Bot、モック作業を実装して");
           return JSON.stringify({
             minutes: "- Ownerがモック発話",
             shouldReply: true,
             reply: "モック応答",
-            tasks: [{ title: "モック作業", sourceSequences: [1] }],
+            tasks: [
+              {
+                title: "モック作業",
+                sourceSequences: [1],
+                authorizationSequences: [1],
+                executionIntent: "requested",
+              },
+            ],
           });
         },
         runTask: async (task, { onProgress }) => {
           turnEvents.push("power_task");
-          assert.equal(task.request, "モック発話");
+          assert.equal(task.request, "井戸Bot、モック作業を実装して");
           await onProgress("🔎 モック進捗");
           return "モックタスク完了";
         },
@@ -635,6 +652,7 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
     },
   });
 
+  t.after(() => service.stop());
   speaking.emit("start", config.allowedUserId);
   decoder.emit("data", Buffer.alloc(48_000));
   decoder.emit("end");
@@ -649,25 +667,59 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
     channels: 2,
     frameSize: 960,
   });
-  assert.equal(turnEvents[0], "stt");
+  assert.ok(service.hud?.url);
+  const hudSnapshot = await (
+    await fetch(service.hud.url + "/api/snapshot")
+  ).json();
   for (const stage of [
-    "codex",
-    "post_response",
-    "tts",
-    "playback",
-    "power_task",
-  ]) {
+    "AUDIO",
+    "STT",
+    "ASSEMBLE",
+    "OBSERVE",
+    "EXECUTE",
+    "DELIVER",
+  ])
+    assert.ok(
+      hudSnapshot.events.some((event) => event.stage === stage),
+      `HUD missing ${stage}`,
+    );
+  const hudInputs = hudSnapshot.events.find(
+    (event) => event.stage === "ASSEMBLE" && event.text,
+  )?.inputIds;
+  assert.ok(
+    hudSnapshot.events.some(
+      (event) =>
+        event.stage === "DELIVER" &&
+        event.status === "completed" &&
+        event.inputIds.some((id) => hudInputs.includes(id)),
+    ),
+  );
+  assert.equal(turnEvents[0], "stt");
+  for (const stage of ["codex", "power_task"]) {
     assert.ok(turnEvents.includes(stage));
   }
-  assert.ok(posts.some(({ content }) => /会議観測モード/.test(content)));
-  assert.ok(posts.some(({ content }) => /Owner.*モック発話/.test(content)));
+  assert.ok(posts.some(({ content }) => /井戸Bot・会議の案内/.test(content)));
+  assert.ok(posts.some(({ content }) => /Owner.*モック作業/.test(content)));
   assert.ok(posts.some(({ content }) => /議事録/.test(content)));
   assert.deepEqual(
     archivedStatements.map(({ speakerName, text }) => ({ speakerName, text })),
-    [{ speakerName: "Owner", text: "モック発話" }],
+    [{ speakerName: "Owner", text: "井戸Bot、モック作業を実装して" }],
   );
-  assert.ok(
+  assert.equal(
     posts.some(({ content }) => content === "タスクを追加しました：モック作業"),
+    false,
+  );
+  assert.equal(turnEvents.includes("tts"), false);
+  assert.equal(turnEvents.includes("playback"), false);
+  assert.equal(
+    hudSnapshot.events.some((event) =>
+      ["TTS", "PLAYBACK"].includes(event.stage),
+    ),
+    false,
+  );
+  assert.equal(
+    posts.some(({ content }) => content?.includes("モックタスク完了")),
+    false,
   );
   assert.ok(posts.some(({ content }) => /Codexタスク/.test(content)));
   assert.ok(
@@ -696,12 +748,13 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
     true,
   );
   await eventually(() =>
-    posts.some(({ content }) => content.startsWith("📦 **モック作業**")),
+    service.session.results.some(
+      (result) => result.result === "モックタスク完了",
+    ),
   );
   assert.equal(
-    posts.find(({ content }) => content.startsWith("📦 **モック作業**"))
-      .enforceNonce,
-    true,
+    posts.some(({ content }) => content.startsWith("📦 **モック作業**")),
+    false,
   );
   assert.ok(
     posts.every(({ content }) => !/Codexタスク(開始|完了)/.test(content)),
@@ -717,8 +770,49 @@ test("synthetic participant PCM crosses receive, STT, Codex, Text, TTS, and play
   await service.session.dependencies.postText("delivery identity check", {
     idempotencyKey: "synthetic-reply:chunk:0",
   });
-  assert.equal(posts.at(-1).enforceNonce, true);
-  assert.match(posts.at(-1).nonce, /^[a-f0-9]{24}$/);
+  assert.equal(taskThreadPosts.at(-1).enforceNonce, true);
+  assert.match(taskThreadPosts.at(-1).nonce, /^[a-f0-9]{24}$/);
+  const studioOrigin = new URL(service.studio.url).origin;
+  const login = await (
+    await fetch(studioOrigin + "/api/studio/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "ブラウザの参加者",
+        code: "synthetic-studio-operator-code-00000001",
+      }),
+    })
+  ).json();
+  const studioSnapshot = await (
+    await fetch(studioOrigin + "/api/studio/rooms/current/snapshot", {
+      headers: { Authorization: `Bearer ${login.token}` },
+    })
+  ).json();
+  const sameTask = studioSnapshot.tasks[0];
+  assert.equal(sameTask.id, service.taskQueue.list()[0].id);
+  const response = await fetch(
+    studioOrigin + "/api/studio/rooms/current/commands",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${login.token}`,
+      },
+      body: JSON.stringify({
+        id: "browser-same-task-follow-0001",
+        type: "follow",
+        meetingId: studioSnapshot.meetingId,
+        taskId: sameTask.id,
+        specRevision: sameTask.specRevision,
+        controlVersion: sameTask.controlVersion,
+        text: "ブラウザから同じ作業を修正して",
+      }),
+    },
+  );
+  assert.equal(response.status, 200);
+  assert.equal(service.taskQueue.list().length, 1);
+  assert.equal(service.taskQueue.list()[0].specRevision, 2);
+  assert.equal(service.taskQueue.list()[0].threadId, "55555555555555555");
   await service.stop();
   await service.stop();
   assert.equal(connectionDestroyCalls, 1);

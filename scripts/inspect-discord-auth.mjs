@@ -1,8 +1,8 @@
-import { DiscordClient } from "../src/discord-client.mjs";
+import { DiscordClient } from "../src/integrations/discord-bot/client.mjs";
 import {
   getDiscordTokenStoreDescription,
   readDiscordTokenStore,
-} from "../src/discord-config.mjs";
+} from "../src/integrations/discord-bot/config.mjs";
 
 const credential = await readDiscordTokenStore();
 const client = new DiscordClient();

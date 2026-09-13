@@ -5,8 +5,8 @@ import {
   CodexAgentTeam,
   parseCodexAgents,
 } from "../src/discord-agent-team.mjs";
-import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
-import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
+import { TaskQueue as DiscordVoiceTaskQueue } from "../src/engine/task-queue.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
 
 async function eventually(predicate, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;

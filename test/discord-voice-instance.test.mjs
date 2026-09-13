@@ -12,7 +12,7 @@ test("voice instance commands layer one ignored profile over the base env", () =
   assert.deepEqual(launch.arguments, [
     "--env-file-if-exists=/srv/voice-bot/.env",
     "--env-file=/srv/voice-bot/.env.voice.tdm-wisdom",
-    "/srv/voice-bot/src/discord-voice-server.mjs",
+    "/srv/voice-bot/src/runtime/discord-voice/server.mjs",
   ]);
 });
 

@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { fileURLToPath } from "node:url";
 
 const serverPath = fileURLToPath(
-  new URL("../src/discord-rpc-server.mjs", import.meta.url),
+  new URL("../src/integrations/discord-rpc/server.mjs", import.meta.url),
 );
 const transport = new StdioClientTransport({
   command: process.execPath,

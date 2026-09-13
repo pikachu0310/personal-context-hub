@@ -1,3 +1,4 @@
+import { parseBotInvocation } from "./invocation.mjs";
 const stopVerb =
   "(?:停止(?:して(?:ください)?)?|中止(?:して(?:ください)?)?|キャンセル(?:して(?:ください)?)?|止めて(?:ください)?|stop|cancel)[。.!！\\s]*";
 const namedStop = new RegExp(
@@ -12,23 +13,17 @@ const currentStop = new RegExp(
 // Only a complete, directly addressed stop is eligible for the immediate path.
 // Quotations, questions, compound requests, and uncertain speech stay with the observer.
 export function parseImmediateTaskStop(text) {
-  const addressed = String(text ?? "")
-    .trim()
-    .match(
-      /^(?:井戸(?:bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,：:\s]*([\s\S]+)$/iu,
-    );
+  const addressed = parseBotInvocation(text);
   if (!addressed) return undefined;
-  const named = addressed[1].match(namedStop);
+  const named = addressed.body.match(namedStop);
   if (named) return { taskId: named[1] };
-  return currentStop.test(addressed[1]) ? {} : undefined;
+  return currentStop.test(addressed.body) ? {} : undefined;
 }
 
 export function isImmediateTaskStatus(text, { explicitlyAsked = false } = {}) {
   const normalized = String(text ?? "").trim();
-  const addressed = normalized.match(
-    /^(?:井戸(?:bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,：:\s]*([\s\S]+)$/iu,
-  );
-  const body = addressed?.[1] ?? (explicitlyAsked ? normalized : "");
+  const addressed = parseBotInvocation(normalized);
+  const body = addressed?.body ?? (explicitlyAsked ? normalized : "");
   return /^(?:今の|現在の)?(?:作業状況|タスク(?:の)?状況|進捗(?:状況)?)(?:(?:を)?教えて(?:ください)?|(?:は)?[?？]|(?:は)?どう(?:なってる|なっていますか))?[。.!！?？\s]*$/u.test(
     body,
   );
@@ -39,12 +34,8 @@ const speechStop = new RegExp(
   "iu",
 );
 export function isImmediateSpeechStop(text) {
-  const addressed = String(text ?? "")
-    .trim()
-    .match(
-      /^(?:井戸(?:bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,：:\s]*([\s\S]+)$/iu,
-    );
-  return Boolean(addressed && speechStop.test(addressed[1]));
+  const addressed = parseBotInvocation(text);
+  return Boolean(addressed && speechStop.test(addressed.body));
 }
 
 export function parseImmediateTaskInstruction(
@@ -52,11 +43,9 @@ export function parseImmediateTaskInstruction(
   { requireWakeWord = false } = {},
 ) {
   const normalized = String(text ?? "").trim();
-  const addressed = normalized.match(
-    /^(?:井戸(?:bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,：:\s]*([\s\S]+)$/iu,
-  );
+  const addressed = parseBotInvocation(normalized);
   if (requireWakeWord && !addressed) return undefined;
-  const body = addressed?.[1] ?? normalized;
+  const body = addressed?.body ?? normalized;
   if (
     /[「」『』"`?？]|(?:かも|かな|たら|なら|しないで|停止|中止|キャンセル|止めて)/u.test(
       body,

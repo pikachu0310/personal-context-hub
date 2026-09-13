@@ -1,6 +1,6 @@
 import OpenAI from "openai";
-import { DiscordLiveBridge } from "../src/discord-voice-live.mjs";
-import { ttsPcm24kMonoToDiscordRaw } from "../src/discord-voice-audio.mjs";
+import { DiscordLiveBridge } from "../src/providers/live.mjs";
+import { ttsPcm24kMonoToDiscordRaw } from "../src/adapters/discord/audio-format.mjs";
 
 // Synthetic audio only. This script never joins Discord or starts a worker.
 const client = new OpenAI();

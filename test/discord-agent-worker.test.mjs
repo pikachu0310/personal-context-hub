@@ -18,12 +18,12 @@ import {
 } from "../src/discord-agent-worker.mjs";
 import { CodexAgentTeam } from "../src/discord-agent-team.mjs";
 import { createDistributedTaskRunner } from "../src/discord-agent-task-runner.mjs";
-import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
+import { TaskQueue as DiscordVoiceTaskQueue } from "../src/engine/task-queue.mjs";
 import {
   createIdobataMessageHandler,
   createIdobataSlashHandler,
   IDOBATA_APPLICATION_COMMAND,
-} from "../src/discord-voice-commands.mjs";
+} from "../src/adapters/discord/commands.mjs";
 import {
   DiscordAgentWebhookPublisher,
   generateAgentAvatar,

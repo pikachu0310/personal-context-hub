@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createIdobataMessageHandler } from "../src/discord-voice-commands.mjs";
-import { DiscordVoiceMeetingSession } from "../src/discord-voice-session.mjs";
+import { createIdobataMessageHandler } from "../src/adapters/discord/commands.mjs";
+import { DiscordVoiceMeetingSession } from "../src/adapters/discord/sessions.mjs";
 
 function handlerFor(tasks, session = {}) {
   const posts = [];

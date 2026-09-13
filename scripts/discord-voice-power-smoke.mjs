@@ -1,8 +1,8 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { loadDiscordVoiceConfig } from "../src/discord-voice-config.mjs";
-import { CodexVoiceRunner } from "../src/discord-voice-openai.mjs";
+import { loadDiscordVoiceConfig } from "../src/runtime/discord-voice/config.mjs";
+import { CodexVoiceRunner } from "../src/execution/codex/runner.mjs";
 
 const base = loadDiscordVoiceConfig();
 const temporaryDirectory = await mkdtemp(join(tmpdir(), "voice-power-smoke-"));

@@ -48,6 +48,8 @@ test("text and audio inputs preserve identity and use independent text-only outp
           minutes: "要点",
           shouldReply: true,
           reply: "回答",
+          replyReason: "new_finding",
+          replySourceSequences: [1],
           tasks: [],
           taskControls: [],
         }),
@@ -380,7 +382,7 @@ test("normalized audio and text requests reach execution and plain results with 
       posts = [];
     const engine = await createConversationEngine({
       config: { ...config, powerMode: true },
-      audio: { transcribe: async () => "実装してください" },
+      audio: { transcribe: async () => "井戸Bot、実装してください" },
       execution: bindExecution({
         observeMeeting: async ({ statements }) =>
           JSON.stringify({
@@ -393,6 +395,10 @@ test("normalized audio and text requests reach execution and plain results with 
                 title: "作業",
                 kind: "implementation",
                 complexity: "routine",
+                executionIntent: "requested",
+                authorizationSequences: statements.map(
+                  (statement) => statement.sequence,
+                ),
                 sourceSequences: statements.map(
                   (statement) => statement.sequence,
                 ),
@@ -412,7 +418,7 @@ test("normalized audio and text requests reach execution and plain results with 
         type,
         ...(type === "audio"
           ? { audio: Buffer.from("fixture") }
-          : { text: "実装してください" }),
+          : { text: "井戸Bot、実装してください" }),
         actor: { id: "operator" },
       });
       await eventually(() => engine.session.statements.length === 1);

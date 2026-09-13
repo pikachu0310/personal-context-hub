@@ -1,5 +1,5 @@
-import { readTokenStore } from "../src/config.mjs";
-import { TraqClient } from "../src/traq-client.mjs";
+import { readTokenStore } from "../src/integrations/traq/config.mjs";
+import { TraqClient } from "../src/integrations/traq/client.mjs";
 
 const token = await readTokenStore();
 const client = new TraqClient();

@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   DiscordVoiceMeetingSession,
   DiscordVoiceTaskQueue,
-} from "../src/discord-voice-session.mjs";
-import { createIdobataMessageHandler } from "../src/discord-voice-commands.mjs";
+} from "../src/adapters/discord/sessions.mjs";
+import { createIdobataMessageHandler } from "../src/adapters/discord/commands.mjs";
 
 const noop = async () => undefined;
 
@@ -105,7 +105,14 @@ function meeting(options = {}) {
     observe: async ({ statements }) =>
       JSON.stringify({
         minutes: "決定",
-        tasks: [{ title: "work", sourceSequences: [statements[0].sequence] }],
+        tasks: [
+          {
+            title: "work",
+            sourceSequences: [statements[0].sequence],
+            authorizationSequences: [statements[0].sequence],
+            executionIntent: "requested",
+          },
+        ],
         shouldReply: false,
       }),
     ...options,
@@ -223,7 +230,12 @@ test("voice cancellation is resolved before replaying a pending receipt", async 
           : {
               minutes: "作業依頼",
               tasks: [
-                { title: "work", sourceSequences: [statements[0].sequence] },
+                {
+                  title: "work",
+                  sourceSequences: [statements[0].sequence],
+                  authorizationSequences: [statements[0].sequence],
+                  executionIntent: "requested",
+                },
               ],
               shouldReply: false,
             },

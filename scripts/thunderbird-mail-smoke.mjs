@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { fileURLToPath } from "node:url";
 
 const serverPath = fileURLToPath(
-  new URL("../src/thunderbird-mail-server.mjs", import.meta.url),
+  new URL("../src/integrations/thunderbird/server.mjs", import.meta.url),
 );
 const startScriptPath = fileURLToPath(
   new URL("./start-thunderbird-mail-mcp.sh", import.meta.url),

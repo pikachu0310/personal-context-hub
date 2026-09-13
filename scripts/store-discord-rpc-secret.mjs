@@ -2,7 +2,7 @@ import {
   DISCORD_RPC_REDIRECT_URI,
   getDiscordRpcCredentialStoreDescription,
   writeDiscordRpcCredentialStore,
-} from "../src/discord-rpc-config.mjs";
+} from "../src/integrations/discord-rpc/config.mjs";
 
 function getArgument(name) {
   const index = process.argv.indexOf(name);

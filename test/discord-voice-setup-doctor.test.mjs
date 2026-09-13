@@ -6,7 +6,7 @@ import {
   runDiscordVoiceSetupDoctor,
   VOICE_CODEX_DOCTOR_FAILED,
   VOICE_CODEX_DOCTOR_OK,
-} from "../src/discord-voice-setup-doctor.mjs";
+} from "../src/runtime/discord-voice/setup-doctor.mjs";
 
 const validEnvironment = Object.freeze({
   PERSONAL_CONTEXT_VOICE_GUILD_ID: "11111111111111111",

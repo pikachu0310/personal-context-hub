@@ -6,7 +6,7 @@ import {
   getTokenStoreDescription,
   readTokenStore,
   writeTokenStore,
-} from "../src/config.mjs";
+} from "../src/integrations/traq/config.mjs";
 
 if (getTokenBackend() !== "dpapi") {
   throw new Error(

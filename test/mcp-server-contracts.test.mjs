@@ -41,7 +41,7 @@ function byName(tools, name) {
 }
 
 test("traQ MCP exposes guarded write and destructive contracts", async () => {
-  const tools = await listTools("server.mjs", {
+  const tools = await listTools("integrations/traq/server.mjs", {
     PERSONAL_CONTEXT_TOKEN_PATH: "/definitely/missing/traq-token.json",
   });
   assert.equal(tools.length, 31);
@@ -64,7 +64,7 @@ test("traQ MCP exposes guarded write and destructive contracts", async () => {
 });
 
 test("Discord Bot MCP exposes guarded writes without reading credentials at startup", async () => {
-  const tools = await listTools("discord-server.mjs", {
+  const tools = await listTools("integrations/discord-bot/server.mjs", {
     PERSONAL_CONTEXT_DISCORD_TOKEN_PATH:
       "/definitely/missing/discord-token.json",
   });
@@ -82,7 +82,7 @@ test("Discord Bot MCP exposes guarded writes without reading credentials at star
 });
 
 test("Discord user MCP handshakes without Discord or credentials", async () => {
-  const tools = await listTools("discord-rpc-server.mjs", {
+  const tools = await listTools("integrations/discord-rpc/server.mjs", {
     PERSONAL_CONTEXT_DISCORD_RPC_PATH: "/definitely/missing/discord-rpc.json",
   });
   assert.equal(tools.length, 8);
@@ -90,7 +90,7 @@ test("Discord user MCP handshakes without Discord or credentials", async () => {
 });
 
 test("Thunderbird MCP exposes only read-only contracts", async () => {
-  const tools = await listTools("thunderbird-mail-server.mjs", {
+  const tools = await listTools("integrations/thunderbird/server.mjs", {
     THUNDERBIRD_PROFILE: "/definitely/missing/thunderbird-profile",
   });
   assert.equal(tools.length, 5);

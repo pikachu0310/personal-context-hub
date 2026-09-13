@@ -1,4 +1,9 @@
+import { safeNotify } from "../../engine/telemetry.mjs";
 import { SpeechStartGate } from "./speech-start.mjs";
+import {
+  createThreadParticipantJoiner,
+  taskParticipantIds,
+} from "./discussion-threads.mjs";
 import { formatTaskPreview } from "../../engine/output/preview.mjs";
 import { Readable } from "node:stream";
 import { createHash, randomUUID } from "node:crypto";
@@ -24,6 +29,7 @@ import {
   PcmTurnBuffer,
   PcmSegmentBuffer,
   wrapPcmAsWav,
+  qualifyTranscriptionAudio,
 } from "../../engine/input/audio.mjs";
 
 import { boundText, formatElapsedTime } from "../../engine/shared.mjs";
@@ -31,6 +37,8 @@ import { escapeDiscordMarkdown } from "./presentation.mjs";
 import { ttsPcm24kMonoToDiscordRaw } from "./audio-format.mjs";
 
 const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
+const QUALIFIED_SPEECH = Symbol("qualifiedSpeech");
+const decodedSpeakers = new WeakMap();
 const AUDIO_RETRY_MESSAGE =
   "⚠️ 音声データを処理できませんでした。もう一度話してください。";
 
@@ -90,32 +98,94 @@ export function createDiscordPlayer(
   const speechStart = new SpeechStartGate(connection.receiver.speaking, {
     silenceMs: speechStartSilenceMs,
   });
-  const play = serializeAudioPlayback(async (ttsPcm, { signal } = {}) => {
-    if (signal?.aborted) throw signal.reason;
-    const stopOnAbort = () => player.stop(true);
-    signal?.addEventListener("abort", stopOnAbort, { once: true });
-    try {
-      const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
-      const seconds = raw.length / PCM_BYTES_PER_SECOND;
-      await speechStart.runWhenQuiet(
-        () => {
-          const resource = createAudioResource(Readable.from(raw), {
-            inputType: StreamType.Raw,
+  const serializedPlay = serializeAudioPlayback(
+    async (ttsPcm, { signal, beforeStart, canStart, onPlaybackState } = {}) => {
+      if (signal?.aborted) throw signal.reason;
+      const interruption = new AbortController();
+      signal = signal
+        ? AbortSignal.any([signal, interruption.signal])
+        : interruption.signal;
+      let playing = false;
+      const onHumanStart = () => {
+        if (playing) {
+          logInfoQuietly(logger, {
+            component: "discord-voice",
+            event: "playback_interrupted",
+            reason: "human_speech",
           });
-          player.play(resource);
-        },
-        { signal },
-      );
-      await entersState(player, AudioPlayerStatus.Playing, 5_000);
-      await entersState(
-        player,
-        AudioPlayerStatus.Idle,
-        Math.max(10_000, Math.ceil(seconds * 1_000) + 10_000),
-      );
-    } finally {
-      signal?.removeEventListener("abort", stopOnAbort);
-    }
-  });
+          interruption.abort(
+            Object.assign(new Error("Human speech interrupted playback"), {
+              code: "SPEECH_STOPPED",
+              interruptionReason: "human_speech",
+            }),
+          );
+        }
+      };
+      const onRawStart = (userId) => {
+        // RTP speaking events also arrive for silence and microphone clicks.
+        // Decoded participants interrupt only after the same signal check as STT.
+        if (!decodedSpeakers.get(connection)?.(userId)) onHumanStart();
+      };
+      connection.receiver.speaking.on("start", onRawStart);
+      connection.receiver.speaking.on(QUALIFIED_SPEECH, onHumanStart);
+      const stopOnAbort = () => player.stop(true);
+      signal?.addEventListener("abort", stopOnAbort, { once: true });
+      try {
+        const raw = ttsPcm24kMonoToDiscordRaw(ttsPcm);
+        const seconds = raw.length / PCM_BYTES_PER_SECOND;
+        safeNotify(onPlaybackState, {
+          status: "waiting",
+          reason: "speaker_silence",
+        });
+        let admitted = false;
+        while (!admitted) {
+          if (signal.aborted) throw signal.reason;
+          if (beforeStart && !(await beforeStart({ signal }))) return;
+          admitted = await speechStart.runWhenQuiet(
+            () => {
+              if (canStart && !canStart()) return false;
+              const resource = createAudioResource(Readable.from(raw), {
+                inputType: StreamType.Raw,
+              });
+              playing = true;
+              player.play(resource);
+              return true;
+            },
+            { signal },
+          );
+        }
+        await entersState(
+          player,
+          AudioPlayerStatus.Playing,
+          AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
+        );
+        safeNotify(onPlaybackState, { status: "running", reason: undefined });
+        await entersState(
+          player,
+          AudioPlayerStatus.Idle,
+          AbortSignal.any([
+            signal,
+            AbortSignal.timeout(
+              Math.max(10_000, Math.ceil(seconds * 1_000) + 10_000),
+            ),
+          ]),
+        );
+        if (signal.aborted) throw signal.reason;
+      } finally {
+        playing = false;
+        connection.receiver.speaking.off("start", onRawStart);
+        connection.receiver.speaking.off(QUALIFIED_SPEECH, onHumanStart);
+        signal?.removeEventListener("abort", stopOnAbort);
+      }
+    },
+  );
+  const play = (audio, options = {}) => {
+    safeNotify(options.onPlaybackState, {
+      status: "waiting",
+      reason: "playback_queue",
+    });
+    return serializedPlay(audio, options);
+  };
   play.dispose = () => speechStart.dispose();
   return play;
 }
@@ -181,14 +251,18 @@ export function subscribeToAllowedSpeaker({
   live,
 }) {
   const active = new Set();
+  decodedSpeakers.set(
+    connection,
+    (userId) => config.listenToEveryone || userId === config.allowedUserId,
+  );
   const notify = (content) =>
     Promise.resolve()
       .then(() => postText(content))
       .catch(() => undefined);
   connection.receiver.speaking.on("end", (userId) => live?.speakerEnd(userId));
   connection.receiver.speaking.on("start", (userId) => {
-    if (!config.listenToEveryone && userId !== config.allowedUserId) return;
     live?.speakerStart(userId);
+    if (!config.listenToEveryone && userId !== config.allowedUserId) return;
     if (active.has(userId)) return;
     const startedAt = Date.now();
     active.add(userId);
@@ -241,10 +315,21 @@ export function subscribeToAllowedSpeaker({
     };
     let discardedTurn = false;
     let finalized = false;
+    let activeSpeechMs = 0;
+    let speechConfirmed = false;
 
     decoder.on("data", (chunk) => {
       if (discardedTurn) return;
       try {
+        if (!speechConfirmed) {
+          activeSpeechMs += qualifyTranscriptionAudio(
+            wrapPcmAsWav(chunk),
+          ).activeMs;
+          if (activeSpeechMs >= 80) {
+            speechConfirmed = true;
+            connection.receiver.speaking.emit(QUALIFIED_SPEECH, userId);
+          }
+        }
         live?.input(userId, chunk);
         if (segmented) {
           for (const pcm of turnBuffer.push(chunk)) enqueueSegment(pcm);
@@ -350,9 +435,24 @@ export function createDiscordMessagePayload(
   };
 }
 
-export function createEditableDiscordPost(textChannel, { silent = true } = {}) {
+export function createEditableDiscordPost(
+  textChannel,
+  { silent = true, botUserId, restorePrefix } = {},
+) {
   let message;
+  let restored = false;
   return async (content) => {
+    if (!restored) {
+      restored = true;
+      if (botUserId && restorePrefix && textChannel.messages?.fetch) {
+        const recent = await textChannel.messages.fetch({ limit: 100 });
+        message = recent?.find(
+          (item) =>
+            item.author?.id === botUserId &&
+            item.content?.startsWith(restorePrefix),
+        );
+      }
+    }
     const payload = createDiscordMessagePayload(content, { silent });
     if (!message || typeof message.edit !== "function") {
       message = await textChannel.send(payload);
@@ -593,6 +693,7 @@ export function createDiscordTaskThread(
     agentMessagePublisher,
   } = {},
 ) {
+  const joinParticipants = createThreadParticipantJoiner();
   return async (task) => {
     const creationKey = `task-thread:${task.id}:${task.createdAt}:${task.threadId ?? "initial"}`;
     const title = String(task.title ?? "Codexタスク")
@@ -674,6 +775,7 @@ export function createDiscordTaskThread(
     }
     const threadId = String(thread.id ?? "");
     if (!threadId) throw new Error("Created task thread has no channel ID.");
+    await joinParticipants(thread, taskParticipantIds(task));
     const card = createDiscordTaskCardUpdater(
       textChannel,
       task,

@@ -3,11 +3,11 @@ import test from "node:test";
 import {
   identifyVerificationCommand,
   formatVerificationEvidence,
-} from "../src/discord-voice-evidence.mjs";
+} from "../src/engine/evidence.mjs";
 import {
   CodexVoiceRunner,
   describePowerTaskEvent,
-} from "../src/discord-voice-openai.mjs";
+} from "../src/execution/codex/runner.mjs";
 
 test("verification evidence cannot mistake printed commands or masked failures for a passing check", () => {
   for (const command of [

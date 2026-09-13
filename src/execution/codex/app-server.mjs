@@ -395,7 +395,9 @@ class AppServerThread {
             : { ...last, scope: "last_response_only" };
           this.client.threadUsage.set(this.id, total);
         } else usage = last ? { ...last, scope: "last_response_only" } : null;
-      } else if (["item/started", "item/completed"].includes(method)) {
+      } else if (
+        ["item/started", "item/updated", "item/completed"].includes(method)
+      ) {
         const item = normalizeAppServerItem(params.item);
         if (item) queue.push({ type: method.replace("/", "."), item });
       } else if (method === "turn/completed") {

@@ -1,6 +1,17 @@
+import { invocationAcknowledgement } from "./observation/invocation.mjs";
+import { createSpeechTicket } from "./reply/speech-ticket.mjs";
+import { createTelemetry } from "./telemetry.mjs";
 import { MeetingMemory } from "./observation/memory.mjs";
 import { deliverSpeech } from "./output/speech.mjs";
 import { randomUUID } from "node:crypto";
+import {
+  mayReplyImmediately,
+  isBotAddressed,
+  directTaskCreation,
+  hasTaskCommitment,
+  normalizeTaskTopic,
+  shouldDeliverObservationReply,
+} from "./observation/participation.mjs";
 import { VoiceServiceError, voiceErrorCode } from "./errors.mjs";
 import {
   boundText,
@@ -39,11 +50,14 @@ import {
 } from "./observation/observation.mjs";
 export class MeetingSession {
   constructor({
+    telemetry = createTelemetry(),
     presentation = plainPresentation,
     speechEnabled = true,
     transcribe,
     observe,
     quickReply,
+    classifyVoiceNeed,
+    revalidateReply,
     investigateQuestion,
     getRuntimeContext = () => ({}),
     upsertLiveTranscript,
@@ -80,12 +94,15 @@ export class MeetingSession {
     scheduleInterval = setInterval,
     cancelInterval = clearInterval,
   }) {
+    this.telemetry = telemetry;
     this.presentation = presentation;
     this.speechEnabled = speechEnabled;
     this.dependencies = {
       transcribe,
       observe,
       quickReply,
+      classifyVoiceNeed,
+      revalidateReply,
       investigateQuestion,
       getRuntimeContext,
       upsertLiveTranscript,
@@ -121,6 +138,10 @@ export class MeetingSession {
     this.cancelInterval = cancelInterval;
     this.audioQueue = [];
     this.activeTranscriptions = 0;
+    this.replyContextRevision = 0;
+    this.speechCandidates = new Map();
+    this.latestSpeechOrders = new Map();
+    this.announcedResults = new Set();
     this.activeTranscriptionJobs = new Set();
     this.activeOperations = new Set();
     this.archiveOperations = new WeakMap();
@@ -220,8 +241,36 @@ export class MeetingSession {
       metadata,
       queuedAt: Date.now(),
     });
+    this.#recordQueuedAudio(this.audioQueue.at(-1));
     this.#drainTranscriptions();
     return true;
+  }
+
+  #recordQueuedAudio(queued) {
+    if (queued.sequence === undefined || queued.hudRecorded) return;
+    queued.hudRecorded = true;
+    const inputIds = [`${this.meetingId}:I-${queued.sequence}`];
+    this.telemetry.emit({
+      stage: "AUDIO",
+      spanId: `audio-${queued.id}-${queued.metadata.segmentIndex ?? 0}`,
+      status: "completed",
+      at: queued.queuedAt,
+      inputIds,
+    });
+    this.telemetry.emit({
+      stage: "STT",
+      spanId: `stt-wait-${queued.id}-${queued.metadata.segmentIndex ?? 0}`,
+      status: "waiting",
+      reason: "transcription_capacity",
+      inputIds,
+    });
+    this.telemetry.emit({
+      stage: "ASSEMBLE",
+      spanId: `input-${this.meetingId}-${queued.sequence}`,
+      status: "waiting",
+      reason: "transcript_segments",
+      inputIds,
+    });
   }
 
   async persist() {
@@ -415,8 +464,11 @@ export class MeetingSession {
     await this.persist();
     this.#queueLiveUpdate();
     if (
-      completed.some((statement) => !statement.handledAction) &&
-      this.immediateReactions
+      completed.some(
+        (statement) =>
+          !statement.handledAction &&
+          mayReplyImmediately(statement, this.immediateReactions),
+      )
     ) {
       this.immediateObservationRequested = true;
       this.#scheduleImmediateObservation();
@@ -452,7 +504,7 @@ export class MeetingSession {
       this.#queueLiveUpdate();
       if (
         !statement.handledAction &&
-        (this.immediateReactions || statement.requestReply)
+        mayReplyImmediately(statement, this.immediateReactions)
       ) {
         this.immediateObservationRequested = true;
         this.#scheduleImmediateObservation();
@@ -463,7 +515,28 @@ export class MeetingSession {
     }
   }
 
-  async #tryImmediateTaskAction(statement) {
+  #tryImmediateTaskAction(statement) {
+    return this.telemetry.scope(
+      { inputIds: [`${this.meetingId}:I-${statement.sequence}`] },
+      () => this.#tryImmediateTaskActionObserved(statement),
+    );
+  }
+
+  async #tryImmediateTaskActionObserved(statement) {
+    this.telemetry.emit({
+      stage: "ASSEMBLE",
+      spanId: `input-${this.meetingId}-${statement.sequence}`,
+      status: "completed",
+      text: statement.text,
+      speaker: statement.speakerName,
+    });
+    this.#replyDiagnostic(
+      statement,
+      mayReplyImmediately(statement, this.immediateReactions)
+        ? "呼びかけを検出"
+        : "呼びかけなし・通常の会話",
+    );
+    this.replyContextRevision++;
     this.memory.remember(statement);
     this.dependencies.onStatement(statement);
     if (
@@ -481,7 +554,9 @@ export class MeetingSession {
     }
     if (isImmediateSpeechStop(statement.text))
       return this.#tryImmediateSpeechStop(statement);
+    if (!mayReplyImmediately(statement)) return false;
     if (await this.#tryImmediateInstruction(statement)) return true;
+    if (await this.#tryImmediateCreation(statement)) return true;
     const handled = await (isImmediateTaskStatus(statement.text, {
       explicitlyAsked: statement.requestReply === true,
     })
@@ -511,6 +586,85 @@ export class MeetingSession {
       })),
       runtime: this.dependencies.getRuntimeContext(),
     };
+  }
+
+  async #tryImmediateCreation(statement) {
+    if (
+      !this.immediateReactions ||
+      !this.tasksEnabled ||
+      !this.ownerUserId ||
+      statement.taskEligible === false ||
+      statement.handledAction ||
+      !(
+        (this.allParticipantsOperate && statement.userId) ||
+        statement.userId === this.ownerUserId ||
+        this.operatorUserIds.includes(statement.userId)
+      )
+    )
+      return false;
+    const parsed = directTaskCreation(statement.text, {
+      explicitlyAsked: statement.requestReply === true,
+    });
+    if (!parsed) return false;
+    if (
+      !hasTaskCommitment(
+        {
+          executionIntent: "requested",
+          sourceSequences: [statement.sequence],
+          authorizationSequences: [statement.sequence],
+        },
+        this.statements,
+      )
+    )
+      return false;
+    const [task] = authorizeMeetingTasks(
+      [
+        {
+          title: parsed.title,
+          kind: "implementation",
+          complexity: "routine",
+          acceptanceCriteria: [],
+          sourceSequences: [statement.sequence],
+        },
+      ],
+      [
+        {
+          ...statement,
+          sourceUserId: statement.userId,
+          userId: this.ownerUserId,
+        },
+      ],
+      this.ownerUserId,
+    );
+    if (!task) return false;
+    task.id = randomUUID().slice(0, 8);
+    task.meetingId = this.meetingId;
+    task.context = this.getContextSnapshot();
+    task.requestKey = `${this.meetingId}:voice:${statement.sequence}`;
+    this.pendingTasks.push(task);
+    statement.handledAction = { type: "create", taskId: task.id };
+    statement.taskEligible = false;
+    this.#replyDiagnostic(statement, "作成依頼を受付・保存中");
+    try {
+      await this.persist();
+      const { accepted } = await this.#dispatchPendingTasks();
+      this.#replyDiagnostic(
+        statement,
+        accepted.some((item) => item.requestKey === task.requestKey)
+          ? "作成依頼を受け付けました"
+          : "作成依頼の受付を再試行中",
+      );
+      this.#log("immediate_task_creation", {
+        sequence: statement.sequence,
+        taskId: task.id,
+      });
+    } catch (error) {
+      this.#log("immediate_task_creation_pending", {
+        sequence: statement.sequence,
+        errorCode: voiceErrorCode(error),
+      });
+    }
+    return true;
   }
 
   async #tryImmediateInstruction(statement) {
@@ -576,44 +730,66 @@ export class MeetingSession {
     return true;
   }
 
+  #replyDiagnostic(statement, decision) {
+    if (statement.meetingId !== this.meetingId) return;
+    if (this.lastReplyDecision?.sequence > statement.sequence) return;
+    this.lastReplyDecision = { sequence: statement.sequence, decision };
+    this.#log("meeting_invocation_decision", this.lastReplyDecision);
+    this.#queueLiveUpdate();
+  }
+
   #startQuickReply(statement) {
     if (
       this.dependencies.isLive() ||
       !this.dependencies.quickReply ||
       statement.handledAction ||
-      (!statement.requestReply &&
-        (!this.immediateReactions ||
-          statement.taskEligible === false ||
-          (!(
-            this.answerUnaddressedQuestions &&
-            /[？?]|(?:ですか|ますか|だっけ|なの|かな|教えて)[。！!\s]*$|(?:どうすれ|どうや|何が|何を|なぜ|なんで)/u.test(
-              statement.text,
-            )
-          ) &&
-            !/^(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,\s。！!？?]/iu.test(
-              statement.text,
-            )))) ||
+      !mayReplyImmediately(statement, this.immediateReactions) ||
       (!statement.requestReply &&
         /(?:実装|修正|作成|調査|検索|ベンチマーク|テスト)(?:して|をお願い)|作って|直して|調べて/u.test(
           statement.text,
         ))
     )
       return;
-    if (this.activeQuickReplies >= 3) return;
+    if (this.activeQuickReplies >= 3) {
+      this.#replyDiagnostic(statement, "返信処理が混雑・会話確認へ");
+      return;
+    }
+    this.#replyDiagnostic(statement, "回答を確認中");
     this.activeQuickReplies++;
     statement.handledAction = { type: "quick_reply", pending: true };
     const startedAt = Date.now();
     const context = this.getReplyContext(statement);
-    const explicitlyAsked =
-      statement.requestReply ||
-      /^(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)[、,\s。！!？?]/iu.test(
-        statement.text,
-      );
+    const explicitlyAsked = true;
     this.#trackOperation(
       (async () => {
         let reply;
         let investigated = false;
         try {
+          if (
+            this.dependencies.classifyVoiceNeed &&
+            !invocationAcknowledgement(statement.text)
+          ) {
+            const need = await withTimeout(
+              (signal) =>
+                this.dependencies.classifyVoiceNeed(
+                  { text: statement.text, context },
+                  { signal },
+                ),
+              15_000,
+              "classifying voice need",
+              this.shutdownController.signal,
+            );
+            this.#log("meeting_voice_need", {
+              sequence: statement.sequence,
+              decision: need.decision,
+            });
+            if (need.decision !== "reply") {
+              this.#replyDiagnostic(statement, "音声回答は不要と判定");
+              statement.handledAction = { type: "quick_reply", ignored: true };
+              await this.persist();
+              return;
+            }
+          }
           const rawDecision = await withTimeout(
             (signal) =>
               this.dependencies.quickReply(
@@ -629,6 +805,7 @@ export class MeetingSession {
               ? { action: "reply", reply: rawDecision }
               : rawDecision;
           if (decision?.action === "ignore") {
+            this.#replyDiagnostic(statement, "回答を見送り");
             statement.handledAction = { type: "quick_reply", ignored: true };
             await this.persist();
             this.#log("meeting_quick_reply_ignored", {
@@ -637,6 +814,7 @@ export class MeetingSession {
             return;
           }
           if (decision?.action === "investigate") {
+            this.#replyDiagnostic(statement, "資料・ログを確認中");
             if (!this.dependencies.investigateQuestion)
               throw new Error("Question investigation unavailable");
             investigated = true;
@@ -671,6 +849,7 @@ export class MeetingSession {
           reply = boundText(reply, investigated ? 5000 : 1200);
           if (!reply) throw new Error("Empty reply");
           if (this.closed) return;
+          this.#replyDiagnostic(statement, "回答を作成・送信待ち");
           this.#log("meeting_quick_reply_completed", {
             sequence: statement.sequence,
             elapsedMs: Date.now() - startedAt,
@@ -678,6 +857,7 @@ export class MeetingSession {
           });
         } catch (error) {
           if (this.closed) return;
+          this.#replyDiagnostic(statement, "回答処理に失敗");
           this.#log("meeting_quick_reply_failed", {
             errorCode: voiceErrorCode(error),
           });
@@ -701,6 +881,7 @@ export class MeetingSession {
           }
           return;
         }
+        this.replyContextRevision++;
         this.recentConversation.push({
           role: "assistant",
           sequence: statement.sequence,
@@ -827,9 +1008,14 @@ export class MeetingSession {
   }
 
   async #saveImmediateReply(statement, control, handledAction) {
+    control.participantUserIds = statement.userId ? [statement.userId] : [];
+    control.taskId ??= statement.taskId;
     if (!(this.autonomousTasks && handledAction.type === "quick_reply"))
       statement.taskEligible = false;
     statement.handledAction = handledAction;
+    control.speechTargets ??= [
+      { sequence: statement.sequence, text: statement.text },
+    ];
     // This is a notification-only receipt. Replaying it never invokes a worker or control.
     this.pendingControls.push(control);
     try {
@@ -1011,7 +1197,19 @@ export class MeetingSession {
     ].join("\n\n");
   }
 
-  async addTaskResult(result, options = {}) {
+  addTaskResult(result, options = {}) {
+    return this.telemetry.scope(
+      {
+        taskId: result.taskId ?? result.id,
+        inputIds: (result.sourceSequences ?? []).map(
+          (n) => `${result.meetingId ?? this.meetingId}:I-${n}`,
+        ),
+      },
+      () => this.#addTaskResultObserved(result, options),
+    );
+  }
+
+  async #addTaskResultObserved(result, options = {}) {
     while (this.resetting) await this.meetingBoundary;
     if (this.closed)
       throw new VoiceServiceError(
@@ -1030,6 +1228,7 @@ export class MeetingSession {
       this.results = this.results.filter(
         (previous) => previous.id !== result.id,
       );
+      this.replyContextRevision++;
       this.results.push({
         ...result,
         result: boundText(result.result, 4000),
@@ -1045,6 +1244,10 @@ export class MeetingSession {
         "Meeting closed before result notification",
         "会議を停止しています。",
       );
+    if (options.resultAlreadyDelivered) {
+      if (meetingId === this.meetingId) this.#announceTaskResult(result);
+      return;
+    }
     if (meetingId !== this.meetingId) {
       await this.dependencies.postText(
         this.presentation.meetingResult(result, true),
@@ -1056,6 +1259,28 @@ export class MeetingSession {
       this.presentation.meetingResult(result, false),
       options,
     );
+    this.#announceTaskResult(result);
+  }
+
+  #announceTaskResult(result) {
+    if (
+      result.superseded ||
+      this.dependencies.isLive() ||
+      !this.dependencies.revalidateReply
+    )
+      return;
+    const key = `${this.meetingId}:${result.id}:${result.runRevision ?? 0}`;
+    if (this.announcedResults.has(key)) return;
+    this.announcedResults.add(key);
+    if (this.announcedResults.size > 200)
+      this.announcedResults.delete(this.announcedResults.values().next().value);
+    void this.#queueMeetingSpeech(speechExcerpt(result.result), [
+      {
+        text: `タスク結果: ${result.title ?? result.id}`,
+        resultId: result.id,
+        runRevision: result.runRevision ?? 0,
+      },
+    ]);
   }
 
   async newMeeting(resetObserver = async () => undefined) {
@@ -1106,6 +1331,7 @@ export class MeetingSession {
       this.recentConversation = [];
       this.results = [];
       this.sequence = 0;
+      this.lastReplyDecision = undefined;
       this.silencedThroughSequence = null;
       this.revision = 0;
       this.observationRetryPending = false;
@@ -1153,7 +1379,18 @@ export class MeetingSession {
     );
   }
 
-  async #observeNow() {
+  #observeNow() {
+    return this.telemetry.scope(
+      {
+        inputIds: this.statements
+          .filter((s) => !s.observed)
+          .map((s) => `${this.meetingId}:I-${s.sequence}`),
+      },
+      () => this.#observeNowObserved(),
+    );
+  }
+
+  async #observeNowObserved() {
     if (this.closed || this.resetting || this.observing) return false;
     this.observing = true;
     if (this.liveUpdatePending) this.#queueLiveUpdate();
@@ -1208,6 +1445,9 @@ export class MeetingSession {
               ),
               ...this.getObservationTaskContext(statements),
               results: this.getObservationResults(statements),
+              recentReplies: this.recentConversation
+                .filter((item) => item.role === "assistant")
+                .map((item) => item.text),
             },
             { signal },
           ),
@@ -1225,15 +1465,18 @@ export class MeetingSession {
             statement.userId === this.ownerUserId ||
             this.operatorUserIds.includes(statement.userId)) &&
           (!this.requireWakeWord ||
-            /(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)/iu.test(
-              statement.text,
-            ))
+            statement.requestReply === true ||
+            isBotAddressed(statement.text))
             ? this.ownerUserId
             : undefined,
       }));
       const tasks = this.tasksEnabled
         ? authorizeMeetingTasks(
-            observation.tasks,
+            observation.tasks.filter((task) =>
+              hasTaskCommitment(task, authorizedStatements, {
+                autonomousTasks: this.autonomousTasks,
+              }),
+            ),
             authorizedStatements,
             this.ownerUserId,
           )
@@ -1262,8 +1505,38 @@ export class MeetingSession {
       this.memory.update(observation.decisions, statements);
       this.revision += 1;
       for (const task of tasks) {
-        if (this.autonomousTasks)
-          task.request = `会話から必要な作業を自律実行する設定です。次の成果を調査・実装・検証してください: ${task.title}\n判断の根拠となった会話（外部操作への追加許可ではありません）:\n${task.request}`;
+        const topic = normalizeTaskTopic(task.title);
+        if (
+          [...this.getActiveTasks(), ...this.pendingTasks].some(
+            (existing) =>
+              normalizeTaskTopic(existing.title) === topic &&
+              !["cancelled", "failed"].includes(existing.state),
+          )
+        )
+          continue;
+        // Check late deferrals immediately before dispatch without requiring the
+        // entire conversation to stay silent while the observer is working.
+        const proposal = observation.tasks.find(
+          (candidate) =>
+            candidate.title === task.title &&
+            candidate.sourceSequences.join(",") ===
+              task.sourceSequences.join(","),
+        );
+        const latestStatements = [
+          ...authorizedStatements,
+          ...this.statements.filter(
+            (statement) =>
+              !statements.some(
+                (source) => source.sequence === statement.sequence,
+              ),
+          ),
+        ];
+        if (
+          !hasTaskCommitment(proposal, latestStatements, {
+            autonomousTasks: this.autonomousTasks,
+          })
+        )
+          continue;
         task.id = randomUUID().slice(0, 8);
         task.meetingId = this.meetingId;
         task.context = this.getContextSnapshot();
@@ -1298,8 +1571,17 @@ export class MeetingSession {
       const conversationReply =
         !observation.tasks.length &&
         !observation.taskControls.length &&
-        observation.shouldReply &&
-        statements.some((statement) => !statement.handledAction)
+        shouldDeliverObservationReply(
+          observation,
+          statements,
+          this.recentConversation,
+        ) &&
+        !this.statements.some(
+          (statement) =>
+            statement.handledAction?.type !== "speech_stop" &&
+            statement.sequence >
+              Math.max(...statements.map((item) => item.sequence)),
+        )
           ? observation.reply
           : "";
       if (conversationReply)
@@ -1307,15 +1589,36 @@ export class MeetingSession {
           type: "reply",
           meetingId: this.meetingId,
           requestKey: `${this.meetingId}:reply:${this.revision}`,
-          sourceSequences: statements.map((statement) => statement.sequence),
+          sourceSequences: observation.replySourceSequences,
+          participantUserIds: [
+            ...new Set(
+              statements
+                .filter((statement) =>
+                  observation.replySourceSequences.includes(statement.sequence),
+                )
+                .map((statement) => statement.userId)
+                .filter(Boolean),
+            ),
+          ],
           notification: conversationReply,
-          spokenNotification: this.#canSpeakFor(
-            statements
-              .filter((statement) => !statement.handledAction)
-              .map((statement) => statement.sequence),
-          )
-            ? speechExcerpt(conversationReply)
-            : "",
+          speechTargets: statements
+            .filter((s) =>
+              observation.replySourceSequences.includes(s.sequence),
+            )
+            .map(({ sequence, text }) => ({ sequence, text })),
+          spokenNotification:
+            statements.some(
+              (statement) =>
+                observation.replySourceSequences.includes(statement.sequence) &&
+                mayReplyImmediately(statement),
+            ) &&
+            this.#canSpeakFor(
+              statements
+                .filter((statement) => !statement.handledAction)
+                .map((statement) => statement.sequence),
+            )
+              ? speechExcerpt(conversationReply)
+              : "",
         });
       for (const statement of statements) statement.observed = true;
       this.statements = this.statements.filter(
@@ -1329,30 +1632,10 @@ export class MeetingSession {
       await this.#dispatchPendingControls();
       const { accepted: acceptedTasks } = await this.#dispatchPendingTasks();
 
-      const reply = acceptedTasks.length
-        ? `タスクを追加しました：${acceptedTasks.map((task) => task.title).join("、")}`
-        : "";
-      if (reply) {
-        for (const chunk of this.presentation.splitText(reply)) {
-          await withTimeout(
-            (signal) => this.dependencies.postText(chunk, { signal }),
-            this.stageTimeouts.posting,
-            "posting meeting response",
-            this.shutdownController.signal,
-          );
-        }
-        this.#queueMeetingSpeech(
-          this.#canSpeakFor(
-            acceptedTasks.flatMap((task) => task.sourceSequences ?? []),
-          )
-            ? speechExcerpt(reply)
-            : "",
-        );
-      }
       this.#log("meeting_observation_completed", {
         elapsedMs: Date.now() - startedAt,
         statements: statements.length,
-        replied: Boolean(reply || conversationReply),
+        replied: Boolean(conversationReply),
         tasks: acceptedTasks.length,
       });
       if (
@@ -1360,7 +1643,7 @@ export class MeetingSession {
           (statement) =>
             !statement.observed &&
             !statement.handledAction &&
-            (this.immediateReactions || statement.requestReply),
+            mayReplyImmediately(statement, this.immediateReactions),
         )
       )
         this.immediateObservationRequested = true;
@@ -1444,6 +1727,8 @@ export class MeetingSession {
                   : chunks[index],
                 {
                   signal,
+                  taskId: control.taskId,
+                  participantUserIds: control.participantUserIds,
                   idempotencyKey: control.requestKey
                     ? `${control.requestKey}:text:${index}`
                     : undefined,
@@ -1456,16 +1741,34 @@ export class MeetingSession {
           control.deliveredChunks = index + 1;
           await this.persist();
         }
+        if (control.type === "reply" && control.notification) {
+          this.replyContextRevision++;
+          this.recentConversation.push({
+            role: "assistant",
+            sourceSequences: control.sourceSequences,
+            text: boundText(control.notification, 1200),
+          });
+          this.recentConversation = this.recentConversation.slice(-24);
+        }
         this.pendingControls = this.pendingControls.filter(
           (pending) => pending !== control,
         );
         await this.persist();
-        const excerpt = control.spokenNotification ?? control.notification;
+        // Receipts and ordinary progress stay in text; only actual answers speak.
+        const excerpt = ["reply", "status"].includes(control.type)
+          ? (control.spokenNotification ?? control.notification)
+          : "";
         const spoken =
           excerpt && replyContext ? `${replyContext}です。${excerpt}` : excerpt;
         // Text delivery must not wait for an earlier spoken response.
         void this.#queueMeetingSpeech(
           this.#canSpeakFor(control.sourceSequences) ? spoken : "",
+          control.speechTargets ??
+            this.recentConversation.filter(
+              (item) =>
+                item.role === "user" &&
+                control.sourceSequences?.includes(item.sequence),
+            ),
         );
       } catch (error) {
         this.#log("meeting_control_dispatch_pending", {
@@ -1485,7 +1788,7 @@ export class MeetingSession {
     );
   }
 
-  #queueMeetingSpeech(spoken) {
+  #queueMeetingSpeech(spoken, targets = []) {
     if (!this.speechEnabled || !spoken || this.closed || this.voicePaused)
       return Promise.resolve();
     if (this.dependencies.isLive()) {
@@ -1496,16 +1799,93 @@ export class MeetingSession {
       this.shutdownController.signal,
       this.speechController.signal,
     ]);
+    const key = targets
+      .map((target) =>
+        target.text
+          .normalize("NFKC")
+          .replace(/[\s、。！？!?]/gu, " ")
+          .trim(),
+      )
+      .join("\n");
+    const order = Math.max(
+      -1,
+      ...targets.map((target) => target.sequence ?? -1),
+    );
+    const historyKey = `${this.meetingId}:${key}`;
+    if (key && (this.latestSpeechOrders.get(historyKey) ?? -1) > order)
+      return Promise.resolve();
+    if (key) this.latestSpeechOrders.set(historyKey, order);
+    if (this.latestSpeechOrders.size > 200)
+      this.latestSpeechOrders.delete(
+        this.latestSpeechOrders.keys().next().value,
+      );
+    const candidate = { order };
+    if (key) this.speechCandidates.set(key, candidate);
+    const ticket = createSpeechTicket({
+      isCurrent: () =>
+        (!key || this.speechCandidates.get(key) === candidate) &&
+        targets.every((target) => {
+          if (!target.resultId) return true;
+          const current = this.results.find(
+            (result) => result.id === target.resultId,
+          );
+          return (
+            current &&
+            !current.superseded &&
+            (current.runRevision ?? 0) === target.runRevision
+          );
+        }),
+      text: spoken,
+      targets,
+      validate: this.dependencies.revalidateReply
+        ? async (input, options) => {
+            const decision = await this.dependencies.revalidateReply(
+              input,
+              options,
+            );
+            this.#log("meeting_speech_revalidated", {
+              decision: decision.decision,
+              sourceSequences: targets
+                .map((t) => t.sequence)
+                .filter(Number.isInteger),
+            });
+            return decision;
+          }
+        : undefined,
+      getState: () => ({
+        revision: this.replyContextRevision,
+        pendingTranscripts:
+          this.activeTranscriptions +
+          this.audioQueue.length +
+          this.speechTurns.turns.size +
+          this.activeTextInputs,
+        conversation: this.recentConversation.filter(
+          (item) =>
+            !targets.some(
+              (target) =>
+                target.sequence === item.sequence ||
+                item.sourceSequences?.includes(target.sequence),
+            ),
+        ),
+      }),
+    });
+    const finishWait = this.telemetry.span("TTS", {
+      status: "waiting",
+      reason: "playback_queue",
+    });
     this.pendingSpeechCount++;
     this.speechQueue = this.speechQueue
-      .then(() =>
-        deliverSpeech(spoken, {
+      .then(() => {
+        finishWait(speechSignal.aborted ? "interrupted" : "completed");
+        return deliverSpeech(spoken, {
           synthesize: this.dependencies.synthesize,
           playAudio: this.dependencies.playAudio,
           stageTimeouts: this.stageTimeouts,
           signal: speechSignal,
-        }),
-      )
+          beforeStart: ticket.beforeStart,
+          canStart: ticket.canStart,
+        });
+      })
       .catch((error) => {
         if (!this.closed && error?.code !== "SPEECH_STOPPED")
           this.#log("meeting_speech_failed", {
@@ -1514,6 +1894,8 @@ export class MeetingSession {
       })
       .finally(() => {
         this.pendingSpeechCount--;
+        if (key && this.speechCandidates.get(key) === candidate)
+          this.speechCandidates.delete(key);
       });
     return this.#trackOperation(this.speechQueue);
   }
@@ -1603,6 +1985,22 @@ export class MeetingSession {
     if (this.stopping) return this.stopping;
     this.closed = true;
     this.cancelInterval(this.interval);
+    for (const item of this.audioQueue) {
+      this.telemetry.emit({
+        stage: "STT",
+        spanId: `stt-wait-${item.id}-${item.metadata.segmentIndex ?? 0}`,
+        status: "interrupted",
+        reason: "service_stopped",
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+      });
+      this.telemetry.emit({
+        stage: "ASSEMBLE",
+        spanId: `input-${this.meetingId}-${item.sequence}`,
+        status: "interrupted",
+        reason: "service_stopped",
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+      });
+    }
     this.audioQueue = [];
     this.shutdownController.abort(
       new VoiceServiceError(
@@ -1646,6 +2044,13 @@ export class MeetingSession {
       this.audioQueue.length
     ) {
       const item = this.audioQueue.shift();
+      this.#recordQueuedAudio(item);
+      this.telemetry.emit({
+        stage: "STT",
+        spanId: `stt-wait-${item.id}-${item.metadata.segmentIndex ?? 0}`,
+        status: "completed",
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+      });
       this.activeTranscriptions += 1;
       const job = this.#transcribeItem(item);
       this.activeTranscriptionJobs.add(job);
@@ -1657,7 +2062,17 @@ export class MeetingSession {
     }
   }
 
-  async #transcribeItem(item) {
+  #transcribeItem(item) {
+    return this.telemetry.scope(
+      {
+        inputIds: [`${this.meetingId}:I-${item.sequence}`],
+        parentId: item.metadata.utteranceId,
+      },
+      () => this.#transcribeItemObserved(item),
+    );
+  }
+
+  async #transcribeItemObserved(item) {
     const startedAt = Date.now();
     let accepted = false;
     let segmentSettled = false;
@@ -1737,6 +2152,17 @@ export class MeetingSession {
         });
       }
     } finally {
+      if (!accepted)
+        this.telemetry.emit({
+          stage: "ASSEMBLE",
+          spanId: `input-${this.meetingId}-${item.sequence}`,
+          status: this.closed
+            ? "interrupted"
+            : segmentSettled
+              ? "skipped"
+              : "failed",
+          reason: this.closed ? "service_stopped" : "transcript_unavailable",
+        });
       if (item.metadata.utteranceId && !segmentSettled) {
         this.speechTurns.settle(
           item.metadata.utteranceId,
@@ -1748,9 +2174,11 @@ export class MeetingSession {
       this.#queueLiveUpdate();
       if (
         accepted &&
-        this.immediateReactions &&
         this.statements.some(
-          (statement) => !statement.observed && !statement.handledAction,
+          (statement) =>
+            !statement.observed &&
+            !statement.handledAction &&
+            mayReplyImmediately(statement, this.immediateReactions),
         )
       ) {
         this.immediateObservationRequested = true;
@@ -1765,6 +2193,10 @@ export class MeetingSession {
       (statement) => !statement.observed,
     );
     const notices = [];
+    if (this.lastReplyDecision)
+      notices.push(
+        `直近の発言 #${this.lastReplyDecision.sequence}: ${this.lastReplyDecision.decision}`,
+      );
     if (this.activeInvestigations)
       notices.push(
         `質問のソース・実行状態を確認中 ${this.activeInvestigations}件`,

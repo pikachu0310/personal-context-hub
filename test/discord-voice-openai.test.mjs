@@ -14,7 +14,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import test from "node:test";
-import { wrapPcmAsWav } from "../src/discord-voice-audio.mjs";
+import { wrapPcmAsWav } from "../src/engine/input/audio.mjs";
 import {
   CodexVoiceRunner,
   buildMeetingObservationPrompt,
@@ -22,12 +22,12 @@ import {
   buildCodexPrompt,
   buildCodexEnvironment,
   buildPowerTaskPrompt,
-  createOpenAIAudioAdapter,
   codexWorkspaceTrustDirectories,
   isSafeIsolatedCodexConfig,
   describePowerTaskEvent,
   prepareIsolatedCodexHome,
-} from "../src/discord-voice-openai.mjs";
+} from "../src/execution/codex/runner.mjs";
+import { createOpenAIAudioAdapter } from "../src/providers/openai-audio.mjs";
 
 test("Codex restart accepts trust for the Git main repository of a linked worktree", async () => {
   const root = await realpath(
@@ -238,7 +238,7 @@ test("meeting observation prompt requests cumulative minutes and optional replie
   assert.match(prompt, /sourceSequences/);
   assert.match(prompt, /"isOwner":true/);
   assert.match(prompt, /"isOwner":false/);
-  assert.match(prompt, /定型的に「結論」から始めない/);
+  assert.match(prompt, /具体的な答えと根拠を短い1〜3文/);
 });
 
 test("power task prompt authorizes only the owner request", () => {
@@ -293,8 +293,8 @@ test("OpenAI audio adapter uses bounded Japanese STT and PCM TTS contracts", asy
   assert.deepEqual(await adapter.synthesize("返答"), Buffer.from([1, 2, 3]));
   assert.equal(calls[0][1].language, undefined);
   assert.deepEqual(calls[0][1].languages, ["ja", "en"]);
+  assert.match(calls[0][1].prompt, /井戸Bot/u);
   assert.equal(calls[0][1].keywords, undefined);
-  assert.equal(calls[0][1].prompt, undefined);
   assert.equal(calls[0][2].body, undefined);
   assert.equal(calls[1][1].response_format, "pcm");
   assert.equal(calls[1][1].speed, 2);
@@ -389,6 +389,8 @@ test("Codex voice runner enforces structured meeting observations", async () => 
     "minutes",
     "shouldReply",
     "reply",
+    "replyReason",
+    "replySourceSequences",
     "tasks",
     "taskControls",
     "decisions",

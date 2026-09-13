@@ -1,5 +1,5 @@
-import { DiscordRpcClient } from "../src/discord-rpc-client.mjs";
-import { getDiscordRpcCredentialStoreDescription } from "../src/discord-rpc-config.mjs";
+import { DiscordRpcClient } from "../src/integrations/discord-rpc/client.mjs";
+import { getDiscordRpcCredentialStoreDescription } from "../src/integrations/discord-rpc/config.mjs";
 
 const client = new DiscordRpcClient();
 try {

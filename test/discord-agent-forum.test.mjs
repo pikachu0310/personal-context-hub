@@ -3,8 +3,8 @@ import test from "node:test";
 import {
   createDiscordTaskThread,
   formatDiscordTaskCard,
-} from "../src/discord-voice-server.mjs";
-import { createIdobataMessageHandler } from "../src/discord-voice-commands.mjs";
+} from "../src/adapters/discord/transport.mjs";
+import { createIdobataMessageHandler } from "../src/adapters/discord/commands.mjs";
 
 test("an assigned Issue gets one Forum thread and agent-channel notice", async () => {
   const edits = [];

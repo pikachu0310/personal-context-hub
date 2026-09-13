@@ -39,6 +39,7 @@ export class TaskQueue {
     runTask,
     steerTask,
     confirmPreview,
+    restartPreview,
     invalidatePreview = async () => {},
     postText,
     createTaskThread,
@@ -67,6 +68,7 @@ export class TaskQueue {
     this.runTask = runTask;
     this.steerTask = steerTask;
     this.confirmPreviewVersion = confirmPreview;
+    this.restartPreviewVersion = restartPreview;
     this.invalidatePreview = invalidatePreview;
     this.postText = postText;
     this.createTaskThread = createTaskThread;
@@ -194,6 +196,17 @@ export class TaskQueue {
       usage: structuredClone(task.usage),
       usageHistory: structuredClone(task.usageHistory),
       specRevision: task.specRevision ?? 1,
+      specHistory: structuredClone(
+        (task.specHistory ?? [])
+          .filter((entry) => !entry.pending || entry === includeInstruction)
+          .map(({ id, text, specRevision, receivedAt, sourceSequences }) => ({
+            id,
+            text,
+            specRevision,
+            receivedAt,
+            sourceSequences,
+          })),
+      ),
       activeSpecRevision: task.activeSpecRevision,
       steeredInstructions: structuredClone(task.steeredInstructions ?? []),
       issueId: task.issueId,
@@ -604,6 +617,9 @@ export class TaskQueue {
           task.instructions = task.instructions.filter(
             (candidate) => candidate !== entry,
           );
+          task.specHistory = task.specHistory?.filter(
+            (candidate) => candidate !== entry,
+          );
           task.specRevision = Math.max(
             task.activeSpecRevision ?? 1,
             ...task.instructions.map((item) => item.specRevision ?? 1),
@@ -767,6 +783,28 @@ export class TaskQueue {
     );
   }
 
+  async restartPreview(taskId, revision) {
+    const task = this.tasks.get(taskId);
+    if (
+      !task ||
+      task.executing ||
+      task.state !== "completed" ||
+      task.runRevision !== revision ||
+      !this.restartPreviewVersion
+    )
+      return false;
+    const specification = task.specRevision ?? 1;
+    if (task.resultMetadata?.specRevision !== specification) return false;
+    await this.restartPreviewVersion(task);
+    await this.persist({ strict: true });
+    return (
+      task.state === "completed" &&
+      task.runRevision === revision &&
+      (task.specRevision ?? 1) === specification &&
+      task.preview?.state === "available"
+    );
+  }
+
   async retryResultDelivery() {
     if (this.deliveringResults || this.closed) return;
     this.deliveringResults = true;
@@ -882,6 +920,8 @@ export class TaskQueue {
     };
     task.specRevision = entry.specRevision;
     task.instructions.push(entry);
+    task.specHistory ??= [];
+    task.specHistory.push(entry);
     task.state = task.executing ? "running" : "queued";
     task.cancelled = false;
     const result = {

@@ -20,3 +20,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      - run: npm run hud:install
+      - run: npm run hud:build
+      - run: npx prettier --check "ui/src/**/*.{ts,tsx,css}" "ui/*.{json,mjs,html}"
+      - run: npm --prefix ui audit
+      - run: npx playwright install --with-deps chromium
+      - run: npm run smoke:discord:voice:hud
+      - run: npm run smoke:studio

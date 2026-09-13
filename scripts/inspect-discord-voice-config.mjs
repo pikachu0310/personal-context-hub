@@ -1,4 +1,4 @@
-import { inspectDiscordVoiceReadiness } from "../src/discord-voice-diagnostics.mjs";
+import { inspectDiscordVoiceReadiness } from "../src/runtime/discord-voice/diagnostics.mjs";
 
 const arguments_ = process.argv.slice(2);
 if (

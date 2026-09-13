@@ -1,8 +1,8 @@
-import { DiscordRpcClient } from "../src/discord-rpc-client.mjs";
+import { DiscordRpcClient } from "../src/integrations/discord-rpc/client.mjs";
 import {
   getDiscordRpcCredentialStoreDescription,
   readDiscordRpcCredentialStore,
-} from "../src/discord-rpc-config.mjs";
+} from "../src/integrations/discord-rpc/config.mjs";
 
 const credential = await readDiscordRpcCredentialStore();
 const client = new DiscordRpcClient();

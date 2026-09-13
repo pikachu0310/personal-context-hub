@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DiscordVoiceTaskQueue } from "../src/discord-voice-session.mjs";
+import { DiscordVoiceTaskQueue } from "../src/adapters/discord/sessions.mjs";
 const noop = async () => undefined;
 const eventually = async (check) => {
   for (let i = 0; i < 200; i++) {
