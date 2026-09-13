@@ -83,11 +83,18 @@ export function createTelemetry(sink) {
           );
           return result;
         } catch (error) {
-          finish(signal?.aborted ? "interrupted" : "failed", {
-            reason: /TIMEOUT/i.test(error?.code ?? "")
-              ? "timeout"
-              : "operation_failed",
-          });
+          finish(
+            signal?.aborted || error?.code === "SPEECH_STOPPED"
+              ? "interrupted"
+              : "failed",
+            {
+              reason:
+                error?.interruptionReason ??
+                (/TIMEOUT/i.test(error?.code ?? "")
+                  ? "timeout"
+                  : "operation_failed"),
+            },
+          );
           throw error;
         } finally {
           signal?.removeEventListener("abort", aborted);

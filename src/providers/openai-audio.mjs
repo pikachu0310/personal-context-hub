@@ -24,6 +24,9 @@ export function createOpenAIAudioAdapter(config, { client } = {}) {
         file: await toFile(wav, "discord-turn.wav", { type: "audio/wav" }),
         model: config.sttModel,
       };
+      if (config.sttModel !== "gpt-4o-transcribe-diarize")
+        request.prompt =
+          "日本語と英語の開発会議。固有名詞: 井戸Bot（いどぼっと）、Codex（コーデックス）、GitHub Issue（イシュー）、タスク。";
       const options = { signal };
       if (config.sttModel === "gpt-transcribe") {
         request.languages = ["ja", "en"];

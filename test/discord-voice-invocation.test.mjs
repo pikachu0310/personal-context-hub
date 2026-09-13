@@ -7,6 +7,7 @@ import {
 import {
   isBotAddressed,
   hasTaskCommitment,
+  directTaskCreation,
 } from "../src/engine/observation/participation.mjs";
 import {
   parseImmediateTaskStop,
@@ -33,6 +34,10 @@ test("vocatives tolerate fillers, greetings, repetition and bounded ASR aliases"
     "井戸Bot教えて",
     "えーと、井戸Bot、結果は？",
     "あ、リドボット、何かしゃべって。",
+    "移動、移動ボットを、接続を確認して。",
+    "いど、イドボット、返事して。",
+    "井戸Bot挨拶文のテキストファイルを作ってください。",
+    "井戸Bot聞こえていますか？",
   ])
     assert.equal(isBotAddressed(text), true, text);
   assert.equal(
@@ -44,6 +49,89 @@ test("vocatives tolerate fillers, greetings, repetition and bounded ASR aliases"
     parseBotInvocation("あ、井戸Bot、「空文字」を説明して。").body,
     "「空文字」を説明して。",
   );
+});
+
+test("direct creation distinguishes concrete work from questions, discussion and deferrals", () => {
+  assert.ok(
+    directTaskCreation("入力フォームを作って。", { explicitlyAsked: true }),
+  );
+  assert.equal(directTaskCreation("入力フォームを作って。"), undefined);
+  assert.equal(
+    directTaskCreation("返事して。", { explicitlyAsked: true }),
+    undefined,
+  );
+  for (const body of [
+    "接続確認用のタスクを立てて。",
+    "hello.txtに挨拶を書くタスクを作って。",
+    "入力フォームを実装して。",
+    "接続試験のIssueを立てて。",
+  ])
+    assert.ok(directTaskCreation("リドボット、" + body), body);
+  for (const body of [
+    "フォームを作ってもいいかも。",
+    "まだフォームを作らなくていい。",
+    "それを作って。",
+    "作成するか調べるか、どちらかを実行して。",
+    "何かしゃべって。",
+    "石を建てて。",
+  ])
+    assert.equal(directTaskCreation("井戸Bot、" + body), undefined, body);
+});
+
+test("explicit creation reaches the durable queue while the conversation observer is busy", async () => {
+  const accepted = [];
+  let release,
+    observing = false;
+  const session = new DiscordVoiceMeetingSession({
+    transcribe: async (wav) => wav.toString(),
+    observe: async () => {
+      if (!observing) {
+        observing = true;
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      }
+      return JSON.stringify({ minutes: "", shouldReply: false, tasks: [] });
+    },
+    quickReply: async () =>
+      assert.fail("creation is not a conversational answer"),
+    upsertLiveTranscript: async () => {},
+    upsertMinutes: async () => {},
+    postText: async () => {},
+    synthesize: async () => Buffer.alloc(2),
+    playAudio: async () => {},
+    ownerUserId: "owner",
+    immediateReactions: true,
+    tasksEnabled: true,
+    requireWakeWord: true,
+    allParticipantsOperate: true,
+    enqueueTask: async (task) => {
+      accepted.push(task);
+      return true;
+    },
+    scheduleInterval: () => ({}),
+    cancelInterval: () => {},
+    logger: { info() {} },
+  });
+  try {
+    await session.addText("今日は画面の相談です。", { userId: "owner" });
+    const audit = session.observeNow();
+    for (let i = 0; i < 50 && !observing; i++)
+      await new Promise((r) => setTimeout(r, 5));
+    await session.addText("リドボット、hello.txtに挨拶を書くタスクを立てて。", {
+      userId: "participant",
+    });
+    assert.equal(accepted.length, 1);
+    assert.equal(accepted[0].sourceStatements[0].userId, "participant");
+    assert.match(accepted[0].requestKey, /:voice:2$/);
+    release();
+    await audit;
+    await session.observeNow();
+    assert.equal(accepted.length, 1);
+  } finally {
+    release?.();
+    await session.stop();
+  }
 });
 
 test("mentions, quotations, different addressees and unrelated words remain quiet", () => {
@@ -66,6 +154,8 @@ test("mentions, quotations, different addressees and unrelated words remain quie
     "「あ。井戸Bot、止めて",
     "あ、井戸Bot、返事してって言っても聞いてないね",
     "リドボットって認識されたね",
+    "井戸Botを紹介して",
+    "井戸Botに依頼したことを紹介する",
   ])
     assert.equal(isBotAddressed(text), false, text);
 });

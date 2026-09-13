@@ -21,19 +21,51 @@ function uncertain(text) {
   );
 }
 
-function explicitDelegation(text) {
+export function explicitDelegation(text, { explicitlyAsked = false } = {}) {
+  if (explicitlyAsked && !isBotAddressed(text))
+    return explicitDelegation(`井戸Bot、${text}`);
   const unquoted = String(text ?? "")
     .replace(QUOTED, "")
     .trim();
   if (!unquoted || uncertain(unquoted) || invocationAcknowledgement(unquoted))
     return false;
   if (isBotAddressed(unquoted))
-    return /(?:して|してください|作って|直して|調べて|確認して|進めて|お願い|頼む|任せる|実行)(?:ほしい|ほしいです|くれる|くれますか|もらえる|もらえますか)?[。！!？?\s]*$|(?:して|作って|直して|調べて|進めて)ください/u.test(
-      unquoted,
+    return (
+      /(?:して|してください|作って|直して|調べて|確認して|進めて|お願い|頼む|任せる|実行)(?:ほしい|ほしいです|くれる|くれますか|もらえる|もらえますか)?[。！!？?\s]*$|(?:して|作って|直して|調べて|進めて)ください/u.test(
+        unquoted,
+      ) ||
+      /(?:タスク|[Ii]ssue|イシュー).{0,30}(?:立てて|建てて|切って)(?:ください|くれる|ほしい)?[。！!？?\s]*$/u.test(
+        unquoted,
+      )
     );
   return /(?:井戸(?:Bot|ボット)|ボット|Bot|Codex|コーデックス)(?:に|へ).{0,100}(?:任せよう|任せる|任せて|頼もう|頼む|依頼する|依頼しよう|お願いする|お願いしよう|やってもらおう|やってもらう|進めてもらおう|進めてもらう)[。！!\s]*$/iu.test(
     unquoted,
   );
+}
+
+// Clear creation requests can go straight to the same durable queue used by
+// the observer. Questions, proposals and ambiguous references still use it.
+export function directTaskCreation(text, { explicitlyAsked = false } = {}) {
+  if (!explicitDelegation(text, { explicitlyAsked })) return undefined;
+  const call =
+    parseBotInvocation(text) ?? (explicitlyAsked ? { body: text } : undefined);
+  if (!call) return undefined;
+  const body = call.body;
+  if (/^(?:それ|これ|あれ|さっき|今の|この|その|どちら|どっち)/u.test(body))
+    return undefined;
+  if (
+    !/(?:作って|作成して|実装して|追加して|修正して|直して|調査して|調べて|テストして|(?:タスク|[Ii]ssue|イシュー).{0,30}(?:立てて|建てて|切って))/u.test(
+      body,
+    )
+  )
+    return undefined;
+  if (
+    /(?:かどうか|するか|どちらか|どっちか|(?:作って|作成して|実装して)と)/u.test(
+      body,
+    )
+  )
+    return undefined;
+  return { body, title: body.replace(/[。！!？?\s]+$/gu, "").slice(0, 80) };
 }
 
 // Identity authorization and conversational commitment are separate checks.
@@ -59,6 +91,10 @@ export function hasTaskCommitment(
   const commitments = task.authorizationSequences.map((sequence) =>
     sources.get(sequence),
   );
+  const committed = (statement) =>
+    explicitDelegation(statement.text, {
+      explicitlyAsked: statement.requestReply === true,
+    });
   if (
     commitments.some(
       (statement) =>
@@ -68,13 +104,10 @@ export function hasTaskCommitment(
     )
   )
     return false;
-  if (!commitments.some((statement) => explicitDelegation(statement.text)))
-    return false;
+  if (!commitments.some(committed)) return false;
   // Do not let the model omit a later explicit deferral from its chosen evidence.
   const lastCommitment = Math.max(
-    ...commitments
-      .filter((statement) => explicitDelegation(statement.text))
-      .map((statement) => statement.sequence),
+    ...commitments.filter(committed).map((statement) => statement.sequence),
   );
   return !statements.some((statement) => {
     if (statement.sequence < lastCommitment || statement.taskEligible === false)

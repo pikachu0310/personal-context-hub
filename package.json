@@ -45,6 +45,7 @@
     "smoke:discord:voice:preview": "node scripts/discord-voice-preview-smoke.mjs",
     "smoke:discord:voice:loop": "node scripts/discord-voice-loop-smoke.mjs",
     "smoke:discord:voice:live": "node --env-file-if-exists=.env scripts/discord-voice-live-smoke.mjs",
+    "smoke:discord:voice:invocation": "node --env-file-if-exists=.env scripts/discord-voice-invocation-smoke.mjs",
     "hud:build": "npm --prefix ui run build",
     "hud:install": "npm --prefix ui ci",
     "smoke:discord:voice:hud": "node scripts/voice-hud-browser-smoke.mjs",

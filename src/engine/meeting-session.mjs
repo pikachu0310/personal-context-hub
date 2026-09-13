@@ -6,6 +6,8 @@ import { deliverSpeech } from "./output/speech.mjs";
 import { randomUUID } from "node:crypto";
 import {
   mayReplyImmediately,
+  isBotAddressed,
+  directTaskCreation,
   hasTaskCommitment,
   normalizeTaskTopic,
   shouldDeliverObservationReply,
@@ -554,6 +556,7 @@ export class MeetingSession {
       return this.#tryImmediateSpeechStop(statement);
     if (!mayReplyImmediately(statement)) return false;
     if (await this.#tryImmediateInstruction(statement)) return true;
+    if (await this.#tryImmediateCreation(statement)) return true;
     const handled = await (isImmediateTaskStatus(statement.text, {
       explicitlyAsked: statement.requestReply === true,
     })
@@ -583,6 +586,85 @@ export class MeetingSession {
       })),
       runtime: this.dependencies.getRuntimeContext(),
     };
+  }
+
+  async #tryImmediateCreation(statement) {
+    if (
+      !this.immediateReactions ||
+      !this.tasksEnabled ||
+      !this.ownerUserId ||
+      statement.taskEligible === false ||
+      statement.handledAction ||
+      !(
+        (this.allParticipantsOperate && statement.userId) ||
+        statement.userId === this.ownerUserId ||
+        this.operatorUserIds.includes(statement.userId)
+      )
+    )
+      return false;
+    const parsed = directTaskCreation(statement.text, {
+      explicitlyAsked: statement.requestReply === true,
+    });
+    if (!parsed) return false;
+    if (
+      !hasTaskCommitment(
+        {
+          executionIntent: "requested",
+          sourceSequences: [statement.sequence],
+          authorizationSequences: [statement.sequence],
+        },
+        this.statements,
+      )
+    )
+      return false;
+    const [task] = authorizeMeetingTasks(
+      [
+        {
+          title: parsed.title,
+          kind: "implementation",
+          complexity: "routine",
+          acceptanceCriteria: [],
+          sourceSequences: [statement.sequence],
+        },
+      ],
+      [
+        {
+          ...statement,
+          sourceUserId: statement.userId,
+          userId: this.ownerUserId,
+        },
+      ],
+      this.ownerUserId,
+    );
+    if (!task) return false;
+    task.id = randomUUID().slice(0, 8);
+    task.meetingId = this.meetingId;
+    task.context = this.getContextSnapshot();
+    task.requestKey = `${this.meetingId}:voice:${statement.sequence}`;
+    this.pendingTasks.push(task);
+    statement.handledAction = { type: "create", taskId: task.id };
+    statement.taskEligible = false;
+    this.#replyDiagnostic(statement, "作成依頼を受付・保存中");
+    try {
+      await this.persist();
+      const { accepted } = await this.#dispatchPendingTasks();
+      this.#replyDiagnostic(
+        statement,
+        accepted.some((item) => item.requestKey === task.requestKey)
+          ? "作成依頼を受け付けました"
+          : "作成依頼の受付を再試行中",
+      );
+      this.#log("immediate_task_creation", {
+        sequence: statement.sequence,
+        taskId: task.id,
+      });
+    } catch (error) {
+      this.#log("immediate_task_creation_pending", {
+        sequence: statement.sequence,
+        errorCode: voiceErrorCode(error),
+      });
+    }
+    return true;
   }
 
   async #tryImmediateInstruction(statement) {
@@ -1383,9 +1465,8 @@ export class MeetingSession {
             statement.userId === this.ownerUserId ||
             this.operatorUserIds.includes(statement.userId)) &&
           (!this.requireWakeWord ||
-            /(?:井戸(?:Bot|ボット)|[いイ][どド](?:ぼっと|ボット)|コーデックス|codex)/iu.test(
-              statement.text,
-            ))
+            statement.requestReply === true ||
+            isBotAddressed(statement.text))
             ? this.ownerUserId
             : undefined,
       }));

@@ -5,17 +5,31 @@ const SEPARATOR = "[、,：:。.!！?？\\s]*";
 const PREFIX =
   "(?:(?:あ[ーあ]*|え[ーえ]*と?|えっと|あの|ねえ|ねぇ|ちょっと|すみません|こんにちは|もしもし)[、,\\s]+){0,6}";
 const VOCATIVE = new RegExp(
-  `^${PREFIX}(${NAME})(?=$|[、,：:。.!！?？\\s]|教えて|聞いて|お願い|調べて|確認して|答えて|何か|停止|止めて)${SEPARATOR}`,
+  `^${PREFIX}(${NAME})(?=$|[^a-z0-9_])${SEPARATOR}`,
   "iu",
 );
-const MENTION =
-  /^(?:って|という|と呼|と言|と聞|の(?:応答|認識|名前|こと|動作)|は(?:今|どう|まだ)|をどう|が(?:反応|応答))/u;
+const MENTION = /^(?:って|という|と呼|と言|と聞|の|は|を|が|に|へ)/u;
 const QUOTED = /「[^」]*」|『[^』]*』|"[^"\n]*"|`[^`]*`/gu;
 
 export function parseBotInvocation(value) {
-  const text = String(value ?? "")
+  let text = String(value ?? "")
     .normalize("NFKC")
     .trim();
+  // ASR can retain the abandoned first syllables of a repeated name. Only
+  // repair them immediately before a complete, known name and a direct request.
+  const repair = new RegExp(
+    `^(?:移動|井戸|[いイ][どド])[、,\\s]+(?=${NAME})`,
+    "iu",
+  );
+  if (repair.test(text)) {
+    text = text.replace(repair, "");
+    if (
+      /(?:して|作って|答えて|喋って|しゃべって|立てて)[。！!？?\s]*$/u.test(
+        text,
+      )
+    )
+      text = text.replace(new RegExp(`^(${NAME})を[、,\\s]+`, "iu"), "$1、");
+  }
   // Mask quoted calls so a full stop inside a quotation cannot create a call.
   const masked = text.replace(QUOTED, (quote) => "＿".repeat(quote.length));
   if (/[「」『』"`]/u.test(masked)) return undefined;

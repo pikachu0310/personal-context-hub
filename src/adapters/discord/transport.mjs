@@ -29,6 +29,7 @@ import {
   PcmTurnBuffer,
   PcmSegmentBuffer,
   wrapPcmAsWav,
+  qualifyTranscriptionAudio,
 } from "../../engine/input/audio.mjs";
 
 import { boundText, formatElapsedTime } from "../../engine/shared.mjs";
@@ -36,6 +37,8 @@ import { escapeDiscordMarkdown } from "./presentation.mjs";
 import { ttsPcm24kMonoToDiscordRaw } from "./audio-format.mjs";
 
 const PCM_BYTES_PER_SECOND = 48_000 * 2 * 2;
+const QUALIFIED_SPEECH = Symbol("qualifiedSpeech");
+const decodedSpeakers = new WeakMap();
 const AUDIO_RETRY_MESSAGE =
   "⚠️ 音声データを処理できませんでした。もう一度話してください。";
 
@@ -104,14 +107,27 @@ export function createDiscordPlayer(
         : interruption.signal;
       let playing = false;
       const onHumanStart = () => {
-        if (playing)
+        if (playing) {
+          logInfoQuietly(logger, {
+            component: "discord-voice",
+            event: "playback_interrupted",
+            reason: "human_speech",
+          });
           interruption.abort(
             Object.assign(new Error("Human speech interrupted playback"), {
               code: "SPEECH_STOPPED",
+              interruptionReason: "human_speech",
             }),
           );
+        }
       };
-      connection.receiver.speaking.on("start", onHumanStart);
+      const onRawStart = (userId) => {
+        // RTP speaking events also arrive for silence and microphone clicks.
+        // Decoded participants interrupt only after the same signal check as STT.
+        if (!decodedSpeakers.get(connection)?.(userId)) onHumanStart();
+      };
+      connection.receiver.speaking.on("start", onRawStart);
+      connection.receiver.speaking.on(QUALIFIED_SPEECH, onHumanStart);
       const stopOnAbort = () => player.stop(true);
       signal?.addEventListener("abort", stopOnAbort, { once: true });
       try {
@@ -154,9 +170,11 @@ export function createDiscordPlayer(
             ),
           ]),
         );
+        if (signal.aborted) throw signal.reason;
       } finally {
         playing = false;
-        connection.receiver.speaking.off("start", onHumanStart);
+        connection.receiver.speaking.off("start", onRawStart);
+        connection.receiver.speaking.off(QUALIFIED_SPEECH, onHumanStart);
         signal?.removeEventListener("abort", stopOnAbort);
       }
     },
@@ -233,6 +251,10 @@ export function subscribeToAllowedSpeaker({
   live,
 }) {
   const active = new Set();
+  decodedSpeakers.set(
+    connection,
+    (userId) => config.listenToEveryone || userId === config.allowedUserId,
+  );
   const notify = (content) =>
     Promise.resolve()
       .then(() => postText(content))
@@ -293,10 +315,21 @@ export function subscribeToAllowedSpeaker({
     };
     let discardedTurn = false;
     let finalized = false;
+    let activeSpeechMs = 0;
+    let speechConfirmed = false;
 
     decoder.on("data", (chunk) => {
       if (discardedTurn) return;
       try {
+        if (!speechConfirmed) {
+          activeSpeechMs += qualifyTranscriptionAudio(
+            wrapPcmAsWav(chunk),
+          ).activeMs;
+          if (activeSpeechMs >= 80) {
+            speechConfirmed = true;
+            connection.receiver.speaking.emit(QUALIFIED_SPEECH, userId);
+          }
+        }
         live?.input(userId, chunk);
         if (segmented) {
           for (const pcm of turnBuffer.push(chunk)) enqueueSegment(pcm);

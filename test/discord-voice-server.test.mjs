@@ -544,7 +544,7 @@ test("a malformed decoded frame is contained and reported without crashing", asy
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(enqueued, false);
-  assert.equal(logs[0].event, "receive_finalize_failed");
+  assert.equal(logs[0].event, "receive_frame_failed");
   assert.deepEqual(messages, [
     "⚠️ 音声データを処理できませんでした。もう一度話してください。",
   ]);
@@ -837,6 +837,66 @@ test("human speech interrupts admitted playback and leaves no interruption liste
   await assert.rejects(play(Buffer.alloc(1920)), /abort|interrupt/i);
   assert.equal(stops, 1);
   assert.equal(speaking.listenerCount("start"), 1); // Only the persistent quiet gate remains.
+});
+
+test("silent RTP bursts do not interrupt playback but qualified decoded speech does", async (t) => {
+  const speaking = new EventEmitter();
+  let player,
+    decoder,
+    stops = 0;
+  const connection = {
+    subscribe: (value) => {
+      player = value;
+    },
+    receiver: {
+      speaking,
+      subscribe: () => {
+        const stream = new EventEmitter();
+        stream.pipe = () => {};
+        stream.destroy = () => {};
+        return stream;
+      },
+    },
+  };
+  subscribeToAllowedSpeaker({
+    connection,
+    config: {
+      listenToEveryone: true,
+      minimumAudioMs: 250,
+      maximumAudioSeconds: 90,
+      silenceMs: 1000,
+    },
+    session: { enqueue: () => true },
+    postText: async () => {},
+    logger: { error() {} },
+    createDecoder: () => {
+      decoder = new EventEmitter();
+      decoder.destroy = () => {};
+      return decoder;
+    },
+  });
+  const play = createDiscordPlayer(
+    connection,
+    { info() {}, error() {} },
+    { speechStartSilenceMs: 0 },
+  );
+  t.after(() => play.dispose());
+  player.stop = () => {
+    stops++;
+  };
+  player.play = (resource) => {
+    resource.playStream.destroy();
+    speaking.emit("start", "participant");
+    decoder.emit("data", Buffer.alloc(19200));
+    assert.equal(stops, 0, "100 ms of silence is not an interruption");
+    const voiced = Buffer.alloc(19200);
+    for (let i = 0; i < voiced.length; i += 2)
+      voiced.writeInt16LE(i % 8 < 4 ? 2000 : -2000, i);
+    decoder.emit("data", voiced);
+  };
+  await assert.rejects(play(Buffer.alloc(1920)), /abort|interrupt/i);
+  assert.equal(stops, 1);
+  decoder.emit("end");
 });
 
 test("every speaker interrupts Live once while the STT allowlist still applies", () => {
