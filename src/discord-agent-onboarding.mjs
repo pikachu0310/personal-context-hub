@@ -37,6 +37,12 @@ export function decodeAgentInvitation(value, now = Date.now()) {
 export function agentGuideComponents(guideUrl, pairing) {
   const components = [];
   if (pairing) {
+    components.push({
+      type: 2,
+      style: 1,
+      custom_id: "ido:agent-setup",
+      label: "① 接続用.cmdをダウンロード",
+    });
     const url = agentInvitationUrl(pairing);
     // Discord limits link buttons to 512 characters. Keep manual import as a
     // fallback for unusually long gateway URLs instead of failing the reply.
@@ -44,7 +50,7 @@ export function agentGuideComponents(guideUrl, pairing) {
       components.push({
         type: 2,
         style: 5,
-        label: "このPCの接続画面に自動入力",
+        label: "② 参加情報を入力",
         url,
       });
   }

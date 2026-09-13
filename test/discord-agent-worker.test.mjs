@@ -250,7 +250,7 @@ test("the private Discord slash reply retains pairing and guide buttons without 
   assert.equal(group.type, 2);
   assert.deepEqual(
     group.options.map(({ name }) => name),
-    ["connect", "disconnect", "status"],
+    ["setup", "connect", "disconnect", "status"],
   );
   const replies = [];
   const calls = [];
@@ -300,12 +300,12 @@ test("the private Discord slash reply retains pairing and guide buttons without 
   assert.match(replies[0].content, /PAIR-CODE/);
   assert.doesNotMatch(replies[0].content, /token|auth\.json/i);
   assert.match(
-    replies[0].components[0].components[0].url,
+    replies[0].components[0].components[1].url,
     /^http:\/\/127\.0\.0\.1:17879\/join#ido1\./,
   );
   assert.deepEqual(replies[0].allowedMentions, { parse: [] });
   assert.equal(
-    replies[0].components[0].components[1].url,
+    replies[0].components[0].components[2].url,
     config.agentJoinGuideUrl,
   );
 });

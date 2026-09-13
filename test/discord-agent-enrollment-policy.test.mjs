@@ -170,7 +170,7 @@ test("a guild participant can enroll their own Worker without receiving general 
   };
   await handler(message);
   assert.equal(pairedOwner, owner);
-  assert.equal(replies[0].components[0].components.length, 1);
+  assert.equal(replies[0].components[0].components.length, 2);
   await handler({
     ...message,
     id: "task-interaction",

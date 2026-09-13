@@ -715,6 +715,7 @@ export async function startDiscordVoiceCodex({
       },
     });
     const handleInteraction = createIdobataInteractionHandler({
+      workerGateway,
       config,
       taskQueue,
     });

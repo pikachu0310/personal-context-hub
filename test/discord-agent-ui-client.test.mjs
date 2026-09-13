@@ -85,6 +85,7 @@ test("invitation landing autofills an authorized tab without connecting or trans
       await readFile(new URL(`../src/${file}`, import.meta.url), "utf8"),
       {
         document: { getElementById: element },
+        window: { name: "", open: () => ({ focus() {} }) },
         location,
         history: {
           replaceState: (_state, _title, path) => {

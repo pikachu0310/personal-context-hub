@@ -180,6 +180,8 @@ export class TaskQueue {
       title: task.title,
       request: task.request,
       requestKey: task.requestKey,
+      requestedByUserId: task.requestedByUserId,
+      workerOwnerUserId: task.workerOwnerUserId,
       receiptFailed:
         task === receiptTask && includeInstruction ? false : task.receiptFailed,
       context: task.context,

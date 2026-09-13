@@ -187,7 +187,16 @@ export class CodexAgentTeam {
 
   assign(task, existingTasks = [], { force = false, exclude = [] } = {}) {
     const existing = this.get(task.assignedAgentId);
-    if (existing && existing.online !== false && !force) {
+    const owned = (agent) =>
+      !task.workerOwnerUserId ||
+      (agent?.transport === "remote" &&
+        agent.ownerUserId === task.workerOwnerUserId);
+    if (
+      existing &&
+      owned(existing) &&
+      (existing.online !== false || task.workerOwnerUserId) &&
+      !force
+    ) {
       task.assignedAgentName = existing.name;
       task.issueId ??= task.id;
       return existing;
@@ -204,6 +213,7 @@ export class CodexAgentTeam {
     const excluded = new Set(exclude);
     const eligible = this.list().filter(
       (agent) =>
+        owned(agent) &&
         agent.enabled !== false &&
         agent.online !== false &&
         !excluded.has(agent.id),
@@ -264,6 +274,10 @@ export class CodexAgentTeam {
     const agent = this.get(task.assignedAgentId);
     return Boolean(
       agent &&
+      agent.enabled !== false &&
+      (!task.workerOwnerUserId ||
+        (agent.transport === "remote" &&
+          agent.ownerUserId === task.workerOwnerUserId)) &&
       agent.online !== false &&
       (this.active.get(agent.id) ?? 0) < agent.maximumConcurrentTasks,
     );

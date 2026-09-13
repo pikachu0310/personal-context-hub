@@ -1,4 +1,5 @@
-/* global document, location, history */
+/* global document, location, history, window */
+window.name = "ido-agent-control";
 const token =
   location.hash.slice(1) || sessionStorage.getItem("agent-ui-token");
 if (token) sessionStorage.setItem("agent-ui-token", token);
