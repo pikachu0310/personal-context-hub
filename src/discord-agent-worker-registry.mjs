@@ -150,7 +150,9 @@ export class AgentWorkerRegistry {
       throw new Error("Worker concurrency must be from 1 through 4.");
     const agentId = `member-${pairing.ownerUserId}`;
     const token = randomBytes(32).toString("base64url");
-    const requestedName = String(name ?? "").trim().slice(0, 80);
+    const requestedName = String(name ?? "")
+      .trim()
+      .slice(0, 80);
     const record = {
       agentId,
       name: requestedName || `${pairing.ownerDisplayName} Codex`.slice(0, 80),
