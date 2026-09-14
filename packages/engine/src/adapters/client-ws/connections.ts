@@ -6,12 +6,12 @@ import {
   type Command,
   type Grant,
   type Task,
-} from "../../../../common/src/contracts/protocol.js";
-import { secret } from "../../../../common/src/runtime/platform.js";
+} from "@ido/common/contracts/protocol";
+import { secret } from "@ido/common/runtime/platform";
 import {
   requiresPolicySupport,
   restrictExecutionPolicy,
-} from "../../../../common/src/contracts/work.js";
+} from "@ido/common/contracts/work";
 import { Scheduler } from "../../clients/scheduler.js";
 import type { Device } from "../../domain/models.js";
 import type { Repository } from "../../ports/repository.js";

@@ -1,5 +1,6 @@
 import { checkBoundaries } from "./check-boundaries.mjs";
 await checkBoundaries();
+await import("./build-common-ui.mjs");
 import { build } from "esbuild";
 import { cp, mkdir, chmod, rm } from "node:fs/promises";
 import { resolve, relative, isAbsolute } from "node:path";

@@ -3,9 +3,9 @@ import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type { Command, Task } from "../../common/src/contracts/protocol.js";
-import { Credentials } from "../../common/src/runtime/credentials.js";
-import { run } from "../../common/src/runtime/platform.js";
+import type { Command, Task } from "@ido/common/contracts/protocol";
+import { Credentials } from "@ido/common/runtime/credentials";
+import { run } from "@ido/common/runtime/platform";
 import { Executor } from "../src/execution/executor.js";
 test("a restarted Client does not re-execute a persisted delivery", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-recovery-"));

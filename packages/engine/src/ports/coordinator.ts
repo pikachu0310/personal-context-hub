@@ -8,4 +8,4 @@ export type {
   CoordinatorResponse,
   CoordinatorEvent,
   CoordinatorSource,
-} from "../../../common/src/contracts/coordinator.js";
+} from "@ido/common/contracts/coordinator";

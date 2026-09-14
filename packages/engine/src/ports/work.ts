@@ -1,9 +1,9 @@
-import type { Task } from "../../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import type {
   ExecutionPolicy,
   WorkReceipt,
   WorkSource,
-} from "../../../common/src/contracts/work.js";
+} from "@ido/common/contracts/work";
 
 export interface WorkRequest {
   requestKey: string;

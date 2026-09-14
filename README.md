@@ -36,8 +36,8 @@ See [setup and architecture](docs/ido-engine-client.md) for administrator initia
 - `packages/client`: local Codex app-server adapter, repositories, worktrees and execution.
 - `packages/plugin-discord`: Bot, voice commands and Activity integration.
 - `packages/plugin-dashboard`: independent Dashboard process, business HTTP API and React/Mantine web UI.
-- `packages/common`: public communication contracts and low-level runtime utilities.
-- `packages/ui`: Mantine components and business views receiving data/actions from their owner.
+- `packages/common`: compiled public communication contracts and low-level runtime utilities, imported through `@ido/common/contracts/...` and `@ido/common/runtime/...`.
+- `packages/common-ui`: compiled React/Mantine components and business views, imported through `@ido/common-ui`; receives data/actions from each owner.
 - `scripts`: current build, package, browser validation and repository coordination tools.
 - `examples/ido-preview`: compatible preview application.
 

@@ -1,10 +1,10 @@
-import type { Task } from "../../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import type { Device } from "../domain/models.js";
 import type { Repository } from "../ports/repository.js";
 import {
   requiresPolicySupport,
   restrictExecutionPolicy,
-} from "../../../common/src/contracts/work.js";
+} from "@ido/common/contracts/work";
 export class Scheduler {
   constructor(readonly repository: Repository) {}
   schedule(online: Set<string>) {

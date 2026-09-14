@@ -4,9 +4,9 @@ import {
   pluginFrame,
   type PluginFrame,
   type PluginManifest,
-} from "../../../../common/src/contracts/plugins.js";
-import { workerEnvironment } from "../../../../common/src/runtime/platform.js";
-import { Rpc } from "../../../../common/src/runtime/rpc.js";
+} from "@ido/common/contracts/plugins";
+import { workerEnvironment } from "@ido/common/runtime/platform";
+import { Rpc } from "@ido/common/runtime/rpc";
 export class PluginProcess {
   child?: ChildProcess;
   rpc?: Rpc;

@@ -1,6 +1,6 @@
 import { Badge, Code, Group, Paper, Stack, Text } from "@mantine/core";
-import { Card } from "../../../../ui/src/components/Card.js";
-import type { Action, AdminState, Invoke } from "../../../../ui/src/types.js";
+import { Card } from "@ido/common-ui";
+import type { Action, AdminState, Invoke } from "@ido/common-ui";
 export function Diagnostics({
   state,
   action,

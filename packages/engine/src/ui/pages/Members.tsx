@@ -1,7 +1,6 @@
 import { Group, Paper, Select, Stack, Text } from "@mantine/core";
-import { Card } from "../../../../ui/src/components/Card.js";
-import { Form } from "../../../../ui/src/components/Form.js";
-import type { Action, AdminState, Invoke } from "../../../../ui/src/types.js";
+import { Card, Form } from "@ido/common-ui";
+import type { Action, AdminState, Invoke } from "@ido/common-ui";
 export function Members({
   state,
   action,

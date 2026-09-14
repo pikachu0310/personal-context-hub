@@ -8,10 +8,10 @@ import {
   type Command,
   type Mapping,
   type Project,
-} from "../../../common/src/contracts/protocol.js";
-import { Credentials } from "../../../common/src/runtime/credentials.js";
-import { HttpError, send } from "../../../common/src/runtime/http.js";
-import { atomic, json, secret } from "../../../common/src/runtime/platform.js";
+} from "@ido/common/contracts/protocol";
+import { Credentials } from "@ido/common/runtime/credentials";
+import { HttpError, send } from "@ido/common/runtime/http";
+import { atomic, json, secret } from "@ido/common/runtime/platform";
 import { connect } from "../connection/engine.js";
 import { pair } from "../connection/pair.js";
 import { pollPair } from "../connection/poll.js";

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { WebSocket } from "ws";
-import type { Task } from "../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import { Store, type Device } from "../src/adapters/sqlite/store.js";
 import { Engine } from "../src/bootstrap/engine.js";
 import { Scheduler } from "../src/clients/scheduler.js";

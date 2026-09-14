@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Credentials } from "../../common/src/runtime/credentials.js";
+import { Credentials } from "@ido/common/runtime/credentials";
 import { Store } from "../src/adapters/sqlite/store.js";
 import { Tunnels } from "../src/adapters/tunnels/manager.js";
 

@@ -10,6 +10,78 @@
     "dist",
     "README.md"
   ],
-  "main": "dist/index.js",
-  "private": true
+  "private": true,
+  "exports": {
+    "./contracts/api": {
+      "types": "./dist/contracts/api.d.ts",
+      "import": "./dist/contracts/api.js"
+    },
+    "./contracts/coordinator": {
+      "types": "./dist/contracts/coordinator.d.ts",
+      "import": "./dist/contracts/coordinator.js"
+    },
+    "./contracts/plugins": {
+      "types": "./dist/contracts/plugins.d.ts",
+      "import": "./dist/contracts/plugins.js"
+    },
+    "./contracts/protocol": {
+      "types": "./dist/contracts/protocol.d.ts",
+      "import": "./dist/contracts/protocol.js"
+    },
+    "./contracts/work": {
+      "types": "./dist/contracts/work.d.ts",
+      "import": "./dist/contracts/work.js"
+    },
+    "./runtime/browser-api": {
+      "types": "./dist/runtime/browser-api.d.ts",
+      "import": "./dist/runtime/browser-api.js"
+    },
+    "./runtime/codex/app-server": {
+      "types": "./dist/runtime/codex/app-server.d.mts",
+      "import": "./dist/runtime/codex/app-server.mjs"
+    },
+    "./runtime/codex/binary": {
+      "types": "./dist/runtime/codex/binary.d.ts",
+      "import": "./dist/runtime/codex/binary.js"
+    },
+    "./runtime/codex/event-queue": {
+      "types": "./dist/runtime/codex/event-queue.d.mts",
+      "import": "./dist/runtime/codex/event-queue.mjs"
+    },
+    "./runtime/codex/events": {
+      "types": "./dist/runtime/codex/events.d.mts",
+      "import": "./dist/runtime/codex/events.mjs"
+    },
+    "./runtime/codex/thread": {
+      "types": "./dist/runtime/codex/thread.d.mts",
+      "import": "./dist/runtime/codex/thread.mjs"
+    },
+    "./runtime/credentials": {
+      "types": "./dist/runtime/credentials.d.ts",
+      "import": "./dist/runtime/credentials.js"
+    },
+    "./runtime/http": {
+      "types": "./dist/runtime/http.d.ts",
+      "import": "./dist/runtime/http.js"
+    },
+    "./runtime/lifecycle": {
+      "types": "./dist/runtime/lifecycle.d.ts",
+      "import": "./dist/runtime/lifecycle.js"
+    },
+    "./runtime/platform": {
+      "types": "./dist/runtime/platform.d.ts",
+      "import": "./dist/runtime/platform.js"
+    },
+    "./runtime/plugin": {
+      "types": "./dist/runtime/plugin.d.ts",
+      "import": "./dist/runtime/plugin.js"
+    },
+    "./runtime/rpc": {
+      "types": "./dist/runtime/rpc.d.ts",
+      "import": "./dist/runtime/rpc.js"
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/build-common.mjs"
+  }
 }

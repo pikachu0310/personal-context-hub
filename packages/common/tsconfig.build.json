@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.ido.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*.ts", "src/**/*.mjs"],
+  "exclude": ["dist", "node_modules"]
+}

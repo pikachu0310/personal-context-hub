@@ -2,15 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type {
-  Command,
-  User,
-} from "../../../../common/src/contracts/protocol.js";
-import {
-  hash,
-  passwordHash,
-  secret,
-} from "../../../../common/src/runtime/platform.js";
+import type { Command, User } from "@ido/common/contracts/protocol";
+import { hash, passwordHash, secret } from "@ido/common/runtime/platform";
 import {
   describeError,
   type Diagnostic,

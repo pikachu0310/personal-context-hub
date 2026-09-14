@@ -1,4 +1,4 @@
-import type { Task } from "../../../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import type { Meeting } from "../../domain/models.js";
 import type { Models } from "../../ports/models.js";
 import type { Repository } from "../../ports/repository.js";

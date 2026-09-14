@@ -1,4 +1,4 @@
-import { type Project } from "../../../common/src/contracts/protocol.js";
+import { type Project } from "@ido/common/contracts/protocol";
 
 import type { Client } from "../bootstrap/client.js";
 export function pollPair(this: Client) {

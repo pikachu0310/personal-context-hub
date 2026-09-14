@@ -1,11 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  asset,
-  body,
-  HttpError,
-  send,
-} from "../../../common/src/runtime/http.js";
-import type { Rpc } from "../../../common/src/runtime/rpc.js";
+import { asset, body, HttpError, send } from "@ido/common/runtime/http";
+import type { Rpc } from "@ido/common/runtime/rpc";
 export async function route(
   req: IncomingMessage,
   res: ServerResponse,

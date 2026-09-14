@@ -6,10 +6,10 @@ import {
   type CoordinatorObservation,
   type CoordinatorResponse,
   type CoordinatorRuntime,
-} from "../../../../common/src/contracts/coordinator.js";
-import { AppServerCodex } from "../../../../common/src/runtime/codex/app-server.mjs";
-import { codexBinary } from "../../../../common/src/runtime/codex/binary.js";
-import { workerEnvironment } from "../../../../common/src/runtime/platform.js";
+} from "@ido/common/contracts/coordinator";
+import { AppServerCodex } from "@ido/common/runtime/codex/app-server";
+import { codexBinary } from "@ido/common/runtime/codex/binary";
+import { workerEnvironment } from "@ido/common/runtime/platform";
 import {
   coordinatorPrompt,
   coordinatorSchema,

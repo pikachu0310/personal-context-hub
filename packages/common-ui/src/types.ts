@@ -1,7 +1,4 @@
-import type {
-  ApiResult,
-  WorkspaceState,
-} from "../../common/src/contracts/api.js";
+import type { ApiResult, WorkspaceState } from "@ido/common/contracts/api";
 export type {
   AdminState,
   ApiResult,
@@ -10,7 +7,7 @@ export type {
   MessageView,
   PluginState,
   WorkspaceState,
-} from "../../common/src/contracts/api.js";
+} from "@ido/common/contracts/api";
 export type Action = (
   path: string,
   input: Record<string, unknown>,

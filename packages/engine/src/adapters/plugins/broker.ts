@@ -1,8 +1,8 @@
 import type {
   ConversationInput,
   InputContext,
-} from "../../../../common/src/contracts/plugins.js";
-import { text } from "../../../../common/src/contracts/protocol.js";
+} from "@ido/common/contracts/plugins";
+import { text } from "@ido/common/contracts/protocol";
 import { Contexts } from "../../management/contexts.js";
 import { Identities } from "../../management/identities.js";
 import type { Workspace } from "../../output/queries/workspace.js";

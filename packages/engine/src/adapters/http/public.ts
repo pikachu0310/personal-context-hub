@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { endpoint, text } from "../../../../common/src/contracts/protocol.js";
-import { HttpError, send } from "../../../../common/src/runtime/http.js";
+import { endpoint, text } from "@ido/common/contracts/protocol";
+import { HttpError, send } from "@ido/common/runtime/http";
 import type { Engine } from "../../bootstrap/engine.js";
 import type { Auth } from "./auth.js";
 export async function publicRoutes(

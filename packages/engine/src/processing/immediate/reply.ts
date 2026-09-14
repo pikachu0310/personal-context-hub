@@ -1,7 +1,7 @@
 import type {
   ConversationInput,
   InputContext,
-} from "../../../../common/src/contracts/plugins.js";
+} from "@ido/common/contracts/plugins";
 import type { Conversation } from "../conversation.js";
 import { invocationAcknowledgement } from "./invocation.mjs";
 export async function reply(

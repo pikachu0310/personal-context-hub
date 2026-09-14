@@ -1,4 +1,4 @@
-import type { Command, User } from "../../../common/src/contracts/protocol.js";
+import type { Command, User } from "@ido/common/contracts/protocol";
 import type { Diagnostic, DiagnosticContext } from "../domain/diagnostics.js";
 export interface Repository {
   get<T>(kind: string, id: string): T | undefined;
