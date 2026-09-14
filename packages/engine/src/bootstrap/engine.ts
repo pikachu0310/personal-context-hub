@@ -1,3 +1,6 @@
+import { WorkspaceLifecycle } from "../processing/projects/lifecycle.js";
+import { seedParticipants } from "../processing/projects/task-participants.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
@@ -96,6 +99,15 @@ export class Engine {
   constructor(readonly options: EngineOptions) {
     this.store = new Store(options.directory);
     new Projects(this.store).ensure();
+    for (const entry of this.store.entries())
+      if (entry.kind === "project-lock")
+        this.store.remove(entry.kind, entry.id);
+    for (const task of this.store.list<Task>("task")) {
+      if (!task.memberStates) {
+        seedParticipants(this.store, task);
+        this.store.put("task", task.id, task);
+      }
+    }
     this.credentials = new Credentials(options.directory, "ido-engine");
     this.origin = `http://127.0.0.1:${options.port ?? 4310}`;
     this.previewOrigin = `http://127.0.0.1:${options.previewPort ?? 4311}`;
@@ -204,6 +216,16 @@ export class Engine {
         publish: (event) => this.plugins.publish(event),
       });
     }
+    const lifecycle = new WorkspaceLifecycle(
+      this.store,
+      async (projectId) => {
+        await this.conversation.coordinated?.resetProject(projectId);
+      },
+      (task) => this.connections.invalidateTask(task),
+    );
+    this.connections.lifecycle = lifecycle;
+    this.workspace.lifecycle = lifecycle;
+    this.workspace.engineUrl = () => this.config().engineUrl ?? this.origin;
     this.tunnels = new Tunnels(options.directory, this.store, this.credentials);
     this.server.on("upgrade", (req, socket, head) => {
       if (req.url?.startsWith("/preview/") && this.trustedHost(req)) {

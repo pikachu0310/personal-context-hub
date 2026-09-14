@@ -6,7 +6,7 @@ import { ProjectView } from "./ProjectView.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { InviteDialog } from "./InviteDialog.js";
 import { Modal, Text, Button, Anchor } from "@mantine/core";
-import { Form } from "@ido/common-ui";
+import { Form, TaskMenu } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
 import { useEffect, useState } from "react";
 import { ClientView } from "./ClientView.js";
@@ -81,6 +81,21 @@ export function App() {
       setProjectView(undefined);
     }
   }, [projectView?.taskId, state?.runs]);
+  useEffect(() => {
+    if (!state) return;
+    if (
+      projectView &&
+      !state.settings.projects.some((p) => p.id === projectView.projectId)
+    )
+      setProjectView(undefined);
+    if (selected && !state.runs.some((r) => r.task.runId === selected))
+      select(undefined);
+    if (
+      selectedShared &&
+      !state.teamTasks?.tasks.some((t) => t.id === selectedShared)
+    )
+      selectShared(undefined);
+  }, [state, projectView, selected, selectedShared]);
   if (!state)
     return (
       <div className="workspace-loading">
@@ -128,12 +143,7 @@ export function App() {
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
-  const projects = [
-    ...new Set([
-      ...state.settings.projects.map((p) => p.id),
-      ...runs.map((r) => r.task.projectId),
-    ]),
-  ];
+  const projects = state.settings.projects.map((p) => p.id);
   return (
     <div className={`agent-workspace ${sidebar ? "" : "sidebar-hidden"}`}>
       <aside className="workspace-sidebar" aria-label="プロジェクトとタスク">
@@ -265,58 +275,78 @@ export function App() {
                   </button>
                 )}
                 {shared.map((task) => (
-                  <button
-                    key={task.id}
-                    disabled={!projectConnected}
-                    className={`task-link ${projectView?.taskId === task.id ? "selected" : ""}`}
-                    onClick={() =>
-                      setProjectView({ projectId: id, taskId: task.id })
-                    }
-                  >
-                    <span>{task.title ?? task.text}</span>
-                    <TaskAvatars state={state} task={task} />
-                    <span
-                      className={`task-dot ${task.state}`}
-                      aria-label={stateLabel(task.state)}
+                  <div key={task.id} className="task-row">
+                    <button
+                      disabled={!projectConnected}
+                      className={`task-link ${projectView?.taskId === task.id ? "selected" : ""}`}
+                      onClick={() =>
+                        setProjectView({ projectId: id, taskId: task.id })
+                      }
+                    >
+                      <span>{task.title ?? task.text}</span>
+                      <TaskAvatars state={state} task={task} />
+                      <span
+                        className={`task-dot ${task.state}`}
+                        aria-label={stateLabel(task.state)}
+                      />
+                    </button>
+                    <TaskMenu
+                      task={task}
+                      actorId={state.settings.deviceId}
+                      action={action}
+                      disabled={!projectConnected || !state.lifecycleSupported}
                     />
-                  </button>
+                  </div>
                 ))}
                 {items.map((run) => (
-                  <button
-                    key={run.task.runId}
-                    disabled={!projectConnected}
-                    className={`task-link ${!selectedShared && currentPage === "runs" && run.task.runId === current?.task.runId ? "selected" : ""}`}
-                    aria-current={
-                      currentPage === "runs" &&
-                      !selectedShared &&
-                      run.task.runId === current?.task.runId
-                        ? "page"
-                        : undefined
-                    }
-                    title={run.task.title ?? run.task.text}
-                    onClick={() => {
-                      setProjectView(undefined);
-                      select(run.task.runId);
-                      selectShared(undefined);
-                      setPage("runs");
-                    }}
-                  >
-                    <span>
-                      {run.task.title ?? run.task.text}
-                      {run.origin === "local" && (
-                        <small className="shared-task-owner">
-                          {run.agent === "claude" ? "Claude Code" : "Codex"} ·
-                          ローカルで開始 · Bot未共有
-                        </small>
-                      )}
-                    </span>
-                    <TaskAvatars state={state} task={run.task} local />
-                    <span
-                      role="img"
-                      aria-label={stateLabel(run.state)}
-                      className={`task-dot ${activeState(run.state) ? "active" : run.state}`}
-                    />
-                  </button>
+                  <div key={run.task.runId} className="task-row">
+                    <button
+                      disabled={!projectConnected}
+                      className={`task-link ${!selectedShared && currentPage === "runs" && run.task.runId === current?.task.runId ? "selected" : ""}`}
+                      aria-current={
+                        currentPage === "runs" &&
+                        !selectedShared &&
+                        run.task.runId === current?.task.runId
+                          ? "page"
+                          : undefined
+                      }
+                      title={run.task.title ?? run.task.text}
+                      onClick={() => {
+                        setProjectView(undefined);
+                        select(run.task.runId);
+                        selectShared(undefined);
+                        setPage("runs");
+                      }}
+                    >
+                      <span>
+                        {run.task.title ?? run.task.text}
+                        {run.origin === "local" && (
+                          <small className="shared-task-owner">
+                            {run.agent === "claude" ? "Claude Code" : "Codex"} ·
+                            ローカルで開始 · Bot未共有
+                          </small>
+                        )}
+                      </span>
+                      <TaskAvatars state={state} task={run.task} local />
+                      <span
+                        role="img"
+                        aria-label={stateLabel(run.state)}
+                        className={`task-dot ${activeState(run.state) ? "active" : run.state}`}
+                      />
+                    </button>
+                    {state.projectTasks?.find((t) => t.id === run.task.id) && (
+                      <TaskMenu
+                        task={state.projectTasks.find(
+                          (t) => t.id === run.task.id,
+                        )!}
+                        actorId={state.settings.deviceId}
+                        action={action}
+                        disabled={
+                          !projectConnected || !state.lifecycleSupported
+                        }
+                      />
+                    )}
+                  </div>
                 ))}
               </section>
             );
@@ -554,6 +584,25 @@ export function App() {
                     : (current?.task.title ?? current?.task.text)) ??
                   "タスク")}
           </h1>
+          {state.lifecycleSupported &&
+            (projectView?.taskId || sharedCurrent || current) &&
+            (() => {
+              const task = state.projectTasks?.find(
+                (t) =>
+                  t.id ===
+                  (projectView?.taskId ??
+                    sharedCurrent?.id ??
+                    current?.task.id),
+              );
+              return task ? (
+                <TaskMenu
+                  task={task}
+                  actorId={state.settings.deviceId}
+                  action={action}
+                  disabled={!workspaceConnected}
+                />
+              ) : null;
+            })()}
           <button
             className="icon-button"
             aria-label="最新の状態に更新"
@@ -562,6 +611,11 @@ export function App() {
             <Icon name="refresh" size={17} />
           </button>
         </header>
+        {!!state.deletionSync?.pendingTasks && (
+          <div role="status" className="workspace-error">
+            削除したタスクのローカル履歴を整理中です。同期完了までお待ちください。
+          </div>
+        )}
         {error && (
           <div className="workspace-error" role="alert">
             {error}

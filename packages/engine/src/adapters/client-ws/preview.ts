@@ -20,11 +20,15 @@ export class PreviewRelay {
     string,
     {
       deviceId: string;
+      taskId?: string;
       resolve: (data: Command) => void;
       timer: NodeJS.Timeout;
     }
   >();
-  sockets = new Map<string, { deviceId: string; socket: WebSocket }>();
+  sockets = new Map<
+    string,
+    { deviceId: string; taskId: string; socket: WebSocket }
+  >();
   server = createServer((req, res) => {
     void this.http(req, res).catch(() =>
       send(res, 502, { error: "PREVIEW_UNAVAILABLE" }),
@@ -50,6 +54,7 @@ export class PreviewRelay {
         const requestId = randomUUID();
         this.sockets.set(requestId, {
           deviceId: context.preview.deviceId,
+          taskId: context.preview.taskId,
           socket: ws,
         });
         this.send(context.preview.deviceId, {
@@ -209,6 +214,7 @@ export class PreviewRelay {
       }, 15000);
       this.pending.set(requestId, {
         deviceId: context.preview.deviceId,
+        taskId: context.preview.taskId,
         resolve,
         timer,
       });
@@ -272,6 +278,29 @@ export class PreviewRelay {
         });
       else if (data.type === "preview.ws.close") stream.socket.close();
     }
+  }
+  removeTask(taskId: string) {
+    for (const [id, value] of this.registrations)
+      if (value.taskId === taskId) {
+        this.registrations.delete(id);
+        for (const [token, ticket] of this.tickets)
+          if (ticket.previewId === id) this.tickets.delete(token);
+      }
+    for (const [id, value] of this.sockets)
+      if (value.taskId === taskId) {
+        value.socket.close(1008, "Task deleted");
+        this.sockets.delete(id);
+      }
+    for (const [id, value] of this.pending)
+      if (value.taskId === taskId) {
+        clearTimeout(value.timer);
+        value.resolve({
+          v: 1,
+          type: "preview.http.result",
+          error: "TASK_DELETED",
+        });
+        this.pending.delete(id);
+      }
   }
   disconnected(deviceId: string) {
     for (const [id, value] of this.registrations)

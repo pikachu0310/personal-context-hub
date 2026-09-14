@@ -6,12 +6,16 @@ import type { Executor, Run } from "../execution/executor.js";
 import { recordActivity } from "../execution/activity.js";
 export async function load(this: Executor) {
   await mkdir(this.home, { recursive: true, mode: 0o700 });
-  const saved = await json<{ runs: Record<string, Run>; commands: string[] }>(
-    join(this.directory, "runs.json"),
-    { runs: {}, commands: [] },
-  );
+  const saved = await json<{
+    runs: Record<string, Run>;
+    commands: string[];
+    deletedTasks?: Record<string, true>;
+    pendingPurges?: Record<string, string[]>;
+  }>(join(this.directory, "runs.json"), { runs: {}, commands: [] });
   this.runs = saved.runs;
   this.commands = saved.commands;
+  this.deletedTasks = saved.deletedTasks ?? {};
+  this.pendingPurges = saved.pendingPurges ?? {};
   for (const value of Object.values(this.runs)) {
     value.instructions ??= [];
     // Legacy string journals cannot prove whether a steer was delivered.
@@ -51,5 +55,7 @@ export async function load(this: Executor) {
       });
     }
   }
+  for (const taskId of Object.keys(this.pendingPurges))
+    await this.purge(taskId).catch(() => {});
   await this.save();
 }

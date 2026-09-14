@@ -1,3 +1,4 @@
+import { lifecycleError } from "@ido/common-ui";
 import { browserApi } from "@ido/common/runtime/browser-api";
 const request = browserApi("/api/");
 const errors: Record<string, string> = {
@@ -44,8 +45,6 @@ export async function api<T>(
   try {
     return await request<T>(path, input);
   } catch (error) {
-    throw new Error(
-      errors[(error as Error).message] ?? (error as Error).message,
-    );
+    throw new Error(errors[(error as Error).message] ?? lifecycleError(error));
   }
 }

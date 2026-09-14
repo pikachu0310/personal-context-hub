@@ -55,6 +55,12 @@ export function ProjectView({
       clearInterval(timer);
     };
   }, [projectId]);
+  if (
+    taskId &&
+    clientState.projectTasks &&
+    !clientState.projectTasks.some((t) => t.id === taskId)
+  )
+    return <Text p="xl">タスクは削除されたか、表示できなくなりました。</Text>;
   if (error) return <Alert color="red">{error}</Alert>;
   if (!state) return <Text p="xl">読み込み中…</Text>;
   const owner = state.project.ownerDeviceId === deviceId;

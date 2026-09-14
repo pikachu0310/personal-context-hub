@@ -45,6 +45,7 @@
     "build:common-ui": "npm run build --workspace @ido/common-ui",
     "pack:ido": "node scripts/pack-ido.mjs",
     "smoke:ido": "node scripts/ido-browser-smoke.mjs && node scripts/ido-dashboard-smoke.mjs && node scripts/ido-preview-browser-smoke.mjs && node scripts/client-workspace-smoke.mjs",
+    "smoke:membership": "node scripts/client-membership-smoke.mjs",
     "smoke:workspace": "node scripts/client-workspace-smoke.mjs",
     "smoke:ido:pack": "node scripts/ido-pack-smoke.mjs",
     "lint": "eslint .",

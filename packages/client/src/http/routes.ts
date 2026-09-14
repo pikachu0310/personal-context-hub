@@ -56,6 +56,10 @@ export async function route(
       suggestedInvite: this.suggestedInvite,
       projectTasks: this.projectTasks,
       connected: this.connected,
+      lifecycleSupported: this.lifecycleSupported,
+      deletionSync: {
+        pendingTasks: Object.keys(this.executor.pendingPurges).length,
+      },
       controlSupported: this.controlSupported,
       continuationSupported: this.continuationSupported,
       projectCreationSupported: this.projectCreationSupported,
@@ -73,16 +77,22 @@ export async function route(
       pairing: this.pairing
         ? { url: this.pairing.url, fingerprint: this.pairing.fingerprint }
         : null,
-      runs: Object.values(this.executor.runs).map(
-        ({
-          activity,
-          activityDropped,
-          instructions,
-          pendingInstructions,
-          controlReceipts,
-          ...value
-        }) => value,
-      ),
+      runs: Object.values(this.executor.runs)
+        .filter(
+          (r) =>
+            !this.executor.deletedTasks[r.task.id] &&
+            this.settings.projects.some((p) => p.id === r.task.projectId),
+        )
+        .map(
+          ({
+            activity,
+            activityDropped,
+            instructions,
+            pendingInstructions,
+            controlReceipts,
+            ...value
+          }) => value,
+        ),
       approvals: [...this.executor.approvals].map(
         ([id, { runId, method, params }]) => ({ id, runId, method, params }),
       ),
@@ -91,7 +101,8 @@ export async function route(
   }
   if (req.method === "GET" && url.pathname === "/api/activity") {
     const value = this.executor.runs[id(url.searchParams.get("runId"))];
-    if (!value) throw new HttpError(404, "RUN_NOT_FOUND");
+    if (!value || this.executor.deletedTasks[value.task.id])
+      throw new HttpError(404, "RUN_NOT_FOUND");
     send(res, 200, {
       entries: value.activity ?? [],
       dropped: value.activityDropped ?? 0,
@@ -177,6 +188,33 @@ export async function route(
       });
       return;
     }
+    case "/api/project/leave": {
+      const projectId = id(input.projectId);
+      if (
+        Object.values(this.executor.runs).some(
+          (r) =>
+            r.task.projectId === projectId &&
+            (this.executor.active.has(r.task.runId) ||
+              ["running", "assigned", "interrupted"].includes(r.state) ||
+              Object.values(r.controlReceipts ?? {}).some(
+                (c) => c.delivery === "uncertain",
+              )),
+        )
+      )
+        throw new HttpError(409, "PROJECT_TASKS_ACTIVE");
+      const result = await this.workspaceRequest("project.leave", input);
+      this.syncProjects(
+        this.settings.projects.filter((p) => p.id !== projectId),
+      );
+      await this.save();
+      this.ready();
+      send(res, 200, result);
+      return;
+    }
+    case "/api/task/join":
+    case "/api/task/leave":
+    case "/api/task/delete":
+    case "/api/project/transfer-owner":
     case "/api/project/rename":
     case "/api/project/remove-member":
     case "/api/project/snapshot":
@@ -188,6 +226,10 @@ export async function route(
       )
         throw new HttpError(409, "CONTINUATION_UNSUPPORTED");
       const operations: Record<string, string> = {
+        "/api/task/join": "task.join",
+        "/api/task/leave": "task.leave",
+        "/api/task/delete": "task.delete",
+        "/api/project/transfer-owner": "project.transfer-owner",
         "/api/project/rename": "project.rename",
         "/api/project/remove-member": "project.remove-member",
         "/api/project/snapshot": "project.snapshot",
@@ -198,6 +240,14 @@ export async function route(
         operations[url.pathname],
         input,
       );
+      if (url.pathname === "/api/task/delete") {
+        const taskId = id(input.taskId);
+        this.projectTasks = this.projectTasks.filter((t) => t.id !== taskId);
+        if (this.teamTasks)
+          this.teamTasks.tasks = this.teamTasks.tasks.filter(
+            (t) => t.id !== taskId,
+          );
+      }
       send(res, 200, result);
       return;
     }
@@ -381,7 +431,8 @@ export async function route(
     }
     case "/api/stop": {
       const value = this.executor.runs[id(input.runId)];
-      if (!value) throw new Error("RUN_NOT_FOUND");
+      if (!value || this.executor.deletedTasks[value.task.id])
+        throw new Error("RUN_NOT_FOUND");
       await this.executor.receive(
         {
           v: 1,
@@ -436,7 +487,8 @@ export async function route(
     }
     case "/api/continue": {
       const value = this.executor.runs[id(input.runId)];
-      if (!value) throw new HttpError(404, "RUN_NOT_FOUND");
+      if (!value || this.executor.deletedTasks[value.task.id])
+        throw new HttpError(404, "RUN_NOT_FOUND");
       const requestKey = id(input.requestKey),
         instruction = text(input.instruction, 8000);
       let receipt;
@@ -477,14 +529,16 @@ export async function route(
     }
     case "/api/diff": {
       const value = this.executor.runs[id(input.runId)];
-      if (!value) throw new HttpError(404, "RUN_NOT_FOUND");
+      if (!value || this.executor.deletedTasks[value.task.id])
+        throw new HttpError(404, "RUN_NOT_FOUND");
       const artifact = await this.executor.artifact(value.task.runId);
       send(res, 200, { patch: activityText(artifact.patch, 256000) });
       return;
     }
     case "/api/preview": {
       const value = this.executor.runs[id(input.runId)];
-      if (!value) throw new Error("RUN_NOT_FOUND");
+      if (!value || this.executor.deletedTasks[value.task.id])
+        throw new Error("RUN_NOT_FOUND");
       if (value.origin === "local")
         throw new HttpError(409, "LOCAL_SHARING_NOT_CONNECTED");
       const port = Number(input.port);
@@ -504,7 +558,7 @@ export async function route(
         if (e instanceof HttpError) throw e;
       }
       const previewId = randomUUID();
-      this.preview.register(previewId, port);
+      this.preview.register(previewId, port, value.task.id);
       this.emit({
         v: 1,
         type: "preview.register",

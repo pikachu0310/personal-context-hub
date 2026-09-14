@@ -5,3 +5,6 @@ export { Status } from "./components/Status.js";
 export { Workspace } from "./workspace/Workspace.js";
 export type * from "./types.js";
 export { SecretInput } from "./components/SecretInput.js";
+
+export { TaskMenu, lifecycleError } from "./components/TaskMenu.js";
+export { ProjectManagement } from "./workspace/ProjectManagement.js";

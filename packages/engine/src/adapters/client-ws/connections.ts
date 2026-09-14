@@ -1,3 +1,4 @@
+import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
 import { taskParticipants } from "../../processing/projects/task-participants.js";
 import { ProjectTeam } from "../../processing/projects/team.js";
 import { Projects } from "../../processing/projects/service.js";
@@ -175,6 +176,16 @@ export class ClientConnections {
   readonly preview: PreviewRelay;
   readonly scheduler: Scheduler;
   readonly tasks: Tasks;
+  lifecycle: WorkspaceLifecycle;
+  invalidateTask(task: Task) {
+    this.preview.removeTask(task.id);
+    for (const [id, request] of this.artifactRequests)
+      if (request.runId === task.runId) {
+        clearTimeout(request.timer);
+        request.reject(new Error("TASK_DELETED"));
+        this.artifactRequests.delete(id);
+      }
+  }
   broadcastProjects() {
     const team = new ProjectTeam(this.store);
     for (const [deviceId, ws] of this.peers) {
@@ -195,6 +206,10 @@ export class ClientConnections {
               .map((task) => ({
                 ...task,
                 participants: taskParticipants(this.store, task),
+                canDelete: this.lifecycle.canDelete(
+                  { deviceId, valid: () => true },
+                  task,
+                ),
               })),
           }),
         );
@@ -205,6 +220,7 @@ export class ClientConnections {
     readonly changed: () => void,
     frameAncestors: () => string[] = () => [],
   ) {
+    this.lifecycle = new WorkspaceLifecycle(store);
     this.scheduler = new Scheduler(store);
     this.tasks = new Tasks(store);
     this.preview = new PreviewRelay(
@@ -232,7 +248,7 @@ export class ClientConnections {
       }
     });
     ws.on("error", () => {});
-    ws.on("message", (raw) => {
+    ws.on("message", async (raw) => {
       try {
         const data = frame(raw.toString());
         if (!authenticated) {
@@ -251,6 +267,7 @@ export class ClientConnections {
             throw new Error("AUTH_FAILED");
           deviceId = device.id;
           device.generation++;
+          device.lifecycleVersion = data.lifecycleVersion === 1 ? 1 : undefined;
           generation = device.generation;
           this.store.put("device", device.id, device);
           this.peers.get(device.id)?.close(4000, "superseded");
@@ -276,6 +293,13 @@ export class ClientConnections {
               projects: new ProjectTeam(this.store).projects(device.id),
               workspaceVersion: 1,
               taskListVersion: 1,
+              lifecycleVersion: 1,
+              deletions:
+                device.lifecycleVersion === 1
+                  ? this.store
+                      .pending(device.id)
+                      .filter((c) => c.type === "task.purge")
+                  : [],
             }),
           );
           return;
@@ -340,7 +364,47 @@ export class ClientConnections {
             team = new ProjectTeam(this.store);
           try {
             let result: unknown;
+            const actor = {
+              deviceId: device.id,
+              valid: () =>
+                this.peers.get(device.id) === ws &&
+                this.store.get<Device>("device", device.id)?.generation ===
+                  generation,
+            };
             switch (data.operation) {
+              case "project.leave":
+                result = team.leave(
+                  device.id,
+                  id(input.projectId),
+                  input.membershipVersion,
+                );
+                break;
+              case "project.transfer-owner":
+                result = team.transfer(
+                  device.id,
+                  id(input.projectId),
+                  id(input.deviceId),
+                  input.membershipVersion,
+                );
+                break;
+              case "task.join":
+              case "task.leave":
+                result = this.lifecycle.membership(
+                  actor,
+                  id(input.taskId),
+                  data.operation === "task.join",
+                  input.membershipVersion,
+                );
+                break;
+              case "task.delete":
+                result = await this.lifecycle.deleteTask(
+                  actor,
+                  id(input.taskId),
+                  input,
+                );
+                this.flush();
+                this.changed();
+                break;
               case "profile":
                 result = team.profile(device.id, input);
                 break;
@@ -575,7 +639,8 @@ export class ClientConnections {
           this.ready.add(device.id);
           this.flush();
           this.broadcastProjects();
-        } else if (data.type === "ack") this.store.ack(device.id, id(data.id));
+        } else if (data.type === "ack")
+          this.lifecycle.acknowledge(device.id, id(data.id));
         else if (data.type === "result") {
           this.tasks.updateResult(device.id, generation, data);
           this.flush();
@@ -602,6 +667,8 @@ export class ClientConnections {
       const device = this.store.get<Device>("device", deviceId);
       if (socket?.readyState === WebSocket.OPEN && device)
         for (const command of this.store.pending(deviceId)) {
+          if (command.type === "task.purge" && device.lifecycleVersion !== 1)
+            continue;
           const task = command.task as Task | undefined;
           if (
             ["execute", "retry"].includes(command.type) &&

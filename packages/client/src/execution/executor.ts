@@ -1,3 +1,4 @@
+import { purge } from "./purge.js";
 import { join } from "node:path";
 import type { ClientActivity } from "@ido/common/contracts/api";
 import { executionError, recordActivity } from "./activity.js";
@@ -62,6 +63,9 @@ export class Executor {
   readonly startPlannedWork = startPlannedWork.bind(this);
   runs: Record<string, Run> = {};
   commands: string[] = [];
+  deletedTasks: Record<string, true> = {};
+  pendingPurges: Record<string, string[]> = {};
+  readonly purge = purge.bind(this);
   running = new Map<string, Promise<void>>();
   steering = new Map<string, Promise<void>>();
   active = new Map<
@@ -91,7 +95,7 @@ export class Executor {
   readonly load = load.bind(this);
   readonly save = save.bind(this);
   report(value: Run) {
-    if (value.origin === "local") return;
+    if (value.origin === "local" || this.deletedTasks[value.task.id]) return;
     this.emit({
       v: 1,
       type: "result",
@@ -119,6 +123,17 @@ export class Executor {
     },
   ) {
     if (!command.id) throw new Error("COMMAND_ID_REQUIRED");
+    if (command.type === "task.purge" && !local) {
+      if (typeof command.taskId !== "string")
+        throw new Error("TASK_ID_REQUIRED");
+      await this.purge(command.taskId);
+      this.emit({ v: 1, type: "ack", id: command.id });
+      return;
+    }
+    if (!local && command.taskId && this.deletedTasks[command.taskId]) {
+      this.emit({ v: 1, type: "ack", id: command.id });
+      return;
+    }
     const existing = this.runs[String(command.runId)];
     if (existing && (existing.origin === "local") !== !!local)
       throw new Error("TASK_ORIGIN_MISMATCH");

@@ -66,6 +66,7 @@ export class Client {
   origin = "";
   generation = 0;
   connected = false;
+  lifecycleSupported = false;
   controlSupported = false;
   continuationSupported = false;
   workspaceSupported = false;
@@ -103,6 +104,23 @@ export class Client {
   readonly allowedProjects = new Set<string>();
   get allow() {
     return this.allowedProjects.size > 0;
+  }
+  syncProjects(projects: Project[], tasks?: Task[]) {
+    const joined = new Set(projects.map((p) => p.id));
+    for (const id of this.allowedProjects)
+      if (!joined.has(id)) this.allowedProjects.delete(id);
+    this.settings.projects = projects;
+    if (tasks) this.projectTasks = tasks;
+    else
+      this.projectTasks = this.projectTasks.filter((t) =>
+        joined.has(t.projectId),
+      );
+    if (this.teamTasks)
+      this.teamTasks.tasks = this.teamTasks.tasks.filter(
+        (t) =>
+          joined.has(t.projectId) &&
+          (!tasks || tasks.some((current) => current.id === t.id)),
+      );
   }
   executionMappings() {
     return this.settings.mappings.filter(

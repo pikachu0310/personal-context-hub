@@ -19,6 +19,9 @@ export async function route(
       req.method === "POST" &&
       [
         "projects",
+        "project/invite",
+        "project/delete",
+        "task/delete",
         "meetings",
         "messages",
         "tasks",

@@ -106,6 +106,7 @@ export function dashboardSnapshot(
       runId: t.runId,
       revision: t.revision,
       controlVersion: t.controlVersion ?? 0,
+      membershipVersion: t.membershipVersion ?? 0,
       projectId: t.projectId,
       meetingId: t.meetingId,
       title: clean(t.title || t.text.slice(0, 120)),
@@ -151,6 +152,8 @@ export function dashboardSnapshot(
     return {
       id: p.id,
       name: clean(p.name),
+      isDefault: p.isDefault,
+      membershipVersion: p.membershipVersion ?? 0,
       userIds: [...new Set(ds.map((d) => d.userId))],
       connectedUserIds: [
         ...new Set(
@@ -174,6 +177,13 @@ export function dashboardSnapshot(
     user,
     updatedAt: now,
     projects: projectViews,
+    deletionSync: {
+      pendingClients: new Set(
+        store
+          .list<{ pendingDeviceIds: string[] }>("task-deletion")
+          .flatMap((d) => d.pendingDeviceIds),
+      ).size,
+    },
     users: users.map((u) => ({ ...u, name: clean(u.name) })),
     connections,
     tasks: projectedTasks,
