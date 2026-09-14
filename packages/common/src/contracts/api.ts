@@ -31,6 +31,17 @@ export interface WorkspaceState {
   meetings: MeetingView[];
   tasks: Task[];
 }
+export interface ProjectWorkspace {
+  project: Project;
+  minutes: MeetingView[];
+  tasks: Task[];
+  participants: Array<{
+    id: string;
+    name: string;
+    context: string;
+    codexConnected: boolean;
+  }>;
+}
 export interface PluginState {
   id: string;
   manifest?: PluginManifest;
@@ -45,6 +56,7 @@ export interface AdminState {
   user: User;
   csrf: string;
   clients: Array<{
+    codexConnected?: boolean;
     id: string;
     name: string;
     userId: string;
@@ -103,10 +115,14 @@ export interface ClientActivityState {
   version: number;
 }
 export interface ClientState {
+  allowedProjectIds?: string[];
+  projectTasks?: Task[];
   projectCreationSupported?: boolean;
   controlSupported?: boolean;
   csrf: string;
+  suggestedInvite?: { engineUrl: string; token: string };
   settings: {
+    profile?: { name: string; context: string };
     progressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;

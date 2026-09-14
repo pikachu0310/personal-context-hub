@@ -89,11 +89,11 @@ function migrateV1(db: DatabaseSync, directory: string) {
   }
 }
 
-export function migrate(db: DatabaseSync, directory: string) {
+function migrateV2(db: DatabaseSync, directory: string) {
   const version = Number(
     db.prepare("PRAGMA user_version").get()?.user_version ?? 0,
   );
-  if (version > 2) throw new Error("DATABASE_VERSION_UNSUPPORTED");
+  if (version > 2) return;
   migrateV1(db, directory);
   if (version === 2) return;
   const backup = join(directory, "engine.before-v2.sqlite");
@@ -185,6 +185,55 @@ export function migrate(db: DatabaseSync, directory: string) {
       }
     }
     db.exec("PRAGMA user_version=2; COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function migrate(db: DatabaseSync, directory: string) {
+  const version = Number(
+    db.prepare("PRAGMA user_version").get()?.user_version ?? 0,
+  );
+  if (version > 3) throw new Error("DATABASE_VERSION_UNSUPPORTED");
+  migrateV2(db, directory);
+  if (version === 3) return;
+  const backup = join(directory, "engine.before-v3.sqlite");
+  if (!existsSync(backup)) db.prepare("VACUUM INTO ?").run(backup);
+  if (process.platform !== "win32") chmodSync(backup, 0o600);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const rows = (kind: string) =>
+      db
+        .prepare("SELECT id,data FROM records WHERE kind=? ORDER BY rowid")
+        .all(kind);
+    const devices = rows("device")
+      .map((r) => JSON.parse(String(r.data)))
+      .filter((d) => !d.revoked);
+    const receipts = rows("project-create");
+    const write = db.prepare("INSERT OR REPLACE INTO records VALUES (?,?,?)");
+    for (const row of rows("project")) {
+      const project = JSON.parse(String(row.data));
+      for (const device of devices)
+        write.run(
+          "project-member",
+          `${project.id}:${device.id}`,
+          JSON.stringify({ projectId: project.id, deviceId: device.id }),
+        );
+      if (!project.isDefault && !project.ownerDeviceId) {
+        const receipt = receipts.find(
+          (r) => JSON.parse(String(r.data)).projectId === project.id,
+        );
+        const creator =
+          receipt &&
+          devices.find((d) => String(receipt.id).startsWith(`${d.id}:`));
+        if (creator) {
+          project.ownerDeviceId = creator.id;
+          write.run("project", project.id, JSON.stringify(project));
+        }
+      }
+    }
+    db.exec("PRAGMA user_version=3; COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;

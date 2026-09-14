@@ -62,6 +62,12 @@ export interface CoordinatorTask {
 }
 
 export interface CoordinatorObservation {
+  participants?: Array<{
+    id: string;
+    name: string;
+    context: string;
+    codexConnected: boolean;
+  }>;
   meetingId: string;
   projectId?: string;
   mode: ConversationMode;

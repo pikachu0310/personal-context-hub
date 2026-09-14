@@ -4,7 +4,12 @@ import { fileURLToPath } from "node:url";
 import { Client } from "../../client/src/bootstrap/client.js";
 import { dataDirectory } from "@ido/common/runtime/platform";
 import { lifetime } from "@ido/common/runtime/lifecycle";
-import { externalLink, localSender, parseJoinLink } from "./security.js";
+import {
+  externalLink,
+  localSender,
+  parseJoinLink,
+  parseProjectLink,
+} from "./security.js";
 
 app.setName("IDO Agent");
 if (process.platform === "win32") app.setAppUserModelId("org.idobot.agent");
@@ -15,8 +20,25 @@ let close: (() => Promise<void>) | undefined;
 let closing = false;
 let stopped = false;
 let pendingEngine: string | undefined;
+let pendingInvite: { engineUrl: string; token: string } | undefined;
 function receiveLink(value: string) {
   try {
+    if (new URL(value).hostname === "project") {
+      const invite = parseProjectLink(value);
+      if (
+        client?.settings.deviceId &&
+        client.settings.engineUrl !== invite.engineUrl
+      )
+        throw new Error("INVITATION_ENGINE_MISMATCH");
+      pendingInvite = invite;
+      pendingEngine = invite.engineUrl;
+      if (client) {
+        client.suggestedInvite = invite;
+        if (!client.settings.deviceId)
+          client.suggestedEngine = invite.engineUrl;
+      }
+      return;
+    }
     const engine = parseJoinLink(value);
     if (
       client?.settings.deviceId ||
@@ -114,6 +136,7 @@ else {
       ))
         receiveLink(arg);
       client.suggestedEngine = pendingEngine;
+      client.suggestedInvite = pendingInvite;
       window = new BrowserWindow({
         title: "IDO Agent",
         width: 1240,

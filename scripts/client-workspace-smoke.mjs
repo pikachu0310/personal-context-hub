@@ -47,7 +47,7 @@ try {
   ];
   client.connected = true;
   client.controlSupported = true;
-  client.allow = true;
+  client.allowedProjects.add("project");
   const thread = {
     activeTurnId: null,
     async steer(text) {

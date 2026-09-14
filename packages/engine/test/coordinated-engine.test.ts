@@ -367,6 +367,7 @@ for (const liveMode of [false, true])
       name: "Worker",
       publicKey: "fixture",
       revoked: false,
+      codexConnected: true,
       generation: 1,
       grants: [{ projectId: "project", network: false, slots: 1 }],
       slots: 1,

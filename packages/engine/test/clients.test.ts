@@ -39,6 +39,9 @@ test("two outbound Clients receive separate tasks; duplicate delivery does not s
   for (let i = 0; i < 2; i++) {
     const c = new Client(join(directory, "client" + i));
     c.credentials.backend = "file";
+    t.mock.method(c, "checkAccount", async () => {
+      c.loginStatus = "authenticated";
+    });
     await c.start(0);
     clients.push(c);
     e.store.put("device", "device" + i, {
@@ -53,11 +56,15 @@ test("two outbound Clients receive separate tasks; duplicate delivery does not s
       grants: [],
     });
     c.settings.deviceId = "device" + i;
+    e.store.put("project-member", `project:device${i}`, {
+      projectId: "project",
+      deviceId: `device${i}`,
+    });
     c.settings.engineUrl = e.origin;
     c.settings.mappings = [
       { projectId: "project", directory, network: false, slots: 1 },
     ];
-    c.allow = true;
+    c.allowedProjects.add("project");
     c.executor.execute = async (run: Run) => {
       executions.push(run.task.runId);
       run.state = "running";

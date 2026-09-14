@@ -47,6 +47,7 @@ export function startLogin(client: Client) {
     client.loginUrl = undefined;
     client.loginStatus = code === 0 ? "authenticated" : "login failed";
     if (client.login === child) client.login = undefined;
+    client.ready();
   };
   child.once("error", () => finish(1));
   child.once("close", finish);

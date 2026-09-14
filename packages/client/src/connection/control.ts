@@ -11,7 +11,8 @@ export function control(
   if (!value) throw new HttpError(404, "RUN_NOT_FOUND");
   if (!this.connected || !this.controlSupported)
     throw new HttpError(409, "ENGINE_CONTROL_UNAVAILABLE");
-  if (!this.allow) throw new HttpError(409, "EXECUTION_NOT_ALLOWED");
+  if (!this.allowedProjects.has(value.task.projectId))
+    throw new HttpError(409, "EXECUTION_NOT_ALLOWED");
   if (!["assigned", "running"].includes(value.state))
     throw new HttpError(409, "TASK_NOT_RUNNING");
   if (this.controlRequests.has(requestKey))

@@ -52,6 +52,7 @@ async function fixture(t: TestContext) {
     userId: user.id,
     publicKey: "fixture",
     revoked: false,
+    codexConnected: true,
     generation: 1,
     grants: [{ projectId: "project", network: true, slots: 4 }],
     slots: 4,
@@ -284,6 +285,10 @@ test("a downgraded Client cannot replay restrictive outbox work or receive a res
     readyState: 1,
     send: (value: string) => sent.push(JSON.parse(value)),
   } as any);
+  store.put("project-member", "project:client", {
+    projectId: "project",
+    deviceId: "client",
+  });
   connections.ready.add("client");
   store.put("device", "client", device("client"));
   connections.flush();
@@ -336,4 +341,20 @@ test("a worker failure before producing text is returned as a failure event", as
   assert.equal(result?.state, "failed");
   assert.equal(result?.superseded, false);
   assert.match(result!.result, /失敗/);
+});
+
+test("Codex-unlinked approved Clients receive no task even with execution grants", async (t) => {
+  const { store, work, request, device } = await fixture(t);
+  const client = device("client", 1);
+  client.codexConnected = false;
+  store.put("device", client.id, client);
+  const task = work.submit(request),
+    scheduler = new Scheduler(store);
+  scheduler.schedule(new Set([client.id]));
+  assert.equal(store.get<Task>("task", task.id)?.state, "queued");
+  assert.equal(store.pending(client.id).length, 0);
+  client.codexConnected = true;
+  store.put("device", client.id, client);
+  scheduler.schedule(new Set([client.id]));
+  assert.equal(store.get<Task>("task", task.id)?.clientId, client.id);
 });

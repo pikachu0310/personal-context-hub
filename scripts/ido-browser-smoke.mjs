@@ -279,7 +279,7 @@ try {
     .getByRole("button", { name: "接続を確認してチャンネルを取得" })
     .click();
   await page
-    .getByRole("combobox", { name: "テキストチャンネル", exact: true })
+    .getByRole("combobox", { name: "デフォルトチャンネル", exact: true })
     .click();
   await page.getByRole("option", { name: "#一般" }).click();
   const configSaved = page.waitForResponse((r) =>
@@ -442,6 +442,83 @@ try {
     engine.store.list("project").some((p) => p.name === "Client project"),
   );
   assert.equal(client.allow, false);
+  await clientPage
+    .getByRole("button", { name: "接続とセットアップ", exact: true })
+    .click();
+  assert.equal(
+    await clientPage.getByText(/プロジェクトとローカルrepoを対応付け/).count(),
+    0,
+  );
+  assert.equal(
+    await clientPage
+      .getByRole("heading", { name: "新しいタスクの進め方" })
+      .count(),
+    0,
+  );
+  await clientPage
+    .getByRole("button", { name: "Client projectの設定", exact: true })
+    .click();
+  await clientPage
+    .getByRole("menuitem", { name: "接続・設定", exact: true })
+    .click();
+  await clientPage
+    .getByRole("heading", { name: "タスクの実行許可", exact: true })
+    .waitFor();
+  await clientPage.getByText("Manual · 会話する", { exact: true }).click();
+  await clientPage.waitForFunction(async () => {
+    const state = await (await fetch("/api/state")).json();
+    return state.settings.mappings.some((m) => m.progressMode === "manual");
+  });
+  await clientPage
+    .getByLabel("このプロジェクトのタスクを受け取って実行する")
+    .check();
+  await clientPage.waitForFunction(async () => {
+    const state = await (await fetch("/api/state")).json();
+    return state.allowedProjectIds.length === 1;
+  });
+  await clientPage
+    .getByLabel("このプロジェクトのタスクを受け取って実行する")
+    .uncheck();
+  await clientPage.screenshot({
+    path: ".ido-build/screenshots/client-project-settings.png",
+    fullPage: true,
+  });
+  await clientPage
+    .getByRole("button", { name: "ユーザー設定を開く", exact: true })
+    .click();
+  await clientPage
+    .getByLabel("アカウント名", { exact: true })
+    .fill("Browser participant");
+  await clientPage
+    .getByLabel("個人コンテキスト（自己紹介・開発担当など）")
+    .fill("UI担当");
+  await clientPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await clientPage.getByText("Browser participant", { exact: true }).waitFor();
+  await clientPage
+    .getByRole("button", { name: "Client projectの設定", exact: true })
+    .click();
+  await clientPage
+    .getByRole("menuitem", { name: "プロジェクト名を編集", exact: true })
+    .click();
+  await clientPage
+    .getByLabel("プロジェクト名", { exact: true })
+    .fill("Renamed project");
+  await clientPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await clientPage
+    .getByRole("button", { name: "Renamed projectの設定", exact: true })
+    .waitFor();
+  await clientPage
+    .getByRole("button", { name: "議事録", exact: true })
+    .last()
+    .click();
+  await clientPage.getByText("詳細を見る", { exact: true }).click();
+  await clientPage.getByText("UI担当", { exact: true }).waitFor();
   await page.getByText("クライアント", { exact: true }).first().click();
   await page
     .getByRole("heading", { name: "クライアント", exact: true })

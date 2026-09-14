@@ -49,7 +49,6 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
-  progressMode: "auto" | "manual" = "auto";
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
   readonly waitForPlan = waitForPlan.bind(this);
   readonly startPlannedWork = startPlannedWork.bind(this);
@@ -161,7 +160,7 @@ export class Executor {
       const directory =
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
       const value: Run = {
-        progressMode: previous?.progressMode ?? this.progressMode,
+        progressMode: previous?.progressMode ?? mapping.progressMode ?? "auto",
         activity: structuredClone(previous?.activity ?? []),
         activityDropped: previous?.activityDropped,
         activityVersion: previous?.activityVersion,

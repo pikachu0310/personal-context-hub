@@ -38,11 +38,14 @@ export async function route(
       mode: "client",
       csrf: this.csrf,
       settings: this.settings,
+      suggestedInvite: this.suggestedInvite,
+      projectTasks: this.projectTasks,
       connected: this.connected,
       controlSupported: this.controlSupported,
       projectCreationSupported: this.projectCreationSupported,
       status: this.status,
       allow: this.allow,
+      allowedProjectIds: [...this.allowedProjects],
       loginStatus: this.loginStatus,
       loginUrl: this.loginUrl,
       suggestedEngine: this.suggestedEngine,
@@ -90,7 +93,7 @@ export async function route(
     case "/api/disconnect": {
       if (this.executor.active.size)
         throw new HttpError(409, "STOP_TASKS_FIRST");
-      this.allow = false;
+      this.allowedProjects.clear();
       this.settings.deviceId = undefined;
       this.settings.engineUrl = undefined;
       this.settings.projects = [];
@@ -101,6 +104,75 @@ export async function route(
       this.connected = false;
       this.preview.close();
       await this.save();
+      break;
+    }
+    case "/api/profile": {
+      this.settings.profile = {
+        name: text(input.name, 100),
+        context:
+          typeof input.context === "string" ? input.context.slice(0, 8000) : "",
+      };
+      await this.save();
+      this.ready();
+      break;
+    }
+    case "/api/project/invite": {
+      const result = await this.workspaceRequest<{ token: string }>(
+        "project.invite",
+        { projectId: id(input.projectId) },
+      );
+      send(res, 200, {
+        url: `${this.settings.engineUrl}/invite/${result.token}`,
+      });
+      return;
+    }
+    case "/api/project/rename":
+    case "/api/project/remove-member":
+    case "/api/project/snapshot":
+    case "/api/project/task": {
+      const operations: Record<string, string> = {
+        "/api/project/rename": "project.rename",
+        "/api/project/remove-member": "project.remove-member",
+        "/api/project/snapshot": "project.snapshot",
+        "/api/project/task": "task.create",
+      };
+      const result = await this.workspaceRequest(
+        operations[url.pathname],
+        input,
+      );
+      send(res, 200, result);
+      return;
+    }
+    case "/api/project/inspect-invite": {
+      if (input.engineUrl !== this.settings.engineUrl)
+        throw new HttpError(409, "INVITATION_ENGINE_MISMATCH");
+      const result = await this.workspaceRequest("project.inspect-invite", {
+        token: text(input.token, 200),
+      });
+      send(res, 200, result);
+      return;
+    }
+    case "/api/project/join": {
+      if (input.engineUrl !== this.settings.engineUrl)
+        throw new HttpError(409, "INVITATION_ENGINE_MISMATCH");
+      if (this.allow || this.executor.active.size)
+        throw new HttpError(409, "PAUSE_BEFORE_EDITING");
+      const token = text(input.token, 200);
+      await this.workspaceRequest("project.inspect-invite", { token });
+      const directory = await projectDirectory(text(input.directory, 4000));
+      if (this.allow || this.executor.active.size)
+        throw new HttpError(409, "PAUSE_BEFORE_EDITING");
+      const project = await this.workspaceRequest<
+        import("@ido/common/contracts/protocol").Project
+      >("project.join", { token });
+      if (this.allow || this.executor.active.size)
+        throw new HttpError(409, "PAUSE_BEFORE_EDITING");
+      this.settings.mappings = this.settings.mappings
+        .filter((m) => m.projectId !== project.id)
+        .concat({ projectId: project.id, directory, network: false, slots: 1 });
+      this.suggestedInvite = undefined;
+      await this.save();
+      this.ready();
       break;
     }
     case "/api/projects": {
@@ -185,31 +257,52 @@ export async function route(
       break;
     }
     case "/api/mappings": {
-      if (this.allow || this.executor.active.size)
-        throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       const projectId = id(input.projectId);
+      if (this.projectBusy(projectId))
+        throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       if (!this.settings.projects.some((p) => p.id === projectId))
         throw new HttpError(400, "UNKNOWN_PROJECT");
       const directory = await projectDirectory(text(input.directory, 4000));
-      if (this.allow || this.executor.active.size)
+      if (this.projectBusy(projectId))
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       this.settings.mappings = this.settings.mappings
         .filter((m) => m.projectId !== projectId)
         .concat({
           projectId,
           directory,
+          progressMode: this.settings.mappings.find(
+            (m) => m.projectId === projectId,
+          )?.progressMode,
           network: input.network === true,
           slots: Math.max(1, Math.min(8, Number(input.slots) || 1)),
         });
       await this.save();
       break;
     }
-    case "/api/allow":
-      this.allow = input.allow === true;
-      this.settings.slots = Math.max(1, Math.min(8, Number(input.slots) || 1));
+    case "/api/allow": {
+      const projectId = id(input.projectId);
+      const mapping = this.settings.mappings.find(
+        (m) => m.projectId === projectId,
+      );
+      if (!mapping || !this.settings.projects.some((p) => p.id === projectId))
+        throw new HttpError(409, "PROJECT_DIRECTORY_REQUIRED");
+      mapping.slots = Math.max(
+        1,
+        Math.min(8, Number(input.slots) || mapping.slots),
+      );
+      if (input.allow === true) this.allowedProjects.add(projectId);
+      else this.allowedProjects.delete(projectId);
+      this.settings.slots = Math.min(
+        8,
+        Math.max(
+          1,
+          this.executionMappings().reduce((total, m) => total + m.slots, 0),
+        ),
+      );
       await this.save();
       this.ready();
       break;
+    }
     case "/api/approval":
       this.executor.approve(id(input.id), input.allow === true);
       break;
@@ -222,6 +315,7 @@ export async function route(
       } catch {
         this.loginStatus = "login required";
       }
+      this.ready();
       break;
     case "/api/codex/login": {
       startLogin(this);
@@ -238,19 +332,26 @@ export async function route(
           runId: value.task.runId,
           taskId: value.task.id,
         },
-        this.settings.mappings,
+        this.executionMappings(),
         this.allow,
         this.settings.slots,
       );
       break;
     }
-    case "/api/progress-mode":
+    case "/api/progress-mode": {
       if (!["auto", "manual"].includes(String(input.mode)))
         throw new HttpError(400, "INVALID_PROGRESS_MODE");
-      this.settings.progressMode = input.mode as "auto" | "manual";
-      this.executor.progressMode = this.settings.progressMode;
+      const projectId = id(input.projectId);
+      if (!this.settings.projects.some((p) => p.id === projectId))
+        throw new HttpError(400, "UNKNOWN_PROJECT");
+      const mapping = this.settings.mappings.find(
+        (m) => m.projectId === projectId,
+      );
+      if (!mapping) throw new HttpError(409, "PROJECT_DIRECTORY_REQUIRED");
+      mapping.progressMode = input.mode as "auto" | "manual";
       await this.save();
       break;
+    }
     case "/api/execute-plan": {
       if (!this.allow || !this.connected)
         throw new HttpError(409, "EXECUTION_NOT_ALLOWED");
@@ -260,6 +361,7 @@ export async function route(
         !this.settings.mappings.some(
           (mapping) =>
             mapping.projectId === value.task.projectId &&
+            this.allowedProjects.has(mapping.projectId) &&
             (!value.task.network || mapping.network),
         )
       )

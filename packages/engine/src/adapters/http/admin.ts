@@ -1,3 +1,4 @@
+import { ProjectTeam } from "../../processing/projects/team.js";
 import { createPublicKey, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -105,6 +106,39 @@ export async function route(
     send(res, 200, { ok: true, service: "ido-engine", protocol: 1 });
     return;
   }
+  if (
+    req.method === "GET" &&
+    /^\/invite\/[A-Za-z0-9_-]{43}$/.test(url.pathname)
+  ) {
+    const token = url.pathname.slice(8);
+    const project = new ProjectTeam(this.store).invitation(token);
+    const origin = this.config().engineUrl ?? this.origin;
+    const escape = (value: string) =>
+      value.replace(
+        /[&<>"']/g,
+        (c) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          })[c]!,
+      );
+    const desktop = `ido-agent://project?engine=${encodeURIComponent(origin)}&token=${token}`;
+    const browser = `http://127.0.0.1:4320/?engine=${encodeURIComponent(origin)}&projectInvite=${token}`;
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy":
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+    });
+    res.end(
+      `<!doctype html><html lang="ja"><meta name="viewport" content="width=device-width"><title>プロジェクトへの招待</title><style>body{font:16px system-ui;max-width:620px;margin:10vh auto;padding:24px;background:#17191d;color:#eee}a{display:block;padding:16px;margin:16px 0;background:#313743;color:white;border-radius:10px}</style><h1>${escape(project.name)} への招待</h1><p>IDO Agentで参加し、このPCの保存先を選択します。EngineへのClient接続が未承認の場合は先に承認を受けてください。</p><a href="${escape(desktop)}">IDO Agentで開く</a><a href="${escape(browser)}">ブラウザー版Clientで開く（起動済み）</a></html>`,
+    );
+    return;
+  }
   if (!url.pathname.startsWith("/api/admin/")) {
     if (url.pathname === "/") {
       const embedded = [...this.plugins.processes.values()].find((plugin) => {
@@ -208,7 +242,7 @@ export async function route(
     });
     send(res, 200, {
       deviceId: device.id,
-      projects: this.store.list("project"),
+      projects: new ProjectTeam(this.store).projects(device.id),
     });
     return;
   }

@@ -1,3 +1,4 @@
+import { ProjectTeam } from "../projects/team.js";
 import { createHash } from "node:crypto";
 import type {
   ConversationMode,
@@ -236,6 +237,10 @@ class MeetingCoordinator {
             })),
         })),
       context: this.history(events),
+      participants: new ProjectTeam(this.store)
+        .participants(this.meeting()?.projectId ?? "")
+        .slice(0, 30)
+        .map((p) => ({ ...p, context: p.context.slice(0, 1000) })),
     };
   }
 

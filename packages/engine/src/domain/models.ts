@@ -1,5 +1,7 @@
 import type { Grant } from "@ido/common/contracts/protocol";
 export interface Device {
+  profile?: import("@ido/common/contracts/protocol").ClientProfile;
+  codexConnected?: boolean;
   id: string;
   name: string;
   userId: string;

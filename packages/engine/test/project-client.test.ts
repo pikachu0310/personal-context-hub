@@ -13,7 +13,7 @@ async function until(check: () => boolean) {
   }
   throw new Error("TIMEOUT");
 }
-test("member Client creates and maps idempotently, broadcasts, retries unknown results and checks current rights", async (t) => {
+test("approved Client owns projects, invites participants, retries unknown results and fences revoked devices", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "ido-client-project-"));
   const engine = new Engine({
     directory: join(dir, "engine"),
@@ -36,6 +36,9 @@ test("member Client creates and maps idempotently, broadcasts, retries unknown r
   for (let i = 0; i < 2; i++) {
     const c = new Client(join(dir, `client${i}`));
     c.credentials.backend = "file";
+    t.mock.method(c, "checkAccount", async () => {
+      c.loginStatus = "login required";
+    });
     await c.start(0);
     clients.push(c);
     engine.store.put("device", `device${i}`, {
@@ -55,6 +58,20 @@ test("member Client creates and maps idempotently, broadcasts, retries unknown r
   }
   await until(() => clients.every((c) => c.connected));
   const c = clients[0];
+  await c.workspaceRequest("profile", {
+    name: "Alex",
+    context: "バックエンド開発担当",
+    codexConnected: false,
+  });
+  const defaultWorkspace = await c.workspaceRequest<any>("project.snapshot", {
+    projectId: "default",
+  });
+  const participant = defaultWorkspace.participants.find(
+    (p: any) => p.id === c.settings.deviceId,
+  );
+  assert.equal(participant.name, "Alex");
+  assert.equal(participant.context, "バックエンド開発担当");
+  assert.equal(participant.codexConnected, false);
   const post = async (name: string, directory: string) =>
     fetch(c.origin + "/api/projects", {
       method: "POST",
@@ -64,10 +81,49 @@ test("member Client creates and maps idempotently, broadcasts, retries unknown r
   const path = join(dir, "new");
   await mkdir(path);
   assert.equal((await post("First", path)).status, 200);
-  await until(() =>
-    clients[1].settings.projects.some((p) => p.name === "First"),
-  );
   const project = c.settings.projects.find((p) => p.name === "First")!;
+  assert.equal(project.ownerDeviceId, c.settings.deviceId);
+  assert.equal(
+    clients[1].settings.projects.some((p) => p.id === project.id),
+    false,
+  );
+  const invitation = await c.workspaceRequest<{ token: string }>(
+    "project.invite",
+    { projectId: project.id },
+  );
+  const page = await fetch(`${engine.origin}/invite/${invitation.token}`);
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /ido-agent/);
+  await assert.rejects(
+    clients[1].workspaceRequest("project.snapshot", { projectId: project.id }),
+    /PROJECT_INVITATION_REQUIRED/,
+  );
+  await clients[1].workspaceRequest("project.join", {
+    token: invitation.token,
+  });
+  await until(() =>
+    clients[1].settings.projects.some((p) => p.id === project.id),
+  );
+  await assert.rejects(
+    clients[1].workspaceRequest("project.invite", { projectId: project.id }),
+    /PROJECT_OWNER_REQUIRED/,
+  );
+  await c.workspaceRequest("project.rename", {
+    projectId: project.id,
+    name: "Renamed",
+  });
+  await c.workspaceRequest("project.remove-member", {
+    projectId: project.id,
+    deviceId: clients[1].settings.deviceId,
+  });
+  await assert.rejects(
+    clients[1].workspaceRequest("project.snapshot", { projectId: project.id }),
+    /PROJECT_INVITATION_REQUIRED/,
+  );
+  await assert.rejects(
+    clients[1].workspaceRequest("project.join", { token: invitation.token }),
+    /NEW_INVITATION_REQUIRED/,
+  );
   assert.equal(
     c.settings.mappings.find((m) => m.projectId === project.id)?.network,
     false,
@@ -81,7 +137,7 @@ test("member Client creates and maps idempotently, broadcasts, retries unknown r
     engine.store.list<any>("project").some((p) => "directory" in p),
     false,
   );
-  assert.equal((await post("First", path)).status, 409);
+  assert.equal((await post("Renamed", path)).status, 409);
   const create = c.createProject;
   const retryPath = join(dir, "retry");
   await mkdir(retryPath);
@@ -105,16 +161,16 @@ test("member Client creates and maps idempotently, broadcasts, retries unknown r
   );
   const replay = await c.createProject("Retry", requestId);
   assert.equal(replay.name, "Retry");
-  engine.store.db
-    .prepare("UPDATE users SET role='viewer' WHERE id=?")
-    .run(user.id);
+  const approved = engine.store.get<any>(
+    "device",
+    clients[1].settings.deviceId!,
+  )!;
+  approved.revoked = true;
+  engine.store.put("device", approved.id, approved);
   await assert.rejects(
-    c.createProject("Denied", "new-request"),
-    /PERMISSION_DENIED/,
+    clients[1].createProject("Denied", "new-request"),
+    /PROJECT_DELIVERY_UNKNOWN/,
   );
-  engine.store.db
-    .prepare("UPDATE users SET role='member' WHERE id=?")
-    .run(user.id);
   c.generation -= 1;
   const stale = c.createProject("Stale", "stale-request");
   await assert.rejects(stale, /PROJECT_DELIVERY_UNKNOWN/);

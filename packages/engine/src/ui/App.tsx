@@ -5,7 +5,6 @@ import "@ido/common-ui/style.css";
 import { api } from "./api.js";
 import { Clients } from "./pages/Clients.js";
 import { Diagnostics } from "./pages/Diagnostics.js";
-import { Members } from "./pages/Members.js";
 import { Setup } from "./pages/Setup.js";
 import { PairApproval } from "./PairApproval.js";
 import { useRemoteState } from "./useRemoteState.js";
@@ -47,7 +46,6 @@ export function App() {
     ["clients", "クライアント"],
     ...(state.user.role === "admin"
       ? [
-          ["members", "メンバー"],
           ["diagnostics", "エラーログ"],
           ["audit", "操作履歴"],
         ]
@@ -76,7 +74,6 @@ export function App() {
       </Group>
       {page === "setup" && <Setup {...props} />}
       <Clients {...props} />
-      <Members {...props} />
       <Diagnostics {...props} />
       {page === "audit" && (
         <Card title="操作履歴">

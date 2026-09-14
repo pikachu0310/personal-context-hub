@@ -1,4 +1,8 @@
-import { Modal, Text } from "@mantine/core";
+import { ProjectSettings } from "./ProjectSettings.js";
+import { ProjectView } from "./ProjectView.js";
+import { ProjectMenu } from "./ProjectMenu.js";
+import { InviteDialog } from "./InviteDialog.js";
+import { Modal, Text, Button, Anchor } from "@mantine/core";
 import { Form } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
 import { useEffect, useRef, useState } from "react";
@@ -15,6 +19,27 @@ export function App() {
   const [query, search] = useState("");
   const [sidebar, showSidebar] = useState(true);
   const [projectDialog, setProjectDialog] = useState<string | undefined>();
+  const [profileDialog, showProfile] = useState(false);
+  const [projectView, setProjectView] = useState<{
+    projectId: string;
+    taskId?: string;
+    settings?: boolean;
+  }>();
+  const [invite, setInvite] = useState<{ engineUrl: string; token: string }>();
+  const [dismissedInvite, dismissInvite] = useState("");
+  useEffect(() => {
+    const url = new URL(location.href);
+    const token = url.searchParams.get("projectInvite"),
+      engineUrl = url.searchParams.get("engine");
+    if (token && engineUrl) setInvite({ token, engineUrl });
+  }, []);
+  useEffect(() => {
+    if (
+      state?.suggestedInvite &&
+      state.suggestedInvite.token !== dismissedInvite
+    )
+      setInvite(state.suggestedInvite);
+  }, [state?.suggestedInvite?.token, dismissedInvite]);
   const wasConnected = useRef(false);
   useEffect(() => {
     if (state?.connected && !wasConnected.current) setPage("runs");
@@ -68,7 +93,10 @@ export function App() {
         <nav className="sidebar-nav" aria-label="メインメニュー">
           <button
             className={currentPage === "runs" ? "nav-active" : ""}
-            onClick={() => setPage("runs")}
+            onClick={() => {
+              setProjectView(undefined);
+              setPage("runs");
+            }}
           >
             <Icon name="terminal" />
             実行と承認
@@ -78,7 +106,10 @@ export function App() {
           </button>
           <button
             className={currentPage === "overview" ? "nav-active" : ""}
-            onClick={() => setPage("overview")}
+            onClick={() => {
+              setProjectView(undefined);
+              setPage("overview");
+            }}
           >
             <Icon name="settings" />
             接続とセットアップ
@@ -106,8 +137,17 @@ export function App() {
             </button>
           </div>
           {projects.map((id) => {
+            const project = state.settings.projects.find((p) => p.id === id);
+            const shared = (state.projectTasks ?? []).filter(
+              (t) =>
+                t.projectId === id &&
+                !runs.some((r) => r.task.id === t.id) &&
+                `${t.title ?? ""} ${t.text}`
+                  .toLowerCase()
+                  .includes(query.toLowerCase()),
+            );
             const items = filtered.filter((r) => r.task.projectId === id);
-            if (query && !items.length) return null;
+            if (query && !items.length && !shared.length) return null;
             return (
               <section key={id} className="project-group">
                 <div className="project-name">
@@ -126,7 +166,41 @@ export function App() {
                       ＋
                     </button>
                   )}
+                  {project && (
+                    <ProjectMenu
+                      project={project}
+                      deviceId={state.settings.deviceId}
+                      action={action}
+                      mapping={() =>
+                        setProjectView({ projectId: id, settings: true })
+                      }
+                    />
+                  )}
                 </div>
+                {project && (
+                  <button
+                    className={`task-link ${projectView?.projectId === id && !projectView.taskId ? "selected" : ""}`}
+                    onClick={() => setProjectView({ projectId: id })}
+                  >
+                    <Icon name="file" size={15} />
+                    <span>議事録</span>
+                  </button>
+                )}
+                {shared.map((task) => (
+                  <button
+                    key={task.id}
+                    className={`task-link ${projectView?.taskId === task.id ? "selected" : ""}`}
+                    onClick={() =>
+                      setProjectView({ projectId: id, taskId: task.id })
+                    }
+                  >
+                    <span>{task.title ?? task.text}</span>
+                    <span
+                      className={`task-dot ${task.state}`}
+                      aria-label={stateLabel(task.state)}
+                    />
+                  </button>
+                ))}
                 {items.map((run) => (
                   <button
                     key={run.task.runId}
@@ -139,6 +213,7 @@ export function App() {
                     }
                     title={run.task.title ?? run.task.text}
                     onClick={() => {
+                      setProjectView(undefined);
                       select(run.task.runId);
                       setPage("runs");
                     }}
@@ -163,9 +238,17 @@ export function App() {
           )}
         </div>
         <footer className="sidebar-footer">
-          <div className="local-avatar">PC</div>
+          <button
+            className="local-avatar"
+            aria-label="ユーザー設定を開く"
+            onClick={() => showProfile(true)}
+          >
+            {state.settings.profile?.name?.slice(0, 2) || "PC"}
+          </button>
           <div>
-            <strong>このPCのエージェント</strong>
+            <strong>
+              {state.settings.profile?.name || "ユーザー名を設定"}
+            </strong>
             <span>
               <i
                 className={`connection-dot ${state.connected ? "online" : ""}`}
@@ -176,12 +259,80 @@ export function App() {
           <button
             className="icon-button"
             aria-label="接続設定を開く"
-            onClick={() => setPage("overview")}
+            onClick={() => {
+              setProjectView(undefined);
+              setPage("overview");
+            }}
           >
             <Icon name="settings" size={17} />
           </button>
         </footer>
       </aside>
+      <InviteDialog
+        invite={invite}
+        connected={state.connected}
+        onClose={() => {
+          dismissInvite(invite?.token ?? "");
+          setInvite(undefined);
+          history.replaceState(null, "", location.pathname);
+        }}
+      />
+      <Modal
+        opened={profileDialog}
+        onClose={() => showProfile(false)}
+        title="ユーザー設定"
+      >
+        <Text mb="md">
+          表示名と個人コンテキストは、参加しているプロジェクトで共有し、Engineが会話や開発担当を理解するために使います。
+        </Text>
+        <Form
+          initial={state.settings.profile ?? { name: "参加者", context: "" }}
+          fields={[
+            { key: "name", label: "アカウント名" },
+            {
+              key: "context",
+              label: "個人コンテキスト（自己紹介・開発担当など）",
+              multiline: true,
+              optional: true,
+            },
+          ]}
+          submit={async (data) => {
+            await action("profile", data);
+            showProfile(false);
+          }}
+        />
+        <Text mt="lg">
+          {state.loginStatus === "authenticated"
+            ? "Codex連携済み"
+            : "Codex未連携 — タスクは割り当てられません"}
+        </Text>
+        <Button
+          mt="sm"
+          variant="light"
+          onClick={() => invoke("codex/doctor", {})}
+        >
+          Codex連携を確認
+        </Button>
+        <Button
+          mt="sm"
+          ml="sm"
+          variant="light"
+          onClick={() => invoke("codex/login", {})}
+        >
+          Codexにログイン
+        </Button>
+        {state.loginUrl && (
+          <Anchor
+            display="block"
+            mt="sm"
+            href={state.loginUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            ログイン画面を開く
+          </Anchor>
+        )}
+      </Modal>
       <Modal
         opened={projectDialog !== undefined}
         onClose={() => setProjectDialog(undefined)}
@@ -225,9 +376,13 @@ export function App() {
           </button>
           <Icon name="folder" size={17} />
           <h1>
-            {currentPage === "overview"
-              ? "接続とセットアップ"
-              : (current?.task.title ?? current?.task.text ?? "実行と承認")}
+            {projectView
+              ? (state.settings.projects.find(
+                  (p) => p.id === projectView.projectId,
+                )?.name ?? "プロジェクト")
+              : currentPage === "overview"
+                ? "接続とセットアップ"
+                : (current?.task.title ?? current?.task.text ?? "実行と承認")}
           </h1>
           <button
             className="icon-button"
@@ -242,7 +397,21 @@ export function App() {
             {error}
           </div>
         )}
-        {currentPage === "overview" ? (
+        {projectView?.settings ? (
+          <ProjectSettings
+            key={projectView.projectId}
+            projectId={projectView.projectId}
+            state={state}
+            action={action}
+          />
+        ) : projectView ? (
+          <ProjectView
+            key={projectView.projectId}
+            projectId={projectView.projectId}
+            taskId={projectView.taskId}
+            deviceId={state.settings.deviceId}
+          />
+        ) : currentPage === "overview" ? (
           <div className="setup-scroll">
             <div className="setup-content">
               <div className="setup-intro">
@@ -258,7 +427,10 @@ export function App() {
               </div>
               <ClientView
                 page="overview"
-                state={state}
+                state={{
+                  ...state,
+                  suggestedEngine: invite?.engineUrl ?? state.suggestedEngine,
+                }}
                 action={action}
                 invoke={invoke}
               />

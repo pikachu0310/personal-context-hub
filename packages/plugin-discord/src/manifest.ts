@@ -49,7 +49,7 @@ export const discordManifest: PluginManifest = {
       label: "Mac Apple Silicon版のHTTPSダウンロードURL",
     },
     { key: "macIntelDownloadUrl", label: "Mac Intel版のHTTPSダウンロードURL" },
-    { key: "textChannelId", label: "テキストチャンネルID", required: true },
+    { key: "textChannelId", label: "デフォルトチャンネルID", required: true },
     { key: "appId", label: "Application ID（自動取得）" },
     {
       key: "clientSecret",

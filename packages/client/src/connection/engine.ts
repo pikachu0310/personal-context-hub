@@ -47,6 +47,11 @@ export async function connect(this: Client) {
           v: 1,
           type: "authenticate",
           deviceId: this.settings.deviceId,
+          profile: {
+            ...this.settings.profile,
+            name: this.settings.profile?.name || "参加者",
+            codexConnected: this.loginStatus === "authenticated",
+          },
           signature: sign(
             null,
             Buffer.from(
@@ -63,8 +68,12 @@ export async function connect(this: Client) {
       this.connected = true;
       this.controlSupported = data.controlVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
+      this.workspaceSupported = data.workspaceVersion === 1;
       this.status = "connected";
       this.settings.projects = data.projects as Project[];
+      if (Array.isArray(data.tasks))
+        this.projectTasks =
+          data.tasks as import("@ido/common/contracts/protocol").Task[];
       void this.save();
       for (const value of Object.values(this.executor.runs))
         this.executor.report(value);
@@ -78,7 +87,20 @@ export async function connect(this: Client) {
     if (data.generation !== this.generation) return;
     if (data.type === "projects.updated") {
       this.settings.projects = data.projects as Project[];
+      if (Array.isArray(data.tasks))
+        this.projectTasks =
+          data.tasks as import("@ido/common/contracts/protocol").Task[];
       void this.save();
+      return;
+    }
+    if (data.type === "workspace.result") {
+      const request = this.workspaceRequests.get(String(data.requestId));
+      if (request) {
+        clearTimeout(request.timer);
+        this.workspaceRequests.delete(String(data.requestId));
+        if (data.error) request.reject(new HttpError(409, String(data.error)));
+        else request.resolve(data.result);
+      }
       return;
     }
     if (data.type === "project.result") {
@@ -139,7 +161,7 @@ export async function connect(this: Client) {
       .then(() =>
         this.executor.receive(
           data,
-          this.settings.mappings,
+          this.executionMappings(),
           this.allow,
           this.settings.slots,
         ),
@@ -163,6 +185,12 @@ export async function connect(this: Client) {
       request.reject(new HttpError(409, "PROJECT_DELIVERY_UNKNOWN"));
     }
     this.projectRequests.clear();
+    for (const request of this.workspaceRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new HttpError(409, "WORKSPACE_DELIVERY_UNKNOWN"));
+    }
+    this.workspaceRequests.clear();
+    this.workspaceSupported = false;
     this.status = code === 4003 ? "revoked or permission changed" : "offline";
     this.preview.close();
     if (!this.stopping && code !== 4003)

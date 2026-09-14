@@ -42,6 +42,9 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
     await rm(directory, { recursive: true, force: true });
   });
   await engine.listen();
+  t.mock.method(client, "checkAccount", async () => {
+    client.loginStatus = "authenticated";
+  });
   await client.start(0);
   engine.store.put("device", "device", {
     id: "device",
@@ -55,11 +58,15 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
     grants: [],
   });
   client.settings.deviceId = "device";
+  engine.store.put("project-member", "project:device", {
+    projectId: "project",
+    deviceId: "device",
+  });
   client.settings.engineUrl = engine.origin;
   client.settings.mappings = [
     { projectId: "project", directory, slots: 1, network: false },
   ];
-  client.allow = true;
+  client.allowedProjects.add("project");
   client.executor.execute = async (run: Run) => {
     run.state = "running";
     client.executor.report(run);
@@ -120,9 +127,16 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
   );
   assert.equal(foreignRead.status, 403);
   const before = structuredClone(client.settings.mappings);
-  assert.equal((await post("progress-mode", { mode: "manual" })).status, 200);
-  assert.equal(client.executor.progressMode, "manual");
-  assert.deepEqual(client.settings.mappings, before);
+  assert.equal(
+    (await post("progress-mode", { projectId: "project", mode: "manual" }))
+      .status,
+    200,
+  );
+  assert.equal(client.settings.mappings[0].progressMode, "manual");
+  assert.deepEqual(
+    client.settings.mappings.map(({ progressMode, ...mapping }) => mapping),
+    before,
+  );
   assert.equal(client.allow, true);
   const authoritative = engine.store.get<Task>("task", task.id)!;
   authoritative.clientId = "other-device";
@@ -135,14 +149,12 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
   assert.equal((await denied.json()).error, "TASK_NOT_OWNED_BY_DEVICE");
   authoritative.clientId = "device";
   engine.store.put("task", task.id, authoritative);
-  engine.store.db
-    .prepare("UPDATE users SET role = ? WHERE id = ?")
-    .run("viewer", user.id);
+  engine.store.remove("project-member", "project:device");
   const deniedRole = await post("instruction", {
     ...input,
     requestKey: "request-three",
   });
   assert.equal(deniedRole.status, 409);
-  assert.equal((await deniedRole.json()).error, "PERMISSION_DENIED");
+  assert.equal((await deniedRole.json()).error, "CONTROL_REJECTED");
   assert.equal(engine.store.get<Device>("device", "device")?.revoked, false);
 });

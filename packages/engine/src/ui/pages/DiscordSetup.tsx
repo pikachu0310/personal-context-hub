@@ -89,7 +89,7 @@ export function DiscordSetup({
         接続を確認してチャンネルを取得
       </Button>
       <Select
-        label="テキストチャンネル"
+        label="デフォルトチャンネル"
         searchable
         disabled={!checked}
         value={channel}

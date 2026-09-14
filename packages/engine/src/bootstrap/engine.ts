@@ -108,7 +108,10 @@ export class Engine {
     );
     this.connections = new ClientConnections(
       this.store,
-      () => this.taskEvents.flush(),
+      () => {
+        this.taskEvents.flush();
+        this.connections.broadcastProjects();
+      },
       () =>
         [...this.plugins.processes.values()].flatMap((plugin) =>
           plugin.running ? (plugin.manifest?.web?.frameAncestors ?? []) : [],
