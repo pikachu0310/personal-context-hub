@@ -3,30 +3,78 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      packages: ${{ steps.plan.outputs.packages }}
+      os: ${{ steps.plan.outputs.os }}
+      pack: ${{ steps.filter.outputs.pack == 'true' || github.event_name == 'workflow_dispatch' }}
+      browser: ${{ steps.filter.outputs.browser == 'true' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          # Compare push against its previous commit, PR against its base.
+          base: ${{ github.ref }}
+          filters: .github/filters.yml
+      - id: plan
+        env:
+          CHANGES: ${{ steps.filter.outputs.changes }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          node --input-type=module <<'JS'
+          import { appendFileSync } from 'node:fs';
+          import { suites } from './scripts/ido-targets.mjs';
+          const changed = JSON.parse(process.env.CHANGES);
+          const packages = process.env.EVENT_NAME === 'workflow_dispatch'
+            ? suites : suites.filter(name => changed.includes(name));
+          const os = packages.length || changed.includes('pack')
+            ? ['ubuntu-latest', 'macos-latest', 'windows-latest'] : ['ubuntu-latest'];
+          appendFileSync(process.env.GITHUB_OUTPUT, `packages=${JSON.stringify(packages)}\n`);
+          appendFileSync(process.env.GITHUB_OUTPUT, `os=${JSON.stringify(os)}\n`);
+          JS
   ido:
+    needs: changes
+    if: needs.changes.outputs.packages != '[]' || needs.changes.outputs.pack == 'true' || needs.changes.outputs.browser == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.os) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      IDO_PACKAGES: ${{ needs.changes.outputs.packages }}
+      IDO_FULL_BUILD: ${{ needs.changes.outputs.pack == 'true' || (matrix.os == 'ubuntu-latest' && needs.changes.outputs.browser == 'true') }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm run verify:ido
       - run: npm run pack:ido
+        if: needs.changes.outputs.pack == 'true'
       - run: npm run smoke:ido:pack
+        if: needs.changes.outputs.pack == 'true'
       - run: npx playwright install --with-deps chromium
+        if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.browser == 'true'
       - run: npm run smoke:ido
+        if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.browser == 'true'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -35,3 +83,13 @@ jobs:
             .ido-build/tarballs/*.tgz
             .ido-build/screenshots/*.png
           if-no-files-found: ignore
+  ci_success:
+    name: CI Success
+    needs: [changes, ido]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required jobs
+        env:
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: test "$FAILED" = false

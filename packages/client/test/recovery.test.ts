@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { Command, Task } from "@ido/common/contracts/protocol";
-import { Credentials } from "@ido/common/runtime/credentials";
 import { run } from "@ido/common/runtime/platform";
 import { Executor } from "../src/execution/executor.js";
 test("a restarted Client does not re-execute a persisted delivery", async (t) => {
@@ -58,23 +57,6 @@ test("a restarted Client does not re-execute a persisted delivery", async (t) =>
   assert.equal(executions, 0);
   assert.equal(events.at(-1)?.state, "interrupted");
   assert.equal(restarted.runs.run.directory, join(directory, "preserved"));
-});
-test("default credentials use secrets.json and preserve multiline values and owner-only permissions", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "ido-secrets-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const credentials = new Credentials(directory, "test");
-  assert.equal(credentials.backend, "file");
-  await credentials.set("key", "line1\nline2\n");
-  assert.equal(await credentials.get("key"), "line1\nline2\n");
-  assert.equal(
-    await new Credentials(directory, "test").get("key"),
-    "line1\nline2\n",
-  );
-  if (process.platform !== "win32")
-    assert.equal(
-      (await stat(join(directory, "secrets.json"))).mode & 0o777,
-      0o600,
-    );
 });
 test("worktree artifact includes new text files and excludes credential files", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-artifact-"));

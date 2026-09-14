@@ -1,6 +1,6 @@
 # main2: IDO AgentとDiscord issueフォーラム
 
-基準はmain2の `ef27270`。9月13日にmainへ入ったPR #26 (`428cb01`) のデスクトップUI・終了制御・配布動線と、PR #7 (`17a9d98`) のフォーラム連携を、現在のEngine / Client / Plugin protocol 2へ適合させています。
+main2の `ef27270` を起点に、`0ffdb98` までの更新を統合しています。9月13日にmainへ入ったPR #26 (`428cb01`) のデスクトップUI・終了制御・配布動線と、PR #7 (`17a9d98`) のフォーラム連携を、現在のEngine / Client / Plugin protocol 2へ適合させています。共通コードは `@ido/common` / `@ido/common-ui` の公開exportsを利用します。
 
 ## 今回の範囲
 
@@ -12,6 +12,8 @@
 旧Gateway・独自の参加トークン配布・旧音声タスク割り振り・全承認による権限拡張・GitHub Issue自動作成は移植しません。通常のCodex Appで動く別タスクの取り込みも今回の対象外です。`v0` を実行時に参照しません。
 
 ## 参加者の手順
+
+現在のタスク画面は一覧・状態・最終結果の確認が中心です。実行中の進捗は直近のイベント名であり、途中の説明、コマンドと出力、ファイル変更を時系列で保存・表示するアクティビティ画面は未実装です。
 
 1. Discordで `/ido connect` を実行し、案内リンクを開きます。
 2. 自分のOSのアプリをダウンロードします。WindowsはSetupを実行、MacはDMGのIDO AgentをApplicationsへ移動します。

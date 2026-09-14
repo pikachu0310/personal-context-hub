@@ -59,6 +59,28 @@ npm run smoke:ido:pack
 
 Tarballs are written to `.ido-build/tarballs`. `build:ido`, `check:ido`, `test:ido`, and `verify:ido` remain available. These commands do not publish packages or start a live Discord Bot.
 
+`npm run verify:ido` builds shared packages once, checks types, builds the required
+runtimes, and runs tests. `npm test` also builds its prerequisites, so it works
+after a clean checkout. Set `IDO_PACKAGES` to a JSON array to select suites, for
+example `IDO_PACKAGES='["client"]' npm test` in Bash. Available suites are
+`common`, `common-ui`, `engine`, `client`, `plugin-discord`, `plugin-dashboard`
+and `tooling`; an unset value runs all of them. This local selection is explicit;
+CI additionally selects consumers and integration tests from changed paths.
+
+CI uses [dorny/paths-filter](https://github.com/dorny/paths-filter) with
+[the package filters](.github/filters.yml). Documentation and `v0/` changes skip
+runtime checks. Test-only changes run their owning suite; shared source changes
+also run consumers, and Client/Discord/Dashboard source changes include Engine
+integration tests. Build configuration and dependency changes run all suites.
+Runtime or packaging changes retain tarball installation checks on Linux,
+macOS and Windows. The shared browser smoke runs once on Linux when its inputs
+change. Manual workflow dispatch runs everything. `CI Success` aggregates both
+executed and intentionally skipped jobs into one stable check.
+
+Development-tool tests live in `scripts/test/`; shared Codex protocol and
+credential tests live in `packages/common/test/`. `npm run audit` runs dependency
+auditing separately from repeated CI installations.
+
 ## Legacy archive
 
 `v0/` contains the previous application, Electron client, MCP integrations, UI, tests, deployment tools and their documentation. It has its own package manifest and lockfile. The current runtime, build, tests and CI do not import or execute it. To inspect or run the archived system, explicitly change into that directory and follow its README; its commands are relative to that directory. Existing private configuration is not copied into the archive.

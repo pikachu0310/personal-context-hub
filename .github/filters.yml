@@ -1,0 +1,68 @@
+# Shared build/config changes can affect every package, including new packages.
+# Test-only and documentation changes do not invalidate runtime consumers.
+common:
+  - &global
+    - "package.json"
+    - "package-lock.json"
+    - ".npmrc"
+    - "tsconfig*.json"
+    - ".github/workflows/**"
+    - ".github/filters.yml"
+    - "scripts/{build-*,check-boundaries,verify-ido,ido-targets}.mjs"
+    - "packages/*/{package.json,tsconfig*.json}"
+  - "packages/common/{src,test}/**"
+  - "packages/common/vite.config.*"
+common-ui:
+  - *global
+  - &common "packages/common/src/**"
+  - "packages/common-ui/{src,test}/**"
+  - "packages/common-ui/vite.config.*"
+engine:
+  - *global
+  - *common
+  - &ui "packages/common-ui/src/**"
+  - "packages/engine/{src,test}/**"
+  - "packages/engine/vite.config.*"
+  # Engine integration tests import Client/Discord and launch Dashboard/Discord.
+  - "packages/{client,plugin-discord,plugin-dashboard}/src/**"
+client:
+  - *global
+  - *common
+  - *ui
+  - "packages/client/{src,test}/**"
+  - "packages/client/vite.config.*"
+plugin-discord:
+  - *global
+  - *common
+  - *ui
+  - "packages/plugin-discord/{src,test}/**"
+  - "packages/plugin-discord/vite.config.*"
+plugin-dashboard:
+  - *global
+  - *common
+  - *ui
+  - "packages/plugin-dashboard/{src,test}/**"
+  - "packages/plugin-dashboard/vite.config.*"
+desktop:
+  - *global
+  - *common
+  - *ui
+  - "packages/client/src/**"
+  - "packages/desktop/{src,test}/**"
+
+tooling:
+  - *global
+  - "scripts/**"
+  - "eslint.config.js"
+pack:
+  - *global
+  - "packages/*/src/**"
+  - "packages/*/vite.config.*"
+  - "packages/{engine,client,plugin-discord,plugin-dashboard}/README.md"
+  - "scripts/{pack-ido,ido-pack-smoke}.mjs"
+browser:
+  - *global
+  - "packages/{common,common-ui,engine,client,plugin-dashboard}/src/**"
+  - "packages/{engine,client,plugin-dashboard}/vite.config.*"
+  - "scripts/ido*-browser-smoke.mjs"
+  - "examples/ido-preview/**"
