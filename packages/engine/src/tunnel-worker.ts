@@ -1,7 +1,7 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
-import { writeFile, rm } from "node:fs/promises";
 let child: ChildProcess | undefined;
 let cleanup: () => Promise<unknown> = async () => {};
 process.once("message", (config: any) => {

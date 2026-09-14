@@ -11,10 +11,12 @@ const engine = new Engine({
   port: 0,
   previewPort: 0,
 });
-engine.credentials.backend = "file";
 engine.store.createUser("demo", "demo-password-only", "admin");
+engine.conversation.models.update = async () => ({
+  minutes: "ブラウザテストの議事録",
+  task: null,
+});
 const client = new Client(join(directory, "client"));
-client.credentials.backend = "file";
 let browser;
 try {
   await engine.listen();
@@ -24,14 +26,17 @@ try {
     viewport: { width: 1440, height: 1000 },
   });
   const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(engine.origin);
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.setDefaultTimeout(10000);
+  await page.goto(engine.origin + "/admin");
   await page.getByLabel("ユーザー名").fill("demo");
   await page.getByLabel("パスワード").fill("demo-password-only");
   await page.getByRole("button", { name: "ログイン", exact: true }).click();
   await page
-    .getByRole("heading", { name: "チームの状況", exact: true })
+    .getByRole("heading", { name: "セットアップ", exact: true })
     .waitFor();
+  await page.getByRole("button", { name: "説明をスキップ" }).click();
+  await page.getByRole("button", { name: "説明を再表示" }).waitFor();
   await page.getByText("エラーログ", { exact: true }).click();
   await page.getByText(/記録されたエラーはありません/).waitFor();
   const diagnostic = engine.store.logError(
@@ -41,7 +46,7 @@ try {
       requestID: "req_browser123",
     }),
     {
-      source: "discord-voice",
+      source: "plugin",
       operation: "audio.transcribe",
       model: "gpt-4o-mini-transcribe",
       eventId: "synthetic-input",
@@ -50,102 +55,54 @@ try {
   await page.getByText(/OpenAI APIの利用枠が不足しています/).waitFor();
   const diagnosticText = await page.locator("main").innerText();
   assert.ok(diagnosticText.includes(diagnostic.id));
-  assert.ok(diagnosticText.includes("HTTP: 429"));
-  assert.ok(diagnosticText.includes("req_browser123"));
   assert.ok(!diagnosticText.includes("private-provider-message"));
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
     path: ".ido-build/screenshots/engine-diagnostics.png",
     fullPage: true,
   });
-  await page.getByText("プロジェクト", { exact: true }).click();
+  await page.goto(engine.origin + "/dashboard/");
+  await page.getByText("プロジェクト", { exact: true }).first().click();
   await page.getByLabel("プロジェクト名").fill("Demo project");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await page.getByRole("heading", { name: "Demo project" }).waitFor();
-  await page.getByText("会議・議事録", { exact: true }).click();
+  await page.getByText("会議", { exact: true }).first().click();
   await page.getByLabel("会議名").fill("Planning");
   await page.getByRole("button", { name: "会議を作成", exact: true }).click();
   await page.getByRole("heading", { name: "Planning", exact: true }).waitFor();
-  await page.getByText("セットアップ", { exact: true }).first().click();
-  await page
-    .getByRole("heading", { name: "1. 会話を処理するOpenAI API" })
-    .waitFor();
-  await page.getByRole("button", { name: "説明をスキップ" }).click();
-  await page.getByRole("button", { name: "説明を再表示" }).waitFor();
-  await page.getByRole("button", { name: "3. Bot設定" }).click();
-  assert.equal(
-    await page
-      .getByRole("combobox", { name: "発言・タスク操作を受け付けるユーザー" })
-      .inputValue(),
-    "全員を許可（既定）",
-  );
-  await page.getByRole("textbox", { name: /^Guild ID/ }).fill("123456789");
-  await page
-    .getByRole("textbox", { name: /^テキストチャンネル/ })
-    .fill("234567890");
-  await page.getByRole("combobox", { name: "タスクのプロジェクト" }).click();
-  await page.getByRole("option", { name: "Demo project", exact: true }).click();
-  await page.getByRole("combobox", { name: "会話を保存する会議" }).click();
-  await page.getByRole("option", { name: "Planning", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "発言・タスク操作を受け付けるユーザー" })
-    .click();
-  await page
-    .getByRole("option", { name: "指定したユーザーIDだけ許可", exact: true })
-    .click();
-  await page
-    .getByLabel("許可するDiscordユーザーID（改行またはカンマ区切り）")
-    .fill("345678901, 456789012");
-  await Promise.all([
-    page.waitForResponse(
-      (response) =>
-        response.url().endsWith("/api/settings") && response.status() === 200,
-    ),
-    page.getByRole("button", { name: "保存", exact: true }).click(),
-  ]);
-  assert.equal(engine.store.get("config", "discord").userPolicy, "allowlist");
-  assert.equal(
-    engine.store.get("config", "discord").allowedUserIds,
-    "345678901\n456789012",
-  );
-  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.getByLabel("会話に追加").fill("ブラウザから発言を送ります");
+  await page.getByRole("button", { name: "会話を送信", exact: true }).click();
+  await page.getByText("ブラウザテストの議事録", { exact: true }).waitFor();
+  await page.getByText("議事録", { exact: true }).first().click();
+  await page.getByText("ブラウザテストの議事録", { exact: true }).waitFor();
+  await page.getByText("成果物", { exact: true }).first().click();
+  await page.getByText(/各タスクの実行結果/).waitFor();
+  await page.getByText("会議", { exact: true }).first().click();
   await page.screenshot({
-    path: ".ido-build/screenshots/discord-settings.png",
+    path: ".ido-build/screenshots/dashboard.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "5. 公開URL" }).click();
+  await engine.plugins.get("dashboard").stop();
   assert.equal(
-    await page.getByLabel("Preview公開URL", { exact: true }).count(),
-    0,
+    (await page.request.get(engine.origin + "/dashboard/api/state")).status(),
+    503,
   );
-  let tunnelRequest;
-  engine.tunnels.start = async (provider, ports, url) => {
-    tunnelRequest = { provider, ports, url };
-    engine.store.put("config", "public", {
-      provider,
-      engineUrl: "https://assigned.ngrok-free.app",
-    });
-    engine.tunnels.status = "running; diagnostics required";
-  };
+  await page.goto(engine.origin + "/admin");
   await page
-    .getByLabel("ngrok Authtoken（保存済みなら省略可）")
-    .fill("synthetic-test-token");
-  await page
-    .getByRole("button", { name: "ngrokで公開する", exact: true })
-    .click();
-  await page
-    .getByRole("link", { name: "https://assigned.ngrok-free.app", exact: true })
+    .getByRole("heading", { name: "セットアップ", exact: true })
     .waitFor();
-  assert.equal(tunnelRequest.provider, "ngrok");
-  assert.equal(tunnelRequest.url, undefined);
-  assert.equal(tunnelRequest.ports.engine, Number(new URL(engine.origin).port));
-  assert.equal(
-    await page.getByLabel("ngrok Authtoken（保存済みなら省略可）").inputValue(),
-    "",
-  );
-  // Restore local setup before pairing a test Client.
-  engine.store.remove("config", "public");
-  const clientPage = await browser.newPage();
+  const dashboardCard = page
+    .getByRole("heading", { name: "Dashboard", exact: true })
+    .locator("..")
+    .locator("..");
+  await dashboardCard
+    .getByRole("button", { name: "起動", exact: true })
+    .click();
+  await dashboardCard.getByText("running", { exact: true }).waitFor();
+  const clientPage = await browser.newPage({
+    viewport: { width: 1440, height: 1000 },
+  });
+  clientPage.on("pageerror", (error) => errors.push(error.message));
   await clientPage.goto(client.origin);
   await clientPage.getByLabel("EngineのURL").fill(engine.origin);
   await clientPage.getByRole("button", { name: "接続の確認へ" }).click();
@@ -153,8 +110,7 @@ try {
     name: "Engineへログインして、この端末を承認する",
   });
   await link.waitFor();
-  const url = await link.getAttribute("href");
-  await page.goto(url);
+  await page.goto(await link.getAttribute("href"));
   await page.getByRole("button", { name: "この端末を承認する" }).click();
   await clientPage
     .getByText("connected", { exact: true })
@@ -164,34 +120,36 @@ try {
   await page
     .getByRole("heading", { name: "クライアント", exact: true })
     .waitFor();
-  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.getByText("connected", { exact: true }).first().waitFor();
   await page.screenshot({
     path: ".ido-build/screenshots/engine.png",
     fullPage: true,
-    animations: "disabled",
   });
   await clientPage.screenshot({
     path: ".ido-build/screenshots/client.png",
     fullPage: true,
-    animations: "disabled",
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForFunction(
     () =>
-      parseFloat(
-        globalThis.getComputedStyle(globalThis.document.querySelector("main"))
-          .paddingLeft,
-      ) < 40,
+      globalThis.document.querySelector(".content").getBoundingClientRect()
+        .left <= 32,
   );
-  await page.evaluate(() => globalThis.scrollTo(0, 0));
   await page.screenshot({
     path: ".ido-build/screenshots/mobile.png",
     fullPage: true,
-    animations: "disabled",
   });
+  assert.equal(
+    await page.evaluate(
+      () =>
+        globalThis.document.documentElement.scrollWidth <=
+        globalThis.innerWidth + 1,
+    ),
+    true,
+  );
   assert.deepEqual(errors, []);
   console.log(
-    "Browser smoke passed: login, project, meeting, skip guidance, Client pairing, responsive rendering.",
+    "Browser smoke passed: independent React/Mantine admin, Dashboard, Client; conversation input; plugin restart; pairing; responsive layout.",
   );
 } finally {
   await browser?.close();

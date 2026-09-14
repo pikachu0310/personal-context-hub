@@ -1,10 +1,16 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
-import { readFile } from "node:fs/promises";
-import { Engine } from "./index.js";
-import { Store } from "./store.js";
-import { dataDirectory, openBrowser } from "../../common/src/platform.js";
-import { control, lifetime, recover } from "../../common/src/lifecycle.js";
+import {
+  control,
+  lifetime,
+  recover,
+} from "../../common/src/runtime/lifecycle.js";
+import {
+  dataDirectory,
+  openBrowser,
+} from "../../common/src/runtime/platform.js";
+import { Store } from "./adapters/sqlite/store.js";
+import { Engine } from "./bootstrap/engine.js";
 const args = process.argv.slice(2),
   command = args[0] ?? "start",
   directory = dataDirectory("engine");
@@ -96,6 +102,7 @@ try {
   } else if (command === "plugin-install") {
     const engine = new Engine({ directory });
     await engine.plugins.install(
+      args.includes("--plugin") ? option("--plugin") : "discord",
       "0.2.0",
       args.includes("--tarball") ? option("--tarball") : undefined,
     );

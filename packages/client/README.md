@@ -10,3 +10,5 @@ ido-client status
 ido-client doctor
 ido-client stop
 ```
+
+The local React/Mantine dashboard is bundled with Client at port 4320. Connection/setup and execution/approval pages are independent of the business Dashboard plugin. Local journals, worktrees, approvals and explicit preview registrations remain on this Client.

@@ -96,6 +96,26 @@ try {
     assert.equal(doctor.running, true);
     if (name === "client") assert.match(doctor.codex, /codex/i);
     if (name === "engine") {
+      const dashboard = await fetch(origin + "/dashboard/");
+      assert.equal(dashboard.status, 200);
+      const html = await dashboard.text();
+      const script = html.match(/src="([^"]+\.js)"/)?.[1];
+      assert.ok(script);
+      assert.equal((await fetch(origin + script)).status, 200);
+      const login = await fetch(origin + "/api/admin/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: "smoke",
+          password: "tarball-test-password",
+        }),
+      });
+      assert.equal(login.status, 200);
+      const state = await fetch(origin + "/dashboard/api/state", {
+        headers: { cookie: login.headers.get("set-cookie").split(";")[0] },
+      });
+      assert.equal(state.status, 200);
+      assert.deepEqual((await state.json()).meetings, []);
       const dependencies = JSON.parse(
         execFileSync(npm, ["ls", "--prefix", root, "--all", "--json"], {
           encoding: "utf8",

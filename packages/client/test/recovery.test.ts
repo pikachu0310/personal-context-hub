@@ -1,12 +1,12 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Executor } from "../src/executor.js";
-import { Credentials } from "../../common/src/credentials.js";
-import type { Task, Command } from "../../common/src/protocol.js";
-import { run } from "../../common/src/platform.js";
+import test from "node:test";
+import type { Command, Task } from "../../common/src/contracts/protocol.js";
+import { Credentials } from "../../common/src/runtime/credentials.js";
+import { run } from "../../common/src/runtime/platform.js";
+import { Executor } from "../src/execution/executor.js";
 test("a restarted Client does not re-execute a persisted delivery", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-recovery-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

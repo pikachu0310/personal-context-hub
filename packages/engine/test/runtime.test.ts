@@ -1,15 +1,17 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
+import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { generateKeyPairSync, sign, randomUUID } from "node:crypto";
-import { once } from "node:events";
+import test from "node:test";
 import { WebSocket } from "ws";
-import { request } from "node:http";
-import { Engine } from "../src/index.js";
-import { Store, type Device } from "../src/store.js";
-import type { Task } from "../../common/src/protocol.js";
+import type { Task } from "../../common/src/contracts/protocol.js";
+import { Store, type Device } from "../src/adapters/sqlite/store.js";
+import { Engine } from "../src/bootstrap/engine.js";
+import { Scheduler } from "../src/clients/scheduler.js";
+import { Tasks } from "../src/processing/tasks/service.js";
 
 async function fixture(t: any) {
   const directory = await mkdtemp(join(tmpdir(), "ido-engine-test-"));
@@ -28,7 +30,7 @@ async function login(
   name = "admin",
   password = "test-password-long",
 ) {
-  const res = await fetch(engine.origin + "/api/login", {
+  const res = await fetch(engine.origin + "/api/admin/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, password }),
@@ -45,15 +47,30 @@ async function post(
   data: any,
   session: { cookie: string; csrf: string },
 ) {
-  return fetch(engine.origin + "/api/" + path, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      cookie: session.cookie,
-      "x-csrf-token": session.csrf,
+  return fetch(
+    engine.origin +
+      ([
+        "projects",
+        "meetings",
+        "messages",
+        "tasks",
+        "task/control",
+        "artifact",
+        "preview",
+      ].includes(path)
+        ? "/dashboard/api/"
+        : "/api/admin/") +
+      path,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: session.cookie,
+        "x-csrf-token": session.csrf,
+      },
+      body: JSON.stringify(data),
     },
-    body: JSON.stringify(data),
-  });
+  );
 }
 test("only administrators can read Engine diagnostics", async (t) => {
   const e = await fixture(t);
@@ -62,11 +79,11 @@ test("only administrators can read Engine diagnostics", async (t) => {
     operation: "audio.transcribe",
     eventId: "private-event",
   });
-  assert.equal((await fetch(e.origin + "/api/state")).status, 401);
+  assert.equal((await fetch(e.origin + "/api/admin/state")).status, 401);
   for (const role of ["admin", "member", "viewer"] as const) {
     if (role !== "admin") e.store.createUser(role, "test-password-long", role);
     const session = await login(e, role);
-    const response = await fetch(e.origin + "/api/state", {
+    const response = await fetch(e.origin + "/api/admin/state", {
       headers: { cookie: session.cookie },
     });
     const state = (await response.json()) as any;
@@ -85,7 +102,7 @@ test("local bootstrap required; password hashing, write-only secrets, CSRF, role
     (await post(e, "settings", { openai: "test-only-secret" }, session)).status,
     200,
   );
-  const res = await fetch(e.origin + "/api/state", {
+  const res = await fetch(e.origin + "/api/admin/state", {
     headers: { cookie: session.cookie },
   });
   const state = (await res.json()) as any;
@@ -104,7 +121,7 @@ test("local bootstrap required; password hashing, write-only secrets, CSRF, role
   );
   assert.equal(
     (
-      await fetch(e.origin + "/api/state", {
+      await fetch(e.origin + "/api/admin/state", {
         headers: { cookie: session.cookie, Origin: "https://attacker.example" },
       })
     ).status,
@@ -123,7 +140,7 @@ test("local bootstrap required; password hashing, write-only secrets, CSRF, role
     ),
     403,
   );
-  assert.equal((await fetch(e.origin + "/api/state")).status, 401);
+  assert.equal((await fetch(e.origin + "/api/admin/state")).status, 401);
   const viewer = e.store.createUser("viewer", "test-password-long", "viewer"),
     viewSession = await login(e, "viewer");
   assert.equal(
@@ -143,7 +160,7 @@ test("local bootstrap required; password hashing, write-only secrets, CSRF, role
   );
   assert.equal(
     (
-      await fetch(e.origin + "/api/state", {
+      await fetch(e.origin + "/api/admin/state", {
         headers: { cookie: viewSession.cookie },
       })
     ).status,
@@ -160,7 +177,7 @@ test("device pairing is single-use, key-authenticated, fenced across reconnects 
   const e = await fixture(t),
     session = await login(e);
   const keys = generateKeyPairSync("ed25519");
-  const request = await fetch(e.origin + "/api/pair/request", {
+  const request = await fetch(e.origin + "/api/admin/pair/request", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -172,7 +189,7 @@ test("device pairing is single-use, key-authenticated, fenced across reconnects 
   assert.equal(request.status, 201);
   await post(e, "pair/approve", { id: pair.id }, session);
   const poll = () =>
-    fetch(e.origin + "/api/pair/poll", {
+    fetch(e.origin + "/api/admin/pair/poll", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(pair),
@@ -238,7 +255,7 @@ test("durable allocation, capacity/permission filtering, deduplication and stale
   s.put("device", "a", device("a", 2, 100, false));
   s.put("device", "b", device("b", 1, 0, true));
   const create = (requestId: string, network = false) =>
-    s.createTask({
+    new Tasks(s).createTask({
       projectId: "project",
       meetingId: "meeting",
       authorId: user.id,
@@ -250,7 +267,7 @@ test("durable allocation, capacity/permission filtering, deduplication and stale
   assert.equal(create("first").id, first.id);
   const network = create("network", true);
   const third = create("third");
-  s.schedule(new Set(["a", "b"]));
+  new Scheduler(s).schedule(new Set(["a", "b"]));
   assert.equal(s.get<Task>("task", first.id)?.clientId, "a");
   assert.equal(s.get<Task>("task", network.id)?.clientId, "b");
   assert.equal(s.get<Task>("task", third.id)?.clientId, "a");
@@ -264,19 +281,22 @@ test("durable allocation, capacity/permission filtering, deduplication and stale
     state: "completed",
     result: "done",
   };
-  assert.equal(s.updateResult("a", 0, command), false);
-  assert.equal(s.updateResult("b", 1, command), false);
-  assert.equal(s.updateResult("a", 1, { ...command, runId: "stale" }), false);
+  assert.equal(new Tasks(s).updateResult("a", 0, command), false);
+  assert.equal(new Tasks(s).updateResult("b", 1, command), false);
+  assert.equal(
+    new Tasks(s).updateResult("a", 1, { ...command, runId: "stale" }),
+    false,
+  );
   s.close();
   s = new Store(dir);
-  s.schedule(new Set(["b"]));
+  new Scheduler(s).schedule(new Set(["b"]));
   assert.equal(s.get<Task>("task", first.id)?.clientId, "a");
   assert.equal(s.pending("a").length, 2);
-  assert.equal(s.updateResult("a", 1, command), true);
-  assert.equal(s.updateResult("a", 1, command), false);
-  s.control(first.id, user.id, "retry");
+  assert.equal(new Tasks(s).updateResult("a", 1, command), true);
+  assert.equal(new Tasks(s).updateResult("a", 1, command), false);
+  new Tasks(s).control(first.id, user.id, "retry");
   assert.equal(s.get<Task>("task", first.id)?.revision, 2);
-  assert.equal(s.updateResult("a", 1, command), false);
+  assert.equal(new Tasks(s).updateResult("a", 1, command), false);
 });
 test("failed plugin installation preserves the active installation", async (t) => {
   const e = await fixture(t);
@@ -284,7 +304,7 @@ test("failed plugin installation preserves the active installation", async (t) =
     version: "previous",
     directory: "/not-executed",
   });
-  await assert.rejects(e.plugins.install("unlisted"));
+  await assert.rejects(e.plugins.install("discord", "unlisted"));
   assert.equal(e.store.get<any>("plugin", "discord").version, "previous");
 });
 
@@ -328,139 +348,5 @@ test("one public HTTPS origin serves management and preview; public setup valida
   assert.equal(
     ((await result.json()) as any).error,
     "TUNNEL_CREDENTIAL_REQUIRED",
-  );
-});
-
-test("Discord linking from localhost uses the configured public callback, with local fallback", async (t) => {
-  const engine = await fixture(t),
-    session = await login(engine);
-  engine.store.put("config", "discord", { appId: "123456789" });
-  const local = await post(engine, "discord/link", {}, session);
-  const localUrl = new URL(((await local.json()) as any).url);
-  assert.equal(
-    localUrl.searchParams.get("redirect_uri"),
-    engine.origin + "/api/discord/callback",
-  );
-  engine.store.put("config", "public", {
-    provider: "ngrok",
-    engineUrl: "https://ido.example.com",
-  });
-  const remote = await post(engine, "discord/link", {}, session);
-  assert.equal(remote.status, 200);
-  const remoteUrl = new URL(((await remote.json()) as any).url);
-  assert.equal(
-    remoteUrl.searchParams.get("redirect_uri"),
-    "https://ido.example.com/api/discord/callback",
-  );
-  assert.equal(remoteUrl.searchParams.get("client_id"), "123456789");
-});
-
-test("OAuth callback reports stopped Discord plugin without exposing authorization material", async (t) => {
-  const engine = await fixture(t);
-  engine.store.put("config", "discord", { appId: "123456789" });
-  await engine.credentials.set(
-    "discord.clientSecret",
-    "synthetic-client-secret",
-  );
-  const user = engine.store.users()[0];
-  const url = new URL(engine.discordAuth.start(user.id, engine.origin));
-  const callback = new URL("/api/discord/callback", engine.origin);
-  callback.search = new URLSearchParams({
-    state: url.searchParams.get("state")!,
-    code: "synthetic-code",
-  }).toString();
-  const response = await fetch(callback);
-  assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), {
-    error: "DISCORD_PLUGIN_NOT_RUNNING",
-  });
-});
-
-test("voice inputs follow the active plugin channel and reject obsolete configured channels after leave", async (t) => {
-  const engine = await fixture(t);
-  const user = engine.store.users()[0];
-  engine.store.put("config", "discord", {
-    guildId: "guild",
-    textChannelId: "text",
-    voiceChannelId: "old",
-    meetingId: "meeting",
-    projectId: "project",
-  });
-  engine.store.put("discord-user", "123456789", { userId: user.id });
-  let processed = 0;
-  engine.conversation.transcribe = async () => "synthetic transcript";
-  engine.conversation.process = async () => {
-    processed++;
-    return { id: "meeting", name: "Test", summary: "Summary", messages: [] };
-  };
-  engine.conversation.speak = async () => "";
-  const event = {
-    guildId: "guild",
-    userId: "123456789",
-    audio: Buffer.from("synthetic").toString("base64"),
-  };
-  await engine.pluginInput({ ...event, channelId: "old", eventId: "old" });
-  assert.equal(processed, 0);
-  engine.plugins.voiceChannelId = "active";
-  await engine.pluginInput({
-    ...event,
-    channelId: "active",
-    eventId: "joined",
-  });
-  assert.equal(processed, 1);
-  engine.plugins.stop();
-  await engine.pluginInput({ ...event, channelId: "active", eventId: "left" });
-  assert.equal(processed, 1);
-});
-
-test("Discord user policy defaults to all, validates IDs, persists changes and is admin-only", async (t) => {
-  const e = await fixture(t),
-    session = await login(e);
-  const discord = {
-    guildId: "123",
-    textChannelId: "456",
-    projectId: "project",
-    meetingId: "meeting",
-  };
-  assert.equal((await post(e, "settings", { discord }, session)).status, 200);
-  assert.equal(e.store.get<any>("config", "discord").userPolicy, "all");
-  let updated: any;
-  e.plugins.updatePolicy = (config) => {
-    updated = config;
-  };
-  assert.equal(
-    (
-      await post(
-        e,
-        "settings",
-        {
-          discord: {
-            ...discord,
-            userPolicy: "allowlist",
-            allowedUserIds: "100, 200\n100",
-          },
-        },
-        session,
-      )
-    ).status,
-    200,
-  );
-  assert.equal(updated.allowedUserIds, "100\n200");
-  assert.equal(
-    (
-      await post(
-        e,
-        "settings",
-        { discord: { ...discord, allowedUserIds: "not-an-id" } },
-        session,
-      )
-    ).status,
-    400,
-  );
-  assert.equal(e.store.get<any>("config", "discord").userPolicy, "allowlist");
-  e.store.createUser("member", "test-password-long", "member");
-  assert.equal(
-    (await post(e, "settings", { discord }, await login(e, "member"))).status,
-    403,
   );
 });

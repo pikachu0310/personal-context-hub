@@ -1,6 +1,6 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { Publications } from "../src/publications.js";
+import test from "node:test";
+import { Publications } from "../src/output/publications.js";
 
 test("concurrent transcript updates edit one card and reuse its ID after restart", async () => {
   const sent: any[] = [],
@@ -20,7 +20,9 @@ test("concurrent transcript updates edit one card and reuse its ID after restart
   };
   const publisher = new Publications(
     async () => channel,
-    (...a) => saved.push(a),
+    (...a) => {
+      saved.push(a);
+    },
   );
   await Promise.all([
     publisher.update("transcript", "channel", "speaker one"),
@@ -61,4 +63,44 @@ test("deleted cards are replaced, network failures do not create duplicate messa
   code = 10008;
   await publisher.update("key", "channel", "text", "123");
   assert.equal(sent, 1);
+});
+
+test("publication queued before a configuration change cannot edit or send afterwards", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let current = true,
+    sends = 0,
+    edits = 0;
+  const publisher = new Publications(
+    async () => {
+      await gate;
+      return {
+        isTextBased: () => true,
+        send: async () => {
+          sends++;
+          return { id: "1" };
+        },
+        messages: {
+          edit: async () => {
+            edits++;
+          },
+        },
+      };
+    },
+    () => {},
+  );
+  const pending = publisher.update(
+    "key",
+    "channel",
+    "old configuration",
+    "existing",
+    () => current,
+  );
+  current = false;
+  release();
+  await pending;
+  assert.equal(sends, 0);
+  assert.equal(edits, 0);
 });

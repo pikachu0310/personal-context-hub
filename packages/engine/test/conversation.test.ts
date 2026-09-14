@@ -1,12 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Store } from "../src/store.js";
-import { Conversation } from "../src/ai.js";
-import { Credentials } from "../../common/src/credentials.js";
-import type { Task } from "../../common/src/protocol.js";
+import { join } from "node:path";
+import test from "node:test";
+import type { Task } from "../../common/src/contracts/protocol.js";
+import { Credentials } from "../../common/src/runtime/credentials.js";
+import { OpenAIModels } from "../src/adapters/openai/models.js";
+import { Store } from "../src/adapters/sqlite/store.js";
+import { Conversation } from "../src/processing/conversation.js";
 test("conversation task extraction uses trusted actor and project; viewer and explicit-command processing cannot create extra tasks", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-conversation-"));
   const store = new Store(directory);
@@ -26,9 +27,9 @@ test("conversation task extraction uses trusted actor and project; viewer and ex
   });
   const conversation = new Conversation(
     store,
-    new Credentials(directory, "test", "file"),
+    new OpenAIModels(new Credentials(directory, "test", "file")),
   );
-  conversation.api = async () =>
+  (conversation.models as OpenAIModels).api = async () =>
     ({
       responses: {
         create: async () => ({

@@ -1,6 +1,6 @@
 # IDO Engine / Client
 
-IDO is a self-hosted team engine. It records conversations and minutes, turns explicit implementation requests into tasks, and assigns tasks to members' locally approved Codex clients. The Engine never runs Codex. The Discord plugin is optional and runs in a child process.
+IDO is a self-hosted team engine. It records conversations and minutes, turns explicit implementation requests into tasks, and assigns tasks to members' locally approved Codex clients. The Engine never runs Codex. Dashboard and Discord are independent child-process plugins. Dashboard is bundled and starts by default; Discord is optional. Engine administration remains available if either stops.
 
 The `@ido/*` names are provisional. This branch builds installable npm tarballs; it does not publish packages to the registry. Until publication, use the tarball commands below. Existing hub integrations and their data remain separate; no legacy configuration is read or migrated.
 
@@ -25,15 +25,15 @@ ido-engine start
 
 The first start prompts for the administrator name and a password of at least 12 characters in the terminal. No unauthenticated web registration endpoint exists. For a headless host, use `ido-engine init --name admin --password-stdin` and pipe a password from your secret manager; do not put passwords in command arguments. Then run `ido-engine start --no-open`.
 
-The dashboard opens at `http://127.0.0.1:4310`. Public previews use `/preview/` on the same Engine host. Port 4311 remains an internal relay listener and does not need a public tunnel. `--port` and `--preview-port` change these. Processes remain in the foreground; use a second terminal for `stop`, `status`, or `doctor`. OS service registration is intentionally not included. After a crash, `doctor --recover` removes a stale process lock only if the recorded process has stopped.
+Engine administration opens at `http://127.0.0.1:4310/admin`. Business views run at `/dashboard/`. Public previews use `/preview/` on the same Engine host. Port 4311 remains an internal relay listener and does not need a public tunnel. `--port` and `--preview-port` change these. Processes remain in the foreground; use a second terminal for `stop`, `status`, or `doctor`. OS service registration is intentionally not included. After a crash, `doctor --recover` removes a stale process lock only if the recorded process has stopped.
 
-In the dashboard:
+In Engine administration and Dashboard:
 
 1. Save an OpenAI API key and run its connection check.
-2. Create a project and a meeting; associate the meeting with a project to enable task extraction from implementation requests.
-3. Add the catalog's Discord plugin. Dependencies install into the Engine data directory, not the global npm package directory.
+2. Open **業務Dashboard** and create a project and a meeting; associate the meeting with a project to enable task extraction from implementation requests.
+3. Return to Engine administration and add the catalog's Discord plugin. Copy the project and meeting IDs from Dashboard into its binding settings. Dependencies install into the Engine data directory, not the global npm package directory.
 4. Create a Discord application and Bot, enable Message Content Intent, invite the Bot with `bot` and `applications.commands`, and configure the guild and text channel. Grant only View Channel, Send Messages, Connect and Speak for the chosen channels. Voice reception uses Discord's voice library; obtain participants' agreement before enabling recording in a channel.
-5. Save Application ID and OAuth Client Secret. Start the plugin; it registers `/join`, `/leave` and `/ido` in the configured guild. Join a voice channel yourself and invoke `/join` to bring the Bot there. `/leave` from the same channel disconnects it and stops audio reception/playback. Startup no longer auto-joins a configured voice channel; old voice-channel settings are ignored. Link each IDO member to their own Discord account using the dashboard. By default, everyone in the joined voice channel or configured text channel can contribute and request/control tasks without linking. Activity access still requires linking. In Bot settings, select an explicit Discord user-ID allowlist to restrict reception and commands; an empty allowlist permits nobody. These settings apply immediately. Unlinked speakers receive conversation-only identities, never dashboard accounts or device grants.
+5. Save Application ID and OAuth Client Secret. Start the plugin; it registers `/join`, `/leave` and `/ido` in the configured guild. Join a voice channel yourself and invoke `/join` to bring the Bot there. `/leave` from the same channel disconnects it and stops audio reception/playback. Startup no longer auto-joins a configured voice channel; old voice-channel settings are ignored. Link each IDO member to their own Discord account using the account-link action in Engine setup. By default, everyone in the joined voice channel or configured text channel can contribute and request/control tasks without linking. Activity access still requires linking. In Bot settings, select an explicit Discord user-ID allowlist to restrict reception and commands; an empty allowlist permits nobody. These settings apply immediately. Unlinked speakers receive conversation-only identities, never dashboard accounts or device grants.
 6. Set one HTTPS origin, or use the ngrok button to acquire it automatically. Complete the independent connection checks.
 
 Guidance can be hidden and redisplayed; hiding it does not mark credentials or connectivity as verified. `!ido task <instruction>` explicitly creates a task. Other text and voice messages contribute to minutes; direct implementation requests are extracted into tasks for the configured project. Model output supplies task content, never identities, roles, device grants or administration commands. The dashboard remains usable when the Discord plugin is stopped or fails.
@@ -50,6 +50,8 @@ The local Client dashboard opens at `http://127.0.0.1:4320` (`--port` overrides 
 Enter the Engine HTTPS origin, open the displayed confirmation link, log into IDO, and compare the device fingerprint before approving. The Client polls outward to complete pairing; the Engine page never calls localhost. Pair requests expire in five minutes and are redeemed once. The Engine stores the public device key; the private key stays in the Client's credential store.
 
 Map team projects to existing local Git repositories. Confirm network access and concurrency, then enable automatic execution for the current Client session. Default concurrency is one. New processes require a fresh local opt-in. Additional Codex permission requests appear only in the local approval screen and expire after five minutes. Declining or timing out does not grant additional access. Stopping automatic acceptance does not implicitly stop work already running; use the execution's Stop action.
+
+See [package architecture and migration](packages-architecture.md) for the plugin contract and versioned Engine database migration.
 
 ## Storage and trust boundaries
 
@@ -72,12 +74,14 @@ Disconnected work remains assigned. A Client restart marks uncertain running wor
 
 Follow [Discord's Activity setup](https://docs.discord.com/developers/activities/building-an-activity) and [networking requirements](https://docs.discord.com/developers/activities/development-guides/networking). Configure:
 
-| Setting                | Value                                                                  |
-| ---------------------- | ---------------------------------------------------------------------- |
-| OAuth redirect         | `https://engine.example.com/api/discord/callback`                      |
-| URL Mapping `/`        | Engine's HTTPS host                                                    |
-| Preview path           | `/preview/` on the same host; no extra URL Mapping required            |
-| Browser Activity entry | `/activity` (Discord frame query parameters also select Activity mode) |
+| Setting                | Value                                                       |
+| ---------------------- | ----------------------------------------------------------- |
+| OAuth redirect         | `https://engine.example.com/plugins/discord/callback`       |
+| URL Mapping `/`        | Engine's HTTPS host                                         |
+| Preview path           | `/preview/` on the same host; no extra URL Mapping required |
+| Browser Activity entry | `/plugins/discord/activity`                                 |
+
+The plugin manifest registers the embedded launch query, so a root request containing `frame_id` redirects to `/plugins/discord/activity` while preserving Discord parameters. Ordinary root requests open `/admin`.
 
 The Embedded App SDK supplies an authorization code; token exchange and identity verification occur in the Discord plugin process. The Engine maps the verified Discord identity to an existing IDO member. Activity receives a separate, short-lived bearer credential for its limited routes. It never receives a management session or OAuth Client Secret. Discord access tokens used for the SDK's authenticate command are held in memory.
 
@@ -90,7 +94,7 @@ External OAuth, WebRTC, absolute root asset paths and device-specific APIs are o
 Use one public host for both management and previews. For ngrok:
 
 1. Create an ngrok account and copy **Your Authtoken** from its dashboard (not an API key).
-2. Open IDO setup step 5 and paste the Authtoken. Leave the optional ngrok URL blank to use the account's assigned dev domain, or supply a reserved domain available to that account.
+2. Open Engine setup's public-access section and paste the Authtoken. Leave the optional ngrok URL blank to use the account's assigned dev domain, or supply a reserved domain available to that account.
 3. Click **ngrokで公開する**. IDO installs the SDK if needed, starts one endpoint forwarding to Engine port 4310, and saves the returned HTTPS URL. It reuses the stored token on subsequent starts.
 4. Run **HTTPS・接続診断**, then open the saved URL. The free tier may display a browser warning page; verify the actual Discord Activity flow as well.
 5. Use the saved host for Discord's `/` URL Mapping and the displayed OAuth callback. Remove any old `/preview` mapping to a separate host; the Engine now handles that path itself.

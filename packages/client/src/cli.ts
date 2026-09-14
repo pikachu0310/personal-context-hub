@@ -1,8 +1,16 @@
 #!/usr/bin/env node
-import { Client } from "./index.js";
-import { codexBinary } from "./executor.js";
-import { dataDirectory, openBrowser, run } from "../../common/src/platform.js";
-import { control, lifetime, recover } from "../../common/src/lifecycle.js";
+import {
+  control,
+  lifetime,
+  recover,
+} from "../../common/src/runtime/lifecycle.js";
+import {
+  dataDirectory,
+  openBrowser,
+  run,
+} from "../../common/src/runtime/platform.js";
+import { Client } from "./bootstrap/client.js";
+import { codexBinary } from "./execution/executor.js";
 const args = process.argv.slice(2),
   command = args[0] ?? "start",
   directory = dataDirectory("client");

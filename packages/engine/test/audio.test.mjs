@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { qualifyTranscriptionAudio, wrapPcmAsWav } from "../src/audio.mjs";
+import {
+  qualifyTranscriptionAudio,
+  wrapPcmAsWav,
+} from "../src/input/audio/signal.mjs";
 
 test("signal gate rejects silence/DC/clicks but retains short quiet signals", () => {
   const pcm = Buffer.alloc(192_000);

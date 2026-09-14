@@ -1,11 +1,11 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import OpenAI from "openai";
-import { describeError } from "../src/diagnostics.js";
-import { Store } from "../src/store.js";
+import { Store } from "../src/adapters/sqlite/store.js";
+import { describeError } from "../src/domain/diagnostics.js";
 
 test("SDK quota errors retain useful metadata without provider messages or headers", () => {
   const error = new OpenAI.RateLimitError(

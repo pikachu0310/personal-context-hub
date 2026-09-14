@@ -18,7 +18,7 @@ try {
     id: "project",
     name: "Preview test",
   });
-  const task = engine.store.createTask({
+  const task = engine.tasks.createTask({
     projectId: "project",
     meetingId: "meeting",
     authorId: user.id,
@@ -47,7 +47,7 @@ try {
           window.probe = {};
           try { parent.document.body; probe.parent = 'escaped'; } catch { probe.parent = 'blocked'; }
           try { localStorage.setItem('escape', '1'); probe.storage = 'escaped'; } catch { probe.storage = 'blocked'; }
-          probe.api = fetch('/api/state', { credentials:'include' }).then(r => r.status).catch(() => 'blocked');
+          probe.api = fetch('/api/admin/state', { credentials:'include' }).then(r => r.status).catch(() => 'blocked');
           probe.worker = Promise.resolve().then(() => navigator.serviceWorker.register('./worker.js')).then(() => 'escaped').catch(() => 'blocked');
           const url = new URL(location.href); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
           const socket = new WebSocket(url); socket.onopen = () => socket.send('echo works');
@@ -86,7 +86,7 @@ try {
   await page.getByLabel("パスワード").fill("test-password-long");
   await page.getByRole("button", { name: "ログイン", exact: true }).click();
   await page
-    .getByRole("heading", { name: "チームの状況", exact: true })
+    .getByRole("heading", { name: "セットアップ", exact: true })
     .waitFor();
   await page.evaluate((path) => {
     const iframe = globalThis.document.createElement("iframe");
