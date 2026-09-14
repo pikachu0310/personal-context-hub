@@ -53,11 +53,13 @@ function deferred() {
   return { promise, resolve };
 }
 async function until(check: () => boolean) {
-  for (let i = 0; i < 300; i++) {
+  // Startup includes filesystem I/O; event-loop turns are not a time budget.
+  const deadline = performance.now() + 5_000;
+  while (performance.now() < deadline) {
     if (check()) return;
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  assert.fail("Expected provider state was not reached");
+  assert.ok(check(), "Expected provider state was not reached within 5 seconds");
 }
 async function fixture(t: TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "ido-coordinator-"));
