@@ -2,6 +2,11 @@ import { Collapsible } from "./Collapsible.js";
 import { SidebarTaskList } from "./SidebarTaskList.js";
 import { sidebarTasks, sidebarTaskTitle } from "./sidebar-tasks.js";
 import { useTaskReadState, TaskReadObserver } from "./useTaskReadState.js";
+import { api } from "./api.js";
+import type {
+  ProjectWorkspace,
+  TaskReference,
+} from "@ido/common/contracts/api";
 import { NewLocalTask } from "./NewLocalTask.js";
 import { ProfileSettings } from "./ProfileSettings.js";
 import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
@@ -13,7 +18,7 @@ import { InviteDialog } from "./InviteDialog.js";
 import { Modal, Text, Button, Anchor } from "@mantine/core";
 import { TaskMenu } from "@ido/common-ui";
 import { AddProjectForm } from "./ProjectForm.js";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ClientView } from "./ClientView.js";
 import { ClientRuns } from "./ClientRuns.js";
 import { TeamTaskDetail } from "./TeamTasks.js";
@@ -24,6 +29,26 @@ import "./workspace.css";
 export function App() {
   const { state, error, refresh, action, invoke } = useRemoteState();
   const { seen, markRead } = useTaskReadState();
+  const dirtyMinutes = useRef(new Set<string>());
+  const dirtyChanged = useCallback((id: string, dirty: boolean) => {
+    if (dirty) dirtyMinutes.current.add(id);
+    else dirtyMinutes.current.delete(id);
+  }, []);
+  const confirmNavigation = () =>
+    !dirtyMinutes.current.size ||
+    window.confirm("未保存の議事録を破棄して移動しますか？");
+  const [linkError, setLinkError] = useState("");
+  const openingLink = useRef(0);
+  useEffect(() => {
+    const leave = (event: BeforeUnloadEvent) => {
+      if (dirtyMinutes.current.size) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", leave);
+    return () => window.removeEventListener("beforeunload", leave);
+  }, []);
   const [page, setPage] = useState<"overview" | "runs">();
   const [selected, select] = useState<string>();
   const [selectedShared, selectShared] = useState<string>();
@@ -103,6 +128,41 @@ export function App() {
     )
       selectShared(undefined);
   }, [state, projectView, selected, selectedShared]);
+  const openMinutesTask = async (reference: TaskReference) => {
+    const request = ++openingLink.current;
+    setLinkError("");
+    try {
+      const workspace = await api<ProjectWorkspace>("project/snapshot", {
+        projectId: reference.projectId,
+      });
+      if (request !== openingLink.current) return;
+      if (
+        !workspace.tasks.some(
+          (task) =>
+            task.id === reference.taskId &&
+            task.projectId === reference.projectId,
+        )
+      )
+        throw new Error(
+          "タスクは削除されたか、このプロジェクトから参照できません。",
+        );
+      if (
+        !state?.settings.projects.some(
+          (project) => project.id === reference.projectId,
+        )
+      )
+        throw new Error(
+          "プロジェクトの一覧を更新してから、もう一度リンクを開いてください。",
+        );
+      if (!confirmNavigation()) return;
+      dirtyMinutes.current.clear();
+      setProjectView(reference);
+      selectShared(undefined);
+      setPage("runs");
+    } catch (e) {
+      if (request === openingLink.current) setLinkError((e as Error).message);
+    }
+  };
   if (!state)
     return (
       <div className="workspace-loading">
@@ -176,7 +236,26 @@ export function App() {
         item={viewedTask}
         markRead={markRead}
       />
-      <aside className="workspace-sidebar" aria-label="プロジェクトとタスク">
+      <aside
+        className="workspace-sidebar"
+        aria-label="プロジェクトとタスク"
+        onClickCapture={(event) => {
+          if (
+            !(event.target instanceof Element) ||
+            !event.target.closest(
+              ".task-link, .sidebar-nav button, [data-minutes-navigation]",
+            )
+          )
+            return;
+          if (!confirmNavigation()) {
+            event.preventDefault();
+            event.stopPropagation();
+          } else {
+            openingLink.current++;
+            setLinkError("");
+          }
+        }}
+      >
         <div className="sidebar-brand">
           <span className="brand-symbol">i</span>
           <strong>IDO Agent</strong>
@@ -259,6 +338,7 @@ export function App() {
                         />
                         <button
                           className="icon-button project-compose"
+                          data-minutes-navigation
                           aria-label={`${project.name}に新しいタスクを追加`}
                           title="新しいタスク"
                           disabled={!projectConnected}
@@ -393,6 +473,7 @@ export function App() {
           <button
             className="icon-button"
             aria-label="接続設定を開く"
+            data-minutes-navigation
             onClick={() => {
               setProjectView(undefined);
               setPage("overview");
@@ -576,6 +657,11 @@ export function App() {
             削除したタスクのローカル履歴を整理中です。同期完了までお待ちください。
           </div>
         )}
+        {linkError && (
+          <div className="workspace-error" role="alert">
+            {linkError}
+          </div>
+        )}
         {error && (
           <div className="workspace-error" role="alert">
             {error}
@@ -615,7 +701,7 @@ export function App() {
               await refresh();
             }}
           />
-        ) : workspaceConnected && projectView ? (
+        ) : projectView && !projectView.draft ? (
           <ProjectView
             key={projectView.projectId}
             projectId={projectView.projectId}
@@ -623,6 +709,8 @@ export function App() {
             deviceId={state.settings.deviceId}
             clientState={state}
             openSettings={() => setSettingsProject(projectView.projectId)}
+            openTask={(reference) => void openMinutesTask(reference)}
+            dirtyChanged={dirtyChanged}
           />
         ) : currentPage === "overview" ? (
           <div className="setup-scroll">

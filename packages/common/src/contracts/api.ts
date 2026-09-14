@@ -1,3 +1,15 @@
+import type { MinutesMetadata } from "./minutes.js";
+export {
+  taskUrl,
+  parseTaskUrl,
+  taskMarkdown,
+  MAX_MINUTES_LENGTH,
+} from "./minutes.js";
+export type {
+  TaskReference,
+  MinutesMetadata,
+  MinutesUpdateInput,
+} from "./minutes.js";
 import type { PluginManifest } from "./plugins.js";
 import type { Grant, Mapping, Project, Task, User } from "./protocol.js";
 export interface MessageView {
@@ -12,7 +24,7 @@ export interface MessageView {
   stage: string;
   steps?: Record<string, { state: string; errorId?: string }>;
 }
-export interface MeetingView {
+export interface MeetingView extends MinutesMetadata {
   startedAt?: number;
   closedAt?: number;
   id: string;
@@ -34,6 +46,7 @@ export interface WorkspaceState {
   tasks: Task[];
 }
 export interface ProjectWorkspace {
+  canEditMinutes?: boolean;
   project: Project;
   minutes: MeetingView[];
   tasks: Task[];

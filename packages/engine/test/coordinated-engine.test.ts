@@ -189,6 +189,16 @@ async function fixture(t: TestContext) {
       legacy.push("update");
       throw new Error("LEGACY_UPDATE");
     };
+    engine.conversation.models.summarize = async (meeting) =>
+      [
+        meeting.summary,
+        ...meeting.messages.map(
+          (m) =>
+            `- ${engine.store.conversationAuthor(m.authorId)?.name}: ${m.text}`,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n");
     engine.conversation.models.transcribe = () => transcribe();
     engine.conversation.models.speak = async (text) => {
       speech.push(text);
@@ -292,7 +302,7 @@ async function fixture(t: TestContext) {
   };
 }
 
-test("InputRouter queues mechanical transcripts and one main thread receives only new messages", async (t) => {
+test("InputRouter keeps transcripts separate from Markdown minutes and the main thread receives only new messages", async (t) => {
   const f = await fixture(t);
   await f.input({ text: "前提の一つ目", eventId: "first" });
   assert.equal(f.calls.length, 0);
@@ -313,6 +323,7 @@ test("InputRouter queues mechanical transcripts and one main thread receives onl
     ),
     [["前提の一つ目"], ["前提の二つ目"]],
   );
+  await f.engine.conversation.document.refresh("meeting");
   const meeting = f.engine.store.get<any>("meeting", "meeting");
   assert.match(meeting.summary, /話者A.*前提の一つ目/);
   assert.match(meeting.summary, /話者B.*前提の二つ目/);

@@ -33,6 +33,7 @@ type StoredState = {
 type Batch = { id: string; events: CoordinatorEvent[] };
 export interface CoordinatedOptions {
   coordinator: CoordinatorFactory;
+  updateMinutes?: (meetingId: string) => Promise<void>;
   work: WorkPort;
   synthesize(text: string): Promise<string>;
   createLiveSession?: any;
@@ -487,7 +488,7 @@ class MeetingCoordinator {
     record.stage = "queued";
     record.steps = {
       ...record.steps,
-      minutes: { state: "completed" },
+      minutes: { state: "pending" },
       reply: { state: "pending" },
       delivery: { state: "pending" },
     };
@@ -495,19 +496,7 @@ class MeetingCoordinator {
     this.store.put("coordinator-source-route", id, {
       pluginId: context.pluginId,
     });
-    // Mechanical log projection; full statements remain separate message records.
-    const meeting = this.meeting(event.meetingId)!;
-    meeting.summary = meeting.messages
-      .filter((message) => message.text)
-      .map(
-        (message) =>
-          `[${this.store.conversationAuthor(message.authorId)?.name ?? message.authorId}] ${message.text}`,
-      )
-      .join("\n")
-      .slice(-12_000);
-    this.store.put("meeting", meeting.id, meeting);
     this.publish("transcript", event.meetingId);
-    this.publish("minutes", event.meetingId);
     const addressed =
       event.interaction === true ||
       event.command === "ask" ||
@@ -552,6 +541,7 @@ class MeetingCoordinator {
       source.workAllowed = false;
       source.researchAllowed = false;
     }
+    this.updateMinutes(event.meetingId);
     await this.inbox.submit(
       [
         {
@@ -632,6 +622,21 @@ class MeetingCoordinator {
     await this.inbox.submit([event], { start: true });
   }
 
+  private updateMinutes(meetingId: string) {
+    void this.options
+      .updateMinutes?.(meetingId)
+      .then(() => {
+        if (!this.closed) this.publish("minutes", meetingId);
+      })
+      .catch((error) => {
+        if (!this.closed)
+          this.store.logError(error, {
+            source: "meeting",
+            operation: "minutes.generate",
+            meetingId,
+          });
+      });
+  }
   private async apply(
     value: {
       response: CoordinatorResponse;
@@ -719,6 +724,10 @@ class MeetingCoordinator {
         executionPolicy: research ? { sandboxMode: "read-only" } : undefined,
       });
     }
+    for (const meetingId of new Set(
+      sources.map((source) => source.meetingId ?? this.meetingId),
+    ))
+      this.updateMinutes(meetingId);
     for (const control of response.controls) {
       const selected = select(control.sourceIds);
       if (
