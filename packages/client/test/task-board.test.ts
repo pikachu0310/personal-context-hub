@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Executor, type Run } from "../src/execution/executor.js";
 import { TaskBoardConnection } from "../src/connection/task-board.js";
-import { watchTaskBoard } from "../src/execution/task-board.mjs";
+import { callTaskBoard, watchTaskBoard } from "../src/execution/task-board.mjs";
 import type { Task, Command } from "@ido/common/contracts/protocol";
 
 const task = (): Task => ({
@@ -23,6 +23,63 @@ const task = (): Task => ({
   updatedAt: 1,
   history: [],
   executionPolicy: { sandboxMode: "read-only" },
+});
+
+test("board reads normalize unused arguments before sending to older engines without dropping active filters", async () => {
+  const inputs: unknown[] = [];
+  const board = {
+    read: async (input: unknown) => {
+      inputs.push(input);
+      return { threads: [] };
+    },
+  };
+  const args = {
+    taskId: null,
+    query: "",
+    limit: null,
+    offset: null,
+    id: null,
+    after: null,
+    replyTo: null,
+    includeFinished: null,
+  };
+  const identity = { callId: "call", threadId: "thread", turnId: "turn" };
+  const call = (input: unknown) =>
+    callTaskBoard(board, { ...identity, tool: "board_read", arguments: input });
+  await call(args);
+  assert.deepEqual(inputs.pop(), {});
+  assert.equal(args.query, "");
+  const filtered = {
+    taskId: "peer",
+    query: "API",
+    includeFinished: false,
+    limit: 2,
+    after: 0,
+    offset: 0,
+  };
+  await call(filtered);
+  assert.deepEqual(inputs.pop(), filtered);
+  await call({ query: " \n\t" });
+  assert.deepEqual(inputs.pop(), {});
+  await call({ query: " ".repeat(201) });
+  assert.deepEqual(inputs.pop(), { query: " ".repeat(201) });
+  await assert.rejects(call(null), /arguments must be an object/);
+  await assert.rejects(call([]), /arguments must be an object/);
+  const error = new Error("BOARD_CONNECTION_CLOSED");
+  let attempts = 0;
+  await assert.rejects(
+    callTaskBoard(
+      {
+        read: async () => {
+          attempts++;
+          throw error;
+        },
+      },
+      { ...identity, tool: "board_read", arguments: filtered },
+    ),
+    error,
+  );
+  assert.equal(attempts, 1);
 });
 
 test("Codex receives board tools for new engine work and retains them on resume without granting them to local tasks", async (t) => {
