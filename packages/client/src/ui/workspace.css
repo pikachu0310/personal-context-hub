@@ -1472,6 +1472,8 @@ button {
   opacity: 0;
   pointer-events: none;
 }
+.project-collapse > .collapse-heading:hover .project-menu,
+.project-collapse > .collapse-heading:focus-within .project-menu,
 .project-name:hover .project-menu,
 .project-name:focus-within .project-menu,
 .project-menu[aria-expanded="true"],
