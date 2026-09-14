@@ -1,3 +1,4 @@
+import { Icon } from "./Icons.js";
 import type { ClientState } from "@ido/common/contracts/api";
 import type { Task, TaskParticipant } from "@ido/common/contracts/protocol";
 import { isSelf, participantGroups } from "./participant-identity.js";
@@ -11,17 +12,7 @@ export function UserAvatar({ person }: { person: TaskParticipant }) {
       {person.avatar ? (
         <img src={person.avatar} alt="" />
       ) : person.bot ? (
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          aria-hidden="true"
-        >
-          <path d="M12 3v3M9 3h6M5 8h14v11H5zM2 11v5m20-5v5M8 15h8" />
-          <circle cx="9" cy="11" r="1" />
-          <circle cx="15" cy="11" r="1" />
-        </svg>
+        <Icon name="bot" size={20} />
       ) : (
         person.name.slice(0, 2)
       )}

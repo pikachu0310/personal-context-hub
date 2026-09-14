@@ -90,6 +90,11 @@ try {
   await other.goto(b.origin);
   const menu = async (p) => {
     await p
+      .locator(".task-row")
+      .filter({ hasText: "Lifecycle task" })
+      .first()
+      .hover();
+    await p
       .getByRole("button", {
         name: "Lifecycle taskのタスクメニュー",
         exact: true,
@@ -97,6 +102,67 @@ try {
       .first()
       .click();
   };
+  const taskRow = page
+    .locator(".task-row")
+    .filter({ hasText: "Lifecycle task" })
+    .first();
+  const taskMenu = taskRow.getByRole("button", {
+    name: "Lifecycle taskのタスクメニュー",
+    exact: true,
+  });
+  await taskMenu.waitFor();
+  const menuOpacity = () =>
+    taskMenu.evaluate(
+      (element) => globalThis.getComputedStyle(element).opacity,
+    );
+  assert.equal(await menuOpacity(), "0");
+  await taskRow.hover();
+  await until(async () => (await menuOpacity()) === "1");
+  await page.mouse.move(700, 20);
+  await until(async () => (await menuOpacity()) === "0");
+  await taskMenu.focus();
+  await until(async () => (await menuOpacity()) === "1");
+  await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "退出", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  const meeting = engine.store.get("meeting", task.meetingId);
+  engine.store.put("meeting", meeting.id, {
+    ...meeting,
+    summary: "ログイン画面はメール方式で実装する",
+    name: "開発会議",
+  });
+  await taskRow.getByRole("button").first().click();
+  const sourcePanel = page.getByRole("complementary", { name: "タスクの詳細" });
+  await sourcePanel
+    .getByRole("button", { name: "ソースを追加", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "議事録", exact: true }).click();
+  const sourceDialog = page.getByRole("dialog", {
+    name: "議事録を追加",
+    exact: true,
+  });
+  await sourceDialog.getByLabel("議事録", { exact: true }).click();
+  await page.getByRole("option", { name: "開発会議", exact: true }).click();
+  await sourceDialog
+    .getByRole("button", { name: "追加する", exact: true })
+    .click();
+  await sourceDialog.waitFor({ state: "hidden" });
+  await sourcePanel
+    .getByRole("button", { name: "開発会議", exact: true })
+    .click();
+  await sourcePanel
+    .getByText("ログイン画面はメール方式で実装する", { exact: true })
+    .waitFor();
+  assert.equal(
+    (await b.workspaceRequest("task.sources", { taskId: task.id })).sources[0]
+      .text,
+    "ログイン画面はメール方式で実装する",
+  );
+  await page.reload();
+  await taskRow.getByRole("button").first().click();
+  await sourcePanel
+    .getByRole("button", { name: "開発会議", exact: true })
+    .waitFor();
   await menu(other);
   await other.getByRole("menuitem", { name: "参加する", exact: true }).click();
   await until(
@@ -148,6 +214,10 @@ try {
   await dialog.getByRole("button", { name: "キャンセル", exact: true }).click();
   assert.ok(engine.store.get("task", task.id));
   await page
+    .locator(".project-collapse > .collapse-heading")
+    .filter({ hasText: "Membership project" })
+    .hover();
+  await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .click();
   await page.getByRole("menuitem", { name: "退出", exact: true }).click();
@@ -163,6 +233,10 @@ try {
     true,
   );
   await leave.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await page
+    .locator(".project-collapse > .collapse-heading")
+    .filter({ hasText: "Membership project" })
+    .hover();
   await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .click();
@@ -182,6 +256,10 @@ try {
     () => engine.store.get("project", project.id).ownerDeviceId === "device-1",
   );
   await page
+    .locator(".project-collapse > .collapse-heading")
+    .filter({ hasText: "Membership project" })
+    .hover();
+  await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .click();
   await page.getByRole("menuitem", { name: "退出", exact: true }).click();
@@ -195,6 +273,10 @@ try {
     codexConnected: false,
   });
   assert.ok(!a.settings.projects.some((p) => p.id === project.id));
+  await assert.rejects(
+    a.workspaceRequest("task.sources", { taskId: task.id }),
+    /PROJECT_INVITATION_REQUIRED/,
+  );
   await a.close();
   const restartedA = await connect(0);
   await page.goto(restartedA.origin);
@@ -202,6 +284,10 @@ try {
   await restartedA.workspaceRequest("project.join", {
     token: invitation.token,
   });
+  await page
+    .locator(".project-collapse > .collapse-heading")
+    .filter({ hasText: "Membership project" })
+    .hover();
   await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .waitFor();

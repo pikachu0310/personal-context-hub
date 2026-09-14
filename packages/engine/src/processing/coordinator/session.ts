@@ -40,6 +40,7 @@ type StoredState = {
 type Batch = { id: string; events: CoordinatorEvent[] };
 export interface CoordinatedOptions {
   coordinator: CoordinatorFactory;
+  updateMinutes?: (meetingId: string) => Promise<void>;
   work: WorkPort;
   synthesize(text: string): Promise<string>;
   createLiveSession?: any;
@@ -648,7 +649,6 @@ class MeetingCoordinator {
     // Raw statements are already durable. Topic minutes are updated by the
     // coordinator response; do not overwrite them with a transcript tail.
     this.publish("transcript", event.meetingId);
-    this.publish("minutes", event.meetingId);
     const addressed =
       event.interaction === true ||
       event.command === "ask" ||
@@ -804,6 +804,21 @@ class MeetingCoordinator {
     await this.inbox.submit([event], { start: true });
   }
 
+  private updateMinutes(meetingId: string) {
+    void this.options
+      .updateMinutes?.(meetingId)
+      .then(() => {
+        if (!this.closed) this.publish("minutes", meetingId);
+      })
+      .catch((error) => {
+        if (!this.closed)
+          this.store.logError(error, {
+            source: "meeting",
+            operation: "minutes.generate",
+            meetingId,
+          });
+      });
+  }
   private async apply(
     value: {
       response: CoordinatorResponse;
@@ -960,6 +975,10 @@ class MeetingCoordinator {
       );
       receipts.add(author.id);
     }
+    for (const meetingId of new Set(
+      sources.map((source) => source.meetingId ?? this.meetingId),
+    ))
+      this.updateMinutes(meetingId);
     for (const control of response.controls) {
       const selected = select(control.sourceIds);
       if (

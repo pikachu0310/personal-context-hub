@@ -12,7 +12,9 @@ import { selectedModel } from "../agents/model-selection.js";
 export function localProgress(runs: Record<string, Run>) {
   return {
     schemaVersion: 1,
-    sharing: "not-connected",
+    sharing: Object.values(runs).some((value) => value.discordShare)
+      ? "per-task"
+      : "not-connected",
     tasks: Object.values(runs)
       .filter((value) => value.origin === "local")
       .map((value) => {
@@ -22,9 +24,11 @@ export function localProgress(runs: Record<string, Run>) {
           revision: value.task.revision,
           agent: value.agent ?? "codex",
           model: value.model,
+          reasoningEffort: value.reasoningEffort,
           state: value.state,
           phase: value.phase,
           progressMode: value.progressMode,
+          discordSharing: value.discordShare?.status ?? "disabled",
           title: activityText(value.task.title ?? "", 300),
           updatedAt: value.updatedAt ?? value.task.updatedAt,
           progress: activityText(value.progress ?? "", 1000),
@@ -69,12 +73,39 @@ export async function startLocalTask(
         throw new HttpError(409, "AGENT_LOGIN_REQUIRED");
       if (!model || !available.models.some((value) => value.id === model))
         throw new HttpError(409, "MODEL_UNAVAILABLE");
-      if (agent === "claude" && input.claudePermissionsAcknowledged !== true)
+      const reasoningEffort = input.reasoningEffort || undefined;
+      if (
+        reasoningEffort !== undefined &&
+        (typeof reasoningEffort !== "string" ||
+          !available.models
+            .find((value) => value.id === model)
+            ?.supportedEfforts?.includes(reasoningEffort))
+      )
+        throw new HttpError(400, "EFFORT_UNAVAILABLE");
+      if (
+        agent === "claude" &&
+        input.accessMode === undefined &&
+        input.claudePermissionsAcknowledged !== true
+      )
         throw new HttpError(400, "CLAUDE_PERMISSIONS_REQUIRED");
       const title = text(input.title || instruction.slice(0, 100), 200);
       if (!["auto", "manual"].includes(String(input.mode)))
         throw new HttpError(400, "INVALID_PROGRESS_MODE");
-      if (!["workspace-write", "read-only"].includes(String(input.sandboxMode)))
+      if (
+        input.accessMode !== undefined &&
+        !["full", "approval"].includes(String(input.accessMode))
+      )
+        throw new HttpError(400, "INVALID_ACCESS_MODE");
+      const accessMode =
+        input.accessMode === undefined
+          ? undefined
+          : input.mode === "auto"
+            ? "full"
+            : (input.accessMode as "full" | "approval");
+      if (
+        !accessMode &&
+        !["workspace-write", "read-only"].includes(String(input.sandboxMode))
+      )
         throw new HttpError(400, "INVALID_SANDBOX_MODE");
       const directory = await realpath(text(input.directory, 4000));
       try {
@@ -83,11 +114,22 @@ export async function startLocalTask(
       } catch {
         throw new HttpError(400, "COMMITTED_REPOSITORY_REQUIRED");
       }
-      const projectId = `local-${createHash("sha256").update(directory).digest("hex").slice(0, 24)}`;
+      const share = input.shareDiscord === true;
+      const shareProject = share ? id(input.shareProjectId) : undefined;
+      if (
+        share &&
+        (!client.settings.engineUrl ||
+          !client.settings.deviceId ||
+          !client.settings.projects.some((p) => p.id === shareProject))
+      )
+        throw new HttpError(409, "SHARE_PROJECT_REQUIRED");
+      const projectId =
+        shareProject ??
+        `local-${createHash("sha256").update(directory).digest("hex").slice(0, 24)}`;
       const mapping = {
         projectId,
         directory,
-        network: input.network === true,
+        network: accessMode ? true : input.network === true,
         slots: client.settings.slots,
       };
       const now = Date.now();
@@ -97,14 +139,17 @@ export async function startLocalTask(
         requestId: requestKey,
         projectId,
         meetingId: "local",
-        authorId: "local",
+        authorId: localSender(client).id,
+        participants: [localSender(client)],
         text: instruction,
         title,
         state: "assigned",
         revision: 1,
         network: mapping.network,
         executionPolicy: {
-          sandboxMode: input.sandboxMode as "workspace-write" | "read-only",
+          sandboxMode: accessMode
+            ? undefined
+            : (input.sandboxMode as "workspace-write" | "read-only"),
           networkAccessEnabled: mapping.network,
         },
         createdAt: now,
@@ -123,14 +168,39 @@ export async function startLocalTask(
         [mapping],
         true,
         client.settings.slots,
-        { progressMode: input.mode as "auto" | "manual", agent, model },
+        {
+          progressMode: input.mode as "auto" | "manual",
+          agent,
+          model,
+          reasoningEffort,
+          accessMode,
+          discordShare: share
+            ? {
+                engineUrl: client.settings.engineUrl!,
+                deviceId: client.settings.deviceId!,
+                projectId,
+                sequence: 0,
+                status: "pending",
+              }
+            : undefined,
+        },
       );
       if (!client.executor.runs[runId])
         throw new HttpError(409, "LOCAL_SLOTS_FULL");
+      void client.syncLocalShares();
       return { runId };
     });
   client.processing = operation;
   return operation;
+}
+
+function localSender(client: Client) {
+  return {
+    id: client.settings.deviceId ?? "local",
+    identityId: client.settings.identityId,
+    name: client.settings.profile?.name || "自分",
+    avatar: client.settings.profile?.avatar,
+  };
 }
 
 export async function localInstruction(
@@ -153,6 +223,8 @@ export async function localInstruction(
       runId,
       revision: value.task.revision,
       text: instruction,
+      sender: localSender(client),
+      sentAt: Date.now(),
     },
     [value.localMapping],
     true,
@@ -217,6 +289,8 @@ export async function continueLocalTask(
           runId,
           task,
           continuation: instruction,
+          sender: localSender(client),
+          sentAt: Date.now(),
         },
         [value.localMapping],
         true,
@@ -225,6 +299,7 @@ export async function continueLocalTask(
           progressMode: value.progressMode ?? "auto",
           agent: value.agent,
           model: value.model,
+          reasoningEffort: value.reasoningEffort,
         },
       );
       if (client.executor.runs[runId].task.revision !== task.revision)

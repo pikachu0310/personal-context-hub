@@ -1,3 +1,5 @@
+import { attachTaskSource } from "@ido/common/contracts/protocol";
+import { shareLocalTask } from "../../processing/tasks/local-sharing.js";
 import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
 import { taskParticipants } from "../../processing/projects/task-participants.js";
 import { deviceIdentity } from "../../clients/identity.js";
@@ -26,6 +28,7 @@ import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
 import { taskSnapshot } from "./task-list.js";
 import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
+import { TaskBoard } from "../../processing/tasks/board.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
@@ -269,6 +272,7 @@ export class ClientConnections {
             throw new Error("AUTH_FAILED");
           deviceId = device.id;
           device.generation++;
+          device.taskBoardVersion = data.taskBoardVersion === 1 ? 1 : undefined;
           device.lifecycleVersion = data.lifecycleVersion === 1 ? 1 : undefined;
           generation = device.generation;
           this.store.put("device", device.id, device);
@@ -291,10 +295,12 @@ export class ClientConnections {
               identityId: deviceIdentity(this.store, device),
               generation,
               controlVersion: 1,
+              taskBoardVersion: 1,
               continuationVersion: 1,
               projectVersion: 1,
               projects: new ProjectTeam(this.store).projects(device.id),
               workspaceVersion: 1,
+              localSharingVersion: 1,
               taskListVersion: 1,
               lifecycleVersion: 1,
               deletions:
@@ -320,6 +326,63 @@ export class ClientConnections {
         if (session) session.lastSeenAt = Date.now();
         if (session?.disconnecting && !["result", "ack"].includes(data.type))
           return;
+        if (data.type === "board.request") {
+          const requestId = id(data.requestId);
+          const response = {
+            v: 1,
+            type: "board.result",
+            generation,
+            requestId,
+            taskId: data.taskId,
+            runId: data.runId,
+            revision: data.revision,
+          };
+          try {
+            const task = this.store.get<Task>("task", id(data.taskId));
+            if (
+              !task ||
+              task.clientId !== device.id ||
+              task.runId !== data.runId ||
+              task.revision !== data.revision ||
+              !["assigned", "running"].includes(task.state)
+            )
+              throw new Error("TASK_NOT_RUNNING");
+            new ProjectTeam(this.store).require(device.id, task.projectId);
+            if (
+              !device.grants.some((grant) => grant.projectId === task.projectId)
+            )
+              throw new Error("PERMISSION_DENIED");
+            if (
+              !data.input ||
+              typeof data.input !== "object" ||
+              Array.isArray(data.input)
+            )
+              throw new Error("INVALID_BOARD_INPUT");
+            const board = new TaskBoard(this.store),
+              input = data.input as Record<string, unknown>;
+            let result;
+            if (data.operation === "read") result = board.read(task, input);
+            else if (data.operation === "post") {
+              result = board.post(
+                task,
+                input,
+                `${task.runId}:${text(data.postKey, 600)}`,
+              );
+              const target = this.store.get<Task>("task", result.taskId)!;
+              if (
+                result.created &&
+                !["completed", "failed", "cancelled"].includes(target.state)
+              )
+                this.notifyBoard(task);
+            } else throw new Error("INVALID_BOARD_OPERATION");
+            ws.send(JSON.stringify({ ...response, result }));
+          } catch {
+            ws.send(
+              JSON.stringify({ ...response, error: "BOARD_REQUEST_REJECTED" }),
+            );
+          }
+          return;
+        }
         if (data.type === "project.create") {
           const requestId = id(data.requestId);
           try {
@@ -434,6 +497,9 @@ export class ClientConnections {
                   input.name,
                 );
                 break;
+              case "project.minutes.update":
+                result = team.updateMinutes(device.id, input);
+                break;
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
@@ -462,6 +528,21 @@ export class ClientConnections {
                 );
                 break;
               }
+              case "task.sources": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (input.sourceId) {
+                  task.attachedSources = attachTaskSource(
+                    task.attachedSources,
+                    input,
+                  );
+                  this.store.put("task", task.id, task);
+                  this.changed();
+                }
+                result = { sources: task.attachedSources ?? [] };
+                break;
+              }
               case "task.continue": {
                 const task = this.store.get<Task>("task", id(input.taskId));
                 if (!task) throw new Error("TASK_NOT_FOUND");
@@ -483,6 +564,17 @@ export class ClientConnections {
                     continuation: text(input.text, 8000),
                     expectedRevision: Number(input.revision),
                   },
+                );
+                this.flush();
+                this.changed();
+                break;
+              }
+              case "task.share-local": {
+                result = shareLocalTask(
+                  this.store,
+                  device.id,
+                  generation,
+                  input,
                 );
                 this.flush();
                 this.changed();
@@ -691,6 +783,43 @@ export class ClientConnections {
         this.preview.disconnected(deviceId);
       }
     });
+  }
+  private notifyBoard(author: Task) {
+    for (const task of this.store.list<Task>("task")) {
+      if (
+        task.id === author.id ||
+        task.projectId !== author.projectId ||
+        !task.clientId ||
+        !["assigned", "running"].includes(task.state)
+      )
+        continue;
+      const device = this.store.get<Device>("device", task.clientId);
+      const socket = this.peers.get(task.clientId);
+      if (
+        !device ||
+        device.revoked ||
+        device.taskBoardVersion !== 1 ||
+        !this.ready.has(device.id) ||
+        socket?.readyState !== WebSocket.OPEN ||
+        !device.grants.some((grant) => grant.projectId === task.projectId)
+      )
+        continue;
+      try {
+        new ProjectTeam(this.store).require(device.id, task.projectId);
+        socket.send(
+          JSON.stringify({
+            v: 1,
+            type: "board.changed",
+            generation: device.generation,
+            taskId: task.id,
+            runId: task.runId,
+            revision: task.revision,
+          }),
+        );
+      } catch {
+        /* A notice cannot undo a saved post. */
+      }
+    }
   }
   flush() {
     this.scheduler.schedule(this.ready);

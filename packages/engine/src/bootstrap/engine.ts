@@ -41,6 +41,7 @@ export interface EngineOptions {
   uiDirectory?: string;
   dashboardEntry?: string;
   pluginCatalog?: CatalogEntry[];
+  speech?: { transcriptionModel?: string; speed?: number };
   conversation?:
     | false
     | {
@@ -116,7 +117,7 @@ export class Engine {
       join(dirname(fileURLToPath(import.meta.url)), "ui");
     this.conversation = new Conversation(
       this.store,
-      new OpenAIModels(this.credentials),
+      new OpenAIModels(this.credentials, options.speech),
     );
     this.connections = new ClientConnections(
       this.store,
@@ -198,6 +199,8 @@ export class Engine {
         });
       this.conversation.coordinated = new CoordinatedConversation(this.store, {
         coordinator: this.coordinatorFactory,
+        updateMinutes: (meetingId) =>
+          this.conversation.document.refresh(meetingId),
         work: createWorkPort({
           repository: this.store,
           tasks: this.tasks,
@@ -322,6 +325,7 @@ export class Engine {
     return this;
   }
   async close() {
+    this.conversation.document.stop();
     clearInterval(this.timer);
     const inputs = this.input.close();
     await this.conversation.coordinated?.close();

@@ -1,8 +1,7 @@
 name: CI
 
+# Temporarily pause automatic CI; restore push/pull_request triggers to resume.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 concurrency:

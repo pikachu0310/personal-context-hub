@@ -1,5 +1,7 @@
+import type { MinutesMetadata } from "@ido/common/contracts/api";
 import type { Grant } from "@ido/common/contracts/protocol";
 export interface Device {
+  taskBoardVersion?: number;
   lifecycleVersion?: number;
   profile?: import("@ido/common/contracts/protocol").ClientProfile;
   codexConnected?: boolean;
@@ -14,7 +16,8 @@ export interface Device {
   lastAssigned: number;
   executionPolicyVersion?: number;
 }
-export interface Meeting {
+export interface Meeting extends MinutesMetadata {
+  summaryContextRevision?: number;
   knowledge?: import("@ido/common/contracts/knowledge").MeetingKnowledge;
   startedAt?: number;
   closedAt?: number;

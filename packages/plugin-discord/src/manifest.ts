@@ -50,7 +50,7 @@ export const discordManifest: PluginManifest = {
     },
     {
       key: "issueForumChannelId",
-      label: "issueフォーラムのID（任意・タスク概要を共有）",
+      label: "タスク進捗を共有するフォーラム／テキストチャンネルID（任意）",
     },
     {
       key: "windowsDownloadUrl",

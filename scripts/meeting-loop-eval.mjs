@@ -73,6 +73,7 @@ const engine = new Engine({
   port: 0,
   previewPort: 0,
   conversation: { coordinator: factory, observationIntervalMs: 60_000 },
+  speech: { transcriptionModel: process.env.IDO_EVAL_TRANSCRIPTION_MODEL },
 });
 engine.credentials.get = async (name) =>
   name === "openai" ? process.env.OPENAI_API_KEY : undefined;

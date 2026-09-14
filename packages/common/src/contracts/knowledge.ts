@@ -30,6 +30,14 @@ export interface KnowledgeQuery {
 
 export interface KnowledgePage {
   projectId: string;
+  documents?: Array<{
+    meetingId: string;
+    name: string;
+    revision: number;
+    updatedAt: number;
+    markdown: string;
+    truncated?: boolean;
+  }>;
   topics: Array<
     MeetingTopic & {
       meetingId: string;

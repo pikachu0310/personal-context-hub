@@ -1,4 +1,8 @@
 import type { ClientActivity } from "@ido/common/contracts/api";
+import type { ReactNode } from "react";
+import type { TaskParticipant } from "@ido/common/contracts/protocol";
+import { UserAvatar } from "./TaskAvatars.js";
+import { isStart } from "./chat-presentation.js";
 import { Icon } from "./Icons.js";
 
 export const stateLabel = (state: string) =>
@@ -14,6 +18,8 @@ export const stateLabel = (state: string) =>
     pending: "待機中",
     accepted: "反映済み",
     uncertain: "配送確認が必要",
+    sending: "送信中",
+    rejected: "拒否",
     declined: "拒否",
   })[state] ?? state;
 export const activeState = (state: string) =>
@@ -67,26 +73,91 @@ export function MessageText({ text }: { text: string }) {
     </div>
   );
 }
-export function ActivityItem({ entry }: { entry: ClientActivity }) {
+export function RequestMessage({
+  text,
+  sender,
+  sentAt,
+  children,
+  status,
+}: {
+  text: string;
+  sender?: TaskParticipant;
+  sentAt?: number;
+  children?: ReactNode;
+  status?: string;
+}) {
+  return (
+    <article className="request-message">
+      <div className="request-content">
+        <div className="user-message">
+          <MessageText text={text} />
+          {children}
+        </div>
+        <div className="request-meta">
+          {sentAt !== undefined && Number.isFinite(sentAt) && (
+            <time dateTime={new Date(sentAt).toISOString()}>
+              {new Date(sentAt).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </time>
+          )}
+          {status &&
+            [
+              "pending",
+              "sending",
+              "queued",
+              "uncertain",
+              "declined",
+              "failed",
+              "rejected",
+            ].includes(status) && <span>{stateLabel(status)}</span>}
+        </div>
+      </div>
+      <span
+        className="request-avatar"
+        role="img"
+        aria-label={sender?.name ?? "発言者不明"}
+        title={sender?.name ?? "発言者不明"}
+      >
+        {sender ? (
+          <UserAvatar person={sender} />
+        ) : (
+          <span className="user-avatar">?</span>
+        )}
+      </span>
+    </article>
+  );
+}
+export function ActivityItem({
+  entry,
+  sender,
+}: {
+  entry: ClientActivity;
+  sender?: TaskParticipant;
+}) {
   const when = new Date(entry.at).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
-  if (entry.kind === "message" || entry.kind === "instruction")
+  if (entry.kind === "instruction")
     return (
-      <article
-        className={
-          entry.kind === "instruction" ? "user-message" : "agent-message"
-        }
+      <RequestMessage
+        text={entry.text ?? ""}
+        sender={sender ?? entry.sender}
+        sentAt={entry.sentAt}
+        status={entry.status}
       >
-        <div className="entry-meta">
-          {entry.kind === "instruction" ? "あなた・追加指示" : "IDO Agent"}
-          <time dateTime={new Date(entry.at).toISOString()}>{when}</time>
-          {entry.kind === "instruction" && entry.status && (
-            <span>{stateLabel(entry.status)}</span>
-          )}
-        </div>
+        {entry.truncated && (
+          <p className="muted">長い出力のため一部を省略しました。</p>
+        )}
+      </RequestMessage>
+    );
+  if (entry.kind === "message")
+    return (
+      <article className="agent-message">
         <MessageText text={entry.text ?? ""} />
         {entry.truncated && (
           <p className="muted">長い出力のため一部を省略しました。</p>
@@ -100,7 +171,7 @@ export function ActivityItem({ entry }: { entry: ClientActivity }) {
       >
         <span>{entry.title}</span>
         <time>{when}</time>
-        {entry.text && <small>{entry.text}</small>}
+        {entry.text && !isStart(entry) && <small>{entry.text}</small>}
       </div>
     );
   return (

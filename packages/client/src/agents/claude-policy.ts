@@ -17,6 +17,7 @@ export async function claudeToolAllowed(
     return options.networkAccessEnabled && typeof input.command === "string";
   const path = input.file_path ?? input.path ?? options.workingDirectory;
   if (typeof path !== "string") return false;
+  if (options.sandboxMode === "danger-full-access") return true;
   const root = await realpath(options.workingDirectory);
   const target = resolve(root, path);
   const within = (path: string) => {

@@ -1,6 +1,7 @@
 import type { Task } from "@ido/common/contracts/protocol";
 import type { Meeting } from "../domain/models.js";
 export interface Models {
+  readonly transcriptionModel?: string;
   doctor(): Promise<{ ok: boolean }>;
   transcribe(buffer: Buffer): Promise<string>;
   speak(text: string): Promise<string>;
@@ -9,6 +10,7 @@ export interface Models {
     tasks: Task[],
     question: string,
   ): Promise<string>;
+  summarize?(meeting: Meeting, taskLinks: string[]): Promise<string>;
   update(
     meeting: Meeting,
     messageId: string,

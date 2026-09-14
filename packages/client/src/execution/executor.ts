@@ -1,15 +1,24 @@
 import { purge } from "./purge.js";
 import { join } from "node:path";
-import type { ClientActivity } from "@ido/common/contracts/api";
+import type {
+  ClientActivity,
+  TaskContextSource,
+} from "@ido/common/contracts/api";
 import { executionError, recordActivity } from "./activity.js";
 import { waitForPlan, startPlannedWork } from "./planning.js";
-import type { Command, Mapping, Task } from "@ido/common/contracts/protocol";
+import type {
+  Command,
+  Mapping,
+  Task,
+  RequestMessage,
+} from "@ido/common/contracts/protocol";
 import { approve } from "../approvals/resolve.js";
 import { artifact } from "../artifacts/diff.js";
 import { AppServerCodex } from "../codex/app-server.mjs";
 import { load } from "../storage/load.js";
 import { save } from "../storage/save.js";
 import { execute } from "./run.js";
+import { TaskBoardConnection } from "../connection/task-board.js";
 import type { AgentKind } from "../agents/types.js";
 import { ClaudeRuntime } from "../agents/claude.js";
 import {
@@ -20,7 +29,7 @@ import {
   type ControlDelivery,
 } from "@ido/common/contracts/work";
 
-export interface WorkInstruction {
+export interface WorkInstruction extends RequestMessage {
   id: string;
   receiptId?: string;
   controlVersion?: number;
@@ -30,12 +39,29 @@ export interface WorkInstruction {
 }
 
 export interface Run {
+  requestAt?: number;
+  contextSources?: TaskContextSource[];
+  boardToolsEnabled?: boolean;
+  meetingToolsEnabled?: boolean;
   model?: string;
   modelReasoningEffort?: "low" | "medium" | "high";
+  reasoningEffort?: string;
   agent?: AgentKind;
   origin?: "local";
   localMapping?: Mapping;
+  discordShare?: {
+    engineUrl: string;
+    deviceId: string;
+    projectId: string;
+    sequence: number;
+    taskId?: string;
+    fingerprint?: string;
+    status?: "pending" | "synced" | "error";
+    error?: string;
+  };
+  accessMode?: "full" | "approval";
   progressMode?: "auto" | "manual";
+  pendingProgressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
   planApproved?: boolean;
   plan?: string;
@@ -61,6 +87,9 @@ export class Executor {
     task: Task,
     input: import("@ido/common/contracts/knowledge").KnowledgeQuery,
   ) => Promise<import("@ido/common/contracts/knowledge").KnowledgePage>;
+  contextProfile: () => { name: string; context: string } | undefined = () =>
+    undefined;
+  readonly board: TaskBoardConnection;
   createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
     new ClaudeRuntime(options);
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
@@ -93,7 +122,9 @@ export class Executor {
     readonly emit: (message: Command) => void,
     readonly createCodex: (options: any) => AppServerCodex = (options) =>
       new AppServerCodex(options),
-  ) {}
+  ) {
+    this.board = new TaskBoardConnection(emit);
+  }
   get home() {
     return join(this.directory, "codex");
   }
@@ -122,9 +153,12 @@ export class Executor {
     allow: boolean,
     slots: number,
     local?: {
+      discordShare?: Run["discordShare"];
+      accessMode?: "full" | "approval";
       progressMode: "auto" | "manual";
       agent?: AgentKind;
       model?: string;
+      reasoningEffort?: string;
     },
   ) {
     if (!command.id) throw new Error("COMMAND_ID_REQUIRED");
@@ -209,13 +243,35 @@ export class Executor {
       }
       const directory =
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
+      task.attachedSources = [
+        ...new Map(
+          [
+            ...(previous?.task.attachedSources ?? []),
+            ...(task.attachedSources ?? []),
+          ].map((source) => [source.id, source]),
+        ).values(),
+      ];
       const value: Run = {
+        contextSources: previous?.contextSources?.filter(
+          (source) => source.kind !== "minutes",
+        ),
         agent: previous?.agent ?? local?.agent ?? "codex",
-        model: previous ? previous.model : local?.model,
+        model: previous ? previous.model : (local?.model ?? mapping.model),
+        reasoningEffort: previous
+          ? previous.reasoningEffort
+          : local
+            ? local.reasoningEffort
+            : mapping.reasoningEffort,
         modelReasoningEffort: previous?.modelReasoningEffort,
+        meetingToolsEnabled: previous?.meetingToolsEnabled,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
+        discordShare: previous?.discordShare ?? local?.discordShare,
+        accessMode: previous
+          ? previous.accessMode
+          : (local?.accessMode ?? mapping.accessMode),
         progressMode:
+          previous?.pendingProgressMode ??
           previous?.progressMode ??
           local?.progressMode ??
           mapping.progressMode ??
@@ -224,8 +280,10 @@ export class Executor {
         activityDropped: previous?.activityDropped,
         activityVersion: previous?.activityVersion,
         task: structuredClone(task),
+        requestAt: previous ? command.sentAt : task.createdAt,
         directory,
         threadId: previous?.threadId,
+        boardToolsEnabled: previous?.boardToolsEnabled,
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],
         instructions: structuredClone(previous?.instructions ?? []),
@@ -272,6 +330,8 @@ export class Executor {
           kind: "instruction",
           title: "追加依頼",
           text: command.continuation,
+          sender: command.sender,
+          sentAt: command.sentAt,
           status: "accepted",
         });
       this.runs[task.runId] = value;
@@ -366,6 +426,8 @@ export class Executor {
       previous.instructions.push({
         id: command.id,
         text: command.text,
+        sender: command.sender,
+        sentAt: command.sentAt,
         specRevision,
         delivery: "pending",
         receiptId:
@@ -380,6 +442,8 @@ export class Executor {
         kind: "instruction",
         title: "追加指示",
         text: command.text,
+        sender: command.sender,
+        sentAt: command.sentAt,
         status: "pending",
       });
       this.controlReceipt(previous, command, "queued");
@@ -440,9 +504,20 @@ export class Executor {
               kind: "instruction",
               title: "追加指示",
               text: instruction.text,
+              sender: instruction.sender,
+              sentAt: instruction.sentAt,
               status: instruction.delivery,
             });
-            if (applied) value.activeSpecRevision = instruction.specRevision;
+            if (applied) {
+              value.activeSpecRevision = instruction.specRevision;
+              recordActivity(value, {
+                id: `instruction-start:${instruction.id}`,
+                kind: "status",
+                title: "作業を開始",
+                event: "started",
+                requestAt: instruction.sentAt,
+              });
+            }
             this.controlReceipt(
               value,
               instruction,
@@ -460,6 +535,8 @@ export class Executor {
               kind: "instruction",
               title: "追加指示",
               text: instruction.text,
+              sender: instruction.sender,
+              sentAt: instruction.sentAt,
               status: "uncertain",
             });
             this.controlReceipt(value, instruction, "uncertain");
@@ -483,6 +560,7 @@ export class Executor {
   execute = execute.bind(this);
   readonly approve = approve.bind(this);
   async close() {
+    this.board.close();
     for (const request of this.approvals.values()) {
       clearTimeout(request.timer);
       request.resolve({ decision: "decline" });

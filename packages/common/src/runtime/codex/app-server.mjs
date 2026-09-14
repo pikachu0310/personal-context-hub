@@ -35,6 +35,7 @@ export class AppServerCodex extends EventEmitter {
     this.sequence = 0;
     this.closed = false;
     this.threadUsage = new Map();
+    this.dynamicHandlers = new Map();
   }
 
   connect() {
@@ -71,11 +72,26 @@ export class AppServerCodex extends EventEmitter {
           return this.fail(new Error("Invalid Codex App Server message"));
         }
         if (message.id !== undefined && message.method) {
-          if (message.method === "item/tool/call" && this.options.onToolCall) {
+          if (message.method === "item/tool/call") {
             void Promise.resolve()
-              .then(() => this.options.onToolCall(message.params ?? {}))
-              .then((result) => {
-                if (!this.closed) this.send({ id: message.id, result });
+              .then(() => {
+                const handler = this.dynamicHandlers.get(
+                  message.params?.threadId,
+                );
+                if (!handler) throw new Error("No active tool handler");
+                return handler(message.params);
+              })
+              .then((value) => {
+                if (!this.closed)
+                  this.send({
+                    id: message.id,
+                    result: {
+                      success: true,
+                      contentItems: [
+                        { type: "inputText", text: JSON.stringify(value) },
+                      ],
+                    },
+                  });
               })
               .catch(() => {
                 if (!this.closed)
@@ -86,7 +102,7 @@ export class AppServerCodex extends EventEmitter {
                       contentItems: [
                         {
                           type: "inputText",
-                          text: "Meeting context is unavailable. Do not invent missing information.",
+                          text: "Tool request failed. No success is confirmed; check arguments or retry.",
                         },
                       ],
                     },

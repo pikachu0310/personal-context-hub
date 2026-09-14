@@ -96,7 +96,8 @@ export class MeetingKnowledgeStore {
       revision: (meeting.knowledge?.revision ?? 0) + 1,
       updatedAt: Date.now(),
     };
-    meeting.summary = renderMinutes(topics);
+    // The editable Markdown document has its own revision-checked writer.
+    // Topic extraction must not replace edits made through MinutesEditor.
     this.store.put("meeting", meeting.id, meeting);
     return true;
   }
@@ -219,6 +220,28 @@ export class MeetingKnowledgeStore {
     }
     return {
       projectId,
+      documents: meetings
+        .filter(
+          (meeting) =>
+            meeting.summary.trim() &&
+            match(meeting.summary) &&
+            (!selected ||
+              meeting.messages.some((message) => selected.has(message.id))),
+        )
+        .sort(
+          (a, b) =>
+            (b.summaryUpdatedAt ?? b.startedAt ?? 0) -
+            (a.summaryUpdatedAt ?? a.startedAt ?? 0),
+        )
+        .slice(0, 3)
+        .map((meeting) => ({
+          meetingId: meeting.id,
+          name: meeting.name,
+          revision: meeting.summaryRevision ?? 0,
+          updatedAt: meeting.summaryUpdatedAt ?? meeting.startedAt ?? 0,
+          markdown: meeting.summary.slice(0, 4000),
+          ...(meeting.summary.length > 4000 ? { truncated: true } : {}),
+        })),
       topics: topics.map((topic) => ({
         ...topic,
         summary: topic.summary.slice(0, 1200),

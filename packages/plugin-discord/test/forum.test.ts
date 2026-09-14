@@ -7,6 +7,7 @@ import {
   ForumCreateRejected,
   forumCommand,
   forumKey,
+  forumContent,
   type ForumRecord,
 } from "../src/forum/sync.js";
 import { normalizeInput } from "../src/input/normalize.js";
@@ -18,6 +19,47 @@ const binding = {
   meetingId: "meeting",
   projectId: "project",
 };
+test("text channel progress creates one starter thread and retains uncertainty after partial creation", async () => {
+  let starts = 0;
+  let failed = false;
+  const sent: any[] = [];
+  const client = {
+    channels: {
+      fetch: async () => ({
+        type: ChannelType.GuildText,
+        guildId: binding.guildId,
+        send: async (value: any) => {
+          sent.push(value);
+          return {
+            startThread: async () => {
+              starts++;
+              if (failed)
+                throw Object.assign(new Error("forbidden"), { status: 403 });
+              return { id: "thread" };
+            },
+          };
+        },
+      }),
+    },
+  } as unknown as Client;
+  const transport = forumTransport(client, binding);
+  assert.equal(
+    await transport.create("title", "IDO task task\n内容"),
+    "thread",
+  );
+  assert.equal(starts, 1);
+  assert.equal(sent[0].enforceNonce, true);
+  assert.deepEqual(sent[0].allowedMentions, { parse: [] });
+  failed = true;
+  await assert.rejects(
+    transport.create("title", "IDO task task\n内容"),
+    (error) => !(error instanceof ForumCreateRejected),
+  );
+  assert.equal(sent[0].nonce, sent[1].nonce);
+  const content = forumContent(task(), "marker", "false");
+  assert.match(content, /\/ido steer/);
+  assert.doesNotMatch(content, /スレッドにメッセージ/);
+});
 test("forum transport fences mutations when configuration changes during channel lookup", async () => {
   let valid = true;
   let writes = 0;

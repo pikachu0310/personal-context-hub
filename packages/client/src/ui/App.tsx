@@ -1,24 +1,54 @@
+import { Collapsible } from "./Collapsible.js";
+import { SidebarTaskList } from "./SidebarTaskList.js";
+import { sidebarTasks, sidebarTaskTitle } from "./sidebar-tasks.js";
+import { useTaskReadState, TaskReadObserver } from "./useTaskReadState.js";
+import { api } from "./api.js";
+import type {
+  ProjectWorkspace,
+  TaskReference,
+} from "@ido/common/contracts/api";
+import { emptyDraftState, projectDrafts } from "./project-drafts.js";
 import { ProfileSettings } from "./ProfileSettings.js";
 import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
-import { previousRegistration } from "./participant-identity.js";
 import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { ProjectView } from "./ProjectView.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { InviteDialog } from "./InviteDialog.js";
 import { Modal, Text, Button, Anchor } from "@mantine/core";
-import { Form, TaskMenu } from "@ido/common-ui";
-import { desktopBridge } from "./desktop.js";
-import { useEffect, useState } from "react";
+import { TaskMenu } from "@ido/common-ui";
+import { AddProjectForm } from "./ProjectForm.js";
+import { useCallback, useEffect, useRef, useState, useReducer } from "react";
 import { ClientView } from "./ClientView.js";
 import { ClientRuns } from "./ClientRuns.js";
 import { TeamTaskDetail } from "./TeamTasks.js";
 import { useRemoteState } from "./useRemoteState.js";
 import { Icon } from "./Icons.js";
-import { activeState, stateLabel } from "./ActivityFeed.js";
+import { activeState } from "./ActivityFeed.js";
 import "./workspace.css";
 export function App() {
   const { state, error, refresh, action, invoke } = useRemoteState();
+  const { seen, markRead } = useTaskReadState();
+  const dirtyMinutes = useRef(new Set<string>());
+  const dirtyChanged = useCallback((id: string, dirty: boolean) => {
+    if (dirty) dirtyMinutes.current.add(id);
+    else dirtyMinutes.current.delete(id);
+  }, []);
+  const confirmNavigation = () =>
+    !dirtyMinutes.current.size ||
+    window.confirm("未保存の議事録を破棄して移動しますか？");
+  const [linkError, setLinkError] = useState("");
+  const openingLink = useRef(0);
+  useEffect(() => {
+    const leave = (event: BeforeUnloadEvent) => {
+      if (dirtyMinutes.current.size) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", leave);
+    return () => window.removeEventListener("beforeunload", leave);
+  }, []);
   const [page, setPage] = useState<"overview" | "runs">();
   const [selected, select] = useState<string>();
   const [selectedShared, selectShared] = useState<string>();
@@ -27,14 +57,32 @@ export function App() {
   const [projectDialog, setProjectDialog] = useState<string | undefined>();
   const [profileDialog, showProfile] = useState(false);
   const [settingsProject, setSettingsProject] = useState<string>();
-  const [taskDrafts, setTaskDrafts] = useState<
-    Record<string, { text: string; requestId: string; sentText?: string }>
-  >({});
+  const [draftState, dispatchDraft] = useReducer(
+    projectDrafts,
+    emptyDraftState,
+  );
+  const taskDrafts = draftState.drafts;
   const [projectView, setProjectView] = useState<{
     projectId: string;
     taskId?: string;
     draft?: boolean;
   }>();
+  const projectViewRef = useRef(projectView);
+  projectViewRef.current = projectView;
+  useEffect(() => {
+    dispatchDraft({
+      type: "leave",
+      active: projectView?.draft ? projectView.projectId : undefined,
+    });
+  }, [projectView]);
+  function openNewTask(projectId: string) {
+    if (!confirmNavigation()) return;
+    openingLink.current++;
+    setLinkError("");
+    dispatchDraft({ type: "open", projectId, requestId: crypto.randomUUID() });
+    setProjectView({ projectId, draft: true });
+    selectShared(undefined);
+  }
   const [invite, setInvite] = useState<{ engineUrl: string; token: string }>();
   const [dismissedInvite, dismissInvite] = useState("");
   useEffect(() => {
@@ -97,6 +145,41 @@ export function App() {
     )
       selectShared(undefined);
   }, [state, projectView, selected, selectedShared]);
+  const openMinutesTask = async (reference: TaskReference) => {
+    const request = ++openingLink.current;
+    setLinkError("");
+    try {
+      const workspace = await api<ProjectWorkspace>("project/snapshot", {
+        projectId: reference.projectId,
+      });
+      if (request !== openingLink.current) return;
+      if (
+        !workspace.tasks.some(
+          (task) =>
+            task.id === reference.taskId &&
+            task.projectId === reference.projectId,
+        )
+      )
+        throw new Error(
+          "タスクは削除されたか、このプロジェクトから参照できません。",
+        );
+      if (
+        !state?.settings.projects.some(
+          (project) => project.id === reference.projectId,
+        )
+      )
+        throw new Error(
+          "プロジェクトの一覧を更新してから、もう一度リンクを開いてください。",
+        );
+      if (!confirmNavigation()) return;
+      dirtyMinutes.current.clear();
+      setProjectView(reference);
+      selectShared(undefined);
+      setPage("runs");
+    } catch (e) {
+      if (request === openingLink.current) setLinkError((e as Error).message);
+    }
+  };
   if (!state)
     return (
       <div className="workspace-loading">
@@ -115,48 +198,81 @@ export function App() {
     projectView?.projectId ??
     sharedCurrent?.projectId ??
     current?.task.projectId;
+  const localWorkspace =
+    !projectView && !selectedShared && current?.origin === "local";
   const workspaceConnected =
-    state.connected &&
-    (!activeProjectId ||
-      state.settings.projects.some((p) => p.id === activeProjectId));
+    localWorkspace ||
+    (state.connected &&
+      (!activeProjectId ||
+        state.settings.projects.some((p) => p.id === activeProjectId)));
   const currentPage = !workspaceConnected ? "overview" : (page ?? "runs");
   const sharedStale =
     !!state.teamTasks && Date.now() - state.teamTasks.updatedAt > 15000;
-  const sharedGroups = [
-    {
-      name: "このPC · 受け取り待ち",
-      tasks: shared.filter(
-        (task) =>
-          task.clientId === state.settings.deviceId &&
-          !runs.some((run) => run.task.runId === task.runId),
-      ),
-    },
-    {
-      name: "自分の以前の登録",
-      tasks: shared.filter((task) =>
-        previousRegistration(task, state.settings),
-      ),
-    },
-    {
-      name: "ほかのPC",
-      tasks: shared.filter(
-        (task) =>
-          task.clientId &&
-          task.clientId !== state.settings.deviceId &&
-          !previousRegistration(task, state.settings),
-      ),
-    },
-    { name: "未割り当て", tasks: shared.filter((task) => !task.clientId) },
-  ];
-  const filtered = runs.filter((run) =>
-    `${run.task.title ?? ""} ${run.task.text}`
+  const allTasks = sidebarTasks(state);
+  const filtered = allTasks.filter((item) =>
+    [
+      sidebarTaskTitle(item),
+      "text" in item.task ? item.task.text : item.task.ownerName,
+      "deviceName" in item.task ? item.task.deviceName : "",
+    ]
+      .join(" ")
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
-  const projects = state.settings.projects.map((p) => p.id);
+  const readScope = JSON.stringify([
+    state.settings.engineUrl ?? "local",
+    state.settings.identityId ?? state.settings.deviceId ?? "local",
+  ]);
+  const viewedTask =
+    currentPage !== "runs" ||
+    projectDialog !== undefined ||
+    profileDialog ||
+    settingsProject ||
+    invite
+      ? undefined
+      : projectView
+        ? allTasks.find((item) => item.task.id === projectView.taskId)
+        : selectedShared
+          ? allTasks.find((item) => item.task.id === selectedShared)
+          : allTasks.find(
+              (item) => item.run?.task.runId === current?.task.runId,
+            );
+  const projects = [
+    ...new Set([
+      ...state.settings.projects.map((p) => p.id),
+      ...runs.filter((r) => r.origin === "local").map((r) => r.task.projectId),
+      ...shared.map((task) => task.projectId),
+      ...(state.projectTasks ?? []).map((task) => task.projectId),
+    ]),
+  ];
   return (
     <div className={`agent-workspace ${sidebar ? "" : "sidebar-hidden"}`}>
-      <aside className="workspace-sidebar" aria-label="プロジェクトとタスク">
+      <TaskReadObserver
+        scope={readScope}
+        item={viewedTask}
+        markRead={markRead}
+      />
+      <aside
+        className="workspace-sidebar"
+        aria-label="プロジェクトとタスク"
+        onClickCapture={(event) => {
+          if (
+            !(event.target instanceof Element) ||
+            event.target.closest(".project-compose, .draft-task-row") ||
+            !event.target.closest(
+              ".task-link, .sidebar-nav button, [data-minutes-navigation]",
+            )
+          )
+            return;
+          if (!confirmNavigation()) {
+            event.preventDefault();
+            event.stopPropagation();
+          } else {
+            openingLink.current++;
+            setLinkError("");
+          }
+        }}
+      >
         <div className="sidebar-brand">
           <span className="brand-symbol">i</span>
           <strong>IDO Agent</strong>
@@ -194,174 +310,122 @@ export function App() {
         </label>
         <div className="project-list">
           <div className="sidebar-caption">
-            プロジェクト<span>{runs.length} タスク</span>
+            <span>プロジェクト</span>
             <button
               className="icon-button"
               aria-label="プロジェクトを追加"
               disabled={!state.connected || !state.projectCreationSupported}
               onClick={() => setProjectDialog("")}
             >
-              ＋
+              <Icon name="plus" size={18} />
             </button>
           </div>
           {projects.map((id) => {
             const project = state.settings.projects.find((p) => p.id === id);
             const projectConnected = state.connected && !!project;
-            const shared = (state.projectTasks ?? []).filter(
-              (t) =>
-                t.projectId === id &&
-                !runs.some((r) => r.task.id === t.id) &&
-                `${t.title ?? ""} ${t.text}`
-                  .toLowerCase()
-                  .includes(query.toLowerCase()),
-            );
-            const items = filtered.filter((r) => r.task.projectId === id);
-            if (query && !items.length && !shared.length) return null;
+            const items = filtered.filter((item) => item.task.projectId === id);
+            if (query && !items.length) return null;
             return (
               <section
                 key={id}
+                data-project-id={id}
                 className={`project-group ${!projectConnected ? "project-disconnected" : ""}`}
               >
-                <div className="project-name">
-                  <Icon name="folder" size={16} />
-                  <span>
-                    {state.settings.projects.find((p) => p.id === id)?.name ??
-                      "ローカルプロジェクト"}
-                  </span>
+                <Collapsible
+                  storageKey={id}
+                  className="project-collapse"
+                  title={
+                    <>
+                      <Icon name="folder" size={16} />
+                      <span>
+                        {state.settings.projects.find((p) => p.id === id)
+                          ?.name ?? "ローカルプロジェクト"}
+                      </span>
+                    </>
+                  }
+                  actions={
+                    project && (
+                      <div className="project-actions">
+                        <ProjectMenu
+                          project={project}
+                          deviceId={state.settings.deviceId}
+                          action={action}
+                          newTask={() => openNewTask(id)}
+                          canCreate={projectConnected}
+                          mapping={() => setSettingsProject(id)}
+                        />
+                        <button
+                          className="icon-button project-compose"
+                          data-minutes-navigation
+                          aria-label={`${project.name}に新しいタスクを追加`}
+                          title="新しいタスク"
+                          disabled={!projectConnected}
+                          onClick={() => openNewTask(id)}
+                        >
+                          <Icon name="plus" size={18} />
+                        </button>
+                      </div>
+                    )
+                  }
+                >
                   {project && (
-                    <div className="project-actions">
-                      <ProjectMenu
-                        project={project}
-                        deviceId={state.settings.deviceId}
-                        action={action}
-                        mapping={() => setSettingsProject(id)}
-                      />
+                    <button
+                      disabled={!projectConnected}
+                      className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
+                      onClick={() => {
+                        setProjectView({ projectId: id });
+                        if (window.matchMedia("(max-width: 900px)").matches)
+                          showSidebar(false);
+                      }}
+                    >
+                      <Icon name="file" size={15} />
+                      <span>議事録</span>
+                    </button>
+                  )}
+                  {Object.hasOwn(taskDrafts, id) && (
+                    <div
+                      className="task-row draft-task-row"
+                      data-draft-project={id}
+                    >
                       <button
-                        className="icon-button project-compose"
-                        aria-label={`${project.name}に新しいタスクを追加`}
-                        title="新しいタスク"
                         disabled={!projectConnected}
-                        onClick={() => {
-                          setTaskDrafts((drafts) => ({
-                            ...drafts,
-                            [id]: drafts[id] ?? {
-                              text: "",
-                              requestId: crypto.randomUUID(),
-                            },
-                          }));
-                          setProjectView({ projectId: id, draft: true });
-                          selectShared(undefined);
-                        }}
+                        className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
+                        onClick={() => openNewTask(id)}
                       >
-                        <Icon name="compose" size={19} />
+                        <span className="task-title">新しいタスク</span>
+                        <TaskAvatars
+                          state={state}
+                          task={{ id: `draft-${id}` }}
+                          local
+                        />
+                        <span className="task-indicator-slot" />
                       </button>
                     </div>
                   )}
-                </div>
-                {project && (
-                  <button
-                    disabled={!projectConnected}
-                    className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
-                    onClick={() => {
-                      setProjectView({ projectId: id });
-                      if (window.matchMedia("(max-width: 900px)").matches)
-                        showSidebar(false);
-                    }}
-                  >
-                    <Icon name="file" size={15} />
-                    <span>議事録</span>
-                  </button>
-                )}
-                {Object.hasOwn(taskDrafts, id) && (
-                  <button
-                    disabled={!projectConnected}
-                    className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
-                    onClick={() =>
-                      setProjectView({ projectId: id, draft: true })
-                    }
-                  >
-                    <span>新しいタスク</span>
-                    <TaskAvatars
-                      state={state}
-                      task={{ id: `draft-${id}` }}
-                      local
-                    />
-                  </button>
-                )}
-                {shared.map((task) => (
-                  <div key={task.id} className="task-row">
-                    <button
-                      disabled={!projectConnected}
-                      className={`task-link ${projectView?.taskId === task.id ? "selected" : ""}`}
-                      onClick={() =>
-                        setProjectView({ projectId: id, taskId: task.id })
-                      }
-                    >
-                      <span>{task.title ?? task.text}</span>
-                      <TaskAvatars state={state} task={task} />
-                      <span
-                        className={`task-dot ${task.state}`}
-                        aria-label={stateLabel(task.state)}
-                      />
-                    </button>
-                    <TaskMenu
-                      task={task}
-                      actorId={state.settings.deviceId}
-                      action={action}
-                      disabled={!projectConnected || !state.lifecycleSupported}
-                    />
-                  </div>
-                ))}
-                {items.map((run) => (
-                  <div key={run.task.runId} className="task-row">
-                    <button
-                      disabled={!projectConnected}
-                      className={`task-link ${!selectedShared && currentPage === "runs" && run.task.runId === current?.task.runId ? "selected" : ""}`}
-                      aria-current={
-                        currentPage === "runs" &&
-                        !selectedShared &&
-                        run.task.runId === current?.task.runId
-                          ? "page"
-                          : undefined
-                      }
-                      title={run.task.title ?? run.task.text}
-                      onClick={() => {
+                  <SidebarTaskList
+                    items={items}
+                    state={state}
+                    connected={projectConnected}
+                    selected={viewedTask?.task.runId}
+                    action={action}
+                    seen={seen}
+                    scope={readScope}
+                    select={(item) => {
+                      if (item.run) {
                         setProjectView(undefined);
-                        select(run.task.runId);
+                        select(item.task.runId);
                         selectShared(undefined);
-                        setPage("runs");
-                      }}
-                    >
-                      <span>
-                        {run.task.title ?? run.task.text}
-                        {run.origin === "local" && (
-                          <small className="shared-task-owner">
-                            {run.agent === "claude" ? "Claude Code" : "Codex"} ·
-                            ローカルで開始 · Bot未共有
-                          </small>
-                        )}
-                      </span>
-                      <TaskAvatars state={state} task={run.task} local />
-                      <span
-                        role="img"
-                        aria-label={stateLabel(run.state)}
-                        className={`task-dot ${activeState(run.state) ? "active" : run.state}`}
-                      />
-                    </button>
-                    {state.projectTasks?.find((t) => t.id === run.task.id) && (
-                      <TaskMenu
-                        task={state.projectTasks.find(
-                          (t) => t.id === run.task.id,
-                        )!}
-                        actorId={state.settings.deviceId}
-                        action={action}
-                        disabled={
-                          !projectConnected || !state.lifecycleSupported
-                        }
-                      />
-                    )}
-                  </div>
-                ))}
+                      } else if ("text" in item.task) {
+                        setProjectView({ projectId: id, taskId: item.task.id });
+                        selectShared(undefined);
+                      } else {
+                        setProjectView(undefined);
+                        selectShared(item.task.id);
+                      }
+                      setPage("runs");
+                    }}
+                  />
+                </Collapsible>
               </section>
             );
           })}
@@ -372,62 +436,22 @@ export function App() {
                 : "Discordから依頼すると、ここにタスクが表示されます。"}
             </p>
           )}
-          {sharedGroups.map((group) => (
-            <section key={group.name} aria-label={group.name}>
-              <div className="sidebar-caption">
-                {group.name}
-                <span>{group.tasks.length} タスク</span>
-              </div>
-              {group.tasks
-                .filter((task) =>
-                  `${task.title} ${task.ownerName ?? ""} ${task.deviceName ?? ""}`
-                    .toLowerCase()
-                    .includes(query.toLowerCase()),
-                )
-                .map((task) => (
-                  <button
-                    key={task.id}
-                    disabled={!state.connected}
-                    className={`task-link ${currentPage === "runs" && selectedShared === task.id ? "selected" : ""}`}
-                    aria-current={
-                      currentPage === "runs" && selectedShared === task.id
-                        ? "page"
-                        : undefined
-                    }
-                    title={`${task.title} · ${task.ownerName ?? "未割り当て"} · ${stateLabel(task.state)}`}
-                    onClick={() => {
-                      setProjectView(undefined);
-                      selectShared(task.id);
-                      setPage("runs");
-                    }}
-                  >
-                    <span>
-                      {task.title}
-                      <small className="shared-task-owner">
-                        {task.ownerName ||
-                          (task.clientId ? "担当不明" : "実行待ち")}{" "}
-                        · {stateLabel(task.state)}
-                      </small>
-                    </span>
-                    <TaskAvatars state={state} task={task} />
-                    <span
-                      className={`task-dot ${activeState(task.state) && !sharedStale && task.deviceConnected ? "active" : task.state}`}
-                    />
-                  </button>
-                ))}
-            </section>
-          ))}
-          <p className="sidebar-empty" role="status">
-            {!state.connected
-              ? "ほかのPCの状態を見るには接続してください。"
-              : !state.teamTasksSupported
-                ? "チーム一覧にはEngineの更新が必要です。"
-                : !state.teamTasks
-                  ? "チームのタスクを取得中…"
-                  : sharedStale
-                    ? "共有情報の更新が遅れています。"
-                    : `共有情報 ${new Date(state.teamTasks.updatedAt).toLocaleTimeString()}`}
-          </p>
+          {(!state.connected ||
+            !state.teamTasksSupported ||
+            !state.teamTasks ||
+            sharedStale) && (
+            <p className="sidebar-empty" role="status">
+              {!state.connected
+                ? "ほかのPCの状態を見るには接続してください。"
+                : !state.teamTasksSupported
+                  ? "チーム一覧にはEngineの更新が必要です。"
+                  : !state.teamTasks
+                    ? "チームのタスクを取得中…"
+                    : sharedStale
+                      ? "共有情報の更新が遅れています。"
+                      : ""}
+            </p>
+          )}
           {state.teamTasks &&
             state.teamTasks.total > state.teamTasks.tasks.length && (
               <p className="sidebar-empty">
@@ -464,6 +488,7 @@ export function App() {
           <button
             className="icon-button"
             aria-label="接続設定を開く"
+            data-minutes-navigation
             onClick={() => {
               setProjectView(undefined);
               setPage("overview");
@@ -477,7 +502,8 @@ export function App() {
         opened={!!settingsProject}
         onClose={() => setSettingsProject(undefined)}
         title={`${state.settings.projects.find((p) => p.id === settingsProject)?.name ?? "プロジェクト"} · 接続・設定`}
-        size="lg"
+        size={640}
+        centered
         className="project-settings-modal"
       >
         {settingsProject && (
@@ -544,35 +570,19 @@ export function App() {
       </Modal>
       <Modal
         centered
+        size={640}
+        className="project-settings-modal"
         opened={projectDialog !== undefined}
         onClose={() => setProjectDialog(undefined)}
         title={
           projectDialog ? "プロジェクトの保存先を選択" : "プロジェクトを追加"
         }
       >
-        <Text size="sm" mb="md">
-          コミット済みGitリポジトリ、または空フォルダを選択してください。空フォルダはGitで初期化します。実行を許可する前に保存先を設定します。
-        </Text>
-        <Form
+        <AddProjectForm
           key={projectDialog}
-          fields={[
-            ...(!projectDialog ? [{ key: "name", label: "名前" }] : []),
-            {
-              key: "directory",
-              label: "ディレクトリ",
-              pick: desktopBridge()?.pickDirectory,
-            },
-          ]}
-          submit={async (data) => {
-            await action(projectDialog ? "mappings" : "projects", {
-              ...data,
-              ...(projectDialog
-                ? { projectId: projectDialog, network: false, slots: 1 }
-                : {}),
-            });
-            setProjectDialog(undefined);
-          }}
-          label={projectDialog ? "保存先を設定" : "追加"}
+          projectId={projectDialog || undefined}
+          action={action}
+          saved={() => setProjectDialog(undefined)}
         />
       </Modal>
       <main className="workspace-main">
@@ -624,10 +634,16 @@ export function App() {
           >
             <Icon name="refresh" size={17} />
           </button>
+          <div id="task-inspector-control" />
         </header>
         {!!state.deletionSync?.pendingTasks && (
           <div role="status" className="workspace-error">
             削除したタスクのローカル履歴を整理中です。同期完了までお待ちください。
+          </div>
+        )}
+        {linkError && (
+          <div className="workspace-error" role="alert">
+            {linkError}
           </div>
         )}
         {error && (
@@ -641,35 +657,41 @@ export function App() {
             projectId={projectView.projectId}
             draft={taskDrafts[projectView.projectId]}
             sendingText={(sentText) =>
-              setTaskDrafts((drafts) => ({
-                ...drafts,
-                [projectView.projectId]: {
-                  ...drafts[projectView.projectId],
-                  sentText,
-                },
-              }))
+              dispatchDraft({
+                type: "sending",
+                projectId: projectView.projectId,
+                requestId: taskDrafts[projectView.projectId].requestId,
+                text: sentText,
+              })
+            }
+            settled={(requestId) =>
+              dispatchDraft({
+                type: "settled",
+                projectId: projectView.projectId,
+                requestId,
+              })
             }
             connected={state.connected}
             onChange={(text) =>
-              setTaskDrafts((drafts) => ({
-                ...drafts,
-                [projectView.projectId]: {
-                  ...drafts[projectView.projectId],
-                  text,
-                },
-              }))
+              dispatchDraft({
+                type: "edit",
+                projectId: projectView.projectId,
+                text,
+              })
             }
             created={async (task) => {
-              setProjectView({ projectId: task.projectId, taskId: task.id });
-              setTaskDrafts((drafts) => {
-                const copy = { ...drafts };
-                delete copy[task.projectId];
-                return copy;
+              const view = projectViewRef.current;
+              dispatchDraft({
+                type: "complete",
+                projectId: task.projectId,
+                requestId: taskDrafts[task.projectId].requestId,
               });
+              if (view?.draft && view.projectId === task.projectId)
+                setProjectView({ projectId: task.projectId, taskId: task.id });
               await refresh();
             }}
           />
-        ) : workspaceConnected && projectView ? (
+        ) : projectView && !projectView.draft ? (
           <ProjectView
             key={projectView.projectId}
             projectId={projectView.projectId}
@@ -677,6 +699,8 @@ export function App() {
             deviceId={state.settings.deviceId}
             clientState={state}
             openSettings={() => setSettingsProject(projectView.projectId)}
+            openTask={(reference) => void openMinutesTask(reference)}
+            dirtyChanged={dirtyChanged}
           />
         ) : currentPage === "overview" ? (
           <div className="setup-scroll">

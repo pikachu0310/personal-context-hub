@@ -10,10 +10,16 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { MeetingView } from "@ido/common/contracts/api";
 
-export function MeetingNotes({ meetings }: { meetings: MeetingView[] }) {
+export function MeetingNotes({
+  meetings,
+  document,
+}: {
+  meetings: MeetingView[];
+  document?: ReactNode;
+}) {
   const [tab, setTab] = useState<string | null>("minutes");
   const [query, setQuery] = useState("");
   const [sources, setSources] = useState<string[]>([]);
@@ -66,20 +72,28 @@ export function MeetingNotes({ meetings }: { meetings: MeetingView[] }) {
   };
   return (
     <Stack gap="md">
-      <TextInput
-        label="議事録・発言を検索"
-        placeholder="議題、技術名、発言の一部"
-        value={query}
-        onChange={(event) => {
-          setQuery(event.currentTarget.value);
-          setLimit(100);
-        }}
-      />
+      {tab !== "document" && (
+        <TextInput
+          label="議事録・発言を検索"
+          placeholder="議題、技術名、発言の一部"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.currentTarget.value);
+            setLimit(100);
+          }}
+        />
+      )}
       <Tabs value={tab} onChange={setTab}>
         <Tabs.List>
           <Tabs.Tab value="minutes">議題別の議事録</Tabs.Tab>
+          {document && <Tabs.Tab value="document">編集できる議事録</Tabs.Tab>}
           <Tabs.Tab value="transcript">発言ログ</Tabs.Tab>
         </Tabs.List>
+        {document && (
+          <Tabs.Panel value="document" pt="md">
+            {document}
+          </Tabs.Panel>
+        )}
         <Tabs.Panel value="minutes" pt="md">
           <Stack>
             <Text size="sm" c="dimmed">

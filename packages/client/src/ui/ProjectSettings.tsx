@@ -1,17 +1,19 @@
 import {
-  Alert,
-  NumberInput,
   Button,
-  Paper,
+  Group,
+  NumberInput,
   SegmentedControl,
-  Stack,
-  Switch,
   Text,
-  Title,
 } from "@mantine/core";
 import { useState } from "react";
-import { Form, type Action, type ClientState } from "@ido/common-ui";
-import { desktopBridge } from "./desktop.js";
+import { type Action, type ClientState } from "@ido/common-ui";
+import {
+  ProjectDirectory,
+  ProjectField,
+  ProjectMode,
+  ProjectToggle,
+  projectHelp,
+} from "./ProjectForm.js";
 export function ProjectSettings({
   projectId,
   state,
@@ -24,137 +26,166 @@ export function ProjectSettings({
   const mapping = state.settings.mappings.find(
     (m) => m.projectId === projectId,
   );
-  const [network, setNetwork] = useState(mapping?.network ?? false),
+  const [directory, setDirectory] = useState(mapping?.directory ?? ""),
+    [slots, setSlots] = useState<number | string>(mapping?.slots ?? 1),
     [error, setError] = useState(""),
-    [slots, setSlots] = useState<number | string>(mapping?.slots ?? 1);
+    [busy, setBusy] = useState(false);
   const allowed = state.allowedProjectIds?.includes(projectId) ?? false;
+  async function update(path: string, data: Record<string, unknown>) {
+    setError("");
+    setBusy(true);
+    try {
+      await action(path, { projectId, ...data });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
-    <div className="project-document">
-      <Stack>
-        <Text c="dimmed">このClientでのプロジェクト設定です。</Text>
-        {!allowed && (
-          <Alert color="yellow" title="このプロジェクトの実行許可はOFFです">
-            タスクを始めるには、下の「このプロジェクトのタスクを受け取って実行する」をONにしてください。
-            {(state.projectTasks ?? []).filter(
-              (t) => t.projectId === projectId && t.state === "queued",
-            ).length > 0 &&
-              `このプロジェクトには${(state.projectTasks ?? []).filter((t) => t.projectId === projectId && t.state === "queued").length}件の待機タスクがあります。許可すると実行枠の範囲で順番に割り当てます。`}
-          </Alert>
-        )}
-        <Paper p="lg" withBorder>
-          <Title order={3} mb="md">
-            保存先と接続
-          </Title>
-          <Text mb="md" size="sm">
-            コミット済みGitリポジトリ、または空フォルダを選択してください。保存先の変更は、タスク実行を一時停止してから行います。
-          </Text>
-          <Form
-            initial={{ directory: mapping?.directory ?? "" }}
-            fields={[
-              {
-                key: "directory",
-                label: "ディレクトリ",
-                pick: desktopBridge()?.pickDirectory,
-              },
-            ]}
-            submit={(data) =>
-              action("mappings", {
-                ...data,
-                projectId,
-                network,
+    <div className="project-settings-form">
+      <div
+        className="project-form-group"
+        role="group"
+        aria-label="保存先と通信"
+      >
+        <ProjectField label="保存先" help={projectHelp.directory}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void update("mappings", {
+                directory,
+                network: mapping?.network ?? false,
                 slots: mapping?.slots ?? 1,
+              });
+            }}
+          >
+            <Group gap="xs" wrap="nowrap">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <ProjectDirectory value={directory} onChange={setDirectory} />
+              </div>
+              <Button type="submit" variant="default" loading={busy}>
+                保存
+              </Button>
+            </Group>
+          </form>
+        </ProjectField>
+        <ProjectField label="インターネット通信" help={projectHelp.network}>
+          <ProjectToggle
+            label="インターネット通信"
+            checked={mapping?.network ?? false}
+            disabled={!mapping || busy}
+            onChange={(network) =>
+              void update("mappings", {
+                directory: mapping!.directory,
+                network,
+                slots: mapping!.slots,
               })
             }
-            label="保存先と通信設定を保存"
-          >
-            <Switch
-              label="このプロジェクトで通信を許可する"
-              checked={network}
-              onChange={(e) => setNetwork(e.currentTarget.checked)}
+          />
+        </ProjectField>
+      </div>
+      <div className="project-form-group" role="group" aria-label="タスク実行">
+        <ProjectField
+          label="同時実行枠"
+          help="このプロジェクトで同時に実行するタスク数（1〜8）です。保存先を設定してから変更できます。"
+        >
+          <Group gap="xs" wrap="nowrap">
+            <NumberInput
+              aria-label="同時実行枠"
+              min={1}
+              max={8}
+              value={slots}
+              onChange={setSlots}
+              style={{ flex: 1 }}
             />
-          </Form>
-        </Paper>
-        <Paper p="lg" withBorder>
-          <Title order={3} mb="md">
-            タスクの実行許可
-          </Title>
-          <Text mb="md">
-            この接続中、このプロジェクトのタスクを許可した保存先・通信権限の範囲で実行します。追加の権限要求はローカル画面で承認します。Clientを終了すると許可は解除されます。
-          </Text>
-          <NumberInput
-            label="このプロジェクトの同時実行枠"
-            min={1}
-            max={8}
-            value={slots}
-            onChange={setSlots}
-            w={220}
-          />
-          <Button
-            mt="sm"
-            variant="light"
-            disabled={!mapping}
-            onClick={() => {
-              void action("allow", {
-                projectId,
-                allow: allowed,
-                slots: Number(slots),
-              }).catch((e) => setError(e.message));
-            }}
-          >
-            実行枠を保存
-          </Button>
-          <Switch
-            mt="md"
-            label="このプロジェクトのタスクを受け取って実行する"
-            disabled={!mapping || !state.connected}
+            <Button
+              variant="default"
+              disabled={!mapping || busy}
+              onClick={() =>
+                void update("allow", { allow: allowed, slots: Number(slots) })
+              }
+            >
+              保存
+            </Button>
+          </Group>
+        </ProjectField>
+        <ProjectField
+          label="タスクの実行許可"
+          help={`${projectHelp.allow} 保存先の設定と接続が必要です。`}
+        >
+          <ProjectToggle
+            label="タスクの実行許可"
+            disabled={!mapping || !state.connected || busy}
             checked={allowed}
-            onChange={(e) => {
-              void action("allow", {
-                projectId,
-                allow: e.currentTarget.checked,
-                slots: Number(slots),
-              }).catch((e) => setError(e.message));
-            }}
+            onChange={(allow) =>
+              void update("allow", { allow, slots: Number(slots) })
+            }
           />
-          {state.loginStatus !== "authenticated" && (
-            <Text mt="sm" c="dimmed">
-              Codex未連携のため、現在タスクは割り当てられません。
-            </Text>
-          )}
-        </Paper>
-        <Paper p="lg" withBorder>
-          <Title order={3} mb="md">
-            新しいタスクの進め方
-          </Title>
-          <Text mb="md">
-            このプロジェクトでこれから受け取るタスクに適用します。受け取り済みのタスクの進め方は維持します。
-          </Text>
-          <SegmentedControl
-            aria-label="このプロジェクトの新しいタスクの進め方"
-            disabled={!mapping}
+        </ProjectField>
+        <ProjectField
+          label="タスクの進め方"
+          help={`${projectHelp.mode} 保存先を設定してから変更できます。`}
+        >
+          <ProjectMode
             value={mapping?.progressMode ?? "auto"}
-            data={[
-              { label: "Auto", value: "auto" },
-              { label: "Manual · 会話する", value: "manual" },
-            ]}
-            onChange={(mode) => {
-              setError("");
-              void action("progress-mode", { projectId, mode }).catch((e) =>
-                setError(e.message),
-              );
-            }}
+            disabled={!mapping || busy}
+            onChange={(mode) =>
+              void update("progress-mode", {
+                mode,
+                accessMode: mode === "auto" ? "full" : "approval",
+              })
+            }
           />
-          <Text mt="sm" size="sm" c="dimmed">
-            Autoは依頼に沿って進めます。Manualはまず相談・計画し、「実行する」を押したら作業に入ります。
-          </Text>
-          {!mapping && <Text mt="sm">先に保存先を設定してください。</Text>}
-          {error && (
-            <Text c="red" role="alert">
-              {error}
-            </Text>
+        </ProjectField>
+      </div>
+      <details className="project-advanced">
+        <summary>詳細設定</summary>
+        <ProjectField
+          label="タスクの権限"
+          help="新しいタスクに適用します。フルアクセスはOSサンドボックスと承認なしでPCのファイル操作・通信が可能です。Manualの「許可を求める」では承認要求を表示します。受信タスクの明示的な制限は優先します。"
+        >
+          {(mapping?.progressMode ?? "auto") === "manual" ? (
+            <SegmentedControl
+              size="sm"
+              fullWidth
+              aria-label="新しいタスクの権限"
+              disabled={!mapping || busy}
+              value={mapping?.accessMode ?? "approval"}
+              data={[
+                { label: "許可を求める", value: "approval" },
+                { label: "フルアクセス", value: "full" },
+              ]}
+              onChange={(accessMode) =>
+                void update("progress-mode", { mode: "manual", accessMode })
+              }
+            />
+          ) : (
+            <Button
+              variant="default"
+              disabled={!mapping || busy}
+              onClick={() =>
+                void update("progress-mode", {
+                  mode: "auto",
+                  accessMode: "full",
+                })
+              }
+            >
+              フルアクセスを適用
+            </Button>
           )}
-        </Paper>
-      </Stack>
+        </ProjectField>
+        {!mapping?.accessMode && (
+          <Text size="sm" c="dimmed">
+            タスクの権限は未適用です。
+          </Text>
+        )}
+      </details>
+      {error && (
+        <Text size="sm" c="red" role="alert">
+          {error}
+        </Text>
+      )}
     </div>
   );
 }

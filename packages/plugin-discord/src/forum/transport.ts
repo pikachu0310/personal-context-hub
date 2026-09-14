@@ -1,4 +1,10 @@
-import { ChannelType, type Client, type ForumChannel } from "discord.js";
+import {
+  ChannelType,
+  type Client,
+  type ForumChannel,
+  type TextChannel,
+} from "discord.js";
+import { createHash } from "node:crypto";
 import {
   ForumCreateRejected,
   type ForumBinding,
@@ -10,14 +16,16 @@ export function forumTransport(
   binding: ForumBinding,
   valid: () => boolean = () => true,
 ): ForumTransport {
-  const forum = async (): Promise<ForumChannel> => {
+  const forum = async (): Promise<ForumChannel | TextChannel> => {
     const channel = await client.channels.fetch(binding.issueForumChannelId);
     if (
-      channel?.type !== ChannelType.GuildForum ||
+      !channel ||
+      (channel.type !== ChannelType.GuildForum &&
+        channel.type !== ChannelType.GuildText) ||
       channel.guildId !== binding.guildId
     )
       throw new Error("ISSUE_FORUM_REQUIRED");
-    return channel;
+    return channel as ForumChannel | TextChannel;
   };
   const thread = async (id: string) => {
     const channel = await client.channels.fetch(id);
@@ -55,14 +63,35 @@ export function forumTransport(
       return undefined;
     },
     async create(name, content) {
-      let channel: ForumChannel;
+      let channel: ForumChannel | TextChannel;
       try {
         channel = await forum();
       } catch {
         throw new ForumCreateRejected("FORUM_NOT_AVAILABLE");
       }
       if (!valid()) throw new ForumCreateRejected("FORUM_CONFIG_CHANGED");
+      let published = false;
       try {
+        if (channel.type === ChannelType.GuildText) {
+          const message = await channel.send({
+            content,
+            allowedMentions: { parse: [] },
+            nonce: createHash("sha256")
+              .update(content.split("\n", 1)[0])
+              .digest("hex")
+              .slice(0, 24),
+            enforceNonce: true,
+          });
+          published = true;
+          if (!valid()) throw new Error("FORUM_CONFIG_CHANGED");
+          const created =
+            message.thread ??
+            (await message.startThread({
+              name,
+              reason: "Engine task progress synchronization",
+            }));
+          return created.id;
+        }
         const created = await channel.threads.create({
           name,
           message: { content, allowedMentions: { parse: [] } },
@@ -71,7 +100,11 @@ export function forumTransport(
         return created.id;
       } catch (error) {
         const status = (error as { status?: number }).status;
-        if (status && [400, 401, 403, 404, 405, 413, 422, 429].includes(status))
+        if (
+          !published &&
+          status &&
+          [400, 401, 403, 404, 405, 413, 422, 429].includes(status)
+        )
           throw new ForumCreateRejected("FORUM_CREATE_REJECTED");
         throw error;
       }

@@ -74,7 +74,14 @@ export function addParticipant(store: Repository, task: Task, actor: string) {
 export function taskParticipants(
   store: Repository,
   task: Task,
+  includeAvatars = false,
 ): TaskParticipant[] {
+  // Keep task lists compact; only execution/message snapshots persist avatars.
+  if (includeAvatars)
+    return taskParticipants(store, task).map((person) => ({
+      ...person,
+      avatar: store.get<Device>("device", person.id)?.profile?.avatar,
+    }));
   if (!task.memberStates) return inferredParticipants(store, task);
   const inferred = inferredParticipants(store, task);
   return [

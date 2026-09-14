@@ -6,12 +6,14 @@ export interface ForumBinding {
   issueForumChannelId: string;
   meetingId?: string;
   projectId: string;
+  messageContentIntent?: string;
 }
 export interface ForumRecord {
   taskId: string;
   marker: string;
   threadId?: string;
   content?: string;
+  suppressedUntilRevision?: number;
 }
 export interface ForumTransport {
   find(marker: string): Promise<string | undefined>;
@@ -30,12 +32,27 @@ export function forumKey(binding: ForumBinding) {
     )
     .digest("hex")}`;
 }
-export function forumContent(task: Task, marker: string) {
+export function forumContent(
+  task: Task,
+  marker: string,
+  messageContentIntent?: string,
+) {
   const title = clean(task.title ?? task.text)
     .replace(/@/g, "＠")
     .slice(0, 500);
   // Logs, credentials, source statements, local paths and patches stay on the Client.
-  return `${marker}\n**${title}**\n状態: **${task.state}** · 実行版: ${task.revision}\nTask: \`${task.id}\`\nClient: \`${task.clientId ?? "割り当て待ち"}\`\n\n追加指示: このスレッドにメッセージを送信\n停止: 停止 / 中止 / キャンセル / stop / cancel\n詳しい実行ログと承認は各自のIDO Agentで確認してください。`;
+  const shared = task.localMirror
+    ? `\n依頼: ${clean(task.text).replace(/@/g, "＠").slice(0, 700)}\n進捗: ${clean(
+        task.progress ?? "共有待ち",
+      )
+        .replace(/@/g, "＠")
+        .slice(0, 300)}`
+    : "";
+  const controls =
+    messageContentIntent === "false"
+      ? `追加指示: /ido steer task:${task.id}\n停止: /ido stop task:${task.id}`
+      : "追加指示: このスレッドにメッセージを送信\n停止: 停止 / 中止 / キャンセル / stop / cancel";
+  return `${marker}\n**${title}**\n状態: **${task.state}** · 実行版: ${task.revision}\nTask: \`${task.id}\`\nClient: \`${task.clientId ?? "割り当て待ち"}\`${shared}\n\n${controls}\n詳しい実行ログと承認は各自のIDO Agentで確認してください。`;
 }
 export class ForumSync {
   private queue: Promise<unknown> = Promise.resolve();
@@ -68,14 +85,24 @@ export class ForumSync {
         if (task.projectId !== this.binding.projectId) continue;
         try {
           let record = this.records.find((r) => r.taskId === task.id);
-          const existing = !!record;
+          let existing = !!record;
+          if (record?.suppressedUntilRevision !== undefined) {
+            if (task.revision <= record.suppressedUntilRevision) continue;
+            delete record.suppressedUntilRevision;
+            existing = false;
+            await this.write(this.records);
+          }
           if (!record) {
             record = { taskId: task.id, marker: `IDO task ${task.id}` };
             this.records.push(record);
             // Persist intent before the non-idempotent Discord create call.
             await this.write(this.records);
           }
-          const content = forumContent(task, record.marker);
+          const content = forumContent(
+            task,
+            record.marker,
+            this.binding.messageContentIntent,
+          );
           if (!record.threadId) {
             if (existing) {
               record.threadId = await this.transport.find(record.marker);
