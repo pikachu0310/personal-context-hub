@@ -7,10 +7,12 @@ export function ProjectManagement({
   project,
   action,
   disabled = false,
+  forceDelete = false,
 }: {
   project: Pick<Project, "id" | "name" | "isDefault" | "membershipVersion">;
   action: Action;
   disabled?: boolean;
+  forceDelete?: boolean;
 }) {
   const [confirm, setConfirm] = useState(false),
     [name, setName] = useState(""),
@@ -27,6 +29,7 @@ export function ProjectManagement({
         name,
         confirm: true,
         membershipVersion: version,
+        ...(forceDelete ? { force: true } : {}),
       });
       setConfirm(false);
     } catch (e) {
@@ -98,6 +101,11 @@ export function ProjectManagement({
               <Text size="sm">
                 Gitフォルダと外部サービスの投稿は残ります。オフライン端末のローカル履歴は再接続後に整理されます。
               </Text>
+              {forceDelete && (
+                <Text>
+                  配下の実行中タスクも停止確認を待たず削除します。接続中の端末には実行中断を要求し、未接続の端末には再接続後に反映されます。
+                </Text>
+              )}
               <TextInput
                 label="確認のためプロジェクト名を入力"
                 value={name}

@@ -30,6 +30,7 @@ export function TaskMenu({
   actorId,
   action,
   disabled = false,
+  forceDelete = false,
 }: {
   task: Pick<
     Task,
@@ -46,6 +47,7 @@ export function TaskMenu({
   actorId?: string;
   action: Action;
   disabled?: boolean;
+  forceDelete?: boolean;
 }) {
   const [confirm, setConfirm] = useState(false),
     [busy, setBusy] = useState(false),
@@ -59,6 +61,11 @@ export function TaskMenu({
     revision: task.revision,
     controlVersion: task.controlVersion ?? 0,
     membershipVersion: task.membershipVersion ?? 0,
+  };
+  const openDelete = () => {
+    setError("");
+    setDeletionInput({ ...input, ...(forceDelete ? { force: true } : {}) });
+    setConfirm(true);
   };
   const apply = async (operation: string) => {
     setBusy(true);
@@ -77,41 +84,40 @@ export function TaskMenu({
   };
   return (
     <>
-      <Menu withinPortal position="bottom-end">
-        <Menu.Target>
-          <button
-            className="icon-button"
-            disabled={disabled || busy}
-            aria-label={`${task.title ?? task.text}のタスクメニュー`}
-          >
-            <Icon name="dots" />
-          </button>
-        </Menu.Target>
-        <Menu.Dropdown>
-          {actorId && (
-            <Menu.Item
-              onClick={() => void apply(joined ? "task/leave" : "task/join")}
+      {forceDelete && task.canDelete ? (
+        <Button color="red" disabled={disabled || busy} onClick={openDelete}>
+          タスクを強制削除
+        </Button>
+      ) : (
+        <Menu withinPortal position="bottom-end">
+          <Menu.Target>
+            <button
+              className="icon-button"
+              disabled={disabled || busy}
+              aria-label={`${task.title ?? task.text}のタスクメニュー`}
             >
-              {joined ? "退出" : "参加する"}
-            </Menu.Item>
-          )}
-          {task.canDelete && (
-            <Menu.Item
-              color="red"
-              onClick={() => {
-                setError("");
-                setDeletionInput(input);
-                setConfirm(true);
-              }}
-            >
-              削除
-            </Menu.Item>
-          )}
-          {!actorId && !task.canDelete && (
-            <Menu.Item disabled>操作権限がありません</Menu.Item>
-          )}
-        </Menu.Dropdown>
-      </Menu>
+              <Icon name="dots" />
+            </button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            {actorId && (
+              <Menu.Item
+                onClick={() => void apply(joined ? "task/leave" : "task/join")}
+              >
+                {joined ? "退出" : "参加する"}
+              </Menu.Item>
+            )}
+            {task.canDelete && (
+              <Menu.Item color="red" onClick={openDelete}>
+                削除
+              </Menu.Item>
+            )}
+            {!actorId && !task.canDelete && (
+              <Menu.Item disabled>操作権限がありません</Menu.Item>
+            )}
+          </Menu.Dropdown>
+        </Menu>
+      )}
       <Modal
         centered
         opened={confirm || !!error}
@@ -132,6 +138,11 @@ export function TaskMenu({
               <Text>
                 全ユーザーからタスクと履歴が消え、元に戻せません。指示・結果・参加情報・プレビュー・IDOのAIコンテキストを削除します。
               </Text>
+              {forceDelete && (
+                <Text>
+                  実行中のタスクも、クライアントからの停止確認を待たず削除します。接続中の端末には実行中断を要求し、未接続の端末には再接続後に反映されます。
+                </Text>
+              )}
               <Text size="sm" c="dimmed">
                 元の共有会話・議事録、Gitフォルダ、外部サービスへの投稿は残ります。オフライン端末のローカル履歴は再接続後に整理されます。
               </Text>

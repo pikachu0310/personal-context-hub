@@ -111,6 +111,9 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.selectable-row {
+  cursor: pointer;
+}
 .numeric {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

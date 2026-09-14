@@ -75,6 +75,7 @@ async function connect(
         JSON.stringify({
           v: 1,
           type: "authenticate",
+          lifecycleVersion: 1,
           deviceId,
           profile: { name: "Demo", codexConnected: true },
           signature: sign(
@@ -505,4 +506,71 @@ test("dashboard and workspace report the bot project independently of the dashbo
     JSON.stringify(switched.conversationBindings),
     /secret|guildId|botToken/,
   );
+});
+
+test("admin force deletion returns without stop acknowledgement and delivers purge after reconnect", async (t) => {
+  const { engine: e, user, request } = await fixture(t);
+  clearInterval(e.timer);
+  let client = await connect(e, user.id);
+  t.after(() => client.ws.terminate());
+  const work = task(e, user.id);
+  e.flush();
+  await until(() => client.received.some((c) => c.type === "execute"));
+  const saved = e.store.get<Task>("task", work.id)!;
+  const input = {
+    taskId: saved.id,
+    revision: saved.revision,
+    controlVersion: saved.controlVersion ?? 0,
+    membershipVersion: saved.membershipVersion ?? 0,
+    confirm: true,
+  };
+  assert.equal((await request("/task/delete", input)).status, 409);
+  assert.equal(
+    (await request("/task/delete", { ...input, force: true })).status,
+    200,
+  );
+  await until(() =>
+    client.received.some(
+      (c) => c.type === "task.purge" && c.taskId === work.id,
+    ),
+  );
+  assert.equal(e.store.get("task", work.id), undefined);
+  client.send({
+    type: "result",
+    taskId: work.id,
+    runId: saved.runId,
+    revision: saved.revision,
+    state: "completed",
+  });
+  const keys = client.keys;
+  client.ws.terminate();
+  await until(() => !e.peers.has("device"));
+  const offline = task(e, user.id, "offline");
+  offline.state = "interrupted";
+  offline.clientId = "device";
+  offline.controlReceipts = {
+    stop: { id: "stop", type: "stop", delivery: "uncertain" } as any,
+  };
+  e.store.put("task", offline.id, offline);
+  assert.equal(
+    (
+      await request("/task/delete", {
+        ...input,
+        taskId: offline.id,
+        revision: offline.revision,
+        controlVersion: offline.controlVersion ?? 0,
+        membershipVersion: offline.membershipVersion ?? 0,
+        force: true,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(e.store.get("task", offline.id), undefined);
+  client = await connect(e, user.id, "device", keys);
+  await until(() =>
+    client.received.some(
+      (c) => c.type === "task.purge" && c.taskId === offline.id,
+    ),
+  );
+  assert.equal(e.store.get("task", work.id), undefined);
 });

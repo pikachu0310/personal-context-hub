@@ -44,6 +44,7 @@ export function Details({
   select,
   stale,
   refresh,
+  deleted,
   openRaw,
 }: {
   state: DashboardState;
@@ -52,6 +53,7 @@ export function Details({
   select: (v: Selection) => void;
   stale: boolean;
   refresh: () => Promise<void>;
+  deleted: (projectId?: string) => Promise<void>;
   openRaw: (id: string) => void;
 }) {
   const [confirm, setConfirm] = useState<{
@@ -287,13 +289,15 @@ export function Details({
               <Divider />
               <Title order={4}>管理操作</Title>
               <TaskMenu
+                key={task.id}
                 task={{ ...task, text: task.title, canDelete: true }}
+                forceDelete
                 disabled={stale}
                 action={async (path, input) => {
                   const result = await api<
                     import("@ido/common/contracts/api").ApiResult
                   >(path, input);
-                  await refresh();
+                  await deleted();
                   return result;
                 }}
               />
@@ -396,13 +400,16 @@ export function Details({
             <>
               <Title order={3}>{project.name}</Title>
               <ProjectManagement
+                key={project.id}
                 project={project}
+                forceDelete
                 disabled={stale}
                 action={async (path, input) => {
                   const result = await api<
                     import("@ido/common/contracts/api").ApiResult
                   >(path, input);
-                  await refresh();
+                  if (path === "project/delete") await deleted(project.id);
+                  else await refresh();
                   return result;
                 }}
               />

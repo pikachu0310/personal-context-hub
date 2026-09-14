@@ -114,6 +114,7 @@ try {
           JSON.stringify({
             v: 1,
             type: "authenticate",
+            lifecycleVersion: 1,
             deviceId: id,
             profile: { name: id, codexConnected: true },
             signature: sign(
@@ -354,9 +355,162 @@ try {
       animations: "disabled",
     });
   }
+  await page.setViewportSize({ width: 1672, height: 941 });
+  // The entire task row opens details, including status and empty cell padding.
+  const activeRow = page.locator("tr").filter({
+    has: page.getByRole("button", { name: "検索APIの改善", exact: true }),
+  });
+  await activeRow.locator("td").nth(2).click();
+  await page
+    .getByRole("button", { name: "タスクを強制削除", exact: true })
+    .waitFor();
+  await page.keyboard.press("Escape");
+  await activeRow
+    .locator("td")
+    .nth(6)
+    .click({ position: { x: 3, y: 3 } });
+  await page
+    .getByRole("button", { name: "タスクを強制削除", exact: true })
+    .click();
+  let deletion = page.getByRole("dialog", {
+    name: "タスクを完全に削除",
+    exact: true,
+  });
+  await deletion.getByText(/停止確認を待たず削除/).waitFor();
+  await deletion
+    .getByRole("button", { name: "キャンセル", exact: true })
+    .click();
+  assert.ok(engine.store.get("task", tasks[0].id));
+  await page.keyboard.press("Escape");
+  await activeRow
+    .getByRole("button", { name: "検索APIの改善", exact: true })
+    .focus();
+  await page.keyboard.press("Enter");
+  await page
+    .getByRole("button", { name: "タスクを強制削除", exact: true })
+    .click();
+  // A rejected deletion remains reviewable and can be retried with a fresh confirmation.
+  await page.route("**/api/admin/dashboard/task/delete", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "WORKSPACE_CONFLICT" }),
+    }),
+  );
+  await deletion
+    .getByRole("button", { name: "完全に削除する", exact: true })
+    .click();
+  await deletion
+    .getByRole("alert")
+    .filter({ hasText: "状態が変わりました" })
+    .waitFor();
+  assert.ok(engine.store.get("task", tasks[0].id));
+  await page.unroute("**/api/admin/dashboard/task/delete");
+  await deletion
+    .getByRole("button", { name: "キャンセル", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "タスクを強制削除", exact: true })
+    .click();
+  await deletion
+    .getByRole("button", { name: "完全に削除する", exact: true })
+    .click();
+  await until(() => !engine.store.get("task", tasks[0].id));
+  await deletion.waitFor({ state: "hidden" });
+  await page
+    .getByRole("dialog", { name: /^(タスク|プロジェクト)詳細$/ })
+    .waitFor({ state: "hidden" });
+  await activeRow.waitFor({ state: "hidden" });
+  // Project rows support cell padding and keyboard activation too; default remains protected.
+  const defaultRow = page
+    .locator("tr")
+    .filter({ has: page.getByRole("button", { name: "Atlas", exact: true }) });
+  await defaultRow.locator("td").nth(2).click();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "プロジェクトを完全削除", exact: true })
+      .isDisabled(),
+    true,
+  );
+  await page.keyboard.press("Escape");
+  const projectRow = page
+    .locator("tr")
+    .filter({ has: page.getByRole("button", { name: "Beacon", exact: true }) });
+  await projectRow
+    .locator("td")
+    .nth(4)
+    .click({ position: { x: 3, y: 3 } });
+  await page
+    .getByRole("button", { name: "プロジェクトを完全削除", exact: true })
+    .waitFor();
+  await page.keyboard.press("Escape");
+  await projectRow.getByRole("button", { name: "Beacon", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page
+    .getByRole("button", { name: "プロジェクトを完全削除", exact: true })
+    .click();
+  deletion = page.getByRole("dialog", {
+    name: "プロジェクトを完全に削除",
+    exact: true,
+  });
+  assert.equal(
+    await deletion
+      .getByRole("button", { name: "完全に削除する", exact: true })
+      .isDisabled(),
+    true,
+  );
+  await deletion
+    .getByRole("button", { name: "キャンセル", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  // A project containing an offline, stop-unconfirmed task can be deleted while filtered.
+  const offline = engine.store.get("task", tasks[3].id);
+  offline.state = "interrupted";
+  offline.clientId = "worker-s1";
+  offline.controlReceipts = {
+    stop: { id: "stop", type: "stop", delivery: "uncertain" },
+  };
+  engine.store.put("task", offline.id, offline);
+  await page.getByRole("combobox", { name: "プロジェクトで絞り込む" }).click();
+  await page.getByRole("option", { name: "Beacon", exact: true }).click();
+  await page
+    .getByRole("button", { name: "通知文面の調整", exact: true })
+    .waitFor();
+  await projectRow.locator("td").nth(2).click();
+  await page
+    .getByRole("button", { name: "プロジェクトを完全削除", exact: true })
+    .click();
+  await deletion
+    .getByText(/配下の実行中タスクも停止確認を待たず削除/)
+    .waitFor();
+  await deletion
+    .getByRole("textbox", { name: "確認のためプロジェクト名を入力" })
+    .fill("Beacon");
+  await deletion
+    .getByRole("button", { name: "完全に削除する", exact: true })
+    .click();
+  await until(() => !engine.store.get("project", "beacon"));
+  await deletion.waitFor({ state: "hidden" });
+  await page
+    .getByRole("dialog", { name: /^(タスク|プロジェクト)詳細$/ })
+    .waitFor({ state: "hidden" });
+  await page.waitForFunction(
+    () =>
+      globalThis.document.querySelector(
+        'input[aria-label="プロジェクトで絞り込む"]',
+      )?.value === "全プロジェクト",
+  );
+  await defaultRow.waitFor();
+  assert.equal(engine.store.get("task", offline.id), undefined);
+  assert.ok(engine.store.get("task-deletion", offline.id));
+  await page.screenshot({
+    path: ".ido-build/screenshots/ido-dashboard-deletion.png",
+    fullPage: true,
+    animations: "disabled",
+  });
   assert.deepEqual(errors, []);
   console.log(
-    "IDO Dashboard browser smoke passed: real admin APIs, counts, filters, stop, generation-bound disconnect, raw escaping/paging, offline controls, 1672/1366/390px layouts.",
+    "IDO Dashboard browser smoke passed: real admin APIs, counts, filters, stop, generation-bound disconnect, raw escaping/paging, offline controls, row activation, force deletion, project filter reset, 1672/1366/390px layouts.",
   );
 } finally {
   await browser?.close();
