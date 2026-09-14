@@ -7,6 +7,7 @@ import {
 import type { Repository } from "../../ports/repository.js";
 import type { Device, Meeting } from "../../domain/models.js";
 import { ProjectTeam } from "./team.js";
+import type { BoardThread } from "../tasks/board.js";
 import {
   participantId,
   seedParticipants,
@@ -275,6 +276,17 @@ export class WorkspaceLifecycle {
     }
   }
   private purgeTask(task: Task) {
+    this.store.remove("task-board", task.id);
+    for (const thread of this.store.list<BoardThread>("task-board")) {
+      const retained = thread.posts.filter(
+        (post) => post.authorTaskId !== task.id,
+      );
+      if (retained.length !== thread.posts.length)
+        this.store.put("task-board", thread.taskId, {
+          ...thread,
+          posts: retained,
+        });
+    }
     this.invalidate(task);
     const devices = this.store.list<Device>("device");
     const pendingDeviceIds: string[] = [];

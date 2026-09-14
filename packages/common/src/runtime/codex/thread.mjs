@@ -23,6 +23,9 @@ export class AppServerThread {
           {
             ...(this.resuming ? { threadId: this.id, excludeTurns: true } : {}),
             ...(!this.resuming && options.ephemeral ? { ephemeral: true } : {}),
+            ...(!this.resuming && options.dynamicTools?.length
+              ? { dynamicTools: options.dynamicTools }
+              : {}),
             cwd: options.workingDirectory,
             model: options.model,
             sandbox: options.sandboxMode ?? "workspace-write",
@@ -179,6 +182,19 @@ export class AppServerThread {
     };
     this.client.on("notification", onNotification);
     this.client.on("failure", onFailure);
+    if (this.options.onToolCall)
+      this.client.dynamicHandlers.set(this.id, (params) => {
+        signal?.throwIfAborted();
+        if (
+          this.ending ||
+          !this.activeTurnId ||
+          params.turnId !== this.activeTurnId ||
+          params.namespace ||
+          !this.options.dynamicTools?.some((tool) => tool.name === params.tool)
+        )
+          throw new Error("Tool call does not belong to this active turn");
+        return this.options.onToolCall(params);
+      });
     signal?.addEventListener("abort", abort, { once: true });
     try {
       signal?.throwIfAborted();
@@ -225,6 +241,7 @@ export class AppServerThread {
         await this.interrupt().catch(() => {});
       this.client.off("notification", onNotification);
       this.client.off("failure", onFailure);
+      this.client.dynamicHandlers.delete(this.id);
       signal?.removeEventListener("abort", abort);
       this.starting = false;
       this.activeTurnId = null;
