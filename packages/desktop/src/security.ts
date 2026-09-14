@@ -24,10 +24,24 @@ export function localSender(value: string, origin: string) {
     return false;
   }
 }
-export function externalLink(value: string, pairing?: string, login?: string) {
+export function externalLink(
+  value: string,
+  pairing?: string,
+  login?: string,
+  claudeLogin?: string,
+) {
   try {
     const url = new URL(value);
     if (url.username || url.password) return false;
+    if (value === "https://code.claude.com/docs/en/authentication") return true;
+    if (value === claudeLogin)
+      return (
+        [
+          "https://claude.ai",
+          "https://platform.claude.com",
+          "https://console.anthropic.com",
+        ].includes(url.origin) && url.pathname === "/oauth/authorize"
+      );
     if (value === pairing)
       return (
         url.protocol === "https:" ||

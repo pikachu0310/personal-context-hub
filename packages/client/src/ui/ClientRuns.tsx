@@ -95,6 +95,8 @@ export function ClientRuns({
       </div>
     );
   const running = activeState(current.state);
+  const local = current.origin === "local";
+  const agentName = current.agent === "claude" ? "Claude Code" : "Codex";
   const waitingPlan = running && current.phase === "awaiting-plan";
   const entries = activity?.entries ?? [];
   const files = [
@@ -108,7 +110,8 @@ export function ClientRuns({
   const policy =
     current.task.effectiveExecutionPolicy ?? current.task.executionPolicy;
   const canSend =
-    running && state.connected && state.controlSupported && state.allow;
+    running &&
+    (local || (state.connected && state.controlSupported && state.allow));
   async function submit() {
     const instruction = draft.trim();
     if (!instruction || sending || !canSend) return;
@@ -125,7 +128,9 @@ export function ClientRuns({
       setDraft("");
       request.current = undefined;
       setNotice(
-        "Engineが追加指示を受け付けました。反映状況は会話ログに表示されます。",
+        local
+          ? "このPCで追加指示を受け付けました。反映状況は会話ログに表示されます。"
+          : "Engineが追加指示を受け付けました。反映状況は会話ログに表示されます。",
       );
       setFollow(true);
     } catch (error) {
@@ -151,6 +156,7 @@ export function ClientRuns({
   return (
     <section className="task-workspace" aria-label="タスクの会話と行動ログ">
       <div className="task-topline">
+        {local && <span>{agentName} · ローカルで開始 · Bot未共有</span>}
         <span className={`task-state ${running ? "working" : ""}`}>
           <span
             className={`task-dot ${running && !waitingPlan ? "active" : current.state}`}
@@ -175,26 +181,28 @@ export function ClientRuns({
         <div className="workspace-detail">
           <label>WORKSPACE</label>
           <code>{current.directory}</code>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              invoke("preview", { runId, port: Number(port) });
-            }}
-          >
-            <input
-              aria-label="プレビュー用ローカルポート"
-              type="number"
-              min={1024}
-              max={65535}
-              placeholder="プレビューポート"
-              value={port}
-              onChange={(e) => setPort(e.currentTarget.value)}
-              required
-            />
-            <button className="soft-button" type="submit">
-              プレビューを登録
-            </button>
-          </form>
+          {!local && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                invoke("preview", { runId, port: Number(port) });
+              }}
+            >
+              <input
+                aria-label="プレビュー用ローカルポート"
+                type="number"
+                min={1024}
+                max={65535}
+                placeholder="プレビューポート"
+                value={port}
+                onChange={(e) => setPort(e.currentTarget.value)}
+                required
+              />
+              <button className="soft-button" type="submit">
+                プレビューを登録
+              </button>
+            </form>
+          )}
         </div>
       )}
       <div
@@ -207,7 +215,9 @@ export function ClientRuns({
       >
         <div className="conversation-content">
           <article className="user-message initial-request">
-            <div className="entry-meta">Discordからの依頼</div>
+            <div className="entry-meta">
+              {local ? "このアプリからの依頼" : "Discordからの依頼"}
+            </div>
             <MessageText text={current.task.text} />
           </article>
           {loadError && (
@@ -381,12 +391,16 @@ export function ClientRuns({
             </span>
             <button type="button" className="policy-button" onClick={setup}>
               <Icon name="shield" size={16} />
-              {policy?.sandboxMode === "read-only"
-                ? "読み取り専用"
-                : "作業フォルダー内で実行"}
+              {current.agent === "claude"
+                ? "Claude · 操作ごとに承認"
+                : policy?.sandboxMode === "read-only"
+                  ? "読み取り専用"
+                  : "作業フォルダー内で実行"}
             </button>
             <span className="composer-spacer" />
-            <span className="model-label">Codex</span>
+            <span className="model-label">
+              {agentName} · {current.model ?? "既定モデル"}
+            </span>
             <button
               type="submit"
               className="send-button"
@@ -410,8 +424,14 @@ export function ClientRuns({
         <p className="composer-footnote">
           {canSend
             ? "Enterで送信 · Shift + Enterで改行"
-            : "新しい依頼と再実行はDiscord・Dashboardから"}
-          <span>行動ログはこのPCに保存</span>
+            : local
+              ? "新しい実験は左の「新しいローカルタスク」から"
+              : "新しい依頼と再実行はDiscord・Dashboardから"}
+          <span>
+            {current.agent === "claude"
+              ? "追加指示は現在の処理後に同じセッションで続行"
+              : "行動ログはこのPCに保存"}
+          </span>
         </p>
       </div>
       <Modal

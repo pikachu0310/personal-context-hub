@@ -110,6 +110,14 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
   });
   const state = await (await fetch(client.origin + "/api/state")).json();
   assert.ok(!JSON.stringify(state).includes("local-only-message"));
+  await until(() => !!client.teamTasks);
+  assert.equal(client.teamTasksSupported, true);
+  assert.equal(
+    client.teamTasks!.tasks.find((item) => item.id === task.id)?.clientId,
+    "device",
+  );
+  assert.ok(!JSON.stringify(client.teamTasks).includes("local-only-message"));
+  assert.ok(!JSON.stringify(client.teamTasks).includes("controlReceipts"));
   const activity = await fetch(
     client.origin + `/api/activity?runId=${task.runId}`,
   );
@@ -145,4 +153,7 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
   assert.equal(deniedRole.status, 409);
   assert.equal((await deniedRole.json()).error, "PERMISSION_DENIED");
   assert.equal(engine.store.get<Device>("device", "device")?.revoked, false);
+  client.emit({ v: 1, type: "tasks.list" });
+  await until(() => !client.connected);
+  assert.equal(client.teamTasks, undefined);
 });

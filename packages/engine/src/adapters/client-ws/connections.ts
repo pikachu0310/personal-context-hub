@@ -19,6 +19,7 @@ import type { Repository } from "../../ports/repository.js";
 import { Tasks } from "../../processing/tasks/service.js";
 import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
+import { taskSnapshot } from "./task-list.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
@@ -54,6 +55,7 @@ export class ClientConnections {
     let deviceId: string | undefined,
       generation = 0;
     let authenticated = false;
+    let lastTaskListAt = 0;
     const timeout = setTimeout(
       () => ws.close(4001, "authentication timeout"),
       10000,
@@ -96,6 +98,7 @@ export class ClientConnections {
               type: "authenticated",
               generation,
               controlVersion: 1,
+              taskListVersion: 1,
               projects: this.store.list("project"),
             }),
           );
@@ -109,6 +112,24 @@ export class ClientConnections {
           data.generation !== generation
         )
           throw new Error("STALE_CONNECTION");
+        if (data.type === "tasks.list") {
+          // Same member-visible task scope as Workspace.state. Recheck live
+          // membership on every read; device execution grants are not read ACLs.
+          const user = this.store.user(device.userId);
+          if (!user || user.role === "viewer")
+            throw new Error("PERMISSION_DENIED");
+          if (Date.now() - lastTaskListAt < 2000) return;
+          lastTaskListAt = Date.now();
+          ws.send(
+            JSON.stringify({
+              v: 1,
+              type: "tasks.snapshot",
+              generation,
+              snapshot: taskSnapshot(this.store, this.peers),
+            }),
+          );
+          return;
+        }
         if (data.type === "artifact.result") {
           const pending = this.artifactRequests.get(String(data.requestId));
           if (
