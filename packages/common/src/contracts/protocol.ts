@@ -10,6 +10,7 @@ export interface User {
 }
 export interface TaskParticipant {
   id: string;
+  identityId?: string;
   name: string;
   avatar?: string;
   bot?: boolean;

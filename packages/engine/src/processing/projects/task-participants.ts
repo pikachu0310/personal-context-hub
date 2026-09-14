@@ -5,6 +5,7 @@ import {
 } from "@ido/common/contracts/protocol";
 import type { Device } from "../../domain/models.js";
 import type { Repository } from "../../ports/repository.js";
+import { deviceIdentity } from "../../clients/identity.js";
 
 /** Legacy participants are imported once; explicit exits always win. */
 function inferredParticipants(
@@ -20,9 +21,12 @@ function inferredParticipants(
         ? actorId.slice(7)
         : undefined;
     const device = deviceId ? store.get<Device>("device", deviceId) : undefined;
-    if (device && !device.revoked) {
+    if (device) {
+      const identityId = deviceIdentity(store, device);
+      // Keep each registration for membership; views group by identityId.
       participants.set(device.id, {
         id: device.id,
+        identityId,
         name: clean(device.profile?.name ?? device.name).slice(0, 100),
       });
     } else if (!executor) {
@@ -54,7 +58,7 @@ export function seedParticipants(store: Repository, task: Task) {
   if (task.memberStates !== undefined) return;
   task.memberStates = Object.fromEntries(
     inferredParticipants(store, task)
-      .filter((p) => !p.bot)
+      .filter((p) => !p.bot && !store.get<Device>("device", p.id)?.revoked)
       .map((p) => [p.id, true]),
   );
   task.membershipVersion = 0;
@@ -80,6 +84,7 @@ export function taskParticipants(
         const device = store.get<Device>("device", id);
         return {
           id,
+          identityId: device ? deviceIdentity(store, device) : undefined,
           name: clean(
             device?.profile?.name ??
               device?.name ??

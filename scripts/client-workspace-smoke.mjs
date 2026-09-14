@@ -62,11 +62,36 @@ try {
   client.controlSupported = true;
   client.allowedProjects.add("project");
   client.settings.deviceId = "local-device";
+  client.settings.identityId = "client:" + "a".repeat(64);
   client.teamTasksSupported = true;
   client.teamTasks = {
     updatedAt: Date.now(),
-    total: 2,
+    total: 3,
     tasks: [
+      {
+        id: "historical-self",
+        runId: "historical-run",
+        revision: 1,
+        projectId: "project",
+        title: "以前の自分のタスク",
+        state: "completed",
+        clientId: "old-device",
+        clientIdentityId: client.settings.identityId,
+        participants: [
+          {
+            id: "old-device",
+            identityId: client.settings.identityId,
+            name: "Old profile",
+          },
+          {
+            id: "local-device",
+            identityId: client.settings.identityId,
+            name: "Current profile",
+          },
+        ],
+        ownerName: "Old profile",
+        updatedAt: Date.now(),
+      },
       {
         id: "remote-task",
         runId: "remote-run",
@@ -242,6 +267,26 @@ try {
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
   assert.equal(await page.locator(".avatar-overflow").innerText(), "+2");
   assert.ok((await page.locator(".task-avatars .bot-avatar").count()) > 0);
+  const historical = page.getByRole("region", {
+    name: "自分の以前の登録",
+    exact: true,
+  });
+  assert.equal(await historical.locator(".user-avatar").count(), 1);
+  assert.equal(
+    await historical.locator(".task-avatars").getAttribute("aria-label"),
+    "参加者: 参加者",
+  );
+  await historical.getByRole("button").click();
+  await page
+    .getByRole("heading", { name: "以前の自分のタスク", level: 2, exact: true })
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "タスクを停止", exact: true })
+      .count(),
+    0,
+  );
+  assert.equal(client.teamTasks.tasks[0].clientId, "old-device");
   await page
     .getByRole("region", { name: "ほかのPC", exact: true })
     .getByRole("button")

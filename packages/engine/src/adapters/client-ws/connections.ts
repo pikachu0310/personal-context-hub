@@ -1,5 +1,6 @@
 import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
 import { taskParticipants } from "../../processing/projects/task-participants.js";
+import { deviceIdentity } from "../../clients/identity.js";
 import { ProjectTeam } from "../../processing/projects/team.js";
 import { Projects } from "../../processing/projects/service.js";
 import { randomUUID, verify } from "node:crypto";
@@ -286,6 +287,7 @@ export class ClientConnections {
             JSON.stringify({
               v: 1,
               type: "authenticated",
+              identityId: deviceIdentity(this.store, device),
               generation,
               controlVersion: 1,
               continuationVersion: 1,

@@ -42,12 +42,14 @@ export function startLogin(client: Client) {
   child.stderr.on("data", capture);
   const timeout = setTimeout(() => child.kill(), 10 * 60_000);
   const finish = (code: number | null) => {
+    if (client.login !== child) return;
     clearTimeout(timeout);
     output = "";
     client.loginUrl = undefined;
     client.loginStatus = code === 0 ? "authenticated" : "login failed";
     if (client.login === child) client.login = undefined;
     client.ready();
+    void client.checkAccount();
   };
   child.once("error", () => finish(1));
   child.once("close", finish);

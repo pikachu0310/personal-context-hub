@@ -3,6 +3,7 @@ import {
   taskBusy,
   taskParticipants,
 } from "./task-participants.js";
+import { deviceIdentity } from "../../clients/identity.js";
 import { randomBytes } from "node:crypto";
 import { hash } from "@ido/common/runtime/platform";
 import {
@@ -170,6 +171,7 @@ export class ProjectTeam {
         ? [
             {
               id: device.id,
+              identityId: deviceIdentity(this.store, device),
               name: device.profile?.name ?? device.name,
               avatar: device.profile?.avatar,
               context: device.profile?.context ?? "",
@@ -246,7 +248,24 @@ export class ProjectTeam {
       project: this.store.get<Project>("project", projectId),
       minutes: this.store
         .list<Meeting>("meeting")
-        .filter((m) => m.projectId === projectId),
+        .filter((m) => m.projectId === projectId)
+        .map((meeting) => ({
+          ...meeting,
+          messages: meeting.messages.map((message) => {
+            const device = message.authorId.startsWith("client-")
+              ? this.store.get<Device>("device", message.authorId.slice(7))
+              : undefined;
+            return {
+              ...message,
+              ...(device
+                ? {
+                    authorIdentityId: deviceIdentity(this.store, device),
+                    authorName: device.profile?.name ?? device.name,
+                  }
+                : {}),
+            };
+          }),
+        })),
       participants: this.participants(projectId),
       tasks: this.store
         .list<import("@ido/common/contracts/protocol").Task>("task")

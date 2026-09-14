@@ -4,6 +4,10 @@ Self-hosted IDO Client. Requires Node.js 24.x. Package names are provisional; no
 
 See the repository's `docs/ido-engine-client.md` for setup, supported platforms, protocol boundaries and live deployment checks.
 
+Browser and desktop launches retain identity in the same local data directory.
+See [identity and restart behavior](../../docs/client-identity.md) for recovery,
+re-pairing, historical participant display, and the local Codex account status.
+
 ```sh
 ido-client start
 ido-client status

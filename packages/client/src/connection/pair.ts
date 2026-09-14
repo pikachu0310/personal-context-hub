@@ -4,12 +4,29 @@ import { hash } from "@ido/common/runtime/platform";
 
 import type { Client } from "../bootstrap/client.js";
 export async function pair(this: Client, engineUrl: string) {
+  if (this.stopping) throw new Error("CLIENT_STOPPING");
+  if (this.pairStart) throw new Error("PAIRING_ALREADY_PENDING");
+  this.pairStart = startPair.call(this, engineUrl);
+  try {
+    await this.pairStart;
+  } finally {
+    this.pairStart = undefined;
+  }
+}
+async function startPair(this: Client, engineUrl: string) {
+  if (this.pairing || this.pairRequest)
+    throw new Error("PAIRING_ALREADY_PENDING");
   if (this.settings.deviceId)
     throw new Error(
       "ALREADY_PAIRED: revoke and disconnect this device before changing engines",
     );
   const origin = endpoint(engineUrl).origin;
+  if (this.settings.pendingPair) {
+    await this.credentials.set(`pair.${this.settings.pendingPair.id}`, "");
+    delete this.settings.pendingPair;
+  }
   this.settings.engineUrl = origin;
+  await this.save();
   const response = await fetch(origin + "/api/admin/pair/request", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -24,7 +41,15 @@ export async function pair(this: Client, engineUrl: string) {
     id: string;
     proof: string;
     url: string;
+    expires: number;
   };
+  await this.credentials.set(`pair.${result.id}`, result.proof);
+  this.settings.pendingPair = {
+    id: result.id,
+    engineUrl: origin,
+    expires: result.expires,
+  };
+  await this.save();
   this.pairing = {
     ...result,
     url: `${origin}/admin/pair/${result.id}`,

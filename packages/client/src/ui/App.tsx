@@ -1,5 +1,6 @@
 import { ProfileSettings } from "./ProfileSettings.js";
 import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
+import { previousRegistration } from "./participant-identity.js";
 import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { ProjectView } from "./ProjectView.js";
@@ -131,9 +132,18 @@ export function App() {
       ),
     },
     {
+      name: "自分の以前の登録",
+      tasks: shared.filter((task) =>
+        previousRegistration(task, state.settings),
+      ),
+    },
+    {
       name: "ほかのPC",
       tasks: shared.filter(
-        (task) => task.clientId && task.clientId !== state.settings.deviceId,
+        (task) =>
+          task.clientId &&
+          task.clientId !== state.settings.deviceId &&
+          !previousRegistration(task, state.settings),
       ),
     },
     { name: "未割り当て", tasks: shared.filter((task) => !task.clientId) },
