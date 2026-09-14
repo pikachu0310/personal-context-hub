@@ -28,6 +28,7 @@ export function createWorkPort({
         title: request.title,
         kind: request.kind,
         createdByBot: true,
+        trigger: request.trigger,
         sourceIds: structuredClone(request.sourceIds),
         sourceStatements: structuredClone(request.sourceStatements),
         sourceSequences: structuredClone(request.sourceSequences),
@@ -49,6 +50,7 @@ export function createWorkPort({
           requestKey: input.requestKey,
           expectedControlVersion: input.expectedControlVersion,
           instructionResolution: input.instructionResolution,
+          continuation: input.continuation,
         },
       );
       onChange();

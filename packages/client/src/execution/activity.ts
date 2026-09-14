@@ -135,6 +135,8 @@ export function recordEvent(run: Run, event: any): boolean {
 
 export function executionError(error: unknown) {
   const message = (error as Error)?.message;
+  if (message === "MEETING_MODEL_UNAVAILABLE")
+    return "会議タスク用のSol・Sparkをこのアカウントで利用できません。接続したCodexアカウントのモデル一覧を確認してください。";
   if (message === "CLAUDE_AUTH_OR_API_FAILED")
     return "Claudeの認証またはAPI呼び出しに失敗しました。Claudeの公式ログインと利用可能な枠を確認してください。";
   if (message === "CLAUDE_TURN_FAILED" || message === "CLAUDE_TASK_INCOMPLETE")

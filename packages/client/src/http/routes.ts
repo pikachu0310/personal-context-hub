@@ -220,6 +220,7 @@ export async function route(
     case "/api/project/rename":
     case "/api/project/remove-member":
     case "/api/project/snapshot":
+    case "/api/project/knowledge":
     case "/api/project/task":
     case "/api/project/continue": {
       if (
@@ -235,6 +236,7 @@ export async function route(
         "/api/project/rename": "project.rename",
         "/api/project/remove-member": "project.remove-member",
         "/api/project/snapshot": "project.snapshot",
+        "/api/project/knowledge": "project.knowledge",
         "/api/project/task": "task.create",
         "/api/project/continue": "task.continue",
       };

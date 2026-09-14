@@ -15,6 +15,7 @@ export interface Device {
   executionPolicyVersion?: number;
 }
 export interface Meeting {
+  knowledge?: import("@ido/common/contracts/knowledge").MeetingKnowledge;
   startedAt?: number;
   closedAt?: number;
   id: string;

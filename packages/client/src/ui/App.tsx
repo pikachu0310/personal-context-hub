@@ -262,7 +262,11 @@ export function App() {
                   <button
                     disabled={!projectConnected}
                     className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
-                    onClick={() => setProjectView({ projectId: id })}
+                    onClick={() => {
+                      setProjectView({ projectId: id });
+                      if (window.matchMedia("(max-width: 900px)").matches)
+                        showSidebar(false);
+                    }}
                   >
                     <Icon name="file" size={15} />
                     <span>議事録</span>

@@ -20,6 +20,10 @@
       "types": "./dist/contracts/coordinator.d.ts",
       "import": "./dist/contracts/coordinator.js"
     },
+    "./contracts/knowledge": {
+      "types": "./dist/contracts/knowledge.d.ts",
+      "import": "./dist/contracts/knowledge.js"
+    },
     "./contracts/plugins": {
       "types": "./dist/contracts/plugins.d.ts",
       "import": "./dist/contracts/plugins.js"

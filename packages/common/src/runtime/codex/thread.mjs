@@ -23,6 +23,12 @@ export class AppServerThread {
           {
             ...(this.resuming ? { threadId: this.id, excludeTurns: true } : {}),
             ...(!this.resuming && options.ephemeral ? { ephemeral: true } : {}),
+            ...(!this.resuming && options.dynamicTools?.length
+              ? { dynamicTools: options.dynamicTools }
+              : {}),
+            ...(options.developerInstructions
+              ? { developerInstructions: options.developerInstructions }
+              : {}),
             cwd: options.workingDirectory,
             model: options.model,
             sandbox: options.sandboxMode ?? "workspace-write",

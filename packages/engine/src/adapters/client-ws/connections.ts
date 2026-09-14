@@ -25,6 +25,7 @@ import { Tasks } from "../../processing/tasks/service.js";
 import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
 import { taskSnapshot } from "./task-list.js";
+import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
@@ -436,6 +437,31 @@ export class ClientConnections {
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
+              case "project.knowledge": {
+                const projectId = id(input.projectId);
+                team.require(device.id, projectId);
+                result = new MeetingKnowledgeStore(this.store).search(
+                  projectId,
+                  input,
+                );
+                break;
+              }
+              case "task.knowledge": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (
+                  task.clientId !== device.id ||
+                  task.runId !== input.runId ||
+                  task.revision !== input.revision
+                )
+                  throw new Error("TASK_ASSIGNMENT_CHANGED");
+                result = new MeetingKnowledgeStore(this.store).search(
+                  task.projectId,
+                  input,
+                );
+                break;
+              }
               case "task.continue": {
                 const task = this.store.get<Task>("task", id(input.taskId));
                 if (!task) throw new Error("TASK_NOT_FOUND");
@@ -498,8 +524,12 @@ export class ClientConnections {
               }),
             );
             if (
-              data.operation !== "project.snapshot" &&
-              data.operation !== "project.inspect-invite"
+              ![
+                "project.snapshot",
+                "project.knowledge",
+                "task.knowledge",
+                "project.inspect-invite",
+              ].includes(String(data.operation))
             )
               this.broadcastProjects();
           } catch (error) {

@@ -48,6 +48,7 @@ export type TaskState =
   | "failed"
   | "cancelled";
 export interface Task {
+  trigger?: "requested" | "proactive";
   memberStates?: Record<string, boolean>;
   membershipVersion?: number;
   canDelete?: boolean;

@@ -22,6 +22,7 @@ type CreateTaskInput = Pick<
     Pick<
       Task,
       | "createdByBot"
+      | "trigger"
       | "title"
       | "kind"
       | "sourceIds"

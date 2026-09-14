@@ -16,6 +16,7 @@ import { stateLabel } from "./ActivityFeed.js";
 import type { ClientState } from "@ido/common/contracts/api";
 import { api } from "./api.js";
 import { isSelf, participantGroups } from "./participant-identity.js";
+import { MeetingNotes } from "@ido/common-ui";
 export function ProjectView({
   projectId,
   taskId,
@@ -97,22 +98,16 @@ export function ProjectView({
                 openSettings={openSettings}
               />
             )}
+            <details style={{ marginTop: 20 }}>
+              <summary>会議の文脈・元の発言を確認</summary>
+              <div style={{ marginTop: 16 }}>
+                <MeetingNotes key={projectId} meetings={state.minutes} />
+              </div>
+            </details>
           </Paper>
         ) : (
           <>
-            {!state.minutes.length && (
-              <Text c="dimmed">会話が始まると議事録が表示されます。</Text>
-            )}
-            {state.minutes.map((m) => (
-              <Paper key={m.id} p="lg" withBorder>
-                <Text fw={600} mb="sm">
-                  {m.name}
-                </Text>
-                <Text style={{ whiteSpace: "pre-wrap" }}>
-                  {m.summary || "会話を待っています。"}
-                </Text>
-              </Paper>
-            ))}
+            <MeetingNotes key={projectId} meetings={state.minutes} />
             <details>
               <summary>詳細を見る</summary>
               <Stack mt="md">
@@ -174,29 +169,6 @@ export function ProjectView({
                     </Paper>
                   );
                 })}
-                <Title order={3}>生の会話データ</Title>
-                {state.minutes.map((m) => (
-                  <Paper key={m.id} p="md" withBorder>
-                    <Text fw={600}>{m.name}</Text>
-                    {m.messages.map((message) => (
-                      <Text
-                        key={message.id}
-                        mt="sm"
-                        style={{ whiteSpace: "pre-wrap" }}
-                      >
-                        {new Date(message.at).toLocaleString()} ·{" "}
-                        {message.authorIdentityId &&
-                        message.authorIdentityId ===
-                          clientState.settings.identityId
-                          ? `${clientState.settings.profile?.name ?? "自分"} · 自分`
-                          : (message.authorName ?? message.authorId)}
-                        {"\n"}
-                        {message.text}
-                        {message.replyText && `\nIDO: ${message.replyText}`}
-                      </Text>
-                    ))}
-                  </Paper>
-                ))}
               </Stack>
             </details>
           </>

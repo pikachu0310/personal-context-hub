@@ -93,6 +93,33 @@ test("approved Client owns projects, invites participants, retries unknown resul
   await mkdir(path);
   assert.equal((await post("First", path)).status, 200);
   const project = c.settings.projects.find((p) => p.name === "First")!;
+  engine.store.put("meeting", "knowledge-meeting", {
+    id: "knowledge-meeting",
+    name: "会議",
+    projectId: project.id,
+    summary: "",
+    messages: [],
+  });
+  engine.store.put("message", "knowledge-source", {
+    id: "knowledge-source",
+    meetingId: "knowledge-meeting",
+    authorId: "speaker",
+    authorName: "参加者",
+    at: Date.now(),
+    text: "検索の方式を比較する",
+    role: "user",
+    complete: true,
+    stage: "completed",
+  });
+  const knowledgePage = await c.workspaceRequest<any>("project.knowledge", {
+    projectId: project.id,
+    query: "検索",
+  });
+  assert.equal(knowledgePage.messages[0].id, "knowledge-source");
+  await assert.rejects(
+    clients[1].workspaceRequest("project.knowledge", { projectId: project.id }),
+    /PROJECT_INVITATION_REQUIRED/,
+  );
   assert.equal(project.ownerDeviceId, c.settings.deviceId);
   assert.equal(
     clients[1].settings.projects.some((p) => p.id === project.id),
@@ -115,6 +142,42 @@ test("approved Client owns projects, invites participants, retries unknown resul
   await until(() =>
     clients[1].settings.projects.some((p) => p.id === project.id),
   );
+  engine.store.put("task", "knowledge-task", {
+    id: "knowledge-task",
+    projectId: project.id,
+    meetingId: "knowledge-meeting",
+    clientId: c.settings.deviceId,
+    runId: "knowledge-run",
+    revision: 1,
+    specRevision: 1,
+    authorId: "speaker",
+    text: "検索方式",
+    title: "検索方式",
+    state: "completed",
+    history: [],
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    network: false,
+  });
+  const taskQuery = {
+    taskId: "knowledge-task",
+    runId: "knowledge-run",
+    revision: 1,
+    sourceIds: ["knowledge-source"],
+  };
+  assert.equal(
+    (await c.workspaceRequest<any>("task.knowledge", taskQuery)).messages[0]
+      .text,
+    "検索の方式を比較する",
+  );
+  await assert.rejects(
+    c.workspaceRequest("task.knowledge", { ...taskQuery, revision: 2 }),
+    /TASK_ASSIGNMENT_CHANGED/,
+  );
+  await assert.rejects(
+    clients[1].workspaceRequest("task.knowledge", taskQuery),
+    /TASK_ASSIGNMENT_CHANGED/,
+  );
   assert.ok(
     (
       await clients[1].workspaceRequest<{ token: string }>("project.invite", {
@@ -130,6 +193,10 @@ test("approved Client owns projects, invites participants, retries unknown resul
     projectId: project.id,
     deviceId: clients[1].settings.deviceId,
   });
+  await assert.rejects(
+    clients[1].workspaceRequest("project.knowledge", { projectId: project.id }),
+    /PROJECT_INVITATION_REQUIRED/,
+  );
   await assert.rejects(
     clients[1].workspaceRequest("project.snapshot", { projectId: project.id }),
     /PROJECT_INVITATION_REQUIRED/,

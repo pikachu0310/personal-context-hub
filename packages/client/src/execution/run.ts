@@ -8,6 +8,12 @@ import { restrictExecutionPolicy } from "@ido/common/contracts/work";
 import { codexBinary } from "../codex/binary.js";
 import { activityText, recordActivity, recordEvent } from "./activity.js";
 import type { Executor, Run } from "../execution/executor.js";
+import {
+  contextToolHandler,
+  meetingContextInstructions,
+  meetingContextTools,
+} from "./knowledge.js";
+import { meetingModel } from "../agents/model-selection.js";
 export async function execute(
   this: Executor,
   value: Run,
@@ -19,7 +25,12 @@ export async function execute(
   const createRuntime =
     value.agent === "claude" ? this.createClaude : this.createCodex;
   const codex = createRuntime({
-    experimentalApi: value.progressMode === "manual",
+    experimentalApi:
+      value.progressMode === "manual" ||
+      (value.origin !== "local" && !!this.knowledge),
+    ...(value.origin !== "local" && this.knowledge
+      ? { onToolCall: contextToolHandler(this, value) }
+      : {}),
     codexPathOverride: codexBinary(),
     env: workerEnvironment(this.home),
     onApprovalRequest: (method: string, params: unknown) =>
@@ -49,6 +60,30 @@ export async function execute(
   const active = { thread: undefined as any, codex, abort };
   this.active.set(value.task.runId, active);
   try {
+    if (
+      value.origin !== "local" &&
+      this.knowledge &&
+      !value.model &&
+      !value.threadId &&
+      "request" in codex
+    ) {
+      const catalog = await codex.request("model/list", { limit: 100 });
+      Object.assign(
+        value,
+        meetingModel(
+          value.task.text,
+          value.task.kind,
+          (catalog.data ?? [])
+            .filter((item: any) => !item.hidden)
+            .map((item: any) => item.model),
+        ),
+      );
+      recordActivity(value, {
+        kind: "status",
+        title: "会議タスクのモデルを選択",
+        text: `${value.model} / ${value.modelReasoningEffort}`,
+      });
+    }
     recordActivity(value, {
       kind: "status",
       title: value.progressMode === "manual" ? "相談を開始" : "作業を開始",
@@ -75,7 +110,14 @@ export async function execute(
       value.effectiveExecutionPolicy,
     );
     const options = {
+      ...(value.origin !== "local" && this.knowledge
+        ? {
+            dynamicTools: meetingContextTools,
+            developerInstructions: meetingContextInstructions,
+          }
+        : {}),
       model: value.model,
+      modelReasoningEffort: value.modelReasoningEffort,
       workingDirectory: value.directory,
       sandboxMode: policy.sandboxMode ?? "workspace-write",
       requireWritableSandbox: policy.sandboxMode !== "read-only",
@@ -157,8 +199,10 @@ export async function execute(
         ) {
           if (planning) value.plan = activityText(event.item.text);
           else value.result = event.item.text;
-        } else if (event.type === "turn.failed" || event.type === "error")
+        } else if (event.type === "turn.failed" || event.type === "error") {
+          abort.signal.throwIfAborted();
           throw new Error("CODEX_TURN_FAILED");
+        }
         value.progress = event.type;
         this.report(value);
       }

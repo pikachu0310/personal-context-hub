@@ -292,7 +292,7 @@ async function fixture(t: TestContext) {
   };
 }
 
-test("InputRouter queues mechanical transcripts and one main thread receives only new messages", async (t) => {
+test("InputRouter keeps raw statements separate from minutes and one main thread receives only new messages", async (t) => {
   const f = await fixture(t);
   await f.input({ text: "前提の一つ目", eventId: "first" });
   assert.equal(f.calls.length, 0);
@@ -314,8 +314,136 @@ test("InputRouter queues mechanical transcripts and one main thread receives onl
     [["前提の一つ目"], ["前提の二つ目"]],
   );
   const meeting = f.engine.store.get<any>("meeting", "meeting");
-  assert.match(meeting.summary, /話者A.*前提の一つ目/);
-  assert.match(meeting.summary, /話者B.*前提の二つ目/);
+  assert.equal(meeting.summary, "");
+  assert.deepEqual(
+    meeting.messages.map((message: Message) => [
+      message.authorName,
+      message.text,
+    ]),
+    [
+      ["話者A", "前提の一つ目"],
+      ["話者B", "前提の二つ目"],
+    ],
+  );
+  assert.equal(f.tasks().length, 0);
+});
+
+test("a polite spoken request creates work and immediately acknowledges the actual accepted task", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => taskResponse(observation, "implementation"));
+  await f.input({
+    text: "井戸Bot、検索画面のモックを作ってくれるかな？",
+    priority: "immediate",
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.tasks()[0].trigger, "requested");
+  assert.equal(
+    f.delivered.filter(
+      (output) =>
+        output.kind === "reply" && output.content?.includes("受け付けました"),
+    ).length,
+    1,
+  );
+});
+
+test("unaddressed concrete opportunities create bounded work, repeated discussion does not proliferate, and explicit requests bypass automatic cooldown", async (t) => {
+  const f = await fixture(t);
+  let title = "検索画面の比較モック";
+  f.respond((observation) => ({
+    ...silent(),
+    tasks: [{ ...taskResponse(observation, "implementation").tasks[0], title }],
+  }));
+  await f.input({
+    text: "検索画面は小さな比較モックがあると判断しやすいね。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.tasks()[0].trigger, "proactive");
+  await f.input({
+    text: "そうだね、検索画面の比較モックで見たい。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  title = "音声接続の遅延調査";
+  await f.input({
+    text: "音声接続の遅延も原因を調査できるといいね。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  await f.input({
+    text: "井戸Bot、音声接続の遅延の原因を調べてください。",
+    priority: "immediate",
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 2);
+  assert.equal(f.tasks()[1].trigger, "requested");
+});
+
+test("a requested outcome can cite a teammate's relevant statement without attributing the request to that teammate", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => taskResponse(observation, "implementation"));
+  await f.input({
+    text: "検索は一覧から絞り込むモックにしたい。",
+    priority: "normal",
+  });
+  await f.input(
+    { text: "井戸Bot、その検索モックを作ってください。", priority: "normal" },
+    f.context("speaker-b").value,
+  );
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.tasks()[0].authorId, "speaker-b");
+  assert.equal(f.tasks()[0].sourceStatements?.length, 2);
+});
+
+test("automatic topic minutes are published and keep raw speaker statements as citations", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => ({
+    ...silent(),
+    minutes: [
+      {
+        meetingId: "meeting",
+        topics: [
+          {
+            id: null,
+            title: "検索方式",
+            summary: "一覧から絞り込む方式を採用する。速度は未確認。",
+            decisions: ["一覧から絞り込む"],
+            openQuestions: ["検索速度"],
+            sourceIds: sourceIds(observation),
+          },
+        ],
+      },
+    ],
+  }));
+  await f.input({
+    text: "一覧からの絞り込みに決定。検索速度は後で測ろう。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  const meeting = f.engine.store.get<any>("meeting", "meeting");
+  assert.equal(meeting.knowledge.topics.length, 1);
+  assert.equal(meeting.knowledge.topics[0].sourceIds[0], f.messages()[0].id);
+  assert.equal(
+    f.messages()[0].text,
+    "一覧からの絞り込みに決定。検索速度は後で測ろう。",
+  );
+  assert.ok(
+    f.publications.some(
+      (event) =>
+        event.type === "minutes" &&
+        (event.data as any).knowledge?.topics.length,
+    ),
+  );
   assert.equal(f.tasks().length, 0);
 });
 
@@ -413,10 +541,18 @@ for (const liveMode of [false, true])
     );
     assert.deepEqual(
       f.speech,
-      liveMode ? [] : ["確認できた結果を説明します。"],
+      liveMode
+        ? []
+        : [
+            "タスク「対象の調査」を受け付けました。実行先の空き・許可を待っています。",
+            "確認できた結果を説明します。",
+          ],
     );
     if (liveMode)
-      assert.deepEqual(f.live[0].comments, ["確認できた結果を説明します。"]);
+      assert.deepEqual(f.live[0].comments, [
+        "タスク「対象の調査」を受け付けました。実行先の空き・許可を待っています。",
+        "確認できた結果を説明します。",
+      ]);
     f.engine.flush();
     await f.core.flush("meeting");
     assert.equal(f.calls.length, 2);
@@ -595,6 +731,75 @@ test("a natural implementation request uses its actual actor and project rather 
   assert.equal(f.tasks()[0].kind, "implementation");
 });
 
+test("teammates can steer and stop a unique mock before the main model responds", async (t) => {
+  const f = await fixture(t);
+  f.respond(() => undefined);
+  const task = f.engine.tasks.createTask({
+    authorId: "speaker-a",
+    projectId: "project",
+    meetingId: "meeting",
+    requestId: "mock",
+    title: "検索画面のモック",
+    text: "検索画面を作る",
+    network: false,
+  });
+  await f.input(
+    { text: "そのモックを青にして", priority: "normal" },
+    f.context("speaker-b").value,
+  );
+  assert.match(f.tasks()[0].text, /青にして/u);
+  assert.equal(f.tasks()[0].controlVersion, 1);
+  assert.ok(
+    f.delivered.some(
+      (output) =>
+        output.kind === "reply" &&
+        /追加指示を受け付け/u.test(output.content ?? ""),
+    ),
+  );
+  await f.input(
+    { text: "そのモックを止めて", priority: "normal" },
+    f.context("speaker-b").value,
+  );
+  assert.equal(f.tasks()[0].id, task.id);
+  assert.equal(f.tasks()[0].state, "cancelled");
+  assert.equal(f.calls.length, 0);
+  assert.ok(
+    f.delivered.some(
+      (output) =>
+        output.kind === "reply" && /停止しました/u.test(output.content ?? ""),
+    ),
+  );
+});
+
+test("ambiguous or quoted controls do not choose an arbitrary task", async (t) => {
+  const f = await fixture(t);
+  for (const requestId of ["one", "two"])
+    f.engine.tasks.createTask({
+      authorId: "speaker-a",
+      projectId: "project",
+      meetingId: "meeting",
+      requestId,
+      title: `${requestId}のモック`,
+      text: requestId,
+      network: false,
+    });
+  await f.input({ text: "そのモックを止めて", priority: "normal" });
+  await f.input({
+    text: "「そのモックを止めて」という文例です",
+    priority: "normal",
+  });
+  assert.ok(
+    f
+      .tasks()
+      .every((task) => task.state === "queued" && task.controlVersion === 0),
+  );
+  assert.ok(
+    f.delivered.some(
+      (output) => output.kind === "reply" && /複数/u.test(output.content ?? ""),
+    ),
+  );
+});
+
 for (const mismatch of ["target", "operation"] as const)
   test(`a natural stop request cannot authorize a model-changed ${mismatch}`, async (t) => {
     const f = await fixture(t);
@@ -624,10 +829,21 @@ for (const mismatch of ["target", "operation"] as const)
     });
     await until(() => f.calls.length === 1);
     await f.idle();
-    assert.ok(
-      f
-        .tasks()
-        .every((task) => task.state === "queued" && task.controlVersion === 0),
+    assert.equal(
+      f.tasks().find((task) => task.id === first.id)?.state,
+      "cancelled",
+    );
+    assert.equal(
+      f.tasks().find((task) => task.id === first.id)?.controlVersion,
+      1,
+    );
+    assert.equal(
+      f.tasks().find((task) => task.id === second.id)?.state,
+      "queued",
+    );
+    assert.equal(
+      f.tasks().find((task) => task.id === second.id)?.controlVersion,
+      0,
     );
   });
 

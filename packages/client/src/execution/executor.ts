@@ -31,6 +31,7 @@ export interface WorkInstruction {
 
 export interface Run {
   model?: string;
+  modelReasoningEffort?: "low" | "medium" | "high";
   agent?: AgentKind;
   origin?: "local";
   localMapping?: Mapping;
@@ -56,6 +57,10 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
+  knowledge?: (
+    task: Task,
+    input: import("@ido/common/contracts/knowledge").KnowledgeQuery,
+  ) => Promise<import("@ido/common/contracts/knowledge").KnowledgePage>;
   createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
     new ClaudeRuntime(options);
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
@@ -207,6 +212,7 @@ export class Executor {
       const value: Run = {
         agent: previous?.agent ?? local?.agent ?? "codex",
         model: previous ? previous.model : local?.model,
+        modelReasoningEffort: previous?.modelReasoningEffort,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
         progressMode:

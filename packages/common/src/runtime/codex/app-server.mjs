@@ -71,6 +71,29 @@ export class AppServerCodex extends EventEmitter {
           return this.fail(new Error("Invalid Codex App Server message"));
         }
         if (message.id !== undefined && message.method) {
+          if (message.method === "item/tool/call" && this.options.onToolCall) {
+            void Promise.resolve()
+              .then(() => this.options.onToolCall(message.params ?? {}))
+              .then((result) => {
+                if (!this.closed) this.send({ id: message.id, result });
+              })
+              .catch(() => {
+                if (!this.closed)
+                  this.send({
+                    id: message.id,
+                    result: {
+                      success: false,
+                      contentItems: [
+                        {
+                          type: "inputText",
+                          text: "Meeting context is unavailable. Do not invent missing information.",
+                        },
+                      ],
+                    },
+                  });
+              });
+            return;
+          }
           if (
             this.options.onApprovalRequest &&
             [
