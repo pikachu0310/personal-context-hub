@@ -4,6 +4,15 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import { AppServerCodex } from "@ido/common/runtime/codex/app-server";
 
+const taskBoardTools = [
+  {
+    type: "function",
+    name: "board_post",
+    description: "Post a note",
+    inputSchema: { type: "object", properties: { body: { type: "string" } } },
+  },
+];
+
 function server({ handle, requestTimeoutMs = 1000 } = {}) {
   const child = new EventEmitter();
   child.stdin = new PassThrough();
@@ -48,6 +57,96 @@ function server({ handle, requestTimeoutMs = 1000 } = {}) {
     messages,
   };
 }
+
+test("dynamic board tools are bound to the active task turn and survive thread resume", async () => {
+  const fake = server({
+    handle(message, emit) {
+      if (message.method !== "turn/start") return false;
+      emit({
+        method: "turn/started",
+        params: { threadId: "thread1", turn: { id: "turn1" } },
+      });
+      emit({ id: message.id, result: { turn: { id: "turn1" } } });
+      return true;
+    },
+  });
+  fake.client.options.experimentalApi = true;
+  const calls = [];
+  const options = {
+    dynamicTools: taskBoardTools,
+    onToolCall: async (params) => {
+      calls.push(params);
+      return { id: 7 };
+    },
+  };
+  try {
+    for (const thread of [
+      fake.client.startThread(options),
+      fake.client.resumeThread("thread1", options),
+    ]) {
+      const { events } = await thread.runStreamed("work");
+      await events.next();
+      for (const [id, overrides] of [
+        [801, {}],
+        [802, { threadId: "other" }],
+        [803, { turnId: "old" }],
+        [804, { tool: "unregistered" }],
+      ])
+        fake.emit({
+          id,
+          method: "item/tool/call",
+          params: {
+            threadId: "thread1",
+            turnId: "turn1",
+            callId: String(id),
+            tool: "board_post",
+            arguments: { body: "相談" },
+            ...overrides,
+          },
+        });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        fake.messages.findLast((message) => message.id === 801).result.success,
+        true,
+      );
+      for (const id of [802, 803, 804])
+        assert.equal(
+          fake.messages.findLast((message) => message.id === id).result.success,
+          false,
+        );
+      fake.emit({
+        method: "turn/completed",
+        params: {
+          threadId: "thread1",
+          turn: { id: "turn1", status: "completed" },
+        },
+      });
+      while (!(await events.next()).done) {
+        /* Drain completion. */
+      }
+      assert.equal(fake.client.dynamicHandlers.size, 0);
+    }
+    assert.equal(calls.length, 2);
+    assert.deepEqual(
+      fake.messages.find((message) => message.method === "thread/start").params
+        .dynamicTools,
+      taskBoardTools,
+    );
+    assert.equal(
+      "dynamicTools" in
+        fake.messages.find((message) => message.method === "thread/resume")
+          .params,
+      false,
+    );
+    assert.equal(
+      fake.messages.find((message) => message.method === "initialize").params
+        .capabilities.experimentalApi,
+      true,
+    );
+  } finally {
+    await fake.client.close();
+  }
+});
 
 test("plan/default collaboration modes use the configured model without widening sandbox or approvals", async () => {
   const fake = server({

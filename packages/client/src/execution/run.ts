@@ -8,6 +8,12 @@ import { restrictExecutionPolicy } from "@ido/common/contracts/work";
 import { codexBinary } from "../codex/binary.js";
 import { activityText, recordActivity, recordEvent } from "./activity.js";
 import type { Executor, Run } from "../execution/executor.js";
+import {
+  taskBoardTools,
+  taskBoardGuidelines,
+  callTaskBoard,
+  watchTaskBoard,
+} from "./task-board.mjs";
 export async function execute(
   this: Executor,
   value: Run,
@@ -16,10 +22,15 @@ export async function execute(
 ) {
   const repository = await realpath(mapping.directory);
   if (value.state === "cancelled") return;
+  const boardAvailable =
+    this.board.supported &&
+    value.origin !== "local" &&
+    value.agent !== "claude" &&
+    (!value.threadId || value.boardToolsEnabled);
   const createRuntime =
     value.agent === "claude" ? this.createClaude : this.createCodex;
   const codex = createRuntime({
-    experimentalApi: value.progressMode === "manual",
+    experimentalApi: value.progressMode === "manual" || boardAvailable,
     codexPathOverride: codexBinary(),
     env: workerEnvironment(this.home),
     onApprovalRequest: (method: string, params: unknown) =>
@@ -47,6 +58,10 @@ export async function execute(
   } as any);
   const abort = new AbortController();
   const active = { thread: undefined as any, codex, abort };
+  const board = boardAvailable
+    ? this.board.forTask(value.task, abort.signal)
+    : undefined;
+  let stopBoardWatch = () => {};
   this.active.set(value.task.runId, active);
   try {
     recordActivity(value, {
@@ -75,6 +90,12 @@ export async function execute(
       value.effectiveExecutionPolicy,
     );
     const options = {
+      ...(board
+        ? {
+            dynamicTools: taskBoardTools,
+            onToolCall: (params: any) => callTaskBoard(board, params),
+          }
+        : {}),
       model: value.model,
       workingDirectory: value.directory,
       sandboxMode: policy.sandboxMode ?? "workspace-write",
@@ -95,6 +116,10 @@ export async function execute(
     active.thread = value.threadId
       ? codex.resumeThread(value.threadId, options)
       : codex.startThread(options);
+    if (board) {
+      value.boardToolsEnabled = true;
+      stopBoardWatch = watchTaskBoard(board, active.thread);
+    }
     value.state = "running";
     await this.save();
     this.report(value);
@@ -106,6 +131,7 @@ export async function execute(
         ? "これは読み取り専用の調査です。ファイル変更・送信・公開・サービス操作などの外部変更は行わず、根拠と不明点を報告してください。"
         : "",
       value.task.text,
+      board ? taskBoardGuidelines : "",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -209,6 +235,8 @@ export async function execute(
       break;
     }
   } finally {
+    stopBoardWatch();
+    abort.abort();
     for (const [id, request] of this.approvals)
       if (request.runId === value.task.runId) {
         clearTimeout(request.timer);
