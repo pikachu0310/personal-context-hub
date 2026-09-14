@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { restrictExecutionPolicy } from "../../engine/work-policy.mjs";
 import {
   automaticVoiceModel,
   taskModelSelection,
@@ -305,6 +306,10 @@ export function selectTaskProfile(task, config) {
   const complex = task.complexity === "complex";
   const agent = task.assignedAgent;
   const selected = taskModelSelection(task);
+  const policy = restrictExecutionPolicy(
+    task.executionPolicy,
+    task.effectiveExecutionPolicy,
+  );
   return {
     kind,
     model:
@@ -324,8 +329,8 @@ export function selectTaskProfile(task, config) {
           config.codexReasoningEffort ??
           "low")
         : (config.taskReasoningEffort ?? config.codexReasoningEffort ?? "low")),
-    sandboxMode: "workspace-write",
-    networkAccessEnabled: true,
-    webSearchMode: "live",
+    sandboxMode: policy.sandboxMode ?? "workspace-write",
+    networkAccessEnabled: policy.networkAccessEnabled !== false,
+    webSearchMode: policy.networkAccessEnabled === false ? "disabled" : "live",
   };
 }

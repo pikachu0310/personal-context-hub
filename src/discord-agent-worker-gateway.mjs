@@ -6,6 +6,7 @@ import { identifyVerificationCommand } from "./engine/evidence.mjs";
 import { taskModelSelection } from "./engine/model-policy.mjs";
 import { validateAgentEndpoint } from "./discord-agent-endpoint.mjs";
 import { VoiceServiceError } from "./engine/errors.mjs";
+import { restrictExecutionPolicy } from "./engine/work-policy.mjs";
 
 const MAX_MESSAGE_BYTES = 256 * 1024;
 const OPEN = 1;
@@ -28,6 +29,10 @@ function safeTask(task, leaseId) {
     kind: task.kind,
     complexity: task.complexity,
     modelSelection: taskModelSelection(task),
+    executionPolicy: restrictExecutionPolicy(
+      task.executionPolicy,
+      task.effectiveExecutionPolicy,
+    ),
     activeSpecRevision: task.activeSpecRevision,
     acceptanceCriteria: task.acceptanceCriteria
       ?.slice(0, 10)
@@ -272,6 +277,19 @@ export class AgentWorkerGateway {
     const socket = this.connections.get(agentId);
     if (!socket || socket.readyState !== OPEN)
       throw gatewayError("WORKER_OFFLINE", "Assigned worker is offline.");
+    const policy = restrictExecutionPolicy(
+      task.executionPolicy,
+      task.effectiveExecutionPolicy,
+    );
+    if (
+      (policy.sandboxMode === "read-only" ||
+        policy.networkAccessEnabled === false) &&
+      this.sessions.get(socket)?.executionPolicyVersion !== 1
+    )
+      throw gatewayError(
+        "WORKER_POLICY_UNSUPPORTED",
+        "Assigned worker does not support task execution restrictions.",
+      );
     const leaseId = randomUUID();
     const lease = {
       leaseId,
@@ -453,6 +471,7 @@ export class AgentWorkerGateway {
           challenge: session.challenge,
         });
         await this.checkpoint(this.registry.snapshot());
+        session.executionPolicyVersion = message.executionPolicyVersion;
         this.#register(socket, session, paired.agentId, paired.worker);
         socket.send(
           JSON.stringify({
@@ -479,6 +498,7 @@ export class AgentWorkerGateway {
         );
       this.#assertActive(socket, session);
       const worker = this.registry.markOnline(message.agentId, true);
+      session.executionPolicyVersion = message.executionPolicyVersion;
       this.#register(socket, session, message.agentId, worker);
       socket.send(
         JSON.stringify({ type: "authenticated", agentId: message.agentId }),
@@ -523,6 +543,11 @@ export class AgentWorkerGateway {
       lease.task.evidence = safeEvidence(message.evidence);
       lease.task.artifacts = safeArtifacts(message.artifacts);
       lease.task.remoteExecution = true;
+      lease.task.effectiveExecutionPolicy = restrictExecutionPolicy(
+        lease.task.executionPolicy,
+        lease.task.effectiveExecutionPolicy,
+        message.effectiveExecutionPolicy,
+      );
       this.#settle(
         message.leaseId,
         String(message.result ?? "").slice(0, 100_000),

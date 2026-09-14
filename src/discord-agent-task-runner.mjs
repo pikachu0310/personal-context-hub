@@ -13,6 +13,7 @@ export function createDistributedTaskRunner({
         if (
           ![
             "WORKER_OFFLINE",
+            "WORKER_POLICY_UNSUPPORTED",
             "WORKER_DISCONNECTED",
             "WORKER_LEASE_EXPIRED",
           ].includes(error?.code)
@@ -34,7 +35,9 @@ export function createDistributedTaskRunner({
         });
         await task.checkpoint?.();
         await options?.onProgress?.(
-          `🔄 Worker切断のため ${replacement.name} へ安全に再割り当てました。`,
+          error.code === "WORKER_POLICY_UNSUPPORTED"
+            ? `🔄 Workerが実行制約に未対応のため ${replacement.name} へ再割り当てました。`
+            : `🔄 Worker切断のため ${replacement.name} へ安全に再割り当てました。`,
         );
       }
     }

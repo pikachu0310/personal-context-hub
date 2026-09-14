@@ -354,6 +354,12 @@ class AppServerThread {
             config: {
               web_search: options.webSearchMode ?? "disabled",
               model_reasoning_effort: options.modelReasoningEffort ?? "low",
+              ...(options.disableShellTool
+                ? {
+                    "features.shell_tool": false,
+                    "features.unified_exec": false,
+                  }
+                : {}),
             },
           },
         );

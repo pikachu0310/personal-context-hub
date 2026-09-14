@@ -16,6 +16,10 @@ import {
   selectTaskProfile,
 } from "./execution/codex/workspace.mjs";
 import { identifyVerificationCommand } from "./engine/evidence.mjs";
+import {
+  normalizeExecutionPolicy,
+  restrictExecutionPolicy,
+} from "./engine/work-policy.mjs";
 
 const OPEN = 1;
 
@@ -47,6 +51,9 @@ async function readTaskState(path) {
         Number.isSafeInteger(value.runRevision) && value.runRevision >= 0
           ? value.runRevision
           : 0,
+      effectiveExecutionPolicy: normalizeExecutionPolicy(
+        value.effectiveExecutionPolicy,
+      ),
     };
   } catch (error) {
     if (error.code === "ENOENT" || error instanceof SyntaxError)
@@ -119,22 +126,40 @@ export class LocalCodexWorkerExecutor {
       `${task.id}-agent-state.json`,
     );
     const localState = await readTaskState(statePath);
+    task.effectiveExecutionPolicy = restrictExecutionPolicy(
+      task.effectiveExecutionPolicy,
+      localState.effectiveExecutionPolicy,
+    );
     const runRevision = localState.runRevision + 1;
     task.runRevision = runRevision;
+    const profile = selectTaskProfile(task, {
+      taskModel: this.model,
+      taskReasoningEffort: this.reasoningEffort,
+    });
+    const networkAccessEnabled =
+      this.networkAccess && profile.networkAccessEnabled;
     const options = {
-      ...selectTaskProfile(task, {
-        taskModel: this.model,
-        taskReasoningEffort: this.reasoningEffort,
-      }),
+      ...profile,
       workingDirectory,
       approvalPolicy: this.requestApproval ? "on-request" : "never",
-      sandboxMode: "workspace-write",
-      requireWritableSandbox: Boolean(this.requestApproval),
-      networkAccessEnabled: this.networkAccess,
-      webSearchMode: this.networkAccess ? "live" : "disabled",
+      requireWritableSandbox:
+        profile.sandboxMode === "workspace-write" &&
+        Boolean(this.requestApproval),
+      networkAccessEnabled,
+      webSearchMode: networkAccessEnabled ? "live" : "disabled",
       skipGitRepoCheck: false,
       additionalDirectories: [],
     };
+    const effectiveExecutionPolicy = {
+      sandboxMode: options.sandboxMode,
+      networkAccessEnabled,
+    };
+    // Persist restrictions before inference, including unsuccessful runs.
+    await writeTaskState(statePath, {
+      ...localState,
+      runRevision,
+      effectiveExecutionPolicy,
+    });
     const thread = localState.codexThreadId
       ? codex.resumeThread(localState.codexThreadId, options)
       : codex.startThread(options);
@@ -164,11 +189,16 @@ export class LocalCodexWorkerExecutor {
       const result = await thread.run(prompt, { signal });
       const artifacts = await this.workspaces.collect(task);
       const codexThreadId = String(thread.id ?? "").slice(0, 200);
-      await writeTaskState(statePath, { codexThreadId, runRevision });
+      await writeTaskState(statePath, {
+        codexThreadId,
+        runRevision,
+        effectiveExecutionPolicy,
+      });
       return {
         result: result.finalResponse,
         codexThreadId,
         runRevision,
+        effectiveExecutionPolicy,
         evidence,
         artifacts: publicArtifacts(artifacts, runRevision),
       };
@@ -181,7 +211,11 @@ export class LocalCodexWorkerExecutor {
         throw new Error("Codex execution failed.");
       if (event.type === "thread.started") {
         codexThreadId = event.thread_id;
-        await writeTaskState(statePath, { codexThreadId, runRevision });
+        await writeTaskState(statePath, {
+          codexThreadId,
+          runRevision,
+          effectiveExecutionPolicy,
+        });
       }
       if (event.type !== "item.completed") continue;
       if (event.item?.type === "agent_message") {
@@ -212,11 +246,16 @@ export class LocalCodexWorkerExecutor {
       throw new Error("Codex returned an empty response.");
     const artifacts = await this.workspaces.collect(task);
     codexThreadId = String(codexThreadId ?? "").slice(0, 200);
-    await writeTaskState(statePath, { codexThreadId, runRevision });
+    await writeTaskState(statePath, {
+      codexThreadId,
+      runRevision,
+      effectiveExecutionPolicy,
+    });
     return {
       result: finalResponse,
       codexThreadId,
       runRevision,
+      effectiveExecutionPolicy,
       evidence,
       artifacts: publicArtifacts(artifacts, runRevision),
     };
@@ -357,6 +396,7 @@ export class DiscordAgentWorker {
           name: this.name,
           capabilities: this.capabilities,
           maximumConcurrentTasks: this.maximumConcurrentTasks,
+          executionPolicyVersion: 1,
         });
         return;
       }
@@ -366,6 +406,7 @@ export class DiscordAgentWorker {
         agentId: this.credential.agentId,
         token: this.credential.token,
         signature: signChallenge(this.credential.privateKey, message.challenge),
+        executionPolicyVersion: 1,
       });
       return;
     }
@@ -422,6 +463,7 @@ export class DiscordAgentWorker {
         "kind",
         "complexity",
         "modelSelection",
+        "executionPolicy",
         "activeSpecRevision",
         "acceptanceCriteria",
         "sourceStatements",
@@ -430,6 +472,9 @@ export class DiscordAgentWorker {
       ])
         accepted[key] = message[key];
       accepted.id = message.taskId;
+      accepted.executionPolicy = normalizeExecutionPolicy(
+        accepted.executionPolicy,
+      );
       void this.#task(accepted);
     }
   }

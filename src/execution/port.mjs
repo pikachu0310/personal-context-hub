@@ -1,3 +1,8 @@
+import {
+  normalizeExecutionPolicy,
+  restrictExecutionPolicy,
+} from "../engine/work-policy.mjs";
+
 // The execution boundary contains only data and callbacks, never SDK instances.
 // A backend implements run(text, options), observeMeeting(observation, options),
 // and runTask(request, { signal, onProgress, checkpoint }). The task runner owns
@@ -24,6 +29,7 @@ const stateFields = [
   "runRevision",
   "usage",
   "usageHistory",
+  "effectiveExecutionPolicy",
 ];
 export function executionState(task) {
   return Object.fromEntries(
@@ -34,8 +40,40 @@ export function executionState(task) {
 }
 function applyState(task, state = {}) {
   for (const key of stateFields) {
-    if (Object.hasOwn(state, key)) task[key] = structuredClone(state[key]);
+    if (!Object.hasOwn(state, key)) continue;
+    task[key] =
+      key === "effectiveExecutionPolicy"
+        ? restrictExecutionPolicy(
+            task.executionPolicy,
+            task.effectiveExecutionPolicy,
+            state[key],
+          )
+        : structuredClone(state[key]);
   }
+}
+function taskRequest(task) {
+  return {
+    ...executionState(task),
+    ...structuredClone({
+      id: task.id,
+      meetingId: task.meetingId,
+      requestKey: task.requestKey,
+      title: task.title,
+      request: task.request,
+      context: task.context,
+      kind: task.kind,
+      complexity: task.complexity,
+      executionPolicy: normalizeExecutionPolicy(task.executionPolicy),
+      sourceSequences: task.sourceSequences,
+      sourceStatements: task.sourceStatements,
+      acceptanceCriteria: task.acceptanceCriteria,
+      modelSelection: task.modelSelection,
+      specRevision: task.specRevision,
+      activeSpecRevision: task.activeSpecRevision,
+      additionalInstruction: task.additionalInstruction,
+      additionalInstructionSource: task.additionalInstructionSource,
+    }),
+  };
 }
 export function bindExecution(backend) {
   if (!backend) throw new TypeError("execution backend is required");
@@ -56,28 +94,21 @@ export function bindExecution(backend) {
     run: (text, options) => backend.run(text, options),
     observeMeeting: (observation, options) =>
       backend.observeMeeting(observation, options),
+    reviewTask: backend.reviewTask
+      ? async (task, options) =>
+          structuredClone(
+            await backend.reviewTask(
+              {
+                ...taskRequest(task),
+                result: task.result,
+                resultMetadata: structuredClone(task.resultMetadata),
+              },
+              options,
+            ),
+          )
+      : undefined,
     async runTask(task, { signal, onProgress, onEvent } = {}) {
-      const request = {
-        ...executionState(task),
-        id: task.id,
-        meetingId: task.meetingId,
-        requestKey: task.requestKey,
-        title: task.title,
-        request: task.request,
-        context: task.context,
-        kind: task.kind,
-        complexity: task.complexity,
-        sourceSequences: structuredClone(task.sourceSequences),
-        sourceStatements: structuredClone(task.sourceStatements),
-        acceptanceCriteria: structuredClone(task.acceptanceCriteria),
-        modelSelection: structuredClone(task.modelSelection),
-        specRevision: task.specRevision,
-        activeSpecRevision: task.activeSpecRevision,
-        additionalInstruction: task.additionalInstruction,
-        additionalInstructionSource: structuredClone(
-          task.additionalInstructionSource,
-        ),
-      };
+      const request = taskRequest(task);
       const result = await backend.runTask(request, {
         signal,
         onProgress,

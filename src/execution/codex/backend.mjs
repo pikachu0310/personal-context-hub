@@ -12,6 +12,15 @@ export function createCodexBackend(
   return {
     prepare: () => runner.prepare?.(),
     close: () => runner.close?.(),
+    createCoordinator: runner.createCoordinator
+      ? (options) => runner.createCoordinator(options)
+      : undefined,
+    reviewTask: runner.reviewTask
+      ? async (request, options) =>
+          structuredClone(
+            await runner.reviewTask(structuredClone(request), options),
+          )
+      : undefined,
     investigateQuestion: runner.investigateQuestion
       ? (question, options) => runner.investigateQuestion(question, options)
       : undefined,

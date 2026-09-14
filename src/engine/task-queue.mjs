@@ -192,6 +192,8 @@ export class TaskQueue {
       acceptanceCriteria: structuredClone(task.acceptanceCriteria),
       kind: task.kind,
       complexity: task.complexity,
+      executionPolicy: structuredClone(task.executionPolicy),
+      effectiveExecutionPolicy: structuredClone(task.effectiveExecutionPolicy),
       modelSelection: structuredClone(task.modelSelection),
       usage: structuredClone(task.usage),
       usageHistory: structuredClone(task.usageHistory),

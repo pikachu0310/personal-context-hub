@@ -207,3 +207,31 @@ export function authorizeMeetingTasks(tasks, statements, ownerUserId) {
     ];
   });
 }
+
+// The application marks an attributed, permitted question as research-eligible.
+// That mark is independent of taskEligible: a question can permit a read-only
+// investigation without permitting implementation. Model-supplied flags or
+// policies are never copied into the execution authority.
+export function authorizeMeetingResearchTasks(tasks, statements, ownerUserId) {
+  if (!ownerUserId || !Array.isArray(tasks) || !Array.isArray(statements))
+    return [];
+  const proposals = tasks.filter(
+    (task) =>
+      task?.kind === "research" &&
+      Array.isArray(task.sourceSequences) &&
+      task.sourceSequences.every(
+        (sequence) => Number.isInteger(sequence) && sequence > 0,
+      ),
+  );
+  const sources = statements.map((statement) => ({
+    ...statement,
+    taskEligible:
+      statement.readOnlyResearchEligible === true &&
+      !statement.contextOnly &&
+      !statement.handledAction,
+  }));
+  return authorizeMeetingTasks(proposals, sources, ownerUserId).map((task) => ({
+    ...task,
+    executionPolicy: { sandboxMode: "read-only" },
+  }));
+}
