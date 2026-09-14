@@ -5,8 +5,12 @@ export default [
   {
     ignores: [
       "node_modules/**",
+      "v0/**",
       "ui/node_modules/**",
       "ui/dist/**",
+      "packages/*/dist/**",
+      "packages/*/node_modules/**",
+      ".ido-build/**",
       ".desktop-build/**",
       "dist/**",
       ".private/**",

@@ -2,3 +2,7 @@ node_modules/
 .private/
 .codex_tmp_*/
 package-lock.json
+
+v0/
+.ido-build/
+packages/*/dist/

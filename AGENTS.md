@@ -106,3 +106,7 @@
 - For Thunderbird, inspect account metadata and `newestIndexedAt`, confirm the requested account, and then use a bounded folder, query, date window, and result limit. Account inspection must not print message bodies.
 - After JavaScript, MCP, scripts, dependency, or policy changes, run the repository verification suite appropriate to the change.
 - Before publishing, inspect the exact diff, the staged file list, secret-scanning results, and the full history intended for the remote. Never use broad staging commands for convenience.
+
+## Current source layout
+
+Current Engine, Client, Discord plugin, and shared runtime code live in `packages/`. Current build and validation tools live in `scripts/`. Runtime code must not import from outside `packages/`; the build enforces this. The historical application is archived independently and excluded from current workspaces and CI. Maintain the current system from the root and use the archived application's own working directory only for explicitly requested legacy work. Do not move or publish ignored local configuration, credentials or runtime data during source reorganization.
