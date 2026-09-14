@@ -90,6 +90,11 @@ try {
   await other.goto(b.origin);
   const menu = async (p) => {
     await p
+      .locator(".task-row")
+      .filter({ hasText: "Lifecycle task" })
+      .first()
+      .hover();
+    await p
       .getByRole("button", {
         name: "Lifecycle taskのタスクメニュー",
         exact: true,
@@ -97,6 +102,29 @@ try {
       .first()
       .click();
   };
+  const taskRow = page
+    .locator(".task-row")
+    .filter({ hasText: "Lifecycle task" })
+    .first();
+  const taskMenu = taskRow.getByRole("button", {
+    name: "Lifecycle taskのタスクメニュー",
+    exact: true,
+  });
+  await taskMenu.waitFor();
+  const menuOpacity = () =>
+    taskMenu.evaluate(
+      (element) => globalThis.getComputedStyle(element).opacity,
+    );
+  assert.equal(await menuOpacity(), "0");
+  await taskRow.hover();
+  await until(async () => (await menuOpacity()) === "1");
+  await page.mouse.move(700, 20);
+  await until(async () => (await menuOpacity()) === "0");
+  await taskMenu.focus();
+  await until(async () => (await menuOpacity()) === "1");
+  await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "退出", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
   await menu(other);
   await other.getByRole("menuitem", { name: "参加する", exact: true }).click();
   await until(
@@ -148,6 +176,10 @@ try {
   await dialog.getByRole("button", { name: "キャンセル", exact: true }).click();
   assert.ok(engine.store.get("task", task.id));
   await page
+    .locator(".project-name")
+    .filter({ hasText: "Membership project" })
+    .hover();
+  await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .click();
   await page.getByRole("menuitem", { name: "退出", exact: true }).click();
@@ -163,6 +195,10 @@ try {
     true,
   );
   await leave.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await page
+    .locator(".project-name")
+    .filter({ hasText: "Membership project" })
+    .hover();
   await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .click();
@@ -181,6 +217,10 @@ try {
   await until(
     () => engine.store.get("project", project.id).ownerDeviceId === "device-1",
   );
+  await page
+    .locator(".project-name")
+    .filter({ hasText: "Membership project" })
+    .hover();
   await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .click();
@@ -202,6 +242,10 @@ try {
   await restartedA.workspaceRequest("project.join", {
     token: invitation.token,
   });
+  await page
+    .locator(".project-name")
+    .filter({ hasText: "Membership project" })
+    .hover();
   await page
     .getByRole("button", { name: "Membership projectの設定", exact: true })
     .waitFor();

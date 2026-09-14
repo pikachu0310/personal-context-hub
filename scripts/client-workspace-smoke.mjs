@@ -347,18 +347,80 @@ try {
     .getByText("フォームのエラーは日本語で説明してください。", { exact: true })
     .waitFor();
   await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  const schemeIs = (scheme) =>
+    page.waitForFunction(
+      (expected) =>
+        globalThis.document.documentElement.dataset.mantineColorScheme ===
+        expected,
+      scheme,
+    );
+  const lightCanvas = await page
+    .locator(".workspace-main")
+    .evaluate(
+      (element) => globalThis.getComputedStyle(element).backgroundColor,
+    );
+  await page.emulateMedia({ colorScheme: "dark" });
+  await schemeIs("dark");
+  const darkCanvas = await page
+    .locator(".workspace-main")
+    .evaluate(
+      (element) => globalThis.getComputedStyle(element).backgroundColor,
+    );
+  assert.notEqual(darkCanvas, lightCanvas);
+  await page.getByRole("button", { name: "ユーザー設定を開く" }).click();
+  await page.getByRole("dialog").getByText("ダーク", { exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("ido.color-scheme")),
+    "dark",
+  );
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.emulateMedia({ colorScheme: "light" });
+  assert.equal(
+    await page.locator("html").getAttribute("data-mantine-color-scheme"),
+    "dark",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await schemeIs("dark");
+  await page.screenshot({ path: ".ido-build/screenshots/workspace-dark.png" });
+  await page.getByRole("button", { name: "ユーザー設定を開く" }).click();
+  await page.getByRole("dialog").getByText("ライト", { exact: true }).click();
+  await schemeIs("light");
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("ido.color-scheme")),
+    "light",
+  );
+  await page.getByRole("dialog").getByText("システム", { exact: true }).click();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await schemeIs("dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await schemeIs("light");
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-appearance-settings.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.equal(
+    await page
+      .locator('.task-row[data-task-id="task"] .task-indicator.running')
+      .count(),
+    1,
+  );
   assert.equal(await page.locator(".avatar-overflow").innerText(), "+2");
   assert.ok((await page.locator(".task-avatars .bot-avatar").count()) > 0);
-  const historical = page.getByRole("region", {
-    name: "自分の以前の登録",
-    exact: true,
-  });
+  const historical = page.locator('.task-row[data-task-id="historical-self"]');
+  await historical
+    .getByRole("img", { name: "未確認の結果", exact: true })
+    .waitFor();
   assert.equal(await historical.locator(".user-avatar").count(), 1);
   assert.equal(
     await historical.locator(".task-avatars").getAttribute("aria-label"),
     "参加者: Demo user",
   );
-  await historical.getByRole("button").click();
+  await historical.locator(".task-link").click();
+  await historical.locator(".task-indicator").waitFor({ state: "hidden" });
   await page
     .getByRole("heading", { name: "以前の自分のタスク", level: 2, exact: true })
     .waitFor();
@@ -370,9 +432,7 @@ try {
   );
   assert.equal(client.teamTasks.tasks[0].clientId, "old-device");
   await page
-    .locator('.project-group[data-project-id="project"]')
-    .getByRole("region", { name: "ほかのPC", exact: true })
-    .getByRole("button")
+    .locator('.task-row[data-task-id="remote-task"] .task-link')
     .click();
   await page
     .getByText("ルーティングのテストを実行中です。", { exact: true })
@@ -389,37 +449,58 @@ try {
     path: ".ido-build/screenshots/workspace-team-tasks.png",
   });
   await page
-    .locator('.project-group[data-project-id="project"]')
-    .getByRole("region", { name: "未割当", exact: true })
-    .getByRole("button")
+    .locator('.task-row[data-task-id="queued-task"] .task-link')
     .click();
   await page
     .getByText("実行先が決まると、このPCまたはほかのPCの一覧へ移動します。", {
       exact: true,
     })
     .waitFor();
+  await page.reload();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  assert.equal(await historical.locator(".task-indicator").count(), 0);
+  client.teamTasks.tasks[0].revision++;
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await historical
+    .getByRole("img", { name: "未確認の結果", exact: true })
+    .waitFor();
+  await historical.locator(".task-link").click();
+  await historical.locator(".task-indicator").waitFor({ state: "hidden" });
   const voiceGroup = page.locator('.project-group[data-project-id="project"]');
   const toolsGroup = page.locator('.project-group[data-project-id="tools"]');
   for (const project of [voiceGroup, toolsGroup]) {
+    assert.equal(await project.locator(".project-tasks").count(), 1);
     assert.equal(
-      await project
-        .getByRole("region", { name: "このPCで実装中", exact: true })
-        .count(),
-      1,
-    );
-    assert.equal(
-      await project
-        .getByRole("region", { name: "ほかのPC", exact: true })
-        .count(),
-      1,
-    );
-    assert.equal(
-      await project
-        .getByRole("region", { name: "未割当", exact: true })
-        .count(),
-      1,
+      await project.locator(".sidebar-caption, .shared-task-owner").count(),
+      0,
     );
   }
+  assert.equal(
+    await page
+      .locator('.task-row[data-task-id="queued-task"] .task-indicator')
+      .count(),
+    0,
+  );
+  const rowBox = await historical.boundingBox();
+  assert.ok(rowBox.height <= 38, `Task row too tall: ${rowBox.height}`);
+  const addProject = await page
+    .getByRole("button", { name: "プロジェクトを追加", exact: true })
+    .boundingBox();
+  const caption = await page.locator(".sidebar-caption > span").boundingBox();
+  assert.ok(
+    Math.abs(
+      addProject.y + addProject.height / 2 - caption.y - caption.height / 2,
+    ) < 2,
+  );
+  const addTask = await voiceGroup.locator(".project-compose").boundingBox();
+  const projectTitle = await voiceGroup
+    .locator(".project-name > span")
+    .boundingBox();
+  assert.ok(
+    Math.abs(
+      addTask.y + addTask.height / 2 - projectTitle.y - projectTitle.height / 2,
+    ) < 2,
+  );
   assert.equal(
     await voiceGroup
       .getByRole("button")
@@ -553,6 +634,9 @@ try {
     .click();
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
+  await page
+    .locator('.project-group[data-project-id="project"] .project-name')
+    .hover();
   await page
     .getByRole("button", { name: "discord-voiceの設定", exact: true })
     .click();
@@ -751,7 +835,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "Workspace smoke passed: white theme, right environment/sources/diff panels, actual branch and detached HEAD, profile context, mobile drawer, Manual discussion -> execute, live instruction, command output, diff, search, stop, offline gating, reconnect, avatar upload/removal, centered modal and narrow layout.",
+    "Workspace smoke passed: light/dark/system appearance and localStorage persistence, compact unified task rows and unread result acknowledgements, right environment/sources/diff panels, actual branch and detached HEAD, profile context, mobile drawer, Manual discussion -> execute, live instruction, command output, diff, search, stop, offline gating, reconnect, avatar upload/removal, centered modal and narrow layout.",
   );
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
