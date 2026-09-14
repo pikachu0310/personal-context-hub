@@ -886,11 +886,25 @@ for (const liveMode of [false, true])
             "確認できた結果を説明します。",
           ],
     );
-    if (liveMode)
-      assert.deepEqual(f.live[0].comments, [
-        "タスク「対象の調査」を受け付けました。実行先の空き・許可を待っています。",
-        "確認できた結果を説明します。",
-      ]);
+    if (liveMode) {
+      await until(() =>
+        f.live.some((session) =>
+          session.comments.includes("確認できた結果を説明します。"),
+        ),
+      );
+      assert.deepEqual(
+        f.live.flatMap((session) => session.comments),
+        [
+          "タスク「対象の調査」を受け付けました。実行先の空き・許可を待っています。",
+          "確認できた結果を説明します。",
+        ],
+      );
+      assert.equal(
+        f.live[0].closed,
+        true,
+        "new reply fences the prior Live output",
+      );
+    }
     f.engine.flush();
     await f.core.flush("meeting");
     assert.equal(f.calls.length, 2);
@@ -2049,4 +2063,87 @@ test("minutes rollover preserves the project model, recent context and original 
     f.calls.at(-1)!.observation.context!,
     /前提を覚えてください/,
   );
+});
+
+test("speech review uses the main inbox immediately, cannot grant work, and is not restored", async (t) => {
+  const f = await fixture(t);
+  await f.input({
+    audio: audio(),
+    capture: {
+      sessionId: "voice",
+      utteranceId: "question",
+      segmentIndex: 0,
+      startedAt: 100,
+      complete: true,
+      final: true,
+    },
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  const message = f.messages().find((message) => message.role === "user")!;
+  const manager = f.core.session("meeting").audio;
+  manager.turns.offer({
+    text: "元の長い回答",
+    sourceIds: [message.id],
+    targets: [],
+    provider: "text-speech",
+  });
+  f.respond((observation) => {
+    const event = observation.events.find(
+      (event) => event.type === "speech_review",
+    );
+    if (!event) return silent();
+    return {
+      ...silent(),
+      speech: {
+        candidateId: event.review.candidateId,
+        revision: event.review.revision,
+        action: "replace",
+        text: "必要な要点だけです",
+      },
+      // A speech review must not grant authority using historical source IDs.
+      tasks: [
+        {
+          title: "unauthorized",
+          kind: "implementation",
+          sourceIds: [message.id],
+          acceptanceCriteria: [],
+        },
+      ],
+      reply: {
+        text: "重複する回答",
+        reason: "new_finding",
+        sourceIds: [message.id],
+      },
+    };
+  });
+  const before = f.calls.length;
+  await manager.turns.interrupt();
+  await until(() => f.speech.length === 1);
+  await f.idle();
+  assert.equal(
+    f.calls.length,
+    before + 1,
+    "does not wait for the normal 60s test observation interval",
+  );
+  assert.equal(
+    f.factories.length,
+    1,
+    "uses the same conversation model runtime",
+  );
+  assert.deepEqual(f.speech, ["必要な要点だけです"]);
+  assert.equal(f.tasks().length, 0);
+  assert.equal(
+    f.delivered.filter((output) => output.kind === "audio").length,
+    1,
+  );
+  const saved = f.engine.store.get<any>("coordinator", "meeting");
+  assert.equal(
+    JSON.stringify(saved.inbox.pending).includes("speech_review"),
+    false,
+  );
+  await f.restart();
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.speech.length, 1);
 });

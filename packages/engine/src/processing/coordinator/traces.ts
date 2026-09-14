@@ -10,6 +10,7 @@ export type TaskProposal = CoordinatorResponse["tasks"][number];
 export type ModelValue = {
   response: CoordinatorResponse;
   modeRevision: number;
+  audioRevision?: number;
   controlVersions: Record<string, number>;
 };
 export interface TaskDecision {

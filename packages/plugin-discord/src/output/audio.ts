@@ -67,11 +67,14 @@ export class DiscordAudioOutput {
   }
   speakerStart(subject: string) {
     this.state.activeSpeakers.add(subject);
-    this.clear();
+    this.state.playbackRevision = (this.state.playbackRevision ?? 0) + 1;
   }
-  speakerEnd(subject: string) {
+  speakerInterrupt() {
+    this.stop(this.currentId ?? this.raw?.id);
+  }
+  speakerEnd(subject: string, silenceMs = 0) {
     this.state.activeSpeakers.delete(subject);
-    this.quietSince = Date.now();
+    this.quietSince = Date.now() - Math.min(this.quietMs, silenceMs);
   }
   private clear() {
     this.currentCancel?.();
@@ -126,7 +129,12 @@ export class DiscordAudioOutput {
             throw new Error("AUDIO_PLAYBACK_TIMEOUT");
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        if (!this.valid(message)) throw new Error("AUDIO_PLAYBACK_DISCARDED");
+        if (
+          !this.valid(message) ||
+          (message.playbackRevision !== undefined &&
+            message.playbackRevision !== this.state.playbackRevision)
+        )
+          throw new Error("AUDIO_PLAYBACK_DISCARDED");
         const audio = decode(message.audio, 6 * 1024 * 1024, 1);
         if (message.audioFormat && message.audioFormat !== "ogg-opus")
           throw new Error("INVALID_AUDIO_FORMAT");
@@ -182,7 +190,16 @@ export class DiscordAudioOutput {
     )
       throw new Error("INVALID_AUDIO_FRAME");
     const pcm = decode(message.audio, 9600, 2);
-    if (!this.valid(message) || this.state.activeSpeakers.size) return;
+    if (!this.valid(message)) return;
+    // A backchannel may overlap an existing stream, but never starts a new one.
+    if (
+      this.raw?.id !== message.candidateId &&
+      (this.state.activeSpeakers.size ||
+        Date.now() - this.quietSince < this.quietMs ||
+        (message.playbackRevision !== undefined &&
+          message.playbackRevision !== this.state.playbackRevision))
+    )
+      return;
     const id = message.candidateId;
     const sequence = Number(message.audioSequence);
     if (sequence < 0 || sequence <= (this.sequences.get(id) ?? -1)) return;

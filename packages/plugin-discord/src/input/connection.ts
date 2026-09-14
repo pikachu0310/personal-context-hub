@@ -148,8 +148,15 @@ export async function start(
           meetingId: state.config.meetingId,
           projectId: state.config.projectId,
           speechEpoch: receivedEpoch,
+          playbackRevision: state.playbackRevision,
         },
         emit,
+        {
+          onInterrupt: () => {
+            if (state.voice === connection)
+              audioOutput(state).speakerInterrupt();
+          },
+        },
       );
       const stream = connection.receiver.subscribe(userId, {
         end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
@@ -167,11 +174,13 @@ export async function start(
         if (finished) return;
         finished = true;
         capture.finish(complete);
-        audioOutput(state).speakerEnd(userId);
+        if (state.voice === connection)
+          audioOutput(state).speakerEnd(userId, capture.silenceMs);
         active.delete(userId);
       };
       stream.pipe(decoder);
       decoder.on("data", (chunk: Buffer) => {
+        if (state.voice !== connection) return;
         try {
           capture.push(chunk);
         } catch {
