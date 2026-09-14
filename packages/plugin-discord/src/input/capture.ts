@@ -1,9 +1,12 @@
+import { SpeechActivityGate } from "@ido/common/runtime/audio-signal";
 import { randomUUID } from "node:crypto";
 import { wav } from "./wav.js";
 
 // One capture per Discord subject. PCM never mixes before attributed STT.
 // Frames feed Live; complete bounded segments feed transcription independently.
 export class VoiceCapture {
+  private gate: SpeechActivityGate;
+  private onInterrupt: () => void;
   private chunks: Buffer[] = [];
   private size = 0;
   private segmentIndex = 0;
@@ -23,12 +26,20 @@ export class VoiceCapture {
       meetingId: string;
       projectId?: string;
       speechEpoch: number;
+      playbackRevision?: number;
     },
     readonly emit: (event: Record<string, unknown>) => void,
-    { startedAt = Date.now(), maximumSeconds = 20 } = {},
+    {
+      startedAt = Date.now(),
+      maximumSeconds = 20,
+      now = Date.now,
+      onInterrupt = () => {},
+    } = {},
   ) {
     if (maximumSeconds <= 0 || maximumSeconds > 20)
       throw new Error("INVALID_CAPTURE_LIMIT");
+    this.gate = new SpeechActivityGate(now);
+    this.onInterrupt = onInterrupt;
     this.startedAt = startedAt;
     this.maximumBytes = Math.max(
       4,
@@ -48,17 +59,22 @@ export class VoiceCapture {
       },
     };
   }
-  private activity(activity: "start" | "end") {
+  private activity(activity: "start" | "end" | "interrupt") {
     this.emit({
       ...this.envelope(),
       eventId: `${this.utteranceId}:${activity}`,
       activity,
+      ...(activity === "end" ? { silenceMs: this.gate.silenceMs } : {}),
     });
   }
   push(chunk: Buffer) {
     if (this.closed) return;
     if (!Buffer.isBuffer(chunk) || chunk.length % 4)
       throw new Error("INVALID_PCM_FRAME");
+    if (this.gate.push(chunk)) {
+      this.onInterrupt();
+      this.activity("interrupt");
+    }
     for (let offset = 0; offset < chunk.length;) {
       if (this.size === this.maximumBytes) this.segment(false);
       const size = Math.min(
@@ -102,6 +118,9 @@ export class VoiceCapture {
     this.segmentSamples = this.samples;
     this.chunks = [];
     this.size = 0;
+  }
+  get silenceMs() {
+    return this.gate.silenceMs;
   }
   finish(complete = true) {
     if (this.closed) return;

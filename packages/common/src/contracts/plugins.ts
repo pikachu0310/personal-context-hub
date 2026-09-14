@@ -57,7 +57,8 @@ export interface ConversationInput {
   text?: string;
   audio?: string;
   audioFrame?: AudioFrame;
-  activity?: "start" | "end" | "quiet";
+  activity?: "start" | "end" | "quiet" | "interrupt";
+  silenceMs?: number;
   capture?: AudioCapture;
   conversationMode?: ConversationModeKind;
   priority?: "normal" | "immediate";

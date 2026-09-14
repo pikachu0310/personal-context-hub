@@ -269,3 +269,30 @@ test("response parsing defaults empty lists but rejects malformed task authority
     /Liveが音声会話を担当/,
   );
 });
+
+test("speech decisions require a matching-shaped candidate, revision and bounded replacement", () => {
+  assert.equal(parseCoordinatorResponse('{"reply":null}').speech, undefined);
+  const speech = {
+    candidateId: "candidate",
+    revision: 3,
+    action: "replace",
+    text: "短い回答",
+  };
+  assert.deepEqual(
+    parseCoordinatorResponse(JSON.stringify({ speech })).speech,
+    speech,
+  );
+  for (const invalid of [
+    { ...speech, revision: -1 },
+    { ...speech, revision: 1.5 },
+    { ...speech, candidateId: "" },
+    { ...speech, action: "replay" },
+    { ...speech, text: "x".repeat(2001) },
+    { ...speech, text: "" },
+    { ...speech, action: "continue" },
+  ])
+    assert.throws(
+      () => parseCoordinatorResponse(JSON.stringify({ speech: invalid })),
+      /INVALID_COORDINATOR_RESPONSE/,
+    );
+});

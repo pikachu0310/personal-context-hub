@@ -315,8 +315,19 @@ export function validateMediaInput(event: ConversationInput) {
     )
       throw new Error("INVALID_MEDIA_INPUT");
   }
-  if (event.activity && !["start", "end", "quiet"].includes(event.activity))
+  if (
+    event.activity &&
+    !["start", "end", "quiet", "interrupt"].includes(event.activity)
+  )
     throw new Error("INVALID_AUDIO_ACTIVITY");
+  if (
+    event.silenceMs !== undefined &&
+    (event.activity !== "end" ||
+      !Number.isFinite(event.silenceMs) ||
+      event.silenceMs < 0 ||
+      event.silenceMs > 1000)
+  )
+    throw new Error("INVALID_AUDIO_SILENCE");
   if (event.audioFrame) {
     const frame = event.audioFrame;
     if (

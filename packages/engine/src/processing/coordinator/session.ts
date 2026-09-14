@@ -4,9 +4,10 @@ import type {
   ConversationMode,
   CoordinatorEvent,
   CoordinatorObservation,
-  CoordinatorResponse,
   CoordinatorSource,
   CoordinatorFactory,
+  SpeechReview,
+  SpeechDecision,
 } from "@ido/common/contracts/coordinator";
 import type {
   ConversationInput,
@@ -71,6 +72,10 @@ class MeetingCoordinator {
   lastRoute?: Route;
   modeRevision: number;
   closed = false;
+  private speechReviews = new Map<
+    string,
+    (decision?: SpeechDecision | null) => void
+  >();
   constructor(
     readonly store: Repository,
     readonly meetingId: string,
@@ -84,6 +89,7 @@ class MeetingCoordinator {
       mode: saved?.mode ?? options.mode ?? "text-speech",
       createLiveSession: options.createLiveSession,
       synthesize: options.synthesize,
+      reviewSpeech: (review, signal) => this.reviewSpeech(review, signal),
       currentResults: () =>
         this.projectTasks().flatMap((task) => {
           const result = options.work.getResult(task.id);
@@ -113,6 +119,7 @@ class MeetingCoordinator {
         return {
           run: async (observation: CoordinatorObservation, runOptions: any) => {
             const modeRevision = this.modeRevision;
+            const audioRevision = this.audio.turns.revision;
             const controlVersions = Object.fromEntries(
               this.projectTasks().map((task) => [
                 task.id,
@@ -127,6 +134,7 @@ class MeetingCoordinator {
                 () => runtime.run(observation, runOptions),
               ),
               modeRevision,
+              audioRevision,
               controlVersions,
             };
           },
@@ -153,6 +161,27 @@ class MeetingCoordinator {
     this.timer.unref();
   }
 
+  private reviewSpeech(
+    review: SpeechReview,
+    signal: AbortSignal,
+  ): Promise<SpeechDecision | null | undefined> {
+    if (this.closed || signal.aborted) return Promise.resolve(undefined);
+    const id = `speech-review:${review.candidateId}:${review.revision}`;
+    return new Promise((resolve) => {
+      const settle = (decision?: SpeechDecision | null) => {
+        signal.removeEventListener("abort", aborted);
+        this.speechReviews.delete(id);
+        resolve(decision);
+      };
+      const aborted = () => settle();
+      signal.addEventListener("abort", aborted, { once: true });
+      this.speechReviews.set(id, settle);
+      void this.inbox
+        .submit([{ id, type: "speech_review", review }], { urgent: true })
+        .catch(() => settle());
+    });
+  }
+
   meeting(meetingId = this.meetingId) {
     return this.store.get<Meeting>("meeting", meetingId);
   }
@@ -173,11 +202,22 @@ class MeetingCoordinator {
       );
   }
   save(inbox: unknown = this.inbox.snapshot()) {
+    const savedInbox = structuredClone(inbox) as any;
+    if (savedInbox) {
+      const durable = (events: CoordinatorEvent[] = []) =>
+        events.filter((event) => event.type !== "speech_review");
+      savedInbox.pending = durable(savedInbox.pending);
+      if (savedInbox.active) {
+        savedInbox.active.events = durable(savedInbox.active.events);
+        savedInbox.active.steering = durable(savedInbox.active.steering);
+        if (!savedInbox.active.events.length) savedInbox.active = undefined;
+      }
+    }
     this.store.put("coordinator", this.meetingId, {
       version: 1,
       mode: this.audio.mode,
       modeRevision: this.modeRevision,
-      inbox,
+      inbox: savedInbox,
       completed: [...this.completed].slice(-200),
     });
   }
@@ -850,6 +890,19 @@ class MeetingCoordinator {
       return;
     this.requireRoutes(batch.events);
     const response = { ...value.response };
+    const speechEvents = batch.events.filter(
+      (event) => event.type === "speech_review",
+    );
+    for (const event of speechEvents) {
+      const decision = response.speech;
+      this.speechReviews.get(event.id)?.(
+        value.modeRevision === this.modeRevision &&
+          decision?.candidateId === event.review.candidateId &&
+          decision.revision === event.review.revision
+          ? decision
+          : undefined,
+      );
+    }
     const sources = batch.events.flatMap((event) =>
       event.type === "message" ? [event.source] : [],
     );
@@ -1277,6 +1330,7 @@ class MeetingCoordinator {
         }
         if (
           !output.audioRequested &&
+          !speechEvents.length &&
           value.modeRevision === this.modeRevision &&
           (resultEvent || selected.some((source) => source.origin === "audio"))
         ) {
@@ -1286,6 +1340,8 @@ class MeetingCoordinator {
             .reply(
               {
                 text: answer.text,
+                contextRevision: value.audioRevision,
+                replyTo: route?.event.replyTo,
                 sourceIds: answer.sourceIds,
                 reason:
                   resultEvent || this.audio.mode === "live"
@@ -1337,6 +1393,7 @@ class MeetingCoordinator {
   async close() {
     this.closed = true;
     clearInterval(this.timer);
+    for (const settle of this.speechReviews.values()) settle();
     await this.inbox.close();
     await this.audio.close();
     this.save();
