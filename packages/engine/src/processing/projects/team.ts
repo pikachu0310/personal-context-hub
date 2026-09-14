@@ -300,7 +300,15 @@ export class ProjectTeam {
               ? this.store.get<Device>("device", message.authorId.slice(7))
               : undefined;
             return {
-              ...message,
+              id: message.id,
+              authorId: message.authorId,
+              authorName: message.authorName,
+              role: message.role,
+              text: message.text,
+              replyText: message.replyText,
+              at: message.at,
+              stage: message.stage,
+              steps: message.steps,
               ...(device
                 ? {
                     authorIdentityId: deviceIdentity(this.store, device),

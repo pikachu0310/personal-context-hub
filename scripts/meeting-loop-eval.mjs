@@ -292,6 +292,22 @@ try {
     }),
   );
 } finally {
+  report.finalState = {
+    messages: engine.store
+      .list("message")
+      .map(({ text, origin, stage }) => ({ text, origin, stage })),
+    tasks: engine.store
+      .list("task")
+      .map(({ id, state, progress, revision }) => ({
+        id,
+        state,
+        progress,
+        revision,
+      })),
+    outputs,
+    coordinatorRequests: requests,
+  };
+  console.log(JSON.stringify({ stage: "final-state", ...report.finalState }));
   await browser?.close();
   await client.close();
   await engine.close();

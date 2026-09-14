@@ -638,6 +638,7 @@ class MeetingCoordinator {
     record.stage = "queued";
     record.steps = {
       ...record.steps,
+      transcription: { state: event.audio ? "completed" : "skipped" },
       minutes: { state: "pending" },
       reply: { state: "pending" },
       delivery: { state: "pending" },

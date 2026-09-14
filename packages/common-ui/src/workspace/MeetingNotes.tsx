@@ -20,7 +20,13 @@ export function MeetingNotes({
   meetings: MeetingView[];
   document?: ReactNode;
 }) {
-  const [tab, setTab] = useState<string | null>("minutes");
+  const [tab, setTab] = useState<string | null>(() =>
+    document &&
+    !meetings.some((meeting) => meeting.knowledge?.topics.length) &&
+    meetings.some((meeting) => meeting.summary.trim())
+      ? "document"
+      : "minutes",
+  );
   const [query, setQuery] = useState("");
   const [sources, setSources] = useState<string[]>([]);
   const [limit, setLimit] = useState(100);

@@ -496,6 +496,7 @@ for (const liveMode of [false, true])
     assert.equal(task.executionPolicy?.sandboxMode, "read-only");
     assert.deepEqual(task.sourceIds, sourceIds(f.calls[0].observation));
     assert.equal(f.messages()[0].authorName, "話者A");
+    assert.equal(f.messages()[0].steps?.transcription?.state, "completed");
     const workerOwner = f.engine.store.createUser(
       "worker-owner",
       "fixture-password-long",
