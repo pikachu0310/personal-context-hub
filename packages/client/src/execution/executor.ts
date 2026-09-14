@@ -9,6 +9,8 @@ import { AppServerCodex } from "../codex/app-server.mjs";
 import { load } from "../storage/load.js";
 import { save } from "../storage/save.js";
 import { execute } from "./run.js";
+import type { AgentKind } from "../agents/types.js";
+import { ClaudeRuntime } from "../agents/claude.js";
 import {
   normalizeExecutionPolicy,
   restrictExecutionPolicy,
@@ -27,6 +29,10 @@ export interface WorkInstruction {
 }
 
 export interface Run {
+  model?: string;
+  agent?: AgentKind;
+  origin?: "local";
+  localMapping?: Mapping;
   progressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
   planApproved?: boolean;
@@ -49,6 +55,8 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
+  createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
+    new ClaudeRuntime(options);
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
   readonly waitForPlan = waitForPlan.bind(this);
   readonly startPlannedWork = startPlannedWork.bind(this);
@@ -58,7 +66,7 @@ export class Executor {
   steering = new Map<string, Promise<void>>();
   active = new Map<
     string,
-    { thread: any; codex: AppServerCodex; abort: AbortController }
+    { thread: any; codex: { close(): Promise<void> }; abort: AbortController }
   >();
   approvals = new Map<
     string,
@@ -83,6 +91,7 @@ export class Executor {
   readonly load = load.bind(this);
   readonly save = save.bind(this);
   report(value: Run) {
+    if (value.origin === "local") return;
     this.emit({
       v: 1,
       type: "result",
@@ -103,10 +112,21 @@ export class Executor {
     mappings: Mapping[],
     allow: boolean,
     slots: number,
+    local?: {
+      progressMode: "auto" | "manual";
+      agent?: AgentKind;
+      model?: string;
+    },
   ) {
     if (!command.id) throw new Error("COMMAND_ID_REQUIRED");
+    const existing = this.runs[String(command.runId)];
+    if (existing && (existing.origin === "local") !== !!local)
+      throw new Error("TASK_ORIGIN_MISMATCH");
+    const acknowledge = () => {
+      if (!local) this.emit({ v: 1, type: "ack", id: command.id });
+    };
     if (this.commands.includes(command.id)) {
-      this.emit({ v: 1, type: "ack", id: command.id });
+      acknowledge();
       const previous = this.runs[String(command.runId)];
       if (previous) this.report(previous);
       return;
@@ -122,7 +142,7 @@ export class Executor {
     ) {
       this.commands.push(command.id);
       await this.save();
-      this.emit({ v: 1, type: "ack", id: command.id });
+      acknowledge();
       this.report(previous);
       return;
     }
@@ -153,14 +173,22 @@ export class Executor {
       ) {
         this.commands.push(command.id);
         await this.save();
-        this.emit({ v: 1, type: "ack", id: command.id });
+        acknowledge();
         this.report(previous);
         return;
       }
       const directory =
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
       const value: Run = {
-        progressMode: previous?.progressMode ?? mapping.progressMode ?? "auto",
+        agent: previous?.agent ?? local?.agent ?? "codex",
+        model: previous ? previous.model : local?.model,
+        origin: local ? "local" : undefined,
+        localMapping: local ? structuredClone(mapping) : undefined,
+        progressMode:
+          previous?.progressMode ??
+          local?.progressMode ??
+          mapping.progressMode ??
+          "auto",
         activity: structuredClone(previous?.activity ?? []),
         activityDropped: previous?.activityDropped,
         activityVersion: previous?.activityVersion,
@@ -209,7 +237,7 @@ export class Executor {
       this.runs[task.runId] = value;
       this.commands.push(command.id);
       await this.save();
-      this.emit({ v: 1, type: "ack", id: command.id });
+      acknowledge();
       if (value.state === "interrupted") {
         value.progress =
           "An earlier instruction has unknown delivery. Resolve it before retrying.";
@@ -220,8 +248,7 @@ export class Executor {
         .catch(async (error) => {
           if (!["cancelled", "interrupted"].includes(value.state))
             value.state = "failed";
-          value.progress =
-            "Execution stopped or failed. Inspect the local repository and Codex login.";
+          value.progress = `Execution stopped or failed. Inspect the local repository and ${value.agent === "claude" ? "Claude" : "Codex"} login.`;
           recordActivity(value, {
             id: "terminal",
             kind: "status",
@@ -258,7 +285,7 @@ export class Executor {
         this.commands.push(command.id);
         await this.save();
         this.report(stopped);
-        this.emit({ v: 1, type: "ack", id: command.id });
+        acknowledge();
         return;
       }
       this.commands.push(command.id);
@@ -281,7 +308,7 @@ export class Executor {
       });
       await this.save();
       this.report(previous);
-      this.emit({ v: 1, type: "ack", id: command.id });
+      acknowledge();
     } else if (command.type === "steer") {
       if (!previous) return;
       if (typeof command.text !== "string" || !command.text.trim())
@@ -321,7 +348,7 @@ export class Executor {
       if (previous.phase === "awaiting-plan")
         this.planWaiters.get(previous.task.runId)?.("discuss");
       this.report(previous);
-      this.emit({ v: 1, type: "ack", id: command.id });
+      acknowledge();
     }
   }
   controlReceipt(

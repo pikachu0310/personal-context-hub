@@ -16,10 +16,12 @@ import { atomic, json, secret } from "@ido/common/runtime/platform";
 import { connect } from "../connection/engine.js";
 import { control } from "../connection/control.js";
 import type { WorkReceipt } from "@ido/common/contracts/work";
+import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
 import { pair } from "../connection/pair.js";
 import { pollPair } from "../connection/poll.js";
 import { Executor } from "../execution/executor.js";
 import { route } from "../http/routes.js";
+import { agentCatalog } from "../agents/model-catalog.js";
 import { ClientPreview } from "../preview/relay.js";
 
 import { checkAccount } from "../auth/account.js";
@@ -43,6 +45,19 @@ interface Settings {
   projects: Project[];
 }
 export class Client {
+  agentCatalog = async () => {
+    const catalog = await agentCatalog(this.executor.home, this.directory);
+    this.loginStatus = catalog.find((value) => value.agent === "codex")
+      ?.authenticated
+      ? "authenticated"
+      : "login required";
+    this.claudeLoginStatus = catalog.find((value) => value.agent === "claude")
+      ?.authenticated
+      ? "authenticated"
+      : "not authenticated";
+    if (!this.stopping) this.ready();
+    return catalog;
+  };
   settings: Settings = { mappings: [], slots: 1, projects: [] };
   credentials: Credentials;
   executor: Executor;
@@ -73,6 +88,9 @@ export class Client {
       timer: NodeJS.Timeout;
     }
   >();
+  teamTasksSupported = false;
+  teamTasks?: TeamTaskSnapshot;
+  teamTasksRequestedAt = 0;
   controlRequests = new Map<
     string,
     {
@@ -108,6 +126,8 @@ export class Client {
   status = "offline";
   login?: ChildProcess;
   loginStatus = "not checked";
+  claudeLoginStatus = "not checked";
+  claudeLoginUrl?: string;
   loginUrl?: string;
   suggestedEngine?: string;
   desktop?: { name: string; version: string; pid: number; platform: string };

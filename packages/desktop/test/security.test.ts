@@ -35,6 +35,18 @@ test("desktop allows only its own renderer origin and exact active login or pair
   const login = "https://auth.openai.com/oauth/authorize?state=example";
   assert.ok(externalLink(pairing, pairing, login));
   assert.ok(externalLink(login, pairing, login));
+  const claude = "https://claude.ai/oauth/authorize?state=fixture";
+  assert.ok(externalLink(claude, undefined, undefined, claude));
+  assert.ok(!externalLink(claude, undefined, undefined, claude + "other"));
+  assert.ok(
+    !externalLink(
+      "https://claude.ai.evil.example/oauth/authorize",
+      undefined,
+      undefined,
+      "https://claude.ai.evil.example/oauth/authorize",
+    ),
+  );
+  assert.ok(externalLink("https://code.claude.com/docs/en/authentication"));
   for (const url of [
     "file:///tmp/a",
     "https://evil.example",

@@ -2,6 +2,7 @@ import { sign } from "node:crypto";
 import { WebSocket } from "ws";
 import { HttpError } from "@ido/common/runtime/http";
 import type { WorkReceipt } from "@ido/common/contracts/work";
+import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
 import {
   frame,
   type Command,
@@ -17,6 +18,9 @@ export async function connect(this: Client) {
   this.connected = false;
   this.controlSupported = false;
   this.projectCreationSupported = false;
+  this.teamTasksSupported = false;
+  this.teamTasks = undefined;
+  this.teamTasksRequestedAt = 0;
   this.status = "connecting";
   const privateKey = await this.credentials.get("device.privateKey");
   if (!privateKey) {
@@ -69,6 +73,7 @@ export async function connect(this: Client) {
       this.controlSupported = data.controlVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
       this.workspaceSupported = data.workspaceVersion === 1;
+      this.teamTasksSupported = data.taskListVersion === 1;
       this.status = "connected";
       this.settings.projects = data.projects as Project[];
       if (Array.isArray(data.tasks))
@@ -113,6 +118,10 @@ export async function connect(this: Client) {
       }
       return;
     }
+    if (data.type === "tasks.snapshot") {
+      this.teamTasks = data.snapshot as TeamTaskSnapshot;
+      return;
+    }
     if (data.type === "work.control.result") {
       const request = this.controlRequests.get(String(data.requestKey));
       if (request) {
@@ -127,6 +136,7 @@ export async function connect(this: Client) {
       const value = this.executor.runs[String(data.runId)];
       if (
         !value ||
+        value.origin === "local" ||
         value.task.id !== data.taskId ||
         value.task.revision !== data.revision
       )
@@ -175,6 +185,8 @@ export async function connect(this: Client) {
     this.connected = false;
     this.controlSupported = false;
     this.projectCreationSupported = false;
+    this.teamTasksSupported = false;
+    this.teamTasks = undefined;
     for (const request of this.controlRequests.values()) {
       clearTimeout(request.timer);
       request.reject(new HttpError(409, "CONTROL_DELIVERY_UNKNOWN"));

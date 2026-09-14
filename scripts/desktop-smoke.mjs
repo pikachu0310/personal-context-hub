@@ -115,6 +115,20 @@ try {
     ),
   );
   assert.match(native, /codex/i);
+  const claudeRoot = dirname(
+    packagedRequire.resolve(
+      `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/package.json`,
+    ),
+  );
+  const claudeVersion = await new Promise((resolve, reject) =>
+    execFile(
+      join(claudeRoot, process.platform === "win32" ? "claude.exe" : "claude"),
+      ["--version"],
+      { windowsHide: true },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    ),
+  );
+  assert.match(claudeVersion, /Claude/i);
   await page
     .getByRole("navigation", { name: "メインメニュー" })
     .getByText("実行と承認", { exact: true })

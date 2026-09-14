@@ -118,6 +118,8 @@ export interface ClientState {
   allowedProjectIds?: string[];
   projectTasks?: Task[];
   projectCreationSupported?: boolean;
+  teamTasksSupported?: boolean;
+  teamTasks?: TeamTaskSnapshot;
   controlSupported?: boolean;
   csrf: string;
   suggestedInvite?: { engineUrl: string; token: string };
@@ -134,11 +136,16 @@ export interface ClientState {
   status: string;
   allow: boolean;
   loginStatus: string;
+  claudeLoginStatus?: string;
+  claudeLoginUrl?: string;
   loginUrl?: string;
   suggestedEngine?: string;
   desktop?: { name: string; version: string; pid: number; platform: string };
   pairing?: { url: string; fingerprint: string };
   runs: Array<{
+    agent?: "codex" | "claude";
+    model?: string;
+    origin?: "local";
     task: Task;
     directory: string;
     state: string;
@@ -156,7 +163,38 @@ export interface ClientState {
     params: unknown;
   }>;
 }
+/** Shared summaries only: no local paths, command output or approval data. */
+export interface TeamTaskSnapshot {
+  updatedAt: number;
+  total: number;
+  tasks: Array<
+    Pick<
+      Task,
+      | "id"
+      | "runId"
+      | "revision"
+      | "projectId"
+      | "title"
+      | "state"
+      | "clientId"
+      | "updatedAt"
+    > & {
+      ownerName?: string;
+      deviceName?: string;
+      deviceConnected?: boolean;
+      progress?: string;
+    }
+  >;
+}
+export interface AgentCatalogEntry {
+  agent: "codex" | "claude";
+  authenticated: boolean;
+  models: Array<{ id: string; name: string }>;
+  error?: string;
+}
 export interface ApiResult {
+  agents?: AgentCatalogEntry[];
+  runId?: string;
   url?: string;
   error?: string;
   patch?: string;

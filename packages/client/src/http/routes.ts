@@ -1,6 +1,12 @@
 import { projectDirectory } from "../execution/project-directory.js";
 import { startLogin } from "../auth/login.js";
+import { startClaudeLogin, checkClaudeLogin } from "../auth/claude.js";
 import { activityText } from "../execution/activity.js";
+import {
+  startLocalTask,
+  localInstruction,
+  localProgress,
+} from "../execution/local-tasks.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
@@ -34,6 +40,14 @@ export async function route(
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/state") {
+    if (
+      this.connected &&
+      this.teamTasksSupported &&
+      Date.now() - this.teamTasksRequestedAt >= 2500
+    ) {
+      this.teamTasksRequestedAt = Date.now();
+      this.emit({ v: 1, type: "tasks.list" });
+    }
     send(res, 200, {
       mode: "client",
       csrf: this.csrf,
@@ -43,10 +57,14 @@ export async function route(
       connected: this.connected,
       controlSupported: this.controlSupported,
       projectCreationSupported: this.projectCreationSupported,
+      teamTasksSupported: this.teamTasksSupported,
+      teamTasks: this.connected ? this.teamTasks : undefined,
       status: this.status,
       allow: this.allow,
       allowedProjectIds: [...this.allowedProjects],
       loginStatus: this.loginStatus,
+      claudeLoginStatus: this.claudeLoginStatus,
+      claudeLoginUrl: this.claudeLoginUrl,
       loginUrl: this.loginUrl,
       suggestedEngine: this.suggestedEngine,
       desktop: this.desktop,
@@ -79,6 +97,10 @@ export async function route(
     });
     return;
   }
+  if (req.method === "GET" && url.pathname === "/api/local-tasks/progress") {
+    send(res, 200, localProgress(this.executor.runs));
+    return;
+  }
   if (
     req.method !== "POST" ||
     !equal(String(req.headers["x-csrf-token"] ?? ""), this.csrf)
@@ -86,6 +108,20 @@ export async function route(
     throw new HttpError(403, "CSRF_REQUIRED");
   const input = await body(req);
   switch (url.pathname) {
+    case "/api/agents/models":
+      send(res, 200, { agents: await this.agentCatalog() });
+      return;
+    case "/api/claude/login":
+      startClaudeLogin(this);
+      break;
+    case "/api/claude/doctor":
+      await checkClaudeLogin(this);
+      break;
+    case "/api/local-tasks/start": {
+      const result = await startLocalTask(this, input);
+      send(res, 200, { ok: true, ...result });
+      return;
+    }
     case "/api/pair":
       await this.pair(text(input.engineUrl, 2048));
       this.suggestedEngine = undefined;
@@ -102,6 +138,8 @@ export async function route(
       clearTimeout(this.reconnect);
       this.ws?.close();
       this.connected = false;
+      this.teamTasks = undefined;
+      this.teamTasksSupported = false;
       this.preview.close();
       await this.save();
       break;
@@ -335,6 +373,9 @@ export async function route(
         this.executionMappings(),
         this.allow,
         this.settings.slots,
+        value.origin === "local"
+          ? { progressMode: value.progressMode ?? "auto" }
+          : undefined,
       );
       break;
     }
@@ -353,9 +394,13 @@ export async function route(
       break;
     }
     case "/api/execute-plan": {
+      const value = this.executor.runs[id(input.runId)];
+      if (value?.origin === "local") {
+        await this.executor.startPlannedWork(value.task.runId);
+        break;
+      }
       if (!this.allow || !this.connected)
         throw new HttpError(409, "EXECUTION_NOT_ALLOWED");
-      const value = this.executor.runs[id(input.runId)];
       if (
         !value ||
         !this.settings.mappings.some(
@@ -370,7 +415,12 @@ export async function route(
       break;
     }
     case "/api/instruction": {
-      const receipt = await this.control(
+      const handler =
+        this.executor.runs[id(input.runId)]?.origin === "local"
+          ? (runId: string, key: string, instruction: string) =>
+              localInstruction(this, runId, key, instruction)
+          : this.control;
+      const receipt = await handler(
         id(input.runId),
         id(input.requestKey),
         text(input.instruction, 8000),
@@ -388,6 +438,8 @@ export async function route(
     case "/api/preview": {
       const value = this.executor.runs[id(input.runId)];
       if (!value) throw new Error("RUN_NOT_FOUND");
+      if (value.origin === "local")
+        throw new HttpError(409, "LOCAL_SHARING_NOT_CONNECTED");
       const port = Number(input.port);
       if ([new URL(this.origin).port].includes(String(port)))
         throw new Error("MANAGEMENT_PORT_FORBIDDEN");

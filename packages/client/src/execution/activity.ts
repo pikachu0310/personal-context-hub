@@ -134,12 +134,17 @@ export function recordEvent(run: Run, event: any): boolean {
 }
 
 export function executionError(error: unknown) {
+  const message = (error as Error)?.message;
+  if (message === "CLAUDE_AUTH_OR_API_FAILED")
+    return "Claudeの認証またはAPI呼び出しに失敗しました。Claudeの公式ログインと利用可能な枠を確認してください。";
+  if (message === "CLAUDE_TURN_FAILED" || message === "CLAUDE_TASK_INCOMPLETE")
+    return "Claudeが正常な完了結果を返しませんでした。操作の承認状況とClaudeの認証状態を確認してください。";
   const code = (error as { code?: string })?.code;
   if (code === "AGENT_SANDBOX_NOT_READY")
     return "書き込み用サンドボックスを利用できません。接続設定と実行環境を確認してください。";
   if (code === "ENOENT")
-    return "必要な実行ファイルまたはフォルダーが見つかりません。Git・Codexと作業フォルダーを確認してください。";
+    return "必要な実行ファイルまたはフォルダーが見つかりません。Git・エージェントの実行環境と作業フォルダーを確認してください。";
   if (code === "CODEX_RPC_TIMEOUT")
     return "Codexからの応答が時間内に届きませんでした。重複実行を避けるため自動再実行していません。";
-  return "実行が完了しませんでした。直前のコマンド・出力と、接続設定のCodexログイン状態を確認してください。";
+  return "実行が完了しませんでした。直前のコマンド・出力と、使用中のエージェントのログイン状態を確認してください。";
 }

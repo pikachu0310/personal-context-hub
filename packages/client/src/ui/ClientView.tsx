@@ -53,6 +53,39 @@ export function ClientView({
               </Anchor>
             )}
           </Card>
+          <Card
+            title="Claude Codeでログイン"
+            description="Claudeを使う場合に設定します。このPCの公式Claude Codeの認証を利用し、Botへ認証情報を渡しません。今はアプリから開始するローカルタスクで選べます。"
+          >
+            <Group>
+              <Status value={state.claudeLoginStatus ?? "not checked"} />
+              <Button onClick={() => invoke("claude/login", {})}>
+                Claudeの公式ログインを開始
+              </Button>
+              <Button
+                variant="light"
+                onClick={() => invoke("claude/doctor", {})}
+              >
+                Claudeの認証状態を確認
+              </Button>
+            </Group>
+            {state.claudeLoginUrl && (
+              <Anchor
+                href={state.claudeLoginUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Claudeのログイン画面を開く
+              </Anchor>
+            )}
+            <Anchor
+              href="https://code.claude.com/docs/en/authentication"
+              target="_blank"
+              rel="noreferrer"
+            >
+              公式の認証手順
+            </Anchor>
+          </Card>
           <Card title="2. チームのEngineへ接続">
             <Status value={state.status} />
             {!state.settings.deviceId && (

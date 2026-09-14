@@ -21,6 +21,7 @@ import type { Repository } from "../../ports/repository.js";
 import { Tasks } from "../../processing/tasks/service.js";
 import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
+import { taskSnapshot } from "./task-list.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
@@ -77,6 +78,7 @@ export class ClientConnections {
     let deviceId: string | undefined,
       generation = 0;
     let authenticated = false;
+    let lastTaskListAt = 0;
     const timeout = setTimeout(
       () => ws.close(4001, "authentication timeout"),
       10000,
@@ -122,6 +124,7 @@ export class ClientConnections {
               projectVersion: 1,
               projects: new ProjectTeam(this.store).projects(device.id),
               workspaceVersion: 1,
+              taskListVersion: 1,
             }),
           );
           return;
@@ -265,6 +268,22 @@ export class ClientConnections {
               }),
             );
           }
+          return;
+        }
+        if (data.type === "tasks.list") {
+          const projectIds = new Set(
+            new ProjectTeam(this.store).projects(device.id).map((p) => p.id),
+          );
+          if (Date.now() - lastTaskListAt < 2000) return;
+          lastTaskListAt = Date.now();
+          ws.send(
+            JSON.stringify({
+              v: 1,
+              type: "tasks.snapshot",
+              generation,
+              snapshot: taskSnapshot(this.store, this.peers, projectIds),
+            }),
+          );
           return;
         }
         if (data.type === "artifact.result") {

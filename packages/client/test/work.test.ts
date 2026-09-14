@@ -67,7 +67,12 @@ test("Client applies explicit restrictions in the actual provider options and pr
     }) as any;
   const first = new Executor(directory, () => {}, factory);
   await first.load();
-  const value: Run = { task: baseTask(), directory, state: "assigned" };
+  const value: Run = {
+    task: baseTask(),
+    directory,
+    state: "assigned",
+    model: "test-codex-model",
+  };
   first.runs.run = value;
   const mapping = { projectId: "project", directory, slots: 1, network: true };
   await first.execute(value, mapping, false);
@@ -80,6 +85,7 @@ test("Client applies explicit restrictions in the actual provider options and pr
   };
   await restarted.execute(next, mapping, false);
   for (const actual of options) {
+    assert.equal(actual.model, "test-codex-model");
     assert.equal(actual.sandboxMode, "read-only");
     assert.equal(actual.requireWritableSandbox, false);
     assert.equal(actual.networkAccessEnabled, false);
