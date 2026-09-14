@@ -6,6 +6,8 @@ import type {
 } from "@ido/common/contracts/work";
 
 export interface WorkRequest {
+  // Set by the Engine input route, never inferred from the actor's ID.
+  sourcePluginId?: string;
   trigger?: "requested" | "proactive";
   requestKey: string;
   meetingId: string;
@@ -21,6 +23,7 @@ export interface WorkRequest {
   network?: boolean;
 }
 export interface WorkControl {
+  sourcePluginId?: string;
   taskId: string;
   authorId: string;
   type: "stop" | "instruction" | "retry";

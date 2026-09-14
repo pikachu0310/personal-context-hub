@@ -1020,6 +1020,44 @@ test("hypothetical requests, viewer speech and incomplete capture never become w
   assert.equal(f.messages().at(-1)?.authorId, "speaker-a");
 });
 
+test("Discord route carries execution membership through explicit and model-created tasks and controls", async (t) => {
+  const f = await fixture(t);
+  const context = { ...f.context().value, pluginId: "discord" };
+  await f.input(
+    { text: "画面を実装して", command: "task", priority: "immediate" },
+    context,
+  );
+  await f.idle();
+  const explicit = f.tasks()[0];
+  assert.equal(explicit.participantPolicy, "execution");
+  assert.deepEqual(explicit.memberStates, {});
+  await f.input(
+    {
+      text: "青色に変更して",
+      command: "steer",
+      taskId: explicit.id,
+      priority: "immediate",
+    },
+    context,
+  );
+  await f.idle();
+  assert.equal(f.tasks()[0].queuedInstructions?.[0].sender?.id, "idobot");
+  assert.deepEqual(f.tasks()[0].memberStates, {});
+  f.engine.store.put("task", explicit.id, {
+    ...f.tasks()[0],
+    state: "completed",
+  });
+  f.respond((observation) => taskResponse(observation));
+  await f.input(
+    { text: "井戸Bot、別の機能を調査してください", priority: "immediate" },
+    context,
+  );
+  await until(() => f.tasks().length === 2);
+  await f.idle();
+  assert.equal(f.tasks()[1].participantPolicy, "execution");
+  assert.deepEqual(f.tasks()[1].memberStates, {});
+});
+
 test("model-suggested controls require an explicit permitted control source", async (t) => {
   const f = await fixture(t);
   const task = f.engine.tasks.createTask({

@@ -17,6 +17,7 @@ export interface WorkSource {
 export type ControlDelivery =
   "pending" | "queued" | "applied" | "stopped" | "uncertain" | "rejected";
 export interface WorkReceipt {
+  sourcePluginId?: string;
   id: string;
   taskId: string;
   authorId: string;

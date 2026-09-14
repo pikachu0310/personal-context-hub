@@ -19,6 +19,7 @@ export function createWorkPort({
       if (!actor || actor.role === "viewer")
         throw new Error("PERMISSION_DENIED");
       const task = tasks.createTask({
+        sourcePluginId: request.sourcePluginId,
         projectId: request.projectId,
         meetingId: request.meetingId,
         authorId: request.authorId,
@@ -47,6 +48,7 @@ export function createWorkPort({
         input.type === "instruction" ? "steer" : input.type,
         input.instruction,
         {
+          sourcePluginId: input.sourcePluginId,
           requestKey: input.requestKey,
           expectedControlVersion: input.expectedControlVersion,
           instructionResolution: input.instructionResolution,

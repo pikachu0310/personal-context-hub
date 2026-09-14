@@ -303,6 +303,7 @@ class MeetingCoordinator {
       const continuation =
         parsed.action === "steer" && target.state === "completed";
       const result = this.options.work.control({
+        sourcePluginId: this.routes.get(source.id)?.context.pluginId,
         taskId: target.id,
         authorId: source.authorId,
         type:
@@ -701,6 +702,7 @@ class MeetingCoordinator {
     // speech is interpreted only by the main model through sourced proposals.
     if (event.command === "task" && canWork && this.active(route)) {
       const task = this.options.work.submit({
+        sourcePluginId: context.pluginId,
         requestKey: inputId,
         meetingId: event.meetingId,
         projectId: event.projectId!,
@@ -1069,6 +1071,7 @@ class MeetingCoordinator {
         created =
           previous ??
           this.options.work.submit({
+            sourcePluginId: this.routes.get(author.id)?.context.pluginId,
             requestKey,
             meetingId: author.meetingId ?? this.meetingId,
             projectId: author.projectId,

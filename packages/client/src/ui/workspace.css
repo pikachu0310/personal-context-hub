@@ -1088,7 +1088,10 @@ button {
   border: 2px solid var(--workspace-sidebar);
 }
 .bot-avatar {
-  background: #6162aa;
+  background: #fff;
+}
+.bot-avatar img {
+  object-fit: contain;
 }
 .avatar-overflow {
   background: #e9edf5;

@@ -264,6 +264,7 @@ export class InputRouter {
             actor.id,
             control.action,
             control.instruction ? text(control.instruction) : undefined,
+            { sourcePluginId: context.pluginId },
           );
           this.flush();
           await respond(
@@ -293,6 +294,7 @@ export class InputRouter {
         { source, eventId: event.eventId },
         acceptedId || undefined,
         reservation,
+        context.pluginId,
       );
       // Replies run independently of minutes; a simple call needs no answer API.
       this.ai.messages.step(
@@ -333,6 +335,8 @@ export class InputRouter {
         publishMeeting(context, "minutes", meeting);
         if (event.command === "task" && actor.role !== "viewer") {
           const task = this.tasks.createTask({
+            sourcePluginId: context.pluginId,
+            createdByBot: context.pluginId === "discord" ? true : undefined,
             projectId: config.projectId!,
             meetingId: config.meetingId,
             authorId: actor.id,

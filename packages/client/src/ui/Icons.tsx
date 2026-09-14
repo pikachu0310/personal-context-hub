@@ -20,7 +20,6 @@ import {
   IconX,
   IconRefresh,
   IconListDetails,
-  IconRobot,
   IconDots,
 } from "@tabler/icons-react";
 const icons = {
@@ -45,16 +44,25 @@ const icons = {
   close: IconX,
   refresh: IconRefresh,
   details: IconListDetails,
-  bot: IconRobot,
   dots: IconDots,
 };
 export function Icon({
   name,
   size = 18,
 }: {
-  name: keyof typeof icons;
+  name: keyof typeof icons | "bot";
   size?: number;
 }) {
+  if (name === "bot")
+    return (
+      <img
+        src="/favicon.svg"
+        width={size}
+        height={size}
+        alt=""
+        aria-hidden="true"
+      />
+    );
   const Component = icons[name];
   return <Component size={size} stroke={1.7} aria-hidden="true" />;
 }
