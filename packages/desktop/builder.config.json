@@ -1,0 +1,31 @@
+{
+  "appId": "org.idobot.agent",
+  "productName": "IDO Agent",
+  "directories": { "app": ".ido-build/desktop/app", "output": "dist/desktop" },
+  "files": ["**/*"],
+  "asar": false,
+  "npmRebuild": false,
+  "beforePack": "scripts/check-desktop-target.cjs",
+  "protocols": [{ "name": "IDO Agent connection", "schemes": ["ido-agent"] }],
+  "win": {
+    "target": ["nsis"],
+    "icon": ".ido-build/desktop/app/icon.ico",
+    "artifactName": "IDO-Agent-${version}-Windows-${arch}-Setup.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowElevation": false,
+    "allowToChangeInstallationDirectory": true,
+    "runAfterFinish": false,
+    "deleteAppDataOnUninstall": false
+  },
+  "mac": {
+    "target": ["dmg", "zip"],
+    "icon": "packages/desktop/assets/icon.png",
+    "category": "public.app-category.developer-tools",
+    "hardenedRuntime": true,
+    "artifactName": "IDO-Agent-${version}-Mac-${arch}.${ext}"
+  },
+  "publish": null
+}

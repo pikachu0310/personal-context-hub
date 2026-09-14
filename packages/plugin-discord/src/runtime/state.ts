@@ -1,9 +1,12 @@
 import { createAudioPlayer, type VoiceConnection } from "@discordjs/voice";
 import type { Client } from "discord.js";
 import { randomUUID } from "node:crypto";
+import type { ForumSync } from "../forum/sync.js";
 export interface DiscordState {
   config: Record<string, string>;
   client?: Client;
+  forum?: ForumSync;
+  connectionGuide?: () => Promise<string>;
   voice?: VoiceConnection;
   speechEpoch: number;
   audioSessionId: string;

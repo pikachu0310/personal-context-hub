@@ -21,7 +21,13 @@ export interface PluginManifest {
     frameAncestors?: string[];
   };
   capabilities: Array<
-    "text" | "audio" | "activity" | "web" | "audio-stream" | "playback-control"
+    | "text"
+    | "audio"
+    | "activity"
+    | "web"
+    | "audio-stream"
+    | "playback-control"
+    | "task-forum"
   >;
 }
 

@@ -43,6 +43,13 @@ plugin-dashboard:
   - *ui
   - "packages/plugin-dashboard/{src,test}/**"
   - "packages/plugin-dashboard/vite.config.*"
+desktop:
+  - *global
+  - *common
+  - *ui
+  - "packages/client/src/**"
+  - "packages/desktop/{src,test}/**"
+
 tooling:
   - *global
   - "scripts/**"

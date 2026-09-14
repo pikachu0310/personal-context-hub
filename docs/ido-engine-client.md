@@ -1,5 +1,7 @@
 # IDO Engine / Client
 
+For the native Windows/Mac Client, Discord installation guidance and issue forum synchronization, see [IDO Agent and issue forum setup](main2-desktop-forum.md). CLI usage below remains available.
+
 IDO is a self-hosted team engine. It records conversations, keeps a persistent main Codex model per meeting, and supervises work delegated to members' locally approved Codex Clients. The main model runs on Engine with its own Codex authentication and home; Clients run actual repository work in their independent environments. Dashboard and Discord are independent child-process plugins. Dashboard is bundled and starts by default; Discord is optional. Engine administration remains available if either stops.
 
 The `@ido/*` names are provisional. This branch builds installable npm tarballs; it does not publish packages to the registry. Until publication, use the tarball commands below. Existing hub integrations and their data remain separate; no legacy configuration is read or migrated.

@@ -2,7 +2,7 @@ import type {
   ConversationInput,
   InputContext,
 } from "@ido/common/contracts/plugins";
-import { text } from "@ido/common/contracts/protocol";
+import { text, type Task } from "@ido/common/contracts/protocol";
 import { Contexts } from "../../management/contexts.js";
 import { Identities } from "../../management/identities.js";
 import type { Workspace } from "../../output/queries/workspace.js";
@@ -59,6 +59,24 @@ export class PluginBroker {
     token?: string,
   ): Promise<unknown> {
     const plugin = this.plugins().get(pluginId);
+    if (operation === "connection.info") return { origin: this.origin() };
+    if (operation === "tasks.snapshot") {
+      const config = this.store.get<Record<string, string>>("config", pluginId);
+      if (
+        !plugin.manifest?.capabilities.includes("task-forum") ||
+        !config?.issueForumChannelId ||
+        !config.meetingId ||
+        !config.projectId
+      )
+        throw new Error("PERMISSION_DENIED");
+      return this.store
+        .list<Task>("task")
+        .filter(
+          (task) =>
+            task.meetingId === config.meetingId &&
+            task.projectId === config.projectId,
+        );
+    }
     if (operation.startsWith("storage.")) {
       const key = text(input.key, 500);
       if (operation === "storage.get")

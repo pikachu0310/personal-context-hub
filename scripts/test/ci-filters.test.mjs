@@ -58,6 +58,9 @@ test("docs and legacy edits skip CI, test edits select only their owner", () => 
     [],
   );
   assert.deepEqual(affected("packages/client/test/work.test.ts"), ["client"]);
+  assert.deepEqual(affected("packages/desktop/test/security.test.ts"), [
+    "desktop",
+  ]);
   assert.deepEqual(affected("packages/common/test/app-server.test.mjs"), [
     "common",
   ]);
@@ -68,9 +71,14 @@ test("docs and legacy edits skip CI, test edits select only their owner", () => 
 });
 
 test("runtime changes include consumers and integration tests", () => {
+  assert.deepEqual(affected("packages/desktop/src/security.ts"), [
+    "desktop",
+    "pack",
+  ]);
   assert.deepEqual(affected("packages/client/src/execution/run.ts"), [
     "engine",
     "client",
+    "desktop",
     "pack",
     "browser",
   ]);
@@ -86,6 +94,7 @@ test("runtime changes include consumers and integration tests", () => {
   assert.deepEqual(affected("packages/common-ui/src/style.css"), [
     "common-ui",
     ...runtimePackages,
+    "desktop",
     "pack",
     "browser",
   ]);

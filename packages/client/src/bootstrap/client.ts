@@ -45,6 +45,9 @@ export class Client {
   status = "offline";
   login?: ChildProcess;
   loginStatus = "not checked";
+  loginUrl?: string;
+  suggestedEngine?: string;
+  desktop?: { name: string; version: string; pid: number; platform: string };
   processing: Promise<unknown> = Promise.resolve();
   server = createServer(
     (req, res) =>

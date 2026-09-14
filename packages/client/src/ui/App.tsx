@@ -10,7 +10,8 @@ export function App() {
   if (!state) return error ? <Alert color="red">{error}</Alert> : <Loader />;
   return (
     <Shell
-      title="CLIENT"
+      title="IDO Agent"
+      workspaceLinks={false}
       pages={[
         ["overview", "接続とセットアップ"],
         ["runs", "実行と承認"],

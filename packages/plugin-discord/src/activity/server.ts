@@ -14,6 +14,7 @@ import {
 } from "@ido/common/runtime/http";
 import type { Rpc } from "@ido/common/runtime/rpc";
 import { DiscordAuth } from "../auth/sessions.js";
+import { connectionPage } from "../onboarding/guide.js";
 export class DiscordWeb {
   readonly auth: DiscordAuth;
   readonly limit = new RateLimit(20, 60000);
@@ -43,6 +44,21 @@ export class DiscordWeb {
   }
   async route(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? "/", "http://localhost");
+    if (url.pathname === "/connect" && req.method === "GET") {
+      this.limit.take("connect");
+      const { origin } = await this.rpc().request<{ origin: string }>(
+        "connection.info",
+        {},
+      );
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Content-Security-Policy":
+          "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      });
+      res.end(connectionPage(origin, this.config()));
+      return;
+    }
     if (url.pathname === "/callback" && req.method === "GET") {
       await this.auth.callback(
         url.searchParams.get("state") ?? "",

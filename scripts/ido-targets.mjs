@@ -4,7 +4,13 @@ export const runtimePackages = [
   "plugin-discord",
   "plugin-dashboard",
 ];
-export const suites = ["common", "common-ui", ...runtimePackages, "tooling"];
+export const suites = [
+  "common",
+  "common-ui",
+  ...runtimePackages,
+  "desktop",
+  "tooling",
+];
 
 export function isSelectedSource(path, root, selected) {
   const normalized = path.replaceAll("\\", "/");

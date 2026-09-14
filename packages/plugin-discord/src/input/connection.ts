@@ -21,6 +21,7 @@ import { discordUserAllowed } from "../input/policy.js";
 import { VoiceCapture } from "./capture.js";
 import { audioOutput } from "../output/audio.js";
 import type { DiscordState } from "../runtime/state.js";
+import { forumCommand } from "../forum/sync.js";
 export async function start(
   state: DiscordState,
   emit: (data: Record<string, unknown>) => void,
@@ -41,12 +42,18 @@ export async function start(
   state.client.on(Events.MessageCreate, (message) => {
     if (
       message.author.bot ||
+      message.webhookId ||
       !discordUserAllowed(state.config, message.author.id) ||
-      message.guildId !== state.config.guildId ||
-      message.channelId !== state.config.textChannelId
+      message.guildId !== state.config.guildId
     )
       return;
-    const task = message.content.startsWith("!ido task ");
+    const forumTask =
+      message.channel.isThread() &&
+      message.channel.parentId === state.config.issueForumChannelId
+        ? state.forum?.taskForThread(message.channelId)
+        : undefined;
+    if (!forumTask && message.channelId !== state.config.textChannelId) return;
+    const task = !forumTask && message.content.startsWith("!ido task ");
     const content = task ? message.content.slice(10) : message.content;
     if (!content.trim()) return;
     emit({
@@ -56,7 +63,8 @@ export async function start(
       userId: message.author.id,
       eventId: message.id,
       text: content,
-      command: task ? "task" : "message",
+      command: forumTask ? forumCommand(content) : task ? "task" : "message",
+      taskId: forumTask,
     });
   });
   const handleCommand = voiceCommandHandler(
@@ -196,6 +204,8 @@ export async function start(
         : undefined,
     {
       textChannelId: state.config.textChannelId,
+      connect: () =>
+        state.connectionGuide?.() ?? Promise.resolve("接続案内は準備中です。"),
       allowed: (userId) => discordUserAllowed(state.config, userId),
       quiet: (userId) => {
         state.speechEpoch++;

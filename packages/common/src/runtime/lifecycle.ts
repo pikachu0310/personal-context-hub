@@ -59,7 +59,13 @@ export async function lifetime(directory: string, stop: () => Promise<void>) {
   const close = async () => {
     if (closing) return;
     closing = true;
-    await stop();
+    try {
+      await stop();
+    } catch (error) {
+      // A failed shutdown still owns the lock and must be retryable by the UI.
+      closing = false;
+      throw error;
+    }
     server.close();
     await rm(path, { force: true });
     await lock.close();

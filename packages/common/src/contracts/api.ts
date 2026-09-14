@@ -85,6 +85,9 @@ export interface ClientState {
   status: string;
   allow: boolean;
   loginStatus: string;
+  loginUrl?: string;
+  suggestedEngine?: string;
+  desktop?: { name: string; version: string; pid: number; platform: string };
   pairing?: { url: string; fingerprint: string };
   runs: Array<{
     task: Task;

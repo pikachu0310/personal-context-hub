@@ -27,6 +27,7 @@ export async function registerVoiceCommands(guild: Guild) {
         ["leave", "この通話から退出"],
         ["quiet", "現在の読み上げを停止"],
         ["context", "議事録全文を表示"],
+        ["connect", "IDO AgentのインストールとPC接続の案内"],
       ].map(([name, description]) => ({
         name,
         description,
@@ -100,6 +101,7 @@ export async function registerVoiceCommands(guild: Guild) {
   });
 }
 export interface MeetingControls {
+  connect?(): Promise<string>;
   allowed(userId: string): boolean;
   textChannelId: string;
   quiet(userId: string): void;
@@ -130,6 +132,7 @@ export function voiceCommandHandler(
         "stop",
         "steer",
         "mode",
+        "connect",
       ].includes(command)
     )
       return;
@@ -148,6 +151,16 @@ export function voiceCommandHandler(
     }
     if (!["join", "leave"].includes(command)) {
       if (!controls) return;
+      if (command === "connect") {
+        try {
+          await reply((await controls.connect?.()) ?? "接続案内は準備中です。");
+        } catch {
+          await reply(
+            "接続案内を取得できません。Engineの設定を確認してください。",
+          );
+        }
+        return;
+      }
       const member = await interaction.guild.members.fetch(interaction.user.id);
       const inVoice =
         Boolean(currentChannel()) &&
