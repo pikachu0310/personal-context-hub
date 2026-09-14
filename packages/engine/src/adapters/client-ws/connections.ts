@@ -1,3 +1,4 @@
+import { attachTaskSource } from "@ido/common/contracts/protocol";
 import { shareLocalTask } from "../../processing/tasks/local-sharing.js";
 import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
 import { taskParticipants } from "../../processing/projects/task-participants.js";
@@ -438,6 +439,21 @@ export class ClientConnections {
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
+              case "task.sources": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (input.sourceId) {
+                  task.attachedSources = attachTaskSource(
+                    task.attachedSources,
+                    input,
+                  );
+                  this.store.put("task", task.id, task);
+                  this.changed();
+                }
+                result = { sources: task.attachedSources ?? [] };
+                break;
+              }
               case "task.continue": {
                 const task = this.store.get<Task>("task", id(input.taskId));
                 if (!task) throw new Error("TASK_NOT_FOUND");

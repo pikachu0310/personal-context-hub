@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "devDependencies": {
+    "@mantine/core": "9.6.1",
+    "@mantine/hooks": "9.6.1",
+    "@tabler/icons-react": "^3.46.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "@mantine/core": "9.6.1",
-    "@mantine/hooks": "9.6.1"
+    "react-dom": "^19.2.0"
   },
   "files": [
     "dist",
@@ -31,10 +32,10 @@
     "build": "node ../../scripts/build-common-ui.mjs"
   },
   "peerDependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
     "@mantine/core": "9.6.1",
-    "@mantine/hooks": "9.6.1"
+    "@mantine/hooks": "9.6.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   },
   "dependencies": {
     "@ido/common": "0.2.0"

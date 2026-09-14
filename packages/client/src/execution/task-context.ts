@@ -31,6 +31,9 @@ export function taskContextSources(
       title: `${profile.name || "担当者"}のユーザー情報`,
       text: profile.context,
     });
+  for (const source of task.attachedSources ?? []) {
+    if (!sources.some((item) => item.id === source.id)) sources.push(source);
+  }
   return sources;
 }
 

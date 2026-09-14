@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -90,6 +90,31 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   assert.equal(executions, 1);
   const value = client.executor.runs[runId];
   assert.equal(value.origin, "local");
+  const sourceInput = {
+    runId,
+    taskId: value.task.id,
+    sourceId: "notes",
+    kind: "minutes",
+    title: "Meeting notes",
+    text: "Use the agreed login form",
+  };
+  assert.equal((await post("task/sources", sourceInput, "wrong")).status, 403);
+  assert.equal(
+    (await post("task/sources", { ...sourceInput, taskId: "another" })).status,
+    404,
+  );
+  assert.equal((await post("task/sources", sourceInput)).status, 200);
+  assert.equal((await post("task/sources", sourceInput)).status, 200);
+  assert.equal(value.task.attachedSources?.length, 1);
+  assert.equal(executions, 1);
+  const persisted = JSON.parse(
+    await readFile(join(client.directory, "runs.json"), "utf8"),
+  );
+  assert.equal(
+    persisted.runs[runId].task.attachedSources[0].text,
+    sourceInput.text,
+  );
+
   assert.equal(value.model, "test-model");
   loggedIn = false;
   const expired = await post("local-tasks/start", {

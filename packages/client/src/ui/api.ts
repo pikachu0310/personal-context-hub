@@ -2,6 +2,7 @@ import { lifecycleError } from "@ido/common-ui";
 import { browserApi } from "@ido/common/runtime/browser-api";
 const request = browserApi("/api/");
 const errors: Record<string, string> = {
+  SOURCE_LIMIT_EXCEEDED: "ソースは20件、合計64,000文字まで追加できます。",
   INVALID_AVATAR:
     "画像を読み込めません。別のPNG・JPEG・WebP画像を選択してください。",
   PAIRING_REQUIRED: "先にチームのEngineへの接続を設定してください。",

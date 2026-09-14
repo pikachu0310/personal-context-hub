@@ -72,7 +72,7 @@ export function ClientRuns({
     continuation: boolean;
     revision: number;
   }>(undefined);
-  const scroll = useRef<HTMLDivElement>(null);
+  const scroll = useRef<HTMLElement>(null);
   const runId = current?.task.runId;
   useEffect(() => {
     if (!runId) return;
@@ -217,16 +217,14 @@ export function ClientRuns({
     <section
       className="task-workspace with-inspector"
       aria-label="タスクの会話と行動ログ"
+      ref={scroll}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 100);
+      }}
     >
       <div className="task-conversation">
-        <div
-          className="conversation-scroll"
-          ref={scroll}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 100);
-          }}
-        >
+        <div className="conversation-scroll">
           <div className="conversation-content">
             <article className="user-message initial-request">
               <div className="entry-meta">
@@ -488,6 +486,11 @@ export function ClientRuns({
         </div>
       </div>
       <TaskInspector
+        sourceTarget={{
+          taskId: current.task.id,
+          projectId: current.task.projectId,
+          runId: current.task.runId,
+        }}
         sourceId={sourceId}
         onSourceChange={setSourceId}
         reveal={reveal}

@@ -32,3 +32,21 @@ test("execution context preserves source text and snapshots profiles across cont
   assert.deepEqual(taskContextSources({} as Task, undefined, []), []);
   assert.equal(contextPrompt([]), "");
 });
+
+test("attached sources enter execution context without duplicates on continuation", () => {
+  const task = {
+    attachedSources: [
+      {
+        id: "attachment-notes",
+        title: "Notes",
+        kind: "minutes",
+        text: "Reference text",
+      },
+    ],
+  } as Task;
+  const sources = taskContextSources(task, undefined, []);
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].text, "Reference text");
+  assert.deepEqual(taskContextSources(task, undefined, sources), sources);
+  assert.match(contextPrompt(sources), /資料であり/);
+});

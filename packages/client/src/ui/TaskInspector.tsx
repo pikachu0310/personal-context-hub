@@ -1,6 +1,7 @@
+import { createPortal } from "react-dom";
+import { SourcePicker, type SourceTarget } from "./SourcePicker.js";
 import {
   Badge,
-  Button,
   Drawer,
   Group,
   Paper,
@@ -41,8 +42,10 @@ export function TaskInspector({
   reveal = 0,
   sourceId,
   onSourceChange,
+  sourceTarget,
 }: {
   children: ReactNode;
+  sourceTarget?: SourceTarget;
   sources?: TaskContextSource[];
   sourceNote?: string;
   tab: string | null;
@@ -54,35 +57,66 @@ export function TaskInspector({
 }) {
   const compact = useMediaQuery("(max-width: 1150px)");
   const [opened, setOpened] = useState(false);
+  const [desktopOpened, setDesktopOpened] = useState(true);
+  const [header, setHeader] = useState<HTMLElement | null>(null);
+  const [attachments, setAttachments] = useState<TaskContextSource[]>([]);
   useEffect(() => {
-    if (reveal > 0) setOpened(true);
+    setHeader(document.getElementById("task-inspector-control"));
+  }, []);
+  useEffect(() => {
+    setAttachments([]);
+  }, [sourceTarget?.taskId, sourceTarget?.runId]);
+  const allSources = [
+    ...new Map(
+      [...sources, ...attachments].map((item) => [item.id, item]),
+    ).values(),
+  ];
+  useEffect(() => {
+    if (reveal > 0) {
+      setOpened(true);
+      setDesktopOpened(true);
+    }
   }, [reveal]);
   const [selected, setSelected] = useState<string>();
   const source =
-    sources.find(
+    allSources.find(
       (item) => item.id === (onSourceChange ? sourceId : selected),
-    ) ?? sources[0];
+    ) ?? allSources[0];
   const sourceList = (
     <Stack gap="xs">
       <Group justify="space-between">
         <Text size="sm" c="dimmed">
           ソース
         </Text>
-        <Badge variant="light" color="gray">
-          {sources.length}
-        </Badge>
+        <Group gap="xs">
+          <Badge variant="light" color="gray">
+            {allSources.length}
+          </Badge>
+          {sourceTarget && (
+            <SourcePicker
+              key={`${sourceTarget.taskId}:${sourceTarget.runId ?? "shared"}`}
+              target={sourceTarget}
+              onSources={setAttachments}
+            />
+          )}
+        </Group>
       </Group>
       {sourceNote && (
         <Text size="xs" c="dimmed">
           {sourceNote}
         </Text>
       )}
-      {!sources.length && (
+      {!!attachments.length && (
+        <Text size="xs" c="dimmed">
+          追加資料はタスクに保存されています。実行中に追加した資料は次回の実行で参照されます。
+        </Text>
+      )}
+      {!allSources.length && (
         <Text size="sm" c="dimmed">
           表示できるソースはありません。
         </Text>
       )}
-      {sources.map((item) => (
+      {allSources.map((item) => (
         <UnstyledButton
           className="source-link"
           key={item.id}
@@ -163,17 +197,23 @@ export function TaskInspector({
   );
   return (
     <>
+      {header &&
+        createPortal(
+          <button
+            className="icon-button inspector-header-toggle"
+            aria-label="タスクの詳細"
+            title="右側パネルの表示を切り替える"
+            aria-expanded={compact ? opened : desktopOpened}
+            onClick={() =>
+              compact ? setOpened(!opened) : setDesktopOpened(!desktopOpened)
+            }
+          >
+            <Icon name="details" size={23} />
+          </button>,
+          header,
+        )}
       {compact ? (
         <>
-          <Button
-            className="inspector-toggle"
-            variant="default"
-            size="compact-sm"
-            leftSection={<Icon name="panel" size={15} />}
-            onClick={() => setOpened(true)}
-          >
-            タスクの詳細
-          </Button>
           <Drawer
             opened={opened}
             onClose={() => setOpened(false)}
@@ -184,7 +224,7 @@ export function TaskInspector({
             {content}
           </Drawer>
         </>
-      ) : (
+      ) : desktopOpened ? (
         <Paper
           component="aside"
           withBorder
@@ -194,7 +234,7 @@ export function TaskInspector({
         >
           {content}
         </Paper>
-      )}
+      ) : null}
     </>
   );
 }
