@@ -52,7 +52,16 @@ function interaction(
 test("register join and leave individually without replacing unrelated commands", async () => {
   const names: string[] = [];
   await registerVoiceCommands({
-    commands: { create: async (data: any) => names.push(data.name) },
+    commands: {
+      create: async (data: any) => {
+        names.push(data.name);
+        if (data.name === "project") {
+          assert.equal(data.options[0].name, "name");
+          assert.equal(data.options[0].autocomplete, true);
+          assert.notEqual(data.options[0].required, true);
+        }
+      },
+    },
   } as unknown as Guild);
   assert.deepEqual(names, ["project", "join", "leave", "ido"]);
 });

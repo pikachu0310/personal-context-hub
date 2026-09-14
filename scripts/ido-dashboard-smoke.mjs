@@ -39,6 +39,15 @@ try {
     { id: "cedar", name: "Cedar", remote: "" },
   ];
   for (const p of projects) engine.store.put("project", p.id, p);
+  engine.plugins.get("discord").manifest = {
+    id: "discord",
+    version: "0.2.0",
+    protocol: 2,
+    title: "Discord Bot + Activity",
+    fields: [],
+    capabilities: ["project-conversation"],
+  };
+  engine.store.put("config", "discord", { projectId: "default" });
   const now = Date.now();
   for (const p of projects) {
     engine.store.put("meeting", `meeting-${p.id}`, {
@@ -215,6 +224,13 @@ try {
   await page.reload();
   await page.getByRole("heading", { name: "概要", exact: true }).waitFor();
   await page.getByText("エンジン接続中", { exact: false }).waitFor();
+  await page
+    .getByText("Discord Bot + Activity の参加先: Atlas", { exact: true })
+    .waitFor();
+  engine.store.put("config", "discord", { projectId: "beacon" });
+  await page
+    .getByText("Discord Bot + Activity の参加先: Beacon", { exact: true })
+    .waitFor();
   assert.equal(
     await page
       .getByRole("button", { name: /会話を送信|タスクを作成|追加指示/ })

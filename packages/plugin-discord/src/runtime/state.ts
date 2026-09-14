@@ -13,6 +13,7 @@ export interface DiscordState {
     projects: import("@ido/common/contracts/protocol").Project[];
     projectId: string;
   }>;
+  refreshTranscript?: () => Promise<void>;
   connectionGuide?: () => Promise<string>;
   voice?: VoiceConnection;
   speechEpoch: number;

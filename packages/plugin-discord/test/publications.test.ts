@@ -104,3 +104,95 @@ test("publication queued before a configuration change cannot edit or send after
   assert.equal(sends, 0);
   assert.equal(edits, 0);
 });
+
+test("current transcript shows project names before speech, reuses the card on switching, and fences a stale snapshot", async () => {
+  const { ConversationPublications } =
+    await import("../src/output/conversation.js");
+  const sent: any[] = [],
+    edits: any[] = [];
+  const saved = new Map();
+  const channel = {
+    isTextBased: () => true,
+    send: async (payload: any) => {
+      sent.push(payload);
+      return { id: "card" };
+    },
+    messages: {
+      edit: async (_id: string, payload: any) => edits.push(payload),
+    },
+  };
+  const state: any = {
+    config: { projectId: "default", textChannelId: "channel" },
+    speechEpoch: 0,
+    client: { isReady: () => true },
+  };
+  let snapshot: any = {
+    project: { id: "default", name: "デフォルト" },
+    meeting: { id: "one", projectId: "default", summary: "", messages: [] },
+  };
+  let pending: Promise<any> | undefined;
+  const rpc: any = {
+    request: async (operation: string, input: any) =>
+      operation === "projects.current"
+        ? (pending ?? structuredClone(snapshot))
+        : saved.get(input.key),
+  };
+  const publisher = new Publications(
+    async () => channel,
+    (key, messageId) => {
+      saved.set(key, { messageId });
+    },
+  );
+  const conversation = new ConversationPublications(
+    state,
+    () => rpc,
+    publisher,
+  );
+  await conversation.refresh();
+  assert.match(sent[0].content, /現在のプロジェクト: デフォルト/);
+  state.config.projectId = "next";
+  state.speechEpoch++;
+  snapshot = {
+    project: { id: "next", name: "開発" },
+    meeting: { id: "two", projectId: "next", summary: "", messages: [] },
+  };
+  await conversation.refresh();
+  assert.equal(sent.length, 1);
+  assert.match(edits[0].content, /現在のプロジェクト: 開発/);
+  await conversation.publish({
+    type: "transcript",
+    meetingId: "one",
+    data: {
+      projectId: "default",
+      projectName: "デフォルト",
+      messages: [{ text: "stale", authorId: "user", at: 0 }],
+    },
+  });
+  assert.equal(edits.length, 1);
+  let release!: (value: any) => void;
+  pending = new Promise((resolve) => {
+    release = resolve;
+  });
+  const stale = conversation.refresh();
+  state.speechEpoch++;
+  state.config.projectId = "default";
+  release(snapshot);
+  await stale;
+  assert.equal(edits.length, 1);
+  assert.deepEqual(sent[0].allowedMentions, { parse: [] });
+});
+
+test("transcript headers remain visible with long logs and line breaks in project names", async () => {
+  const { renderPublication } = await import("../src/output/render.js");
+  const content = renderPublication({
+    type: "transcript",
+    meetingId: "m",
+    data: {
+      projectId: "p",
+      projectName: "開発\n@everyone",
+      messages: [{ authorId: "user", at: 0, text: "長い発言".repeat(1000) }],
+    },
+  });
+  assert.match(content, /現在のプロジェクト: 開発 @everyone/);
+  assert.ok(content.length < 1900);
+});

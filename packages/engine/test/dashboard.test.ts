@@ -456,3 +456,53 @@ test("dashboard lifecycle routes enforce admin, CSRF, confirmations and default 
   assert.equal((await request("/project/delete", input)).status, 200);
   assert.equal(e.store.get("project", p.id), undefined);
 });
+
+test("dashboard and workspace report the bot project independently of the dashboard filter without exposing config", async (t) => {
+  const { engine, user } = await fixture(t);
+  const plugin = engine.plugins.get("discord");
+  plugin.manifest = {
+    id: "discord",
+    version: "0.2.0",
+    protocol: 2,
+    title: "Discord Bot + Activity",
+    fields: [],
+    capabilities: ["project-conversation"],
+  };
+  engine.store.put("project", "other", {
+    id: "other",
+    name: "開発",
+    remote: "",
+  });
+  engine.store.put("config", "discord", {
+    projectId: "default",
+    botToken: "test-only-secret",
+    guildId: "test-guild",
+  });
+  const initial = dashboardSnapshot(engine, user);
+  assert.equal(initial.conversationBindings?.[0].projectId, "default");
+  engine.store.put("config", "discord", {
+    projectId: "other",
+    botToken: "test-only-secret",
+  });
+  const switched = dashboardSnapshot(engine, user, "default");
+  assert.deepEqual(switched.conversationBindings, [
+    {
+      pluginId: "discord",
+      title: "Discord Bot + Activity",
+      projectId: "other",
+      projectName: "開発",
+    },
+  ]);
+  const workspace: any = await engine.workspace.request("state", {}, {
+    actor: user,
+    valid: () => true,
+  } as any);
+  assert.deepEqual(
+    workspace.conversationBindings,
+    switched.conversationBindings,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(switched.conversationBindings),
+    /secret|guildId|botToken/,
+  );
+});

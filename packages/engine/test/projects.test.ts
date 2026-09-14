@@ -169,8 +169,15 @@ test("project switching preserves accepted speech authorization but fences old d
   });
   await broker.request("discord", "projects.select", {
     subject: "100",
-    projectId: other.id,
+    projectId: "other",
   });
+  const selected = (await broker.request(
+    "discord",
+    "projects.current",
+    {},
+  )) as any;
+  assert.equal(selected.project.id, other.id);
+  assert.equal(selected.meeting.projectId, other.id);
   await broker.request("discord", "input", {
     eventId: "audio",
     projectId: "default",
@@ -221,4 +228,53 @@ test("project switching preserves accepted speech authorization but fences old d
   );
   f.reopen();
   assert.equal(f.store.get<any>("config", "discord").projectId, other.id);
+});
+
+test("project names and IDs select existing projects without creating or guessing a project", async (t) => {
+  const f = await fixture(t);
+  const project = f.service.create("開発 Alpha", "alpha");
+  assert.equal(f.service.selectByNameOrId(" 開発 ＡＬＰＨＡ ").id, project.id);
+  assert.equal(f.service.selectByNameOrId(project.id).id, project.id);
+  assert.equal(f.service.selectByNameOrId("デフォルト").id, "default");
+  assert.throws(() => f.service.selectByNameOrId("開発"), /PROJECT_NOT_FOUND/);
+  f.store.put("project", "duplicate", { id: "duplicate", name: "開発 alpha" });
+  assert.throws(
+    () => f.service.selectByNameOrId("開発 Alpha"),
+    /PROJECT_NAME_AMBIGUOUS/,
+  );
+  assert.equal(f.service.selectByNameOrId(project.id).id, project.id);
+});
+
+test("conversation plugin startup defaults to the default project, retains selection and recovers a deleted selection", async (t) => {
+  const f = await fixture(t);
+  const { Plugins } = await import("../src/adapters/plugins/host.js");
+  const other = f.service.create("開発", "other");
+  const started: any[] = [];
+  const manifest = { capabilities: ["project-conversation"], fields: [] };
+  const plugin = {
+    launch: async () => manifest,
+    start: async (config: any) => started.push(config),
+  };
+  const host = new Plugins(
+    "",
+    f.store,
+    {} as any,
+    [{ id: "fixture", package: "fixture", version: "1", builtin: "unused" }],
+    async () => {},
+    () => {},
+  );
+  host.get = () => plugin as any;
+  await host.start("fixture");
+  assert.equal(started[0].projectId, "default");
+  f.store.put("config", "fixture", {
+    projectId: other.id,
+    meetingId: "legacy",
+  });
+  await host.start("fixture");
+  assert.equal(started[1].projectId, other.id);
+  assert.equal(started[1].meetingId, undefined);
+  f.store.remove("project", other.id);
+  await host.start("fixture");
+  assert.equal(started[2].projectId, "default");
+  assert.equal(f.store.get<any>("config", "fixture").projectId, "default");
 });

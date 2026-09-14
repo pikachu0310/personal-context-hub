@@ -8,7 +8,6 @@ import {
   Client,
   Events,
   GatewayIntentBits,
-  MessageFlags,
   type VoiceChannel,
 } from "discord.js";
 import prism from "prism-media";
@@ -22,6 +21,10 @@ import { discordUserAllowed } from "../input/policy.js";
 import { VoiceCapture } from "./capture.js";
 import { audioOutput } from "../output/audio.js";
 import type { DiscordState } from "../runtime/state.js";
+import {
+  handleProjectInteraction,
+  isProjectInteraction,
+} from "../commands/project.js";
 import { forumCommand } from "../forum/sync.js";
 export async function start(
   state: DiscordState,
@@ -246,50 +249,8 @@ export async function start(
     },
   );
   state.client.on(Events.InteractionCreate, (interaction) => {
-    if (
-      (interaction.isAutocomplete() || interaction.isChatInputCommand()) &&
-      interaction.commandName === "project"
-    ) {
-      void (async () => {
-        const allowed =
-          interaction.guildId === state.config.guildId &&
-          discordUserAllowed(state.config, interaction.user.id);
-        if (interaction.isAutocomplete()) {
-          if (!allowed) {
-            await interaction.respond([]);
-            return;
-          }
-          try {
-            const listing = await state.projectCommand!(interaction.user.id);
-            const query = interaction.options.getFocused().toLowerCase();
-            await interaction.respond(
-              listing.projects
-                .filter((p) => p.name.toLowerCase().includes(query))
-                .slice(0, 25)
-                .map((p) => ({ name: p.name, value: p.id })),
-            );
-          } catch {
-            await interaction.respond([]);
-          }
-        } else {
-          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-          try {
-            if (!allowed) throw new Error("PERMISSION_DENIED");
-            const listing = await state.projectCommand!(
-              interaction.user.id,
-              interaction.options.getString("name") ?? undefined,
-            );
-            await interaction.editReply({
-              content: `現在のプロジェクト: ${listing.projects.find((p) => p.id === listing.projectId)?.name ?? listing.projectId}`,
-              allowedMentions: { parse: [] },
-            });
-          } catch {
-            await interaction.editReply(
-              "切り替えできません。受付権限を確認し、候補から既存プロジェクトを選んでください。",
-            );
-          }
-        }
-      })().catch(() =>
+    if (isProjectInteraction(interaction)) {
+      void handleProjectInteraction(state, interaction).catch(() =>
         emit({ type: "status", status: "project-command-error" }),
       );
       return;
@@ -310,6 +271,11 @@ export async function start(
           throw new Error("DISCORD_VOICE_CHANNEL_REQUIRED");
         await joinChannel(channel as VoiceChannel);
       }
+      await state
+        .refreshTranscript?.()
+        .catch(() =>
+          emit({ type: "status", status: "transcript-refresh-error" }),
+        );
       emit({ type: "status", status: "connected" });
     })().catch(() => emit({ type: "status", status: "startup-failed" }));
   });

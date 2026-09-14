@@ -177,6 +177,7 @@ export function dashboardSnapshot(
     user,
     updatedAt: now,
     projects: projectViews,
+    conversationBindings: engine.plugins.conversationBindings(),
     deletionSync: {
       pendingClients: new Set(
         store

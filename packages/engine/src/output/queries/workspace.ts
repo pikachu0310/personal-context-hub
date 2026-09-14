@@ -18,6 +18,9 @@ import { Tasks } from "../../processing/tasks/service.js";
 import { Projects } from "../../processing/projects/service.js";
 export class Workspace {
   lifecycle: WorkspaceLifecycle;
+  conversationBindings: () => NonNullable<
+    WorkspaceState["conversationBindings"]
+  > = () => [];
   engineUrl: () => string = () => "";
   constructor(
     readonly store: Repository,
@@ -109,6 +112,7 @@ export class Workspace {
     if (operation === "state")
       return {
         user,
+        conversationBindings: this.conversationBindings(),
         projects:
           this.store.list<WorkspaceState["projects"][number]>("project"),
         conversations: this.store.list("project-conversation"),

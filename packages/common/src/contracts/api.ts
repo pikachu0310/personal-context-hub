@@ -41,7 +41,14 @@ export interface MeetingView extends MinutesMetadata {
   summary: string;
   messages: MessageView[];
 }
+export interface ConversationBinding {
+  pluginId: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+}
 export interface WorkspaceState {
+  conversationBindings?: ConversationBinding[];
   deletionSync?: { pendingClients: number };
   user: User;
   projects: Project[];
@@ -310,6 +317,7 @@ export interface DashboardConnection {
   projectIds: string[];
 }
 export interface DashboardState {
+  conversationBindings?: ConversationBinding[];
   deletionSync?: { pendingClients: number };
   user: User;
   updatedAt: number;

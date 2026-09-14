@@ -16,7 +16,7 @@ export async function registerVoiceCommands(guild: Guild) {
     options: [
       {
         name: "name",
-        description: "既存プロジェクトを候補から選択",
+        description: "参加するプロジェクト名（直接入力・候補選択）",
         type: Option.String,
         autocomplete: true,
       },

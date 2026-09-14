@@ -9,7 +9,7 @@ import { normalizeInput } from "../input/normalize.js";
 import { normalizeDiscordPolicy } from "../input/policy.js";
 import { discordManifest } from "../manifest.js";
 import { Publications } from "../output/publications.js";
-import { renderPublication } from "../output/render.js";
+import { ConversationPublications } from "../output/conversation.js";
 import { deliver } from "../output/transport.js";
 import { audioOutput } from "../output/audio.js";
 import { createDiscordState } from "./state.js";
@@ -63,22 +63,41 @@ function configureForum() {
   forumTimer = setInterval(() => void refreshForum(), 10000);
   void refreshForum();
 }
-state.projectCommand = async (subject, projectId) => {
-  if (projectId && projectId !== state.config.projectId) {
-    const project = await runtime.rpc.request<
-      import("@ido/common/contracts/protocol").Project
-    >("projects.select", { subject, projectId });
-    state.config.projectId = project.id;
-    state.speechEpoch++;
-    audioOutput(state).invalidate();
-    for (const request of state.pending.values()) {
-      clearTimeout(request.timer);
-      request.reject();
+let projectSwitch = Promise.resolve();
+state.projectCommand = (subject, selection) => {
+  if (!selection) return runtime.rpc.request("projects.list", { subject });
+  const next = projectSwitch.then(async () => {
+    if (selection) {
+      const project = await runtime.rpc.request<
+        import("@ido/common/contracts/protocol").Project
+      >("projects.select", { subject, projectId: selection });
+      if (project.id !== state.config.projectId) {
+        state.config.projectId = project.id;
+        state.speechEpoch++;
+        audioOutput(state).invalidate();
+        for (const request of state.pending.values()) {
+          clearTimeout(request.timer);
+          request.reject();
+        }
+        state.pending.clear();
+        configureForum();
+      }
+      await state
+        .refreshTranscript?.()
+        .catch(() =>
+          runtime.emit("status", { status: "transcript-refresh-error" }),
+        );
     }
-    state.pending.clear();
-    configureForum();
-  }
-  return runtime.rpc.request("projects.list", { subject });
+    return runtime.rpc.request<{
+      projects: import("@ido/common/contracts/protocol").Project[];
+      projectId: string;
+    }>("projects.list", { subject });
+  });
+  projectSwitch = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
 };
 state.connectionGuide = async () => {
   const { origin } = await runtime.rpc.request<{ origin: string }>(
@@ -93,6 +112,12 @@ const publications = new Publications(
     await runtime.rpc.request("storage.put", { key, value: { messageId } });
   },
 );
+const conversationPublications = new ConversationPublications(
+  state,
+  () => runtime.rpc,
+  publications,
+);
+state.refreshTranscript = () => conversationPublications.refresh();
 state.player.on("error", () => emit({ type: "status", status: "audio-error" }));
 let pendingFrames = 0;
 const emit = (data: Record<string, unknown>) => {
@@ -178,6 +203,11 @@ const runtime = pluginRuntime(
         await start(state, emit, next);
       }
       configureForum();
+      await state
+        .refreshTranscript?.()
+        .catch(() =>
+          runtime.emit("status", { status: "transcript-refresh-error" }),
+        );
       return { ok: true };
     }
     if (operation === "start") {
@@ -230,30 +260,7 @@ const runtime = pluginRuntime(
         !["transcript", "minutes"].includes(event.type)
       )
         return { ok: true };
-      const epoch = state.speechEpoch;
-      const channelId = state.config.textChannelId;
-      const key = `${event.type}-${event.meetingId}-${state.config.textChannelId}`;
-      const saved = await runtime.rpc.request<
-        { messageId?: string } | undefined
-      >("storage.get", { key });
-      if (
-        epoch !== state.speechEpoch ||
-        channelId !== state.config.textChannelId ||
-        (event.data as { projectId?: string }).projectId !==
-          state.config.projectId
-      )
-        return { ok: true };
-      await publications.update(
-        key,
-        state.config.textChannelId,
-        renderPublication(event),
-        saved?.messageId,
-        () =>
-          epoch === state.speechEpoch &&
-          channelId === state.config.textChannelId &&
-          (event.data as { projectId?: string }).projectId ===
-            state.config.projectId,
-      );
+      await conversationPublications.publish(event);
       return { ok: true };
     }
     throw new Error("UNKNOWN_OPERATION");
