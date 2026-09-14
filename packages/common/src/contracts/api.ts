@@ -21,6 +21,7 @@ export interface MeetingView {
   messages: MessageView[];
 }
 export interface WorkspaceState {
+  deletionSync?: { pendingClients: number };
   user: User;
   projects: Project[];
   conversations?: Array<{
@@ -117,6 +118,8 @@ export interface ClientActivityState {
   version: number;
 }
 export interface ClientState {
+  lifecycleSupported?: boolean;
+  deletionSync?: { pendingTasks: number };
   allowedProjectIds?: string[];
   projectTasks?: Task[];
   projectCreationSupported?: boolean;
@@ -208,6 +211,7 @@ export interface ApiResult {
 
 /** Administration projection: no credentials, local paths or raw worker output. */
 export interface DashboardTask {
+  membershipVersion?: number;
   id: string;
   runId: string;
   revision: number;
@@ -239,9 +243,12 @@ export interface DashboardConnection {
   projectIds: string[];
 }
 export interface DashboardState {
+  deletionSync?: { pendingClients: number };
   user: User;
   updatedAt: number;
   projects: Array<{
+    isDefault?: boolean;
+    membershipVersion?: number;
     id: string;
     name: string;
     userIds: string[];

@@ -260,7 +260,9 @@ class MeetingCoordinator {
         .flatMap((m) => m.messages)
         .filter(
           (message) =>
-            message.stage === "completed" && !current.has(message.id),
+            message.stage === "completed" &&
+            (message as Message).role !== "assistant" &&
+            !current.has(message.id),
         )
         .slice(-30)
         .map((message) => ({
@@ -280,6 +282,11 @@ class MeetingCoordinator {
         }>("conversation-output")
         .filter(
           (output) =>
+            (output.at ?? output.startedAt ?? 0) >
+              (this.store.get<{ cutoffAt: number }>(
+                "project-context",
+                this.meeting()?.projectId ?? "",
+              )?.cutoffAt ?? -1) &&
             this.projectMeetings().some((m) => m.id === output.meetingId) &&
             (output.delivered || output.provider === "live") &&
             typeof output.text === "string",
@@ -583,6 +590,7 @@ class MeetingCoordinator {
       meetingId: this.lastRoute?.event.meetingId ?? this.meetingId,
       role: "assistant",
       provider: "live",
+      taskIds: this.projectTasks().map((task) => task.id),
       playbackStatus: "unknown",
     });
     await this.inbox.submit([
@@ -632,7 +640,12 @@ class MeetingCoordinator {
     },
     batch: Batch,
   ) {
-    if (this.completed.has(batch.id) || this.closed) return;
+    if (
+      this.completed.has(batch.id) ||
+      this.closed ||
+      this.store.get("project-lock", this.meeting()?.projectId ?? "")
+    )
+      return;
     this.requireRoutes(batch.events);
     const response = value.response;
     const sources = batch.events.flatMap((event) =>
@@ -800,6 +813,14 @@ class MeetingCoordinator {
             results.at(-1)?.meetingId ??
             this.meetingId,
           role: "assistant",
+          taskIds: [
+            ...new Set([
+              ...Object.keys(value.controlVersions),
+              ...batch.events.flatMap((event) =>
+                event.type === "task_result" ? [event.taskId] : [],
+              ),
+            ]),
+          ],
           provider: "coordinator",
           text: answer.text,
           sourceIds: answer.sourceIds,
@@ -911,6 +932,8 @@ export class CoordinatedConversation {
     if (this.closed) throw new Error("COORDINATOR_CLOSED");
     const meeting = this.store.get<Meeting>("meeting", meetingId);
     if (!meeting) throw new Error("MEETING_NOT_FOUND");
+    if (meeting.projectId && this.store.get("project-lock", meeting.projectId))
+      throw new Error("WORKSPACE_CONFLICT");
     const saved = meeting.projectId
       ? this.store.get<{ coordinatorId: string }>(
           "project-conversation",
@@ -1018,6 +1041,18 @@ export class CoordinatedConversation {
     const session = this.session(meetingId);
     await session.inbox.resolveUncertain({ retry });
     return session.inbox.flush();
+  }
+  async resetProject(projectId: string) {
+    const meetings = this.store
+      .list<Meeting>("meeting")
+      .filter((m) => m.projectId === projectId);
+    for (const meeting of meetings) {
+      const session = this.sessions.get(meeting.id);
+      if (session) {
+        await session.close();
+        this.sessions.delete(meeting.id);
+      }
+    }
   }
   async close() {
     this.closed = true;

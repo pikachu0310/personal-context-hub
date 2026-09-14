@@ -1,3 +1,4 @@
+import { ProjectTeam } from "../../processing/projects/team.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { id, type Task } from "@ido/common/contracts/protocol";
 import { body, HttpError, send } from "@ido/common/runtime/http";
@@ -33,7 +34,40 @@ export async function dashboard(
     this.mutate(req, auth, true);
     const input = await body(req);
     try {
-      if (url.pathname === "/api/admin/dashboard/stop") {
+      const actor = {
+        user: auth.user,
+        valid: () => {
+          try {
+            return this.authenticate(req).user.id === auth.user.id;
+          } catch {
+            return false;
+          }
+        },
+      };
+      if (url.pathname === "/api/admin/dashboard/project/invite") {
+        const invitation = new ProjectTeam(this.store).issueInvite(
+          id(input.projectId),
+        );
+        send(res, 200, {
+          url: `${this.config().engineUrl ?? this.origin}/invite/${invitation.token}`,
+        });
+      } else if (url.pathname === "/api/admin/dashboard/project/delete") {
+        const result = await this.connections.lifecycle.deleteProject(
+          actor,
+          id(input.projectId),
+          input,
+        );
+        this.flush();
+        send(res, 200, result);
+      } else if (url.pathname === "/api/admin/dashboard/task/delete") {
+        const result = await this.connections.lifecycle.deleteTask(
+          actor,
+          id(input.taskId),
+          input,
+        );
+        this.flush();
+        send(res, 200, result);
+      } else if (url.pathname === "/api/admin/dashboard/stop") {
         const task = this.store.get<Task>("task", id(input.taskId));
         if (!task) throw new HttpError(404, "TASK_NOT_FOUND");
         if (
@@ -94,6 +128,9 @@ export async function dashboard(
       if (error instanceof HttpError) throw error;
       if (
         [
+          "WORKSPACE_CONFLICT",
+          "TASK_ACTIVE",
+          "PROJECT_TASKS_ACTIVE",
           "CONNECTION_CHANGED",
           "CONNECTION_TASKS_CHANGED",
           "TASK_CONTROL_SUPERSEDED",

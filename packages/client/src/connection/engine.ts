@@ -17,6 +17,7 @@ export async function connect(this: Client) {
   this.ws?.close();
   this.connected = false;
   this.controlSupported = false;
+  this.lifecycleSupported = false;
   this.continuationSupported = false;
   this.projectCreationSupported = false;
   this.teamTasksSupported = false;
@@ -52,6 +53,7 @@ export async function connect(this: Client) {
           v: 1,
           type: "authenticate",
           deviceId: this.settings.deviceId,
+          lifecycleVersion: 1,
           profile: {
             ...this.settings.profile,
             name: this.settings.profile?.name || "参加者",
@@ -76,15 +78,29 @@ export async function connect(this: Client) {
       this.projectCreationSupported = data.projectVersion === 1;
       this.workspaceSupported = data.workspaceVersion === 1;
       this.teamTasksSupported = data.taskListVersion === 1;
+      this.lifecycleSupported = data.lifecycleVersion === 1;
       this.status = "connected";
-      this.settings.projects = data.projects as Project[];
+      this.syncProjects(data.projects as Project[]);
       if (Array.isArray(data.tasks))
         this.projectTasks =
           data.tasks as import("@ido/common/contracts/protocol").Task[];
       void this.save();
-      for (const value of Object.values(this.executor.runs))
-        this.executor.report(value);
-      this.ready();
+      this.processing = this.processing
+        .catch(() => {})
+        .then(async () => {
+          for (const command of (Array.isArray(data.deletions)
+            ? data.deletions
+            : []) as Command[])
+            await this.executor.receive(command, [], false, 0);
+          if (this.ws !== ws || this.stopping) return;
+          for (const value of Object.values(this.executor.runs))
+            this.executor.report(value);
+          this.ready();
+        })
+        .catch(() => {
+          this.status = "削除履歴の同期を再試行しています";
+          this.ready();
+        });
       return;
     }
     if (data.type.startsWith("preview.")) {
@@ -93,10 +109,12 @@ export async function connect(this: Client) {
     }
     if (data.generation !== this.generation) return;
     if (data.type === "projects.updated") {
-      this.settings.projects = data.projects as Project[];
-      if (Array.isArray(data.tasks))
-        this.projectTasks =
-          data.tasks as import("@ido/common/contracts/protocol").Task[];
+      this.syncProjects(
+        data.projects as Project[],
+        Array.isArray(data.tasks)
+          ? (data.tasks as import("@ido/common/contracts/protocol").Task[])
+          : undefined,
+      );
       void this.save();
       return;
     }
@@ -168,6 +186,8 @@ export async function connect(this: Client) {
         );
       return;
     }
+    if (data.type === "task.purge" && data.taskId)
+      this.preview.removeTask(data.taskId);
     this.processing = this.processing
       .catch(() => {})
       .then(() =>
@@ -186,6 +206,7 @@ export async function connect(this: Client) {
     if (this.ws !== ws) return;
     this.connected = false;
     this.controlSupported = false;
+    this.lifecycleSupported = false;
     this.continuationSupported = false;
     this.projectCreationSupported = false;
     this.teamTasksSupported = false;

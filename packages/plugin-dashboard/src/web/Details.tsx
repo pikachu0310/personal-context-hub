@@ -1,3 +1,4 @@
+import { TaskMenu, ProjectManagement } from "@ido/common-ui";
 import {
   Alert,
   Badge,
@@ -285,6 +286,17 @@ export function Details({
               )}
               <Divider />
               <Title order={4}>管理操作</Title>
+              <TaskMenu
+                task={{ ...task, text: task.title, canDelete: true }}
+                disabled={stale}
+                action={async (path, input) => {
+                  const result = await api<
+                    import("@ido/common/contracts/api").ApiResult
+                  >(path, input);
+                  await refresh();
+                  return result;
+                }}
+              />
               <Button
                 color="red"
                 variant="outline"
@@ -383,6 +395,17 @@ export function Details({
           {project && (
             <>
               <Title order={3}>{project.name}</Title>
+              <ProjectManagement
+                project={project}
+                disabled={stale}
+                action={async (path, input) => {
+                  const result = await api<
+                    import("@ido/common/contracts/api").ApiResult
+                  >(path, input);
+                  await refresh();
+                  return result;
+                }}
+              />
               <Field label="プロジェクトID" value={project.id} />
               <Field
                 label="接続中 / 所属"

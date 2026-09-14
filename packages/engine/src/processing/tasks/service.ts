@@ -1,3 +1,7 @@
+import {
+  addParticipant,
+  seedParticipants,
+} from "../projects/task-participants.js";
 import { randomUUID } from "node:crypto";
 import type { Command, Project, Task } from "@ido/common/contracts/protocol";
 import type { Device } from "../../domain/models.js";
@@ -41,6 +45,8 @@ export class Tasks {
   createTask(input: CreateTaskInput): Task {
     if (!this.repository.get<Project>("project", input.projectId))
       throw new Error("PROJECT_NOT_FOUND");
+    if (this.repository.get("project-lock", input.projectId))
+      throw new Error("WORKSPACE_CONFLICT");
     return this.repository.transaction(() => {
       const key = JSON.stringify([
         input.authorId,
@@ -49,7 +55,8 @@ export class Tasks {
       ]);
       const previous = this.repository.requestTask(key);
       if (previous) {
-        const task = this.repository.get<Task>("task", previous)!;
+        const task = this.repository.get<Task>("task", previous);
+        if (!task) throw new Error("TASK_DELETED");
         if (task.meetingId !== input.meetingId)
           throw new Error("REQUEST_MEETING_MISMATCH");
         return task;
@@ -70,6 +77,7 @@ export class Tasks {
         updatedAt: Date.now(),
         history: [],
       };
+      seedParticipants(this.repository, task);
       this.repository.put("task", task.id, task);
       this.repository.rememberRequest(key, task.id);
       this.repository.audit(input.authorId, "task.create", task.id);
@@ -177,6 +185,8 @@ export class Tasks {
     return this.repository.transaction(() => {
       const task = this.repository.get<Task>("task", taskId);
       if (!task) throw new Error("TASK_NOT_FOUND");
+      if (this.repository.get("project-lock", task.projectId))
+        throw new Error("WORKSPACE_CONFLICT");
       const requestKey = options.requestKey ?? randomUUID();
       if (!requestKey || requestKey.length > 500)
         throw new Error("INVALID_REQUEST_KEY");
@@ -227,6 +237,7 @@ export class Tasks {
       task.controlReceipts ??= {};
       task.controlReceipts[receipt.id] = receipt;
       const persist = () => {
+        addParticipant(this.repository, task, actor);
         task.updatedAt = Date.now();
         this.repository.put("task", task.id, task);
         this.repository.put("task-control", key, receipt);

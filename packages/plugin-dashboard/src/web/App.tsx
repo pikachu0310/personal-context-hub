@@ -324,6 +324,13 @@ export function App() {
               </Group>
             </Group>
           </Paper>
+          {state.deletionSync && (
+            <Text size="sm" c="dimmed" mt="sm" role="status">
+              {state.deletionSync.pendingClients
+                ? `Engine側の削除は完了しています。${state.deletionSync.pendingClients}台のClientでローカル履歴の同期待ちです。`
+                : "削除履歴はすべてのClientに同期済みです。"}
+            </Text>
+          )}
           {stale && (
             <Alert color="yellow" mt="sm">
               最後に受信した状態を表示しています。再接続できるまで管理操作は無効です。

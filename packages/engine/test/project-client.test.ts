@@ -115,9 +115,12 @@ test("approved Client owns projects, invites participants, retries unknown resul
   await until(() =>
     clients[1].settings.projects.some((p) => p.id === project.id),
   );
-  await assert.rejects(
-    clients[1].workspaceRequest("project.invite", { projectId: project.id }),
-    /PROJECT_OWNER_REQUIRED/,
+  assert.ok(
+    (
+      await clients[1].workspaceRequest<{ token: string }>("project.invite", {
+        projectId: project.id,
+      })
+    ).token,
   );
   await c.workspaceRequest("project.rename", {
     projectId: project.id,

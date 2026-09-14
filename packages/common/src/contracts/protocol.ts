@@ -21,6 +21,7 @@ export interface ClientProfile {
   codexConnected: boolean;
 }
 export interface Project {
+  membershipVersion?: number;
   ownerDeviceId?: string;
   isDefault?: boolean;
   id: string;
@@ -46,6 +47,9 @@ export type TaskState =
   | "failed"
   | "cancelled";
 export interface Task {
+  memberStates?: Record<string, boolean>;
+  membershipVersion?: number;
+  canDelete?: boolean;
   createdByBot?: boolean;
   participants?: TaskParticipant[];
   id: string;

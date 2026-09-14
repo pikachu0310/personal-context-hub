@@ -8,8 +8,24 @@ export function answer(
   meetingId: string,
   question: string,
 ) {
+  const meeting = store.get<Meeting>("meeting", meetingId);
+  const reset = store.get("project-context", meeting?.projectId ?? "");
   return models.answer(
-    store.get<Meeting>("meeting", meetingId),
+    meeting && reset
+      ? {
+          ...meeting,
+          summary: "",
+          messages: meeting.messages
+            .filter((m) => (m as { role?: string }).role !== "assistant")
+            .map(({ id, authorId, text, at, stage }) => ({
+              id,
+              authorId,
+              text,
+              at,
+              stage,
+            })),
+        }
+      : meeting,
     store.list<Task>("task").filter((t) => t.meetingId === meetingId),
     question,
   );

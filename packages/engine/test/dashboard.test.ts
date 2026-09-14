@@ -396,3 +396,63 @@ test("disconnect timeout keeps stop unconfirmed and clears old execute replay", 
       .some((e) => e.action === "connection.disconnected.stop_unconfirmed"),
   );
 });
+
+test("dashboard lifecycle routes enforce admin, CSRF, confirmations and default project protection", async (t) => {
+  const { engine: e, user, request, session } = await fixture(t);
+  const p = { id: "lifecycle-project", name: "Lifecycle project", remote: "" };
+  e.store.put("project", p.id, p);
+  const input = {
+    projectId: p.id,
+    name: p.name,
+    membershipVersion: 0,
+    confirm: true,
+  };
+  const ordinary = e.store.createUser("ordinary", "fixture-password", "member");
+  const ordinarySession = e.store.session(ordinary.id);
+  for (const operation of ["project/invite", "project/delete", "task/delete"]) {
+    assert.equal(
+      (await request(`/${operation}`, input, ordinarySession)).status,
+      403,
+    );
+    assert.equal(
+      (await request(`/${operation}`, input, { ...session, csrf: "invalid" }))
+        .status,
+      403,
+    );
+  }
+  const invite = await request("/project/invite", { projectId: p.id });
+  assert.equal(invite.status, 200);
+  assert.match((await invite.json()).url, /\/invite\//);
+  assert.equal(
+    (await request("/project/delete", { ...input, name: "wrong" })).status,
+    400,
+  );
+  assert.ok(e.store.get("project", p.id));
+  assert.equal(
+    (
+      await request("/project/delete", {
+        ...input,
+        projectId: "default",
+        name: "デフォルト",
+      })
+    ).status,
+    400,
+  );
+  const target = task(e, user.id);
+  const removal = {
+    taskId: target.id,
+    revision: 1,
+    controlVersion: 0,
+    membershipVersion: 0,
+    confirm: true,
+  };
+  assert.equal(
+    (await request("/task/delete", { ...removal, confirm: false })).status,
+    400,
+  );
+  assert.ok(e.store.get("task", target.id));
+  assert.equal((await request("/task/delete", removal)).status, 200);
+  assert.equal(e.store.get("task", target.id), undefined);
+  assert.equal((await request("/project/delete", input)).status, 200);
+  assert.equal(e.store.get("project", p.id), undefined);
+});

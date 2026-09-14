@@ -41,8 +41,21 @@ export class InputRouter {
   private async process(event: ConversationInput, context: InputContext) {
     const config = { meetingId: event.meetingId, projectId: event.projectId };
     const actor = context.actor;
+    const projectId =
+      config.projectId ??
+      this.store.get<Meeting>("meeting", config.meetingId)?.projectId ??
+      "";
+    const contextRevision = this.store.get<{ revision: number }>(
+      "project-context",
+      projectId,
+    )?.revision;
     const allowed = () =>
       !this.closed &&
+      !this.store.get("project-deletion", projectId) &&
+      !this.store.get("project-lock", projectId) &&
+      contextRevision ===
+        this.store.get<{ revision: number }>("project-context", projectId)
+          ?.revision &&
       context.valid() &&
       !!this.store.conversationAuthor(actor.id);
     if (event.audioFrame || event.activity) {
@@ -70,6 +83,7 @@ export class InputRouter {
     let replyMessageId: string | undefined;
     let acceptedId = "";
     const respond = (content: string, file?: string) => {
+      if (!allowed()) return Promise.resolve();
       if (replyMessageId) this.ai.messages.response(replyMessageId, content);
       return context.deliver({
         kind: "reply",

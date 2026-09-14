@@ -3,13 +3,17 @@ import { WebSocket } from "ws";
 import type { Command } from "@ido/common/contracts/protocol";
 
 export class ClientPreview {
-  registrations = new Map<string, { port: number; basePath: string }>();
+  registrations = new Map<
+    string,
+    { port: number; basePath: string; taskId?: string }
+  >();
+  streamTasks = new Map<string, string>();
   streams = new Map<string, WebSocket>();
   constructor(readonly emit: (message: Command) => void) {}
-  register(id: string, port: number) {
+  register(id: string, port: number, taskId?: string) {
     if (!Number.isInteger(port) || port < 1024 || port > 65535)
       throw new Error("INVALID_PORT");
-    this.registrations.set(id, { port, basePath: "/" });
+    this.registrations.set(id, { port, basePath: "/", taskId });
   }
   async receive(data: Command) {
     const requestId = String(data.requestId);
@@ -102,6 +106,8 @@ export class ClientPreview {
         handshakeTimeout: 10000,
       });
       this.streams.set(requestId, stream);
+      if (registration.taskId)
+        this.streamTasks.set(requestId, registration.taskId);
       stream.on("message", (data, binary) =>
         this.emit({
           v: 1,
@@ -114,13 +120,25 @@ export class ClientPreview {
       stream.on("error", () => stream.close());
       stream.on("close", () => {
         this.streams.delete(requestId);
+        this.streamTasks.delete(requestId);
         this.emit({ v: 1, type: "preview.ws.close", requestId });
       });
     }
   }
+  removeTask(taskId: string) {
+    for (const [id, registration] of this.registrations)
+      if (registration.taskId === taskId) this.registrations.delete(id);
+    for (const [id, value] of this.streamTasks)
+      if (value === taskId) {
+        this.streams.get(id)?.close();
+        this.streams.delete(id);
+        this.streamTasks.delete(id);
+      }
+  }
   close() {
     for (const stream of this.streams.values()) stream.close();
     this.streams.clear();
+    this.streamTasks.clear();
     this.registrations.clear();
   }
 }
