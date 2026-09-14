@@ -1,30 +1,28 @@
 # 会話方式と差し替え境界
 
-現在の実装は `packages/` にあります。Engineが会議ごとの永続メインCodexを保持し、作業をClientへ委譲します。同じEngineで `text-speech` と `live` を選択できます。どちらでも、Discordの話者別STTと機械的な発言記録を残します。
+現在の実装は `packages/` にあります。Engineが会議ごとの状態をSQLiteに保存し、OpenAI Responses APIで会話を処理して、作業をClientへ委譲します。同じEngineで `text-speech` と `live` を選択できます。どちらでも、Discordの話者別STTと機械的な発言記録を残します。
 
-| 責務             | text-speech                    | live                             |
-| ---------------- | ------------------------------ | -------------------------------- |
-| 音声の直接応答   | 永続メインモデルが回答文を作成 | Liveが音声会話を担当             |
-| 作業・調査の管理 | Engineの永続メインモデル       | 同じ永続メインモデル             |
-| 実作業           | 許可されたClient               | 同左                             |
-| 人間の発言記録   | ユーザー別STT                  | Liveとは別にユーザー別STT        |
-| 出力             | 文字とTTS                      | 文字、Liveへの情報提供、Live音声 |
+| 責務             | text-speech             | live                             |
+| ---------------- | ----------------------- | -------------------------------- |
+| 音声の直接応答   | APIモデルが回答文を作成 | Liveが音声会話を担当             |
+| 作業・調査の管理 | EngineのAPIモデル       | 同じAPIモデル                    |
+| 実作業           | 許可されたClient        | 同左                             |
+| 人間の発言記録   | ユーザー別STT           | Liveとは別にユーザー別STT        |
+| 出力             | 文字とTTS               | 文字、Liveへの情報提供、Live音声 |
 
 ## 起動と認証
 
-Engine用のCodex認証を用意してから起動します。既存のClient認証や個人用Codex設定はコピーしません。
+Engineを起動し、管理画面でOpenAI APIキーを設定します。EngineにはCodexのインストール・ログイン・専用homeは不要です。
 
 ```sh
-ido-engine codex-login
-ido-engine codex-status
 ido-engine start --conversation-mode text-speech
 ```
 
 `start` の既定値は `text-speech` です。`--conversation-mode live` は新しい会議セッションの既定方式を指定します。会議に保存済みの方式がある場合はそちらを再開します。Discordでは `/ido mode value:live` と `/ido mode value:text-speech` で会議の方式を切り替えます。閲覧者は変更できません。
 
-EngineのCodex homeは既定で `<engine-data>/codex`、主モデル用の作業場所は `<engine-data>/coordinator-workspace` です。`codex-login`、`codex-status`、`start` に同じ `--codex-home` を指定して変更できます。`start --main-model <model>` は主モデルを変更します。現Codexアダプターの既定は `gpt-5.6-sol`、推論強度は `low` です。
+`start --main-model <model>` はAPIモデルを変更します。既定は `gpt-4.1-mini` です。会話処理、STT、TTS、LiveはEngine管理画面の同じOpenAI APIキーを使います。APIキーの変更は次のリクエストから反映されます。
 
-STT、TTS、LiveのOpenAI APIキーはEngine管理画面で設定します。Codex認証と音声APIの認証は別です。Engineの主モデルは会話とタスクの管理に使い、シェル、Web検索、アプリ、MCP、ブラウザー操作などの実作業機能を無効にしています。リポジトリ操作はClient側の権限とCodex環境で実行します。
+会話APIは各リクエストに保存済みの発言・回答履歴を上限付きで渡し、`store: false` と構造化JSON出力を指定します。外部ツールは渡しません。調査・リポジトリ操作はClient側の権限とCodex環境で実行します。
 
 `--conversation-mode legacy` は移行前のpackages版Responsesによる回答・議事録生成を比較用に残す指定です。`v0` の起動ではありません。古い `PERSONAL_CONTEXT_VOICE_*` 設定や `/ido live on/off` は現在のEngine設定ではありません。
 
@@ -34,7 +32,7 @@ STT、TTS、LiveのOpenAI APIキーはEngine管理画面で設定します。Cod
 flowchart TB
     P["Discord / Dashboard"] --> I["入力ルーター・発言記録"]
     I --> C["会議の入力キュー"]
-    C <--> M["Engineの永続メインモデル"]
+    C <--> M["EngineのAPIモデル"]
     M <--> W["WorkPort・Client管理"]
     W <--> X["作業Client"]
     M --> O["文字出力・選択した音声方式"]
@@ -69,7 +67,7 @@ flowchart TB
     F --> L["Liveセッション"]
     L --> P["PCM出力・再生制御"]
     A --> S["独立した話者別STT・記録"]
-    S --> M["永続バックエンドモデル"]
+    S --> M["バックエンドAPIモデル"]
     L <-->|"委任通知・結果案内"| M
     M <--> W["WorkPort"]
 ```
@@ -86,15 +84,17 @@ Live用には20ms単位のPCMフレームを送り、アダプター内部で24k
 flowchart TB
     E["発言・作業結果・観測"] --> Q["保存済み入力キュー"]
     Q --> N["通常入力"]
-    N -->|"モデルが空いたら"| T["同じスレッドの次ターン"]
+    N -->|"モデルが空いたら"| T["次のAPIリクエスト"]
     Q --> U["即時入力"]
-    U -->|"処理中"| S["進行中ターンへsteer"]
+    U -->|"処理中"| S["終了後のAPIリクエストへ待機"]
     U -->|"待機中"| T
 ```
 
 通常入力は会議ごとの30秒タイマーで処理を促し、既にモデルが動いていれば終了後に送ります。作業Clientが動いていることは、メインモデルを待機させる理由にはなりません。明示的な呼びかけや `priority: "immediate"` は即時入力になり、`priority: "normal"` で集約を指定できます。埋め込み時は `EngineOptions.conversation.observationIntervalMs` を差し替えられます。
 
-即時入力は未送信の先行文脈と一緒に、上限付きのバッチで `steer` します。確実に拒否されたsteerは次ターンに回します。送信結果が不明な場合は保留し、再接続だけで再送しません。入力キュー、スレッド参照、保存済み応答、処理済みバッチIDはSQLiteへ保存します。保存済み応答はモデルを再実行せず適用できます。
+HTTPの会話APIには処理途中の入力追加を行いません。`steer` は確実な未受理を返し、即時入力を失わず次のリクエストに回します。Clientの実作業への追加指示・停止は従来の制御経路で処理します。入力キュー、会議参照、保存済み応答、処理済みバッチIDはSQLiteへ保存します。保存済み応答はAPIを再実行せず適用できます。認証エラーなど明確な拒否は未送信状態に戻し、キー修正後に再試行できます。通信切断など結果が不明な送信は保留し、自動再送しません。
+
+旧Codexの会議参照は次のAPI実行時に置換します。旧方式で保留された入力や再認証が必要な入力は、既存の復旧操作で明示的に再開してください。更新だけでは保留入力を再送しません。
 
 復旧操作は認証されたWorkspace契約にあります。専用の管理画面やDiscord復旧コマンドはまだありません。
 
@@ -136,7 +136,7 @@ Bot出力は別の `conversation-output` レコードです。文字配送の `d
 - Liveアダプターは30分で接続を閉じ、失敗時と同様にSTT/TTSへ戻ります。継続接続の自動更新はありません。
 - 現在のTTSアダプターは先頭500文字、Liveへの案内文は先頭350文字までです。長い回答の全文は文字出力で確認します。
 - 発話候補は停止できますが、現在の `Models.speak` はHTTP用AbortSignalを受け取らず、実行済みのTTS要求まで必ず中止できるとは限りません。
-- コンテクストは有限です。初期・復旧用の議事録投影は12,000文字に制限します。Engine内の全発言記録を主モデルや任意のClientへ検索・取得させるポートはなく、永続スレッドは無制限の記憶を意味しません。
+- コンテクストは有限です。初期・復旧用の議事録投影は12,000文字に制限します。Engine内の全発言記録を主モデルや任意のClientへ検索・取得させるポートはなく、APIへ渡す履歴は上限付きです。
 
 ```sh
 npm run check:ido
@@ -144,4 +144,4 @@ npm run build:ido
 npm run test:ido
 ```
 
-対象テストは偽Liveソケット、偽プレイヤー、偽Codex、ローカルIPCで検証します。実際のLive接続、マイク入力、話者別認識精度、会話の重なり、応答時間は未検証です。比較では意図的な集約待ちとモデル・ネットワーク処理時間を分けます。移植範囲は [main2との統合](main2-conversation-integration.md)、作業制約は [WorkPort契約](work-port-contract.md) を参照してください。
+対象テストは偽Liveソケット、偽プレイヤー、モックResponses API、ローカルIPCで検証します。実際のLive接続、マイク入力、話者別認識精度、会話の重なり、応答時間は未検証です。比較では意図的な集約待ちとモデル・ネットワーク処理時間を分けます。移植範囲は [main2との統合](main2-conversation-integration.md)、作業制約は [WorkPort契約](work-port-contract.md) を参照してください。

@@ -4,7 +4,7 @@ import { clean, type Task } from "@ido/common/contracts/protocol";
 export interface ForumBinding {
   guildId: string;
   issueForumChannelId: string;
-  meetingId: string;
+  meetingId?: string;
   projectId: string;
 }
 export interface ForumRecord {
@@ -25,7 +25,6 @@ export function forumKey(binding: ForumBinding) {
       JSON.stringify([
         binding.guildId,
         binding.issueForumChannelId,
-        binding.meetingId,
         binding.projectId,
       ]),
     )
@@ -66,11 +65,7 @@ export class ForumSync {
       let failed = false;
       for (const task of tasks) {
         if (!this.valid()) return;
-        if (
-          task.meetingId !== this.binding.meetingId ||
-          task.projectId !== this.binding.projectId
-        )
-          continue;
+        if (task.projectId !== this.binding.projectId) continue;
         try {
           let record = this.records.find((r) => r.taskId === task.id);
           const existing = !!record;

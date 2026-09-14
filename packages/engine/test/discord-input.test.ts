@@ -454,7 +454,7 @@ test("explicit task and natural controls use the same execution, never create a 
   assert.equal(f.store.list<Task>("task").length, 1);
 });
 
-test("ambiguous tasks require an ID; viewer cannot control; controls cannot cross meetings", async (t) => {
+test("ambiguous tasks require an ID; viewer cannot control; controls span minutes but cannot cross projects", async (t) => {
   const f = await fixture(t);
   const first = f.task("first");
   const second = f.task("second");
@@ -480,7 +480,16 @@ test("ambiguous tasks require an ID; viewer cannot control; controls cannot cros
   f.store.put("task", second.id, second);
   await f.input.handle({
     ...stop,
-    eventId: "wrong-meeting",
+    eventId: "earlier-minutes",
+    taskId: second.id,
+  });
+  assert.equal(f.store.get<Task>("task", second.id)!.state, "cancelled");
+  second.state = "queued";
+  second.projectId = "other-project";
+  f.store.put("task", second.id, second);
+  await f.input.handle({
+    ...stop,
+    eventId: "other-project",
     taskId: second.id,
   });
   assert.equal(f.store.get<Task>("task", second.id)!.state, "queued");

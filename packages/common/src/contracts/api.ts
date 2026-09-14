@@ -12,6 +12,8 @@ export interface MessageView {
   steps?: Record<string, { state: string; errorId?: string }>;
 }
 export interface MeetingView {
+  startedAt?: number;
+  closedAt?: number;
   id: string;
   name: string;
   projectId?: string;
@@ -21,8 +23,24 @@ export interface MeetingView {
 export interface WorkspaceState {
   user: User;
   projects: Project[];
+  conversations?: Array<{
+    projectId: string;
+    meetingId: string;
+    lastHumanAt?: number;
+  }>;
   meetings: MeetingView[];
   tasks: Task[];
+}
+export interface ProjectWorkspace {
+  project: Project;
+  minutes: MeetingView[];
+  tasks: Task[];
+  participants: Array<{
+    id: string;
+    name: string;
+    context: string;
+    codexConnected: boolean;
+  }>;
 }
 export interface PluginState {
   id: string;
@@ -38,6 +56,7 @@ export interface AdminState {
   user: User;
   csrf: string;
   clients: Array<{
+    codexConnected?: boolean;
     id: string;
     name: string;
     userId: string;
@@ -96,11 +115,16 @@ export interface ClientActivityState {
   version: number;
 }
 export interface ClientState {
+  allowedProjectIds?: string[];
+  projectTasks?: Task[];
+  projectCreationSupported?: boolean;
   teamTasksSupported?: boolean;
   teamTasks?: TeamTaskSnapshot;
   controlSupported?: boolean;
   csrf: string;
+  suggestedInvite?: { engineUrl: string; token: string };
   settings: {
+    profile?: { name: string; context: string };
     progressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;

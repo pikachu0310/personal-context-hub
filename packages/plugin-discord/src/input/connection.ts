@@ -8,6 +8,7 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  MessageFlags,
   type VoiceChannel,
 } from "discord.js";
 import prism from "prism-media";
@@ -243,6 +244,54 @@ export async function start(
     },
   );
   state.client.on(Events.InteractionCreate, (interaction) => {
+    if (
+      (interaction.isAutocomplete() || interaction.isChatInputCommand()) &&
+      interaction.commandName === "project"
+    ) {
+      void (async () => {
+        const allowed =
+          interaction.guildId === state.config.guildId &&
+          discordUserAllowed(state.config, interaction.user.id);
+        if (interaction.isAutocomplete()) {
+          if (!allowed) {
+            await interaction.respond([]);
+            return;
+          }
+          try {
+            const listing = await state.projectCommand!(interaction.user.id);
+            const query = interaction.options.getFocused().toLowerCase();
+            await interaction.respond(
+              listing.projects
+                .filter((p) => p.name.toLowerCase().includes(query))
+                .slice(0, 25)
+                .map((p) => ({ name: p.name, value: p.id })),
+            );
+          } catch {
+            await interaction.respond([]);
+          }
+        } else {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          try {
+            if (!allowed) throw new Error("PERMISSION_DENIED");
+            const listing = await state.projectCommand!(
+              interaction.user.id,
+              interaction.options.getString("name") ?? undefined,
+            );
+            await interaction.editReply({
+              content: `現在のプロジェクト: ${listing.projects.find((p) => p.id === listing.projectId)?.name ?? listing.projectId}`,
+              allowedMentions: { parse: [] },
+            });
+          } catch {
+            await interaction.editReply(
+              "切り替えできません。受付権限を確認し、候補から既存プロジェクトを選んでください。",
+            );
+          }
+        }
+      })().catch(() =>
+        emit({ type: "status", status: "project-command-error" }),
+      );
+      return;
+    }
     if (interaction.isChatInputCommand())
       void handleCommand(interaction).catch(() =>
         emit({ type: "status", status: "command-error" }),
@@ -250,6 +299,7 @@ export async function start(
   });
   state.client.once(Events.ClientReady, () => {
     void (async () => {
+      state.config.appId = state.client!.application!.id;
       const guild = await state.client!.guilds.fetch(state.config.guildId);
       await registerVoiceCommands(guild);
       emit({ type: "status", status: "connected" });

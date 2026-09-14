@@ -8,6 +8,7 @@ import {
   type Command,
   type Mapping,
   type Project,
+  type Task,
 } from "@ido/common/contracts/protocol";
 import { Credentials } from "@ido/common/runtime/credentials";
 import { HttpError, send } from "@ido/common/runtime/http";
@@ -23,7 +24,18 @@ import { route } from "../http/routes.js";
 import { agentCatalog } from "../agents/model-catalog.js";
 import { ClientPreview } from "../preview/relay.js";
 
+import { checkAccount } from "../auth/account.js";
+import { workspaceRequest } from "../connection/workspace.js";
+import { createProject } from "../connection/projects.js";
 interface Settings {
+  profile?: { name: string; context: string };
+  pendingProject?: {
+    requestId: string;
+    name: string;
+    directory: string;
+    engineUrl?: string;
+    deviceId?: string;
+  };
   progressMode?: "auto" | "manual";
   engineUrl?: string;
   deviceId?: string;
@@ -43,6 +55,7 @@ export class Client {
       ?.authenticated
       ? "authenticated"
       : "not authenticated";
+    if (!this.stopping) this.ready();
     return catalog;
   };
   settings: Settings = { mappings: [], slots: 1, projects: [] };
@@ -54,6 +67,27 @@ export class Client {
   generation = 0;
   connected = false;
   controlSupported = false;
+  workspaceSupported = false;
+  workspaceRequests = new Map<
+    string,
+    {
+      resolve: (result: unknown) => void;
+      reject: (error: Error) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
+  suggestedInvite?: { engineUrl: string; token: string };
+  projectTasks: Task[] = [];
+  projectCreationSupported = false;
+  projectCreationBusy = false;
+  projectRequests = new Map<
+    string,
+    {
+      resolve: (project: Project) => void;
+      reject: (error: Error) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
   teamTasksSupported = false;
   teamTasks?: TeamTaskSnapshot;
   teamTasksRequestedAt = 0;
@@ -65,7 +99,25 @@ export class Client {
       timer: NodeJS.Timeout;
     }
   >();
-  allow = false;
+  readonly allowedProjects = new Set<string>();
+  get allow() {
+    return this.allowedProjects.size > 0;
+  }
+  executionMappings() {
+    return this.settings.mappings.filter(
+      (m) =>
+        this.allowedProjects.has(m.projectId) &&
+        this.settings.projects.some((p) => p.id === m.projectId),
+    );
+  }
+  projectBusy(projectId: string) {
+    return (
+      this.allowedProjects.has(projectId) ||
+      [...this.executor.active.keys()].some(
+        (runId) => this.executor.runs[runId]?.task.projectId === projectId,
+      )
+    );
+  }
   stopping = false;
   ws?: WebSocket;
   reconnect?: NodeJS.Timeout;
@@ -102,9 +154,14 @@ export class Client {
       join(this.directory, "client.json"),
       this.settings,
     );
+    this.settings.profile ??= { name: "参加者", context: "" };
     await this.executor.load();
-    this.executor.progressMode =
-      this.settings.progressMode === "manual" ? "manual" : "auto";
+    if (this.settings.progressMode) {
+      for (const mapping of this.settings.mappings)
+        mapping.progressMode ??= this.settings.progressMode;
+      delete this.settings.progressMode;
+      await this.save();
+    }
     if (!this.settings.publicKey) {
       const keys = generateKeyPairSync("ed25519");
       this.settings.publicKey = keys.publicKey
@@ -122,6 +179,7 @@ export class Client {
     });
     const address = this.server.address();
     this.origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}`;
+    void this.checkAccount();
     if (this.settings.deviceId) this.connect();
     return this;
   }
@@ -133,21 +191,34 @@ export class Client {
       this.ws.send(JSON.stringify({ ...data, generation: this.generation }));
   }
   grants() {
-    return this.allow
-      ? this.settings.mappings.map(
-          ({ directory, previewCommand, ...grant }) => grant,
-        )
-      : [];
+    return this.executionMappings().map(({ projectId, network, slots }) => ({
+      projectId,
+      network,
+      slots,
+    }));
   }
   ready() {
     this.emit({
       v: 1,
       type: "ready",
       executionPolicyVersion: 1,
+      profile: {
+        ...this.settings.profile,
+        name: this.settings.profile?.name || "参加者",
+        codexConnected: this.loginStatus === "authenticated",
+      },
       grants: this.grants(),
       slots: this.settings.slots,
     });
   }
+  readonly checkAccount = checkAccount.bind(this);
+  workspaceRequest<T>(
+    operation: string,
+    input: Record<string, unknown>,
+  ): Promise<T> {
+    return workspaceRequest.call(this, operation, input) as Promise<T>;
+  }
+  readonly createProject = createProject.bind(this);
   readonly connect = connect.bind(this);
   readonly control = control.bind(this);
   readonly pair = pair.bind(this);
@@ -164,6 +235,16 @@ export class Client {
       request.reject(new HttpError(409, "CONTROL_DELIVERY_UNKNOWN"));
     }
     this.controlRequests.clear();
+    for (const request of this.workspaceRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new HttpError(409, "WORKSPACE_DELIVERY_UNKNOWN"));
+    }
+    this.workspaceRequests.clear();
+    for (const request of this.projectRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new HttpError(409, "PROJECT_DELIVERY_UNKNOWN"));
+    }
+    this.projectRequests.clear();
     this.preview.close();
     await this.executor.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));

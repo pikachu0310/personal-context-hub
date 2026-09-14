@@ -53,3 +53,28 @@ export function externalLink(
     return false;
   }
 }
+
+export function parseProjectLink(value: string) {
+  if (value.length > 4096) throw new Error("INVALID_JOIN_LINK");
+  const url = new URL(value);
+  if (
+    url.protocol !== "ido-agent:" ||
+    url.hostname !== "project" ||
+    !["", "/"].includes(url.pathname) ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.hash ||
+    [...url.searchParams.keys()].some(
+      (k) => !["engine", "token"].includes(k),
+    ) ||
+    url.searchParams.getAll("engine").length !== 1 ||
+    url.searchParams.getAll("token").length !== 1 ||
+    !/^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get("token") ?? "")
+  )
+    throw new Error("INVALID_JOIN_LINK");
+  return {
+    engineUrl: endpoint(url.searchParams.get("engine")).origin,
+    token: url.searchParams.get("token")!,
+  };
+}

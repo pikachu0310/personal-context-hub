@@ -15,6 +15,7 @@ import type {
   PluginOutput,
 } from "@ido/common/contracts/plugins";
 import type { Task } from "@ido/common/contracts/protocol";
+import { Projects } from "../src/processing/projects/service.js";
 import { Engine } from "../src/bootstrap/engine.js";
 import type { Message } from "../src/domain/models.js";
 import { wrapPcmAsWav } from "../src/input/audio/signal.mjs";
@@ -366,6 +367,7 @@ for (const liveMode of [false, true])
       name: "Worker",
       publicKey: "fixture",
       revoked: false,
+      codexConnected: true,
       generation: 1,
       grants: [{ projectId: "project", network: false, slots: 1 }],
       slots: 1,
@@ -1411,4 +1413,48 @@ test("Live cannot announce an obsolete result after its text delivery was awaiti
   );
   assert.deepEqual(f.live[0].comments, []);
   assert.deepEqual(f.speech, []);
+});
+
+test("minutes rollover preserves the project model, recent context and original task association", async (t) => {
+  const f = await fixture(t);
+  let now = 1000;
+  const projects = new Projects(f.engine.store, () => now);
+  const first = projects.accept(
+    { eventId: "first", projectId: "project", text: "前提を覚えてください" },
+    "fixture",
+  );
+  await f.input(first);
+  await f.core.flush(first.meetingId);
+  await f.idle();
+  now += 600000;
+  const next = projects.accept(
+    { eventId: "next", projectId: "project", text: "続きの会話" },
+    "fixture",
+  );
+  assert.notEqual(first.meetingId, next.meetingId);
+  await f.input(next);
+  await f.core.flush(next.meetingId);
+  await f.idle();
+  assert.equal(f.factories.length, 1);
+  assert.match(f.calls.at(-1)!.observation.context!, /前提を覚えてください/);
+  assert.equal(
+    f.messages().find((m) => m.text === "前提を覚えてください")!.meetingId,
+    first.meetingId,
+  );
+  f.engine.store.put("project", "other", {
+    id: "other",
+    name: "Other",
+    remote: "",
+  });
+  const other = projects.accept(
+    { eventId: "other", projectId: "other", text: "別の会話" },
+    "fixture",
+  );
+  await f.input(other);
+  await f.core.flush(other.meetingId);
+  assert.equal(f.factories.length, 2);
+  assert.doesNotMatch(
+    f.calls.at(-1)!.observation.context!,
+    /前提を覚えてください/,
+  );
 });

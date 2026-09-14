@@ -15,7 +15,6 @@
     "ido-engine": "dist/cli.js"
   },
   "dependencies": {
-    "@openai/codex": "0.154.0",
     "openai": "^7.15.0",
     "ws": "^8.21.3"
   },

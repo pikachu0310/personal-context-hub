@@ -1,15 +1,7 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
-import { spawn } from "node:child_process";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
-import { codexBinary } from "@ido/common/runtime/codex/binary";
 import { control, lifetime, recover } from "@ido/common/runtime/lifecycle";
-import {
-  dataDirectory,
-  openBrowser,
-  workerEnvironment,
-} from "@ido/common/runtime/platform";
+import { dataDirectory, openBrowser } from "@ido/common/runtime/platform";
 import { Store } from "./adapters/sqlite/store.js";
 import { Engine } from "./bootstrap/engine.js";
 const args = process.argv.slice(2),
@@ -71,27 +63,7 @@ try {
   if (Number(process.versions.node.split(".")[0]) !== 24)
     throw new Error("IDO requires Node.js 24.x");
   if (command === "init") await init();
-  else if (command === "codex-login" || command === "codex-status") {
-    const codexHome = args.includes("--codex-home")
-      ? option("--codex-home")
-      : join(directory, "codex");
-    await mkdir(codexHome, { recursive: true, mode: 0o700 });
-    const child = spawn(
-      codexBinary(),
-      command === "codex-login"
-        ? ["login", "--device-auth"]
-        : ["login", "status"],
-      {
-        env: workerEnvironment(codexHome),
-        stdio: "inherit",
-        windowsHide: true,
-      },
-    );
-    process.exitCode = await new Promise<number>((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code) => resolve(code ?? 1));
-    });
-  } else if (command === "status" || command === "stop")
+  else if (command === "status" || command === "stop")
     console.log(JSON.stringify(await control(directory, command)));
   else if (command === "doctor") {
     if (args.includes("--recover")) await recover(directory);
@@ -116,9 +88,6 @@ try {
           ? false
           : {
               mode: mode as "text-speech" | "live",
-              codexHome: args.includes("--codex-home")
-                ? option("--codex-home")
-                : undefined,
               model: args.includes("--main-model")
                 ? option("--main-model")
                 : undefined,
@@ -148,7 +117,7 @@ try {
     console.log("Discord plugin installed");
   } else
     throw new Error(
-      "Commands: init, start, stop, status, doctor, plugin-install, codex-login, codex-status",
+      "Commands: init, start, stop, status, doctor, plugin-install",
     );
 } catch (e) {
   console.error((e as Error).message);

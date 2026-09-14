@@ -14,7 +14,7 @@ export async function pair(this: Client, engineUrl: string) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      name: hostname(),
+      name: this.settings.profile?.name || hostname(),
       publicKey: this.settings.publicKey,
     }),
     signal: AbortSignal.timeout(10000),

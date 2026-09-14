@@ -270,6 +270,7 @@ test("durable allocation, capacity/permission filtering, deduplication and stale
     publicKey: "test",
     generation: 1,
     revoked: false,
+    codexConnected: true,
     grants: [{ projectId: "project", network, slots }],
     slots,
     lastAssigned,

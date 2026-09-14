@@ -15,6 +15,19 @@ export interface Diagnostic extends DiagnosticContext {
 }
 
 const reasons: Record<string, string> = {
+  COORDINATOR_CLOSED: "会議の会話処理は終了しています。",
+  COORDINATOR_BUSY: "この会議の会話処理は実行中です。",
+  COORDINATOR_ALREADY_OPEN: "この会議の会話処理は既に開かれています。",
+  COORDINATOR_HANDLE_MISMATCH: "保存された会話状態の会議IDが一致しません。",
+  COORDINATOR_MEETING_MISMATCH: "会話入力の会議IDが一致しません。",
+  COORDINATOR_INPUT_TOO_LARGE: "会話入力が処理できる上限を超えています。",
+  COORDINATOR_NOT_STARTED: "会話APIへの送信前に処理が停止しました。",
+  COORDINATOR_RESPONSE_UNCERTAIN:
+    "会話APIの結果を確認できませんでした。会話状態を確認して再開してください。",
+  COORDINATOR_RESPONSE_INCOMPLETE: "会話APIの応答が完了しませんでした。",
+  INVALID_COORDINATOR_RESPONSE: "会話APIの応答が必要な形式を満たしていません。",
+  COORDINATOR_SOURCE_REVALIDATION_REQUIRED:
+    "会話の再開には入力元の利用者による再認証が必要です。",
   OPENAI_KEY_REQUIRED: "EngineにOpenAI APIキーが設定されていません。",
   MEETING_NOT_FOUND:
     "入力先の会議が見つかりません。入力元の設定で会議を選び直してください。",
@@ -41,6 +54,7 @@ const reasons: Record<string, string> = {
   UNABLE_TO_VERIFY_LEAF_SIGNATURE: "接続先のTLS証明書を検証できませんでした。",
 };
 const types = new Set([
+  "CoordinatorDeliveryError",
   "Error",
   "TypeError",
   "RangeError",

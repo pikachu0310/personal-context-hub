@@ -57,7 +57,6 @@ export { codexBinary } from "../codex/binary.js";
 export class Executor {
   createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
     new ClaudeRuntime(options);
-  progressMode: "auto" | "manual" = "auto";
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
   readonly waitForPlan = waitForPlan.bind(this);
   readonly startPlannedWork = startPlannedWork.bind(this);
@@ -186,7 +185,10 @@ export class Executor {
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
         progressMode:
-          previous?.progressMode ?? local?.progressMode ?? this.progressMode,
+          previous?.progressMode ??
+          local?.progressMode ??
+          mapping.progressMode ??
+          "auto",
         activity: structuredClone(previous?.activity ?? []),
         activityDropped: previous?.activityDropped,
         activityVersion: previous?.activityVersion,

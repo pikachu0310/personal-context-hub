@@ -172,10 +172,7 @@ test("forum binding fences switched configuration and unrelated tasks", async ()
   await sync.sync([task("running")]);
   assert.equal(sync.taskForThread("thread"), undefined);
   assert.equal(f.counts().edits, 0);
-  assert.notEqual(
-    forumKey(binding),
-    forumKey({ ...binding, meetingId: "other" }),
-  );
+  assert.equal(forumKey(binding), forumKey({ ...binding, meetingId: "other" }));
 });
 test("forum input requires mapped task, current guild, participant policy and explicit controls", () => {
   const config = { ...binding, textChannelId: "text", userPolicy: "all" };

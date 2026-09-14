@@ -25,10 +25,11 @@ import { Conversation } from "../processing/conversation.js";
 import { InputRouter } from "../processing/routing/input.js";
 import { CoordinatedConversation } from "../processing/coordinator/session.js";
 import { createWorkPort } from "../processing/tasks/work.js";
-import { createCodexCoordinatorFactory } from "../adapters/codex/coordinator.js";
+import { createOpenAICoordinatorFactory } from "../adapters/openai/coordinator.js";
 import { createLiveSession } from "../adapters/openai/live.mjs";
 import type { CoordinatorFactory } from "../ports/coordinator.js";
 import type { ConversationMode } from "@ido/common/contracts/coordinator";
+import { Projects } from "../processing/projects/service.js";
 export interface EngineOptions {
   directory: string;
   port?: number;
@@ -44,8 +45,6 @@ export interface EngineOptions {
         coordinator?: CoordinatorFactory;
         observationIntervalMs?: number;
         createLiveSession?: any;
-        codexHome?: string;
-        codexExecutable?: string;
         model?: string;
       };
 }
@@ -96,6 +95,7 @@ export class Engine {
   });
   constructor(readonly options: EngineOptions) {
     this.store = new Store(options.directory);
+    new Projects(this.store).ensure();
     this.credentials = new Credentials(options.directory, "ido-engine");
     this.origin = `http://127.0.0.1:${options.port ?? 4310}`;
     this.previewOrigin = `http://127.0.0.1:${options.previewPort ?? 4311}`;
@@ -108,7 +108,10 @@ export class Engine {
     );
     this.connections = new ClientConnections(
       this.store,
-      () => this.taskEvents.flush(),
+      () => {
+        this.taskEvents.flush();
+        this.connections.broadcastProjects();
+      },
       () =>
         [...this.plugins.processes.values()].flatMap((plugin) =>
           plugin.running ? (plugin.manifest?.web?.frameAncestors ?? []) : [],
@@ -177,10 +180,8 @@ export class Engine {
       const conversation = options.conversation ?? {};
       this.coordinatorFactory =
         conversation.coordinator ??
-        createCodexCoordinatorFactory({
-          directory: options.directory,
-          codexHome: conversation.codexHome,
-          codexExecutable: conversation.codexExecutable,
+        createOpenAICoordinatorFactory({
+          credentials: this.credentials,
           model: conversation.model,
         });
       this.conversation.coordinated = new CoordinatedConversation(this.store, {
@@ -241,6 +242,7 @@ export class Engine {
     return this.broker.contexts;
   }
   flush() {
+    this.connections.broadcastProjects();
     this.connections.flush();
     this.taskEvents.flush();
   }

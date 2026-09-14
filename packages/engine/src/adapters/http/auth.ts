@@ -5,7 +5,10 @@ import { equal, hash } from "@ido/common/runtime/platform";
 import type { Engine } from "../../bootstrap/engine.js";
 export type Auth = { user: User; csrf: string; token: string };
 export function config(this: Engine) {
-  return this.store.get<Record<string, string>>("config", "public") ?? {};
+  return {
+    ...this.store.get<Record<string, string>>("config", "public"),
+    ...this.store.get<Record<string, string>>("config", "engine"),
+  };
 }
 export function trustedHost(this: Engine, req: IncomingMessage) {
   const remote = this.config().engineUrl;

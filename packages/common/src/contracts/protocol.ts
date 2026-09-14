@@ -8,7 +8,14 @@ export interface User {
   name: string;
   role: Role;
 }
+export interface ClientProfile {
+  name: string;
+  context: string;
+  codexConnected: boolean;
+}
 export interface Project {
+  ownerDeviceId?: string;
+  isDefault?: boolean;
   id: string;
   name: string;
   remote: string;
@@ -19,6 +26,7 @@ export interface Grant {
   slots: number;
 }
 export interface Mapping extends Grant {
+  progressMode?: "auto" | "manual";
   directory: string;
   previewCommand?: string[];
 }

@@ -1,6 +1,6 @@
 # IDO
 
-Self-hosted Engine with a persistent conversation model, local Codex Clients for delegated work, a bundled Dashboard plugin, and an optional Discord plugin. Node.js 24 is required. The Engine supports both text with STT/TTS and GPT-Live with independent speaker-attributed STT.
+Self-hosted Engine with API-based conversation processing, local Codex Clients for delegated work, a bundled Dashboard plugin, and an optional Discord plugin. Node.js 24 is required. The Engine supports both text with STT/TTS and GPT-Live with independent speaker-attributed STT.
 
 ## Local development
 
@@ -10,11 +10,9 @@ npm run build
 npm test
 ```
 
-Authenticate the Engine's main model and start it in one terminal:
+Start the Engine in one terminal, then configure its OpenAI API key in administration:
 
 ```sh
-node packages/engine/dist/cli.js codex-login
-node packages/engine/dist/cli.js codex-status
 node packages/engine/dist/cli.js start
 ```
 
@@ -28,13 +26,13 @@ For a native Windows or macOS Client window, run `npm run build:desktop` then `n
 
 Engine administration is at `http://127.0.0.1:4310/admin`, the business Dashboard at `http://127.0.0.1:4310/dashboard/`; the Client dashboard is at `http://127.0.0.1:4320`. Use separate `IDO_DATA_DIR` values to override their respective storage directories. Secrets default to owner-only `secrets.json` files in those directories. Runtime data is not moved by source-tree reorganization.
 
-The Engine and each Client have independent Codex homes and authentication. The Engine's main model manages conversation and delegates work; Clients own repository access and execution. OpenAI audio credentials are configured separately in Engine administration. `start --conversation-mode live` selects Live as the default for new meeting sessions; `/ido mode value:live` and `/ido mode value:text-speech` switch an existing meeting. See [conversation modes](docs/conversation-modes.md) for setup, interfaces and recovery.
+The Engine uses OpenAI API requests for conversation and task coordination, with the same administration API key used for audio. It does not install or run Codex. Clients own repository access, execution and Codex authentication. `start --conversation-mode live` selects Live as the default for new meeting sessions; `/ido mode value:live` and `/ido mode value:text-speech` switch an existing meeting. See [conversation modes](docs/conversation-modes.md) for setup, interfaces and recovery.
 
 See [setup and architecture](docs/ido-engine-client.md) for administrator initialization, Discord installation, `/join` and `/leave`, Client pairing, single-host ngrok publishing, and preview restrictions.
 
 ## Current layout
 
-- `packages/engine`: message storage, persistent main Codex coordinator, conversation/task processing, generic plugin host, Client supervision, and bundled React/Mantine administration UI.
+- `packages/engine`: message storage, Responses API coordinator, conversation/task processing, generic plugin host, Client supervision, and bundled React/Mantine administration UI.
 - `packages/client`: local Codex app-server adapter, repositories, worktrees and execution.
 - `packages/desktop`: Electron window, platform packaging and connection links for the current Client.
 - `packages/plugin-discord`: Bot, voice commands and Activity integration.

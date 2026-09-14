@@ -137,7 +137,9 @@ test("third plugin uses the shared input/query contract, deduplicates, and works
     await fetch(engine.origin + "/plugins/fixture/api/state", { headers })
   ).json()) as { tasks: unknown[]; meetings: Array<{ summary: string }> };
   assert.equal(state.tasks.length, 1);
-  assert.equal(state.meetings[0].summary, "Shared minutes");
+  assert.ok(
+    state.meetings.some((meeting) => meeting.summary === "Shared minutes"),
+  );
   const outputs =
     await plugin.request<Array<{ type?: string }>>("test.outputs");
   assert.ok(outputs.some((output) => output.type === "minutes"));

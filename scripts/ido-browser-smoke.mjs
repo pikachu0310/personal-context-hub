@@ -248,26 +248,64 @@ try {
     .getByRole("button", { name: "3 プラグイン接続", exact: true })
     .click();
   await page.getByRole("button", { name: "設定する", exact: true }).click();
-  const botToken = page.getByRole("textbox", { name: /^Botトークン/ });
-  assert.equal(await botToken.inputValue(), "********");
-  assert.equal(await botToken.getAttribute("type"), "text");
+  const botToken = page.getByLabel("Botトークン", { exact: true });
+  assert.equal(await botToken.inputValue(), "");
+  assert.equal(await page.getByLabel("会議ID").count(), 0);
+  assert.equal(
+    await page.getByLabel("Application ID", { exact: true }).count(),
+    0,
+  );
   assert.equal(
     await page
-      .getByRole("textbox", { name: /^OAuthクライアントシークレット/ })
-      .inputValue(),
-    "",
+      .getByLabel("OAuthクライアントシークレット（変更時のみ）")
+      .isVisible(),
+    false,
   );
-  const configSaved = page.waitForResponse((response) =>
-    response.url().endsWith("/api/admin/plugins/configure"),
+  const start = engine.plugins.start.bind(engine.plugins);
+  let botStarts = 0;
+  engine.plugins.setup = async () => ({
+    appId: "123456",
+    channels: [{ id: "general", name: "一般" }],
+  });
+  engine.plugins.start = async (id) => {
+    if (id === "discord") {
+      botStarts++;
+      return;
+    }
+    return start(id);
+  };
+  await page.getByLabel("Guild ID", { exact: true }).fill("12345");
+  await page
+    .getByRole("button", { name: "接続を確認してチャンネルを取得" })
+    .click();
+  await page
+    .getByRole("combobox", { name: "デフォルトチャンネル", exact: true })
+    .click();
+  await page.getByRole("option", { name: "#一般" }).click();
+  const configSaved = page.waitForResponse((r) =>
+    r.url().endsWith("/api/admin/plugins/configure"),
   );
-  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByRole("button", { name: "保存して起動", exact: true }).click();
   assert.equal((await configSaved).status(), 200);
+  await page.waitForResponse((r) =>
+    r.url().endsWith("/api/admin/plugins/start"),
+  );
+  assert.equal(botStarts, 1);
   assert.equal(
     await engine.credentials.get("discord.botToken"),
     "synthetic-plugin-token",
   );
-  assert.equal(await botToken.inputValue(), "********");
-  assert.equal(await page.locator('input[type="password"]').count(), 0);
+  await page.getByText("詳細設定（任意）", { exact: true }).click();
+  await page.getByRole("button", { name: "詳細設定を保存" }).click();
+  await page.getByRole("button", { name: "詳細設定を保存" }).waitFor();
+  assert.equal(engine.store.get("config", "discord").guildId, "12345");
+  assert.equal(engine.store.get("config", "discord").textChannelId, "general");
+  assert.equal(engine.store.get("config", "discord").userPolicy, "allowlist");
+  await page.getByText("詳細設定（任意）", { exact: true }).click();
+  await page.screenshot({
+    path: ".ido-build/screenshots/discord-minimal-setup.png",
+    fullPage: true,
+  });
   await page.getByText("エラーログ", { exact: true }).click();
   await page.getByText(/記録されたエラーはありません/).waitFor();
   const diagnostic = engine.store.logError(
@@ -297,17 +335,19 @@ try {
   await page.getByLabel("プロジェクト名").fill("Demo project");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await page.getByRole("heading", { name: "Demo project" }).waitFor();
-  await page.getByText("会議", { exact: true }).first().click();
-  await page.getByLabel("会議名").fill("Planning");
-  await page.getByRole("button", { name: "会議を作成", exact: true }).click();
-  await page.getByRole("heading", { name: "Planning", exact: true }).waitFor();
+  await page.getByText("会話", { exact: true }).first().click();
+  await page.getByRole("combobox", { name: "現在のプロジェクト" }).click();
+  await page.getByRole("option", { name: "Demo project" }).click();
+  assert.equal(await page.getByLabel("会議名").count(), 0);
   await page.getByLabel("会話に追加").fill("ブラウザから発言を送ります");
   await page.getByRole("button", { name: "会話を送信", exact: true }).click();
-  const logText = "[demo] ブラウザから発言を送ります";
+  const logText = "ブラウザから発言を送ります";
   await page.getByText(logText, { exact: true }).waitFor();
   const meeting = engine.store
     .list("meeting")
-    .find((entry) => entry.name === "Planning");
+    .find((entry) =>
+      entry.messages.some((message) => message.text === logText),
+    );
   assert.ok(meeting);
   await engine.conversation.coordinated.flush(meeting.id);
   assert.equal(observations.length, 1);
@@ -323,11 +363,27 @@ try {
     engine.store.get("coordinator", meeting.id).inbox.handle.backend,
     "browser-fixture",
   );
-  await page.getByText("議事録", { exact: true }).first().click();
-  await page.getByText(logText, { exact: true }).waitFor();
+  const current = engine.store.get("project-conversation", meeting.projectId);
+  engine.store.put("project-conversation", meeting.projectId, {
+    ...current,
+    lastHumanAt: Date.now() - 600001,
+  });
+  await page.getByLabel("会話に追加").fill("分割後の会話");
+  await page.getByRole("button", { name: "会話を送信", exact: true }).click();
+  await page.getByText("分割後の会話", { exact: true }).waitFor();
+  assert.notEqual(
+    engine.store.get("project-conversation", meeting.projectId).meetingId,
+    meeting.id,
+  );
+  await page.getByText("過去の議事録", { exact: true }).first().click();
+  await page.getByText("[demo] " + logText, { exact: true }).waitFor();
+  assert.equal(
+    await page.getByRole("button", { name: "会話を送信" }).count(),
+    0,
+  );
   await page.getByText("成果物", { exact: true }).first().click();
   await page.getByText(/各タスクの実行結果/).waitFor();
-  await page.getByText("会議", { exact: true }).first().click();
+  await page.getByText("会話", { exact: true }).first().click();
   await page.screenshot({
     path: ".ido-build/screenshots/dashboard.png",
     fullPage: true,
@@ -369,6 +425,100 @@ try {
     .getByText("チームに接続中", { exact: true })
     .first()
     .waitFor({ timeout: 15000 });
+  await clientPage
+    .getByRole("button", { name: "プロジェクトを追加", exact: true })
+    .click();
+  await clientPage.getByLabel("名前").fill("Client project");
+  const newRepo = join(directory, "client-project");
+  await mkdir(newRepo);
+  await clientPage.getByLabel("ディレクトリ").fill(newRepo);
+  await clientPage.screenshot({
+    path: ".ido-build/screenshots/client-create-project.png",
+    fullPage: true,
+  });
+  await clientPage.getByRole("button", { name: "追加", exact: true }).click();
+  await clientPage.getByText("Client project", { exact: true }).waitFor();
+  assert.ok(
+    engine.store.list("project").some((p) => p.name === "Client project"),
+  );
+  assert.equal(client.allow, false);
+  await clientPage
+    .getByRole("button", { name: "接続とセットアップ", exact: true })
+    .click();
+  assert.equal(
+    await clientPage.getByText(/プロジェクトとローカルrepoを対応付け/).count(),
+    0,
+  );
+  assert.equal(
+    await clientPage
+      .getByRole("heading", { name: "新しいタスクの進め方" })
+      .count(),
+    0,
+  );
+  await clientPage
+    .getByRole("button", { name: "Client projectの設定", exact: true })
+    .click();
+  await clientPage
+    .getByRole("menuitem", { name: "接続・設定", exact: true })
+    .click();
+  await clientPage
+    .getByRole("heading", { name: "タスクの実行許可", exact: true })
+    .waitFor();
+  await clientPage.getByText("Manual · 会話する", { exact: true }).click();
+  await clientPage.waitForFunction(async () => {
+    const state = await (await fetch("/api/state")).json();
+    return state.settings.mappings.some((m) => m.progressMode === "manual");
+  });
+  await clientPage
+    .getByLabel("このプロジェクトのタスクを受け取って実行する")
+    .check();
+  await clientPage.waitForFunction(async () => {
+    const state = await (await fetch("/api/state")).json();
+    return state.allowedProjectIds.length === 1;
+  });
+  await clientPage
+    .getByLabel("このプロジェクトのタスクを受け取って実行する")
+    .uncheck();
+  await clientPage.screenshot({
+    path: ".ido-build/screenshots/client-project-settings.png",
+    fullPage: true,
+  });
+  await clientPage
+    .getByRole("button", { name: "ユーザー設定を開く", exact: true })
+    .click();
+  await clientPage
+    .getByLabel("アカウント名", { exact: true })
+    .fill("Browser participant");
+  await clientPage
+    .getByLabel("個人コンテキスト（自己紹介・開発担当など）")
+    .fill("UI担当");
+  await clientPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await clientPage.getByText("Browser participant", { exact: true }).waitFor();
+  await clientPage
+    .getByRole("button", { name: "Client projectの設定", exact: true })
+    .click();
+  await clientPage
+    .getByRole("menuitem", { name: "プロジェクト名を編集", exact: true })
+    .click();
+  await clientPage
+    .getByLabel("プロジェクト名", { exact: true })
+    .fill("Renamed project");
+  await clientPage
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await clientPage
+    .getByRole("button", { name: "Renamed projectの設定", exact: true })
+    .waitFor();
+  await clientPage
+    .getByRole("button", { name: "議事録", exact: true })
+    .last()
+    .click();
+  await clientPage.getByText("詳細を見る", { exact: true }).click();
+  await clientPage.getByText("UI担当", { exact: true }).waitFor();
   await page.getByText("クライアント", { exact: true }).first().click();
   await page
     .getByRole("heading", { name: "クライアント", exact: true })

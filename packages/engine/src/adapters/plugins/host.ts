@@ -91,6 +91,31 @@ export class Plugins {
       await probe.stop();
     }
   }
+  async setup(id: string, values: Record<string, string>) {
+    const manifest = await this.inspect(id);
+    const config = {
+      ...this.store.get<Record<string, string>>("config", id),
+      ...values,
+    };
+    for (const field of manifest.fields)
+      if (field.secret && !config[field.key])
+        config[field.key] =
+          (await this.credentials.get(`${id}.${field.key}`)) ?? "";
+    const probe = new PluginProcess(
+      id,
+      this.directory,
+      async () => {
+        throw new Error("INSPECTION_ONLY");
+      },
+      () => {},
+    );
+    try {
+      await probe.launch(this.entry(id));
+      return await probe.request("setup", { config });
+    } finally {
+      await probe.stop();
+    }
+  }
   async configure(id: string, values: Record<string, string>) {
     const manifest = await this.inspect(id);
     const plugin = this.get(id);
@@ -101,6 +126,10 @@ export class Plugins {
         config[field.key] = values[field.key];
     for (const key of ["meetingId", "projectId"])
       if (typeof values[key] === "string") config[key] = values[key];
+    if (manifest.capabilities.includes("project-conversation")) {
+      config.projectId ||= "default";
+      delete config.meetingId;
+    }
     const probe = new PluginProcess(
       id,
       this.directory,
@@ -143,6 +172,11 @@ export class Plugins {
     const plugin = this.get(id);
     const manifest = await plugin.launch(this.entry(id));
     const config = { ...this.store.get<Record<string, string>>("config", id) };
+    if (manifest.capabilities.includes("project-conversation")) {
+      config.projectId ||= "default";
+      delete config.meetingId;
+      this.store.put("config", id, config);
+    }
     for (const field of manifest.fields)
       if (field.secret)
         config[field.key] =
@@ -210,10 +244,25 @@ export class Plugins {
   }
   publish(event: PluginEvent) {
     for (const [id, plugin] of this.processes) {
-      const config = this.store.get<{ meetingId?: string }>("config", id);
+      const config = this.store.get<{ meetingId?: string; projectId?: string }>(
+        "config",
+        id,
+      );
+      const projectId =
+        config?.projectId ??
+        (config?.meetingId
+          ? this.store.get<{ projectId?: string }>("meeting", config.meetingId)
+              ?.projectId
+          : undefined);
+      const eventProjectId = this.store.get<{ projectId?: string }>(
+        "meeting",
+        event.meetingId,
+      )?.projectId;
       if (
         !plugin.running ||
-        (config?.meetingId && config.meetingId !== event.meetingId)
+        (projectId
+          ? projectId !== eventProjectId
+          : config?.meetingId && config.meetingId !== event.meetingId)
       )
         continue;
       void plugin.request("event", { event }).catch(() =>

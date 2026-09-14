@@ -3,6 +3,10 @@ import type {
   InputContext,
 } from "@ido/common/contracts/plugins";
 import { text, type Task } from "@ido/common/contracts/protocol";
+import {
+  Projects,
+  DEFAULT_PROJECT,
+} from "../../processing/projects/service.js";
 import { Contexts } from "../../management/contexts.js";
 import { Identities } from "../../management/identities.js";
 import type { Workspace } from "../../output/queries/workspace.js";
@@ -65,17 +69,35 @@ export class PluginBroker {
       if (
         !plugin.manifest?.capabilities.includes("task-forum") ||
         !config?.issueForumChannelId ||
-        !config.meetingId ||
         !config.projectId
       )
         throw new Error("PERMISSION_DENIED");
       return this.store
         .list<Task>("task")
-        .filter(
-          (task) =>
-            task.meetingId === config.meetingId &&
-            task.projectId === config.projectId,
-        );
+        .filter((task) => task.projectId === config.projectId);
+    }
+    if (operation === "projects.list" || operation === "projects.select") {
+      if (!plugin.manifest?.capabilities.includes("project-conversation"))
+        throw new Error("PERMISSION_DENIED");
+      const actor = this.identities.resolve(pluginId, text(input.subject, 100));
+      if (!actor || actor.role === "viewer")
+        throw new Error("PERMISSION_DENIED");
+      const config =
+        this.store.get<Record<string, string>>("config", pluginId) ?? {};
+      if (operation === "projects.list")
+        return {
+          projects: this.store.list("project"),
+          projectId: config.projectId || DEFAULT_PROJECT,
+        };
+      const projectId = new Projects(this.store).project(
+        text(input.projectId, 100),
+      );
+      this.store.put("config", pluginId, {
+        ...config,
+        projectId,
+        projectRevision: String(Number(config.projectRevision ?? 0) + 1),
+      });
+      return this.store.get("project", projectId);
     }
     if (operation.startsWith("storage.")) {
       const key = text(input.key, 500);
@@ -121,7 +143,7 @@ export class PluginBroker {
       return { ok: true };
     }
     if (operation === "input") {
-      const event = input as unknown as ConversationInput;
+      let event = input as unknown as ConversationInput;
       validateMediaInput(event);
       if (
         (event.audioFrame || event.activity) &&
@@ -129,7 +151,7 @@ export class PluginBroker {
       )
         throw new Error("PERMISSION_DENIED");
       text(event.eventId, 200);
-      text(event.meetingId, 100);
+      if (event.meetingId) text(event.meetingId, 100);
       if (
         event.audio &&
         (typeof event.audio !== "string" ||
@@ -147,16 +169,36 @@ export class PluginBroker {
       let context: InputContext;
       if (token) context = this.context(pluginId, token);
       else {
-        const config = this.store.get<{
-          meetingId: string;
-          projectId?: string;
-        }>("config", pluginId);
+        const config = this.store.get<Record<string, string>>(
+          "config",
+          pluginId,
+        );
+        const projectRouting = plugin.manifest?.capabilities.includes(
+          "project-conversation",
+        );
+        const pinned = event.capture
+          ? this.store.get<{ projectId: string }>(
+              "utterance-route",
+              `${pluginId}:${event.capture.sessionId}:${event.capture.utteranceId}`,
+            )
+          : undefined;
         if (
           !config ||
-          config.meetingId !== event.meetingId ||
-          config.projectId !== event.projectId
+          (projectRouting
+            ? event.projectId &&
+              event.projectId !==
+                (pinned?.projectId ?? config.projectId ?? DEFAULT_PROJECT)
+            : config.meetingId !== event.meetingId ||
+              config.projectId !== event.projectId)
         )
           throw new Error("INPUT_BINDING_MISMATCH");
+        if (projectRouting)
+          event = {
+            ...event,
+            meetingId: "",
+            projectId: pinned?.projectId ?? config.projectId ?? DEFAULT_PROJECT,
+          };
+        const selectedRevision = config.projectRevision;
         if (
           !plugin.manifest?.capabilities.includes(
             event.audioFrame || event.activity
@@ -183,13 +225,28 @@ export class PluginBroker {
             this.store.conversationAuthor(actor.id)?.role === actor.role &&
             this.identities.resolve(pluginId, event.subject!)?.id === actor.id,
           deliver: async (output) => {
-            if (context.valid()) await plugin.request("output", { output });
+            if (
+              context.valid() &&
+              this.store.get<Record<string, string>>("config", pluginId)
+                ?.projectRevision === selectedRevision &&
+              (!projectRouting ||
+                event.projectId ===
+                  (this.store.get<Record<string, string>>("config", pluginId)
+                    ?.projectId ?? DEFAULT_PROJECT))
+            )
+              await plugin.request("output", { output });
           },
           publish: (event) => {
             if (context.valid()) this.plugins().publish(event);
           },
         };
       }
+      if (!context.valid() || context.actor.role === "viewer")
+        throw new Error("PERMISSION_DENIED");
+      event = new Projects(this.store).accept(
+        { ...event, meetingId: event.meetingId || undefined },
+        pluginId,
+      );
       return this.router.handle(event, context);
     }
     const context = this.context(pluginId, token ?? "");

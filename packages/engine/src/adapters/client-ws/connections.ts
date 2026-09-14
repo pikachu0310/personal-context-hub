@@ -1,3 +1,5 @@
+import { ProjectTeam } from "../../processing/projects/team.js";
+import { Projects } from "../../processing/projects/service.js";
 import { randomUUID, verify } from "node:crypto";
 import { WebSocket } from "ws";
 import {
@@ -37,6 +39,27 @@ export class ClientConnections {
   readonly preview: PreviewRelay;
   readonly scheduler: Scheduler;
   readonly tasks: Tasks;
+  broadcastProjects() {
+    const team = new ProjectTeam(this.store);
+    for (const [deviceId, ws] of this.peers) {
+      const device = this.store.get<Device>("device", deviceId);
+      if (device && !device.revoked && ws.readyState === WebSocket.OPEN)
+        ws.send(
+          JSON.stringify({
+            v: 1,
+            type: "projects.updated",
+            generation: device.generation,
+            projects: team.projects(deviceId),
+            tasks: this.store
+              .list<Task>("task")
+              .filter((t) =>
+                team.projects(deviceId).some((p) => p.id === t.projectId),
+              )
+              .slice(-500),
+          }),
+        );
+    }
+  }
   constructor(
     readonly store: Repository,
     readonly changed: () => void,
@@ -74,7 +97,6 @@ export class ClientConnections {
           if (
             !device ||
             device.revoked ||
-            this.store.user(device.userId)?.role === "viewer" ||
             !verify(
               null,
               Buffer.from(`ido:1:${device.id}:${challenge}`),
@@ -90,6 +112,7 @@ export class ClientConnections {
           this.peers.get(device.id)?.close(4000, "superseded");
           this.ready.delete(device.id);
           this.peers.set(device.id, ws);
+          new ProjectTeam(this.store).profile(device.id, data.profile);
           authenticated = true;
           clearTimeout(timeout);
           ws.send(
@@ -98,8 +121,10 @@ export class ClientConnections {
               type: "authenticated",
               generation,
               controlVersion: 1,
+              projectVersion: 1,
+              projects: new ProjectTeam(this.store).projects(device.id),
+              workspaceVersion: 1,
               taskListVersion: 1,
-              projects: this.store.list("project"),
             }),
           );
           return;
@@ -112,12 +137,143 @@ export class ClientConnections {
           data.generation !== generation
         )
           throw new Error("STALE_CONNECTION");
+        if (data.type === "project.create") {
+          const requestId = id(data.requestId);
+          try {
+            let project = new Projects(this.store).create(
+              data.name,
+              `${device.id}:${device.userId}:${requestId}`,
+            );
+            project = new ProjectTeam(this.store).own(device.id, project.id);
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "project.result",
+                generation,
+                requestId,
+                project,
+              }),
+            );
+            this.broadcastProjects();
+          } catch (error) {
+            const code =
+              error instanceof Error &&
+              [
+                "PERMISSION_DENIED",
+                "PROJECT_NAME_EXISTS",
+                "PROJECT_REQUEST_MISMATCH",
+                "INVALID_TEXT",
+              ].includes(error.message)
+                ? error.message
+                : "PROJECT_CREATE_FAILED";
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "project.result",
+                generation,
+                requestId,
+                error: code,
+              }),
+            );
+          }
+          return;
+        }
+        if (data.type === "workspace.request") {
+          const requestId = id(data.requestId),
+            input = (data.input ?? {}) as Record<string, unknown>,
+            team = new ProjectTeam(this.store);
+          try {
+            let result: unknown;
+            switch (data.operation) {
+              case "profile":
+                result = team.profile(device.id, input);
+                break;
+              case "project.invite":
+                result = team.invite(device.id, id(input.projectId));
+                break;
+              case "project.inspect-invite":
+                result = team.invitation(text(input.token, 200));
+                break;
+              case "project.join":
+                result = team.joinInvitation(device.id, text(input.token, 200));
+                break;
+              case "project.remove-member":
+                result = team.remove(
+                  device.id,
+                  id(input.projectId),
+                  id(input.deviceId),
+                );
+                break;
+              case "project.rename":
+                result = team.rename(
+                  device.id,
+                  id(input.projectId),
+                  input.name,
+                );
+                break;
+              case "project.snapshot":
+                result = team.snapshot(device.id, id(input.projectId));
+                break;
+              case "task.create": {
+                const projectId = id(input.projectId);
+                team.require(device.id, projectId);
+                const routed = new Projects(this.store).accept(
+                  {
+                    eventId: id(input.requestId),
+                    projectId,
+                    text: text(input.text),
+                  },
+                  `client:${device.id}`,
+                );
+                result = this.tasks.createTask({
+                  projectId,
+                  meetingId: routed.meetingId,
+                  authorId: `client-${device.id}`,
+                  text: text(input.text),
+                  requestId: id(input.requestId),
+                  network: false,
+                });
+                this.flush();
+                this.changed();
+                break;
+              }
+              default:
+                throw new Error("UNKNOWN_OPERATION");
+            }
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "workspace.result",
+                generation,
+                requestId,
+                result,
+              }),
+            );
+            if (
+              data.operation !== "project.snapshot" &&
+              data.operation !== "project.inspect-invite"
+            )
+              this.broadcastProjects();
+          } catch (error) {
+            const reason = (error as Error).message;
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "workspace.result",
+                generation,
+                requestId,
+                error: /^[A-Z_]+$/.test(reason)
+                  ? reason
+                  : "WORKSPACE_REQUEST_FAILED",
+              }),
+            );
+          }
+          return;
+        }
         if (data.type === "tasks.list") {
-          // Same member-visible task scope as Workspace.state. Recheck live
-          // membership on every read; device execution grants are not read ACLs.
-          const user = this.store.user(device.userId);
-          if (!user || user.role === "viewer")
-            throw new Error("PERMISSION_DENIED");
+          const projectIds = new Set(
+            new ProjectTeam(this.store).projects(device.id).map((p) => p.id),
+          );
           if (Date.now() - lastTaskListAt < 2000) return;
           lastTaskListAt = Date.now();
           ws.send(
@@ -125,7 +281,7 @@ export class ClientConnections {
               v: 1,
               type: "tasks.snapshot",
               generation,
-              snapshot: taskSnapshot(this.store, this.peers),
+              snapshot: taskSnapshot(this.store, this.peers, projectIds),
             }),
           );
           return;
@@ -155,12 +311,13 @@ export class ClientConnections {
               task.revision !== data.revision
             )
               throw new Error("TASK_NOT_OWNED_BY_DEVICE");
+            new ProjectTeam(this.store).require(device.id, task.projectId);
             const receipt = createWorkPort({
               repository: this.store,
               tasks: this.tasks,
             }).control({
               taskId: task.id,
-              authorId: device.userId,
+              authorId: `client-${device.id}`,
               type: "instruction",
               instruction: text(data.instruction, 8000),
               requestKey: `client:${device.id}:${requestKey}`,
@@ -206,19 +363,36 @@ export class ClientConnections {
         if (data.type === "ready") {
           if (!Array.isArray(data.grants) || data.grants.length > 100)
             throw new Error("INVALID_GRANTS");
+          if (data.profile) {
+            device.profile = new ProjectTeam(this.store).profile(
+              device.id,
+              data.profile,
+            );
+            device.name = device.profile.name;
+          }
+          device.codexConnected =
+            (data.profile as { codexConnected?: boolean } | undefined)
+              ?.codexConnected === true;
           device.grants = data.grants
             .map((g: Grant) => ({
               projectId: id(g.projectId),
               network: g.network === true,
               slots: Math.max(1, Math.min(8, Number(g.slots) || 1)),
             }))
-            .filter((g) => !!this.store.get("project", g.projectId));
+            .filter(
+              (g) =>
+                !!this.store.get(
+                  "project-member",
+                  `${g.projectId}:${device.id}`,
+                ),
+            );
           device.slots = Math.max(1, Math.min(8, Number(data.slots) || 1));
           device.executionPolicyVersion =
             data.executionPolicyVersion === 1 ? 1 : undefined;
           this.store.put("device", device.id, device);
           this.ready.add(device.id);
           this.flush();
+          this.broadcastProjects();
         } else if (data.type === "ack") this.store.ack(device.id, id(data.id));
         else if (data.type === "result") {
           this.tasks.updateResult(device.id, generation, data);
@@ -246,6 +420,16 @@ export class ClientConnections {
       if (socket?.readyState === WebSocket.OPEN && device)
         for (const command of this.store.pending(deviceId)) {
           const task = command.task as Task | undefined;
+          if (
+            ["execute", "retry"].includes(command.type) &&
+            task &&
+            (!device.codexConnected ||
+              !this.store.get(
+                "project-member",
+                `${task.projectId}:${device.id}`,
+              ))
+          )
+            continue;
           if (
             ["execute", "retry", "steer"].includes(command.type) &&
             task &&

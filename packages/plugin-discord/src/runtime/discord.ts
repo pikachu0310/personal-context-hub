@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { PluginEvent, PluginOutput } from "@ido/common/contracts/plugins";
 import { pluginRuntime } from "@ido/common/runtime/plugin";
 import { DiscordWeb } from "../activity/server.js";
+import { inspectSetup } from "../input/setup.js";
 import { start } from "../input/connection.js";
 import { normalizeInput } from "../input/normalize.js";
 import { normalizeDiscordPolicy } from "../input/policy.js";
@@ -43,8 +44,7 @@ function configureForum() {
   if (
     !state.config.issueForumChannelId ||
     !state.client ||
-    !state.config.projectId ||
-    !state.config.meetingId
+    !state.config.projectId
   )
     return;
   const binding = { ...state.config } as unknown as ForumBinding;
@@ -63,6 +63,23 @@ function configureForum() {
   forumTimer = setInterval(() => void refreshForum(), 10000);
   void refreshForum();
 }
+state.projectCommand = async (subject, projectId) => {
+  if (projectId && projectId !== state.config.projectId) {
+    const project = await runtime.rpc.request<
+      import("@ido/common/contracts/protocol").Project
+    >("projects.select", { subject, projectId });
+    state.config.projectId = project.id;
+    state.speechEpoch++;
+    audioOutput(state).invalidate();
+    for (const request of state.pending.values()) {
+      clearTimeout(request.timer);
+      request.reject();
+    }
+    state.pending.clear();
+    configureForum();
+  }
+  return runtime.rpc.request("projects.list", { subject });
+};
 state.connectionGuide = async () => {
   const { origin } = await runtime.rpc.request<{ origin: string }>(
     "connection.info",
@@ -110,6 +127,8 @@ const web = new DiscordWeb(
 const runtime = pluginRuntime(
   discordManifest,
   async (operation, input) => {
+    if (operation === "setup")
+      return inspectSetup(input.config as Record<string, string>);
     if (operation === "validate") {
       validateDownloads(input.config as Record<string, string>);
       return {
@@ -161,6 +180,8 @@ const runtime = pluginRuntime(
       normalizeDiscordPolicy(next);
       if (!next.botToken || !next.guildId || !next.textChannelId)
         throw new Error("DISCORD_CONFIG_REQUIRED");
+      const setup = await inspectSetup(next);
+      next.appId = setup.appId;
       await start(state, emit, next);
       configureForum();
       discordManifest.web!.frameOrigins = [
@@ -199,7 +220,8 @@ const runtime = pluginRuntime(
       // retries failed edits and restores mappings after plugin restarts.
       if (event.type === "tasks") return { ok: true };
       if (
-        event.meetingId !== state.config.meetingId ||
+        (event.data as { projectId?: string }).projectId !==
+          state.config.projectId ||
         !["transcript", "minutes"].includes(event.type)
       )
         return { ok: true };
@@ -212,7 +234,8 @@ const runtime = pluginRuntime(
       if (
         epoch !== state.speechEpoch ||
         channelId !== state.config.textChannelId ||
-        event.meetingId !== state.config.meetingId
+        (event.data as { projectId?: string }).projectId !==
+          state.config.projectId
       )
         return { ok: true };
       await publications.update(
@@ -223,7 +246,8 @@ const runtime = pluginRuntime(
         () =>
           epoch === state.speechEpoch &&
           channelId === state.config.textChannelId &&
-          event.meetingId === state.config.meetingId,
+          (event.data as { projectId?: string }).projectId ===
+            state.config.projectId,
       );
       return { ok: true };
     }

@@ -6,11 +6,13 @@ import type { Repository } from "../../ports/repository.js";
 export function taskSnapshot(
   store: Repository,
   connected: ReadonlyMap<string, unknown>,
+  projectIds: ReadonlySet<string>,
 ): TeamTaskSnapshot {
   const active = (task: Task) =>
     ["running", "assigned", "queued"].includes(task.state);
   const tasks = store
     .list<Task>("task")
+    .filter((task) => projectIds.has(task.projectId))
     .sort(
       (a, b) =>
         Number(active(b)) - Number(active(a)) || b.updatedAt - a.updatedAt,
@@ -32,7 +34,7 @@ export function taskSnapshot(
         clientId: task.clientId,
         updatedAt: task.updatedAt,
         ownerName: device
-          ? clean(store.user(device.userId)?.name ?? "").slice(0, 100)
+          ? clean(device.profile?.name ?? device.name).slice(0, 100)
           : undefined,
         deviceName: device ? clean(device.name).slice(0, 100) : undefined,
         deviceConnected: device

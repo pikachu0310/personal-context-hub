@@ -24,6 +24,7 @@ test("shared task summaries bound payloads and exclude private execution fields"
     get: () => ({
       id: "remote",
       name: "Second PC",
+      profile: { name: "Teammate" },
       userId: "user",
       publicKey: "private key material",
       grants: [],
@@ -31,7 +32,12 @@ test("shared task summaries bound payloads and exclude private execution fields"
     }),
     user: () => ({ name: "Teammate" }),
   } as unknown as Repository;
-  const snapshot = taskSnapshot(store, new Map([["remote", {}]]));
+  const snapshot = taskSnapshot(
+    store,
+    new Map([["remote", {}]]),
+    new Set(["project"]),
+  );
+  assert.equal(taskSnapshot(store, new Map(), new Set()).tasks.length, 0);
   assert.equal(snapshot.total, 205);
   assert.equal(snapshot.tasks.length, 200);
   assert.equal(snapshot.tasks[0].id, "task-0");
@@ -44,5 +50,8 @@ test("shared task summaries bound payloads and exclude private execution fields"
   );
   assert.ok(!JSON.stringify(snapshot).includes("private"));
   tasks[0].clientId = undefined;
-  assert.equal(taskSnapshot(store, new Map()).tasks[0].deviceName, undefined);
+  assert.equal(
+    taskSnapshot(store, new Map(), new Set(["project"])).tasks[0].deviceName,
+    undefined,
+  );
 });

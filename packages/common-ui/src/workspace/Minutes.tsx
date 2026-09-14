@@ -1,21 +1,33 @@
-import { Button, Stack, Text } from "@mantine/core";
+import { Stack, Text } from "@mantine/core";
 import { Card } from "../components/Card.js";
 import type { WorkspaceProps } from "../types.js";
-export function Minutes({ state, page, setPage }: WorkspaceProps) {
+export function Minutes({ state, page, projectId }: WorkspaceProps) {
   if (page !== "minutes") return null;
+  const current = state.conversations?.find(
+    (c) => c.projectId === projectId,
+  )?.meetingId;
+  const meetings = state.meetings
+    .filter((m) => m.projectId === projectId && m.id !== current)
+    .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
   return (
     <Stack>
-      {!state.meetings.length && (
-        <Text c="dimmed">会議を作成すると、議事録がここに表示されます。</Text>
+      {!meetings.length && (
+        <Text c="dimmed">
+          会話が分割されると、過去の議事録がここに表示されます。
+        </Text>
       )}
-      {state.meetings.map((meeting) => (
-        <Card key={meeting.id} title={meeting.name}>
-          <Text className="minutes">
-            {meeting.summary || "まだ議事録はありません。"}
-          </Text>
-          <Button variant="subtle" onClick={() => setPage("meetings")}>
-            会話を開く
-          </Button>
+      {meetings.map((m) => (
+        <Card key={m.id} title={m.name}>
+          <Text className="minutes">{m.summary || "議事録はありません。"}</Text>
+          <details>
+            <summary>発言を読む</summary>
+            {m.messages.map((message) => (
+              <Text key={message.id}>
+                {message.authorName ?? message.authorId}: {message.text}
+                {message.replyText && `\nIDO: ${message.replyText}`}
+              </Text>
+            ))}
+          </details>
         </Card>
       ))}
     </Stack>

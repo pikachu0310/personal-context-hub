@@ -111,7 +111,11 @@ export function ClientRuns({
     current.task.effectiveExecutionPolicy ?? current.task.executionPolicy;
   const canSend =
     running &&
-    (local || (state.connected && state.controlSupported && state.allow));
+    (local ||
+      (state.connected &&
+        state.controlSupported &&
+        (state.allowedProjectIds?.includes(current.task.projectId) ??
+          state.allow)));
   async function submit() {
     const instruction = draft.trim();
     if (!instruction || sending || !canSend) return;

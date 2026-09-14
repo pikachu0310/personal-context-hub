@@ -12,6 +12,7 @@ import {
   Text,
   UnstyledButton,
 } from "@mantine/core";
+import { DiscordSetup } from "./DiscordSetup.js";
 import { useState } from "react";
 import { Card, Form, Status } from "@ido/common-ui";
 import type { Action, AdminState, ApiResult, Invoke } from "@ido/common-ui";
@@ -458,44 +459,25 @@ export function Setup({
                     </Group>
                     {plugin.installed &&
                       selected &&
-                      !!plugin.manifest?.fields.length && (
-                        <>
-                          <Form
-                            key={plugin.id + plugin.manifest.version}
-                            initial={plugin.config}
-                            fields={[
-                              ...plugin.manifest.fields.map((field) => ({
-                                key: field.key,
-                                label: field.label,
-                                secret: field.secret,
-                                configured: plugin.secrets?.[field.key],
-                                options: field.options,
-                                multiline: field.multiline,
-                                optional: true,
-                              })),
-                              {
-                                key: "meetingId",
-                                label: "会議ID",
-                                optional: true,
-                              },
-                              {
-                                key: "projectId",
-                                label: "プロジェクトID",
-                                optional: true,
-                              },
-                            ]}
-                            submit={(config) =>
-                              action("plugins/configure", {
-                                pluginId: plugin.id,
-                                config,
-                              })
-                            }
-                          />
-                          <Text size="sm" c="dimmed">
-                            設定を保存したら起動してください。会議・プロジェクトIDはDashboardで確認できます。
-                          </Text>
-                        </>
-                      )}
+                      !!plugin.manifest?.fields.length &&
+                      (plugin.id === "discord" ? (
+                        <DiscordSetup plugin={plugin} action={action} />
+                      ) : (
+                        <Form
+                          initial={plugin.config}
+                          fields={plugin.manifest.fields.map((f) => ({
+                            ...f,
+                            optional: true,
+                            configured: plugin.secrets?.[f.key],
+                          }))}
+                          submit={(config) =>
+                            action("plugins/configure", {
+                              pluginId: plugin.id,
+                              config,
+                            })
+                          }
+                        />
+                      ))}
                     {plugin.installed &&
                       plugin.status === "running" &&
                       plugin.manifest?.capabilities.includes("activity") &&
@@ -515,6 +497,23 @@ export function Setup({
             </>
           )}
         </>
+      )}
+      {admin && (
+        <details>
+          <summary>Engineの詳細設定</summary>
+          <Form
+            initial={{
+              minutesIdleMinutes: state.config.minutesIdleMinutes ?? "10",
+            }}
+            fields={[
+              {
+                key: "minutesIdleMinutes",
+                label: "議事録を分割する無会話時間（分・1〜1440）",
+              },
+            ]}
+            submit={(data) => action("settings", data)}
+          />
+        </details>
       )}
       {!admin && (
         <>

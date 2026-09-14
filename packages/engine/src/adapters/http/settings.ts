@@ -17,6 +17,15 @@ export async function settings(
       this.mutate(req, auth, true);
       if (input.openai)
         await this.credentials.set("openai", text(input.openai, 4000));
+      if (input.minutesIdleMinutes !== undefined) {
+        const interval = Number(input.minutesIdleMinutes);
+        if (!Number.isFinite(interval) || interval < 1 || interval > 1440)
+          throw new Error("INVALID_MINUTES_INTERVAL");
+        this.store.put("config", "engine", {
+          ...this.store.get<Record<string, string>>("config", "engine"),
+          minutesIdleMinutes: String(interval),
+        });
+      }
       this.store.audit(auth.user.id, "settings.update", "configuration");
       break;
     }

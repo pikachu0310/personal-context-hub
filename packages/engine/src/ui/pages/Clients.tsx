@@ -19,7 +19,7 @@ export function Clients({
       {page === "clients" && (
         <Stack>
           <Alert color="teal">
-            各メンバーは <Code>npm install -g @ido/client</Code> →{" "}
+            各参加者は <Code>npm install -g @ido/client</Code> →{" "}
             <Code>ido-client start</Code>
             。ローカル画面にこのEngineのURLを入力し、ブラウザで端末を確認します。
           </Alert>
@@ -40,7 +40,11 @@ export function Clients({
                         : "offline"
                   }
                 />
-                <Text size="sm">接続世代 {d.generation}</Text>
+                <Text size="sm">
+                  {d.codexConnected
+                    ? "Codex連携済み"
+                    : "Codex未連携・タスク割り当てなし"}
+                </Text>
                 {(admin || d.userId === state.user.id) && (
                   <Button
                     size="xs"

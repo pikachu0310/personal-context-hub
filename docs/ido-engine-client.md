@@ -2,7 +2,7 @@
 
 For the native Windows/Mac Client, Discord installation guidance and issue forum synchronization, see [IDO Agent and issue forum setup](main2-desktop-forum.md). CLI usage below remains available.
 
-IDO is a self-hosted team engine. It records conversations, keeps a persistent main Codex model per meeting, and supervises work delegated to members' locally approved Codex Clients. The main model runs on Engine with its own Codex authentication and home; Clients run actual repository work in their independent environments. Dashboard and Discord are independent child-process plugins. Dashboard is bundled and starts by default; Discord is optional. Engine administration remains available if either stops.
+IDO is a self-hosted team engine. It records conversations, coordinates each meeting through the OpenAI Responses API, and supervises work delegated to members' locally approved Codex Clients. Engine uses the OpenAI API key configured in administration; Clients run Codex for actual repository work in their independent environments. Dashboard and Discord are independent child-process plugins. Dashboard is bundled and starts by default; Discord is optional. Engine administration remains available if either stops.
 
 The `@ido/*` names are provisional. This branch builds installable npm tarballs; it does not publish packages to the registry. Until publication, use the tarball commands below. Existing hub integrations and their data remain separate; no legacy configuration is read or migrated.
 
@@ -16,20 +16,18 @@ The OpenAI connection check reads the model list; success verifies authenticatio
 
 ## Install
 
-Use Node.js **24.x**, npm, and Git on macOS, Linux/WSL, or native Windows. Clients need Git for their repository worktrees. Both Engine and Clients supply the official pinned Codex runtime and need their own Codex authentication when using it; existing personal authentication is not copied.
+Use Node.js **24.x**, npm, and Git on macOS, Linux/WSL, or native Windows. Clients need Git for their repository worktrees. Only Clients supply the pinned Codex runtime and need Codex authentication. Engine requires an OpenAI API key; it has no Codex runtime or login.
 
 After package publication:
 
 ```sh
 npm install -g @ido/engine
-ido-engine codex-login
-ido-engine codex-status
 ido-engine start
 ```
 
 The first start prompts for the administrator name and a password of at least 12 characters in the terminal. No unauthenticated web registration endpoint exists. For a headless host, use `ido-engine init --name admin --password-stdin` and pipe a password from your secret manager; do not put passwords in command arguments. Then run `ido-engine start --no-open`.
 
-The default conversation mode is `text-speech`. Use `start --conversation-mode live` to make Live the default for new meeting sessions, or `--conversation-mode legacy` for the previous packages-based Responses reply/minutes path. Existing meetings resume their saved mode. The persistent main model defaults to `gpt-5.6-sol` with low reasoning effort; `--main-model` selects another model. `--codex-home` overrides the Engine main model's home; use the same value for login, status and start. Its default is `<engine-data>/codex`, separate from every Client's home. Main model tools for repository work are disabled; investigation and implementation are delegated through WorkPort. See [conversation modes](conversation-modes.md).
+The default conversation mode is `text-speech`. Use `start --conversation-mode live` to make Live the default for new meeting sessions, or `--conversation-mode legacy` for the previous packages-based Responses reply/minutes path. Existing meetings resume their saved mode. The API coordinator defaults to `gpt-4.1-mini`; `--main-model` selects another Responses API model supporting structured output. It uses the same Engine API key as STT/TTS/Live. Requests carry bounded local conversation history and use `store: false` with no tools. Investigation and implementation are delegated through WorkPort. See [conversation modes](conversation-modes.md).
 
 Engine administration opens at `http://127.0.0.1:4310/admin`. Business views run at `/dashboard/`. Public previews use `/preview/` on the same Engine host. Port 4311 remains an internal relay listener and does not need a public tunnel. `--port` and `--preview-port` change these. Processes remain in the foreground; use a second terminal for `stop`, `status`, or `doctor`. OS service registration is intentionally not included. After a crash, `doctor --recover` removes a stale process lock only if the recorded process has stopped.
 
@@ -63,9 +61,9 @@ See [package architecture and migration](packages-architecture.md) for the plugi
 
 Default application data lives under the current account's application data location: macOS Application Support, Windows LocalAppData, or Linux XDG data home. `IDO_DATA_DIR` explicitly chooses another directory for one process. The Engine and Client use separate directories by default.
 
-- Engine: SQLite users, password hashes (salted scrypt), sessions, projects, meetings/messages, coordinator inbox and thread handles, Bot output records, tasks, delivery outbox, device registration, service identity links and operation audit. Engine also has its own Codex home and restricted coordinator workspace.
+- Engine: SQLite users, password hashes (salted scrypt), sessions, projects, meetings/messages, coordinator inbox and meeting handles, Bot output records, tasks, delivery outbox, device registration, service identity links and operation audit. Conversation requests use this local state; no Engine Codex home or coordinator workspace is created.
 - Client: repo mappings and a durable command/run journal, worktrees, and a dedicated Codex home.
-- Secrets: Engine and Client default to `<data-directory>/secrets.json` on every OS, without accessing Keychain, DPAPI or Secret Service. The file contains plaintext values, is written atomically with mode `0600`, and its directory is created with mode `0700` on POSIX. No environment variable is needed. Existing OS-store values are left untouched and are not automatically migrated; re-save those values in the dashboard after restarting. Codex's own authentication remains managed by Codex in its dedicated home. Protect the containing account and backups; this is not OS sandbox isolation.
+- Secrets: Engine and Client default to `<data-directory>/secrets.json` on every OS, without accessing Keychain, DPAPI or Secret Service. The file contains plaintext values, is written atomically with mode `0600`, and its directory is created with mode `0700` on POSIX. No environment variable is needed. Existing OS-store values are left untouched and are not automatically migrated; re-save those values in the dashboard after restarting. Client Codex authentication remains managed by Codex in its dedicated home. Protect the containing account and backups; this is not OS sandbox isolation.
 - Settings APIs expose only presence flags for secrets. Audit entries contain actor/action/target IDs, not configuration values or conversation bodies.
 
 IDO roles are admin, member and viewer. Team members share projects and meetings in this first version; per-project membership isolation is not implemented. Only admins change plugin packages, credentials, public URLs, members or roles. Sessions are HttpOnly, expire after eight hours, and use CSRF tokens and origin checks. HTTPS sessions use Secure cookies. Login attempts are limited. Initial administrator creation always happens locally.
@@ -135,7 +133,7 @@ npm run pack:ido
 npm run smoke:ido:pack
 ```
 
-The last command installs the tarballs into new temporary directories, checks package boundaries, starts/stops both distributions and installs the plugin from its local tarball. Engine now includes its main-model Codex runtime; Discord SDK code remains in the plugin. Local release testing can use:
+The last command installs the tarballs into new temporary directories, checks package boundaries, starts/stops both distributions and installs the plugin from its local tarball. Engine installs without Codex; Discord SDK code remains in the plugin. Local release testing can use:
 
 ```sh
 npm install -g ./ido-engine-0.2.0.tgz
@@ -144,4 +142,4 @@ ido-engine plugin-install --tarball ./ido-plugin-discord-0.2.0.tgz
 
 `plugin-install --tarball` is a local CLI development/release operation, not a browser endpoint. The browser installer accepts only the catalog's package and version. Installation validates package identity, JavaScript syntax and the plugin protocol handshake before replacing the active installation. Failed installs leave the previous installation selected. Plugin processes are crash-contained but run with the host user's OS permissions. Official catalog membership is a trust decision, not an OS sandbox.
 
-CI adds macOS/Linux/Windows Node 24 checks, npm artifact installation, and a Chromium workflow. Packages tests cover both coordinated conversation and the retained legacy packages path; archived `v0` tests are separate. Automated tests use synthetic accounts, mocked Codex/Live execution and loopback connections; they do not prove real Live conversation, Discord Activity approval, multi-PC networking, provider accounts, Codex login or execution on operating systems not actually run. Those deployment checks need configured test accounts and devices. The [integration mapping](main2-conversation-integration.md) distinguishes migrated features from legacy features outside scope. npm publication, pushing this branch, releases, and public Discord application publication remain separate external actions.
+CI adds macOS/Linux/Windows Node 24 checks, npm artifact installation, and a Chromium workflow. Packages tests cover both coordinated conversation and the retained legacy packages path; archived `v0` tests are separate. Automated tests use synthetic accounts, mocked Responses API, Client Codex and Live execution and loopback connections; they do not prove real Live conversation, Discord Activity approval, multi-PC networking, provider accounts, Codex login or execution on operating systems not actually run. Those deployment checks need configured test accounts and devices. The [integration mapping](main2-conversation-integration.md) distinguishes migrated features from legacy features outside scope. npm publication, pushing this branch, releases, and public Discord application publication remain separate external actions.

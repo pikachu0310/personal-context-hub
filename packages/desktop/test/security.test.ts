@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { externalLink, localSender, parseJoinLink } from "../src/security.js";
+import {
+  externalLink,
+  localSender,
+  parseJoinLink,
+  parseProjectLink,
+} from "../src/security.js";
 test("join links accept only a single Engine origin and never encode task or credentials", () => {
   assert.equal(
     parseJoinLink(
@@ -50,4 +55,22 @@ test("desktop allows only its own renderer origin and exact active login or pair
     "ido-agent://connect?engine=https://evil.example",
   ])
     assert.ok(!externalLink(url, pairing, login));
+});
+
+test("project links validate the invitation and Engine origin", () => {
+  const token = "a".repeat(43);
+  assert.deepEqual(
+    parseProjectLink(
+      `ido-agent://project?engine=https://engine.example.com&token=${token}`,
+    ),
+    { engineUrl: "https://engine.example.com", token },
+  );
+  for (const link of [
+    `ido-agent://project?engine=https://engine.example.com&token=${token}&task=run`,
+    `ido-agent://project?engine=https://engine.example.com&token=${token}&token=${token}`,
+    `ido-agent://project?engine=https://user:secret@engine.example.com&token=${token}`,
+    `ido-agent://project?engine=http://engine.example.com&token=${token}`,
+    `ido-agent://project?engine=https://engine.example.com&token=short`,
+  ])
+    assert.throws(() => parseProjectLink(link));
 });

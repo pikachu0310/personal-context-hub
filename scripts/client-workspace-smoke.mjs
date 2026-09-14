@@ -60,6 +60,7 @@ try {
   ];
   client.connected = true;
   client.controlSupported = true;
+  client.allowedProjects.add("project");
   client.settings.deviceId = "local-device";
   client.teamTasksSupported = true;
   client.teamTasks = {
@@ -91,7 +92,6 @@ try {
       },
     ],
   };
-  client.allow = true;
   const thread = {
     activeTurnId: null,
     async steer(text) {
@@ -350,7 +350,7 @@ try {
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
   client.connected = false;
-  client.allow = false;
+  client.allowedProjects.clear();
   const localFrames = [];
   client.emit = (frame) => localFrames.push(frame);
   await page

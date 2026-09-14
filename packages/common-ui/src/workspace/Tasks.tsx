@@ -32,14 +32,6 @@ export function Tasks({
                       label: p.name,
                     })),
                   },
-                  {
-                    key: "meetingId",
-                    label: "紐づける会議",
-                    options: state.meetings.map((m) => ({
-                      value: m.id,
-                      label: m.name,
-                    })),
-                  },
                   { key: "text", label: "依頼内容", multiline: true },
                   {
                     key: "network",
