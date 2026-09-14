@@ -274,7 +274,9 @@ export function App() {
         }}
       >
         <div className="sidebar-brand">
-          <span className="brand-symbol">i</span>
+          <span className="brand-symbol">
+            <Icon name="bot" size={20} />
+          </span>
           <strong>IDO Agent</strong>
           <button
             className="icon-button"
