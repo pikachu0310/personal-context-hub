@@ -1,4 +1,7 @@
-import { addParticipant } from "../processing/projects/task-participants.js";
+import {
+  addParticipant,
+  taskParticipants,
+} from "../processing/projects/task-participants.js";
 import type { Task } from "@ido/common/contracts/protocol";
 import type { Device } from "../domain/models.js";
 import type { Repository } from "../ports/repository.js";
@@ -74,7 +77,10 @@ export class Scheduler {
           type: "execute",
           taskId: task.id,
           runId: task.runId,
-          task,
+          task: {
+            ...task,
+            participants: taskParticipants(this.repository, task),
+          },
         });
       }
     });

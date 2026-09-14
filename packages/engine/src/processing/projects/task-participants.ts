@@ -27,6 +27,7 @@ function inferredParticipants(
       participants.set(device.id, {
         id: device.id,
         identityId,
+        avatar: device.profile?.avatar,
         name: clean(device.profile?.name ?? device.name).slice(0, 100),
       });
     } else if (!executor) {
@@ -85,6 +86,7 @@ export function taskParticipants(
         return {
           id,
           identityId: device ? deviceIdentity(store, device) : undefined,
+          avatar: device?.profile?.avatar,
           name: clean(
             device?.profile?.name ??
               device?.name ??

@@ -1549,3 +1549,32 @@ button {
     animation: none;
   }
 }
+
+.request-message {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 12px 0 24px auto;
+  max-width: 94%;
+  width: fit-content;
+}
+.request-content {
+  min-width: 0;
+}
+.request-message .user-message {
+  margin: 0;
+  max-width: 100%;
+}
+.request-avatar {
+  flex: 0 0 30px;
+  padding-top: 6px;
+}
+.request-meta {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 5px;
+  color: var(--workspace-muted);
+  font-size: 12px;
+}

@@ -6,7 +6,12 @@ import type {
 } from "@ido/common/contracts/api";
 import { executionError, recordActivity } from "./activity.js";
 import { waitForPlan, startPlannedWork } from "./planning.js";
-import type { Command, Mapping, Task } from "@ido/common/contracts/protocol";
+import type {
+  Command,
+  Mapping,
+  Task,
+  RequestMessage,
+} from "@ido/common/contracts/protocol";
 import { approve } from "../approvals/resolve.js";
 import { artifact } from "../artifacts/diff.js";
 import { AppServerCodex } from "../codex/app-server.mjs";
@@ -23,7 +28,7 @@ import {
   type ControlDelivery,
 } from "@ido/common/contracts/work";
 
-export interface WorkInstruction {
+export interface WorkInstruction extends RequestMessage {
   id: string;
   receiptId?: string;
   controlVersion?: number;
@@ -33,6 +38,7 @@ export interface WorkInstruction {
 }
 
 export interface Run {
+  requestAt?: number;
   contextSources?: TaskContextSource[];
   model?: string;
   agent?: AgentKind;
@@ -244,6 +250,7 @@ export class Executor {
         activityDropped: previous?.activityDropped,
         activityVersion: previous?.activityVersion,
         task: structuredClone(task),
+        requestAt: previous ? command.sentAt : task.createdAt,
         directory,
         threadId: previous?.threadId,
         state: "assigned",
@@ -292,6 +299,8 @@ export class Executor {
           kind: "instruction",
           title: "追加依頼",
           text: command.continuation,
+          sender: command.sender,
+          sentAt: command.sentAt,
           status: "accepted",
         });
       this.runs[task.runId] = value;
@@ -386,6 +395,8 @@ export class Executor {
       previous.instructions.push({
         id: command.id,
         text: command.text,
+        sender: command.sender,
+        sentAt: command.sentAt,
         specRevision,
         delivery: "pending",
         receiptId:
@@ -400,6 +411,8 @@ export class Executor {
         kind: "instruction",
         title: "追加指示",
         text: command.text,
+        sender: command.sender,
+        sentAt: command.sentAt,
         status: "pending",
       });
       this.controlReceipt(previous, command, "queued");
@@ -460,9 +473,20 @@ export class Executor {
               kind: "instruction",
               title: "追加指示",
               text: instruction.text,
+              sender: instruction.sender,
+              sentAt: instruction.sentAt,
               status: instruction.delivery,
             });
-            if (applied) value.activeSpecRevision = instruction.specRevision;
+            if (applied) {
+              value.activeSpecRevision = instruction.specRevision;
+              recordActivity(value, {
+                id: `instruction-start:${instruction.id}`,
+                kind: "status",
+                title: "作業を開始",
+                event: "started",
+                requestAt: instruction.sentAt,
+              });
+            }
             this.controlReceipt(
               value,
               instruction,
@@ -480,6 +504,8 @@ export class Executor {
               kind: "instruction",
               title: "追加指示",
               text: instruction.text,
+              sender: instruction.sender,
+              sentAt: instruction.sentAt,
               status: "uncertain",
             });
             this.controlReceipt(value, instruction, "uncertain");

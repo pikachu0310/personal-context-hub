@@ -1,5 +1,12 @@
 import type { PluginManifest } from "./plugins.js";
-import type { Grant, Mapping, Project, Task, User } from "./protocol.js";
+import type {
+  Grant,
+  Mapping,
+  Project,
+  Task,
+  User,
+  RequestMessage,
+} from "./protocol.js";
 export interface MessageView {
   id: string;
   authorId: string;
@@ -100,7 +107,9 @@ export interface AdminState {
   tunnels: { status: string; busy: boolean; error?: string };
 }
 /** Local Client activity. Never part of Engine result frames or forum updates. */
-export interface ClientActivity {
+export interface ClientActivity extends RequestMessage {
+  event?: "started";
+  requestAt?: number;
   id: string;
   revision: number;
   at: number;

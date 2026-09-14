@@ -15,6 +15,10 @@ export interface TaskParticipant {
   avatar?: string;
   bot?: boolean;
 }
+export interface RequestMessage {
+  sender?: TaskParticipant;
+  sentAt?: number;
+}
 export interface ClientProfile {
   avatar?: string;
   name: string;
@@ -49,6 +53,8 @@ export type TaskState =
   | "failed"
   | "cancelled";
 export interface Task {
+  initialText?: string;
+  queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;
   localMirror?: { deviceId: string; runId: string; sequence: number };
   memberStates?: Record<string, boolean>;
   membershipVersion?: number;
@@ -99,7 +105,7 @@ export interface Preview {
   revision: number;
   expiresAt: number;
 }
-export interface Command {
+export interface Command extends RequestMessage {
   v: 1;
   type: string;
   id?: string;

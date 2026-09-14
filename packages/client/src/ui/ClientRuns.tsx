@@ -1,3 +1,8 @@
+import {
+  initialSender,
+  displaySender,
+  showStart,
+} from "./chat-presentation.js";
 import { ComposerAction } from "./ComposerAction.js";
 import { Button, Group, Stack, Text } from "@mantine/core";
 import { EnvironmentRow, TaskInspector } from "./TaskInspector.js";
@@ -11,6 +16,7 @@ import { api } from "./api.js";
 import {
   ActivityItem,
   activeState,
+  RequestMessage,
   MessageText,
   stateLabel,
 } from "./ActivityFeed.js";
@@ -228,13 +234,18 @@ export function ClientRuns({
           }}
         >
           <div className="conversation-content">
-            <article className="user-message initial-request">
-              <div className="entry-meta">
-                {local ? "このアプリからの依頼" : "プロジェクトへの依頼"}
-              </div>
-              <MessageText
-                text={current.task.history[0]?.text ?? current.task.text}
-              />
+            <RequestMessage
+              sender={displaySender(
+                initialSender(current.task, local, state),
+                state,
+              )}
+              sentAt={current.task.createdAt}
+              text={
+                current.task.initialText ??
+                current.task.history[0]?.text ??
+                current.task.text
+              }
+            >
               {!!current.contextSources?.length && (
                 <div className="source-chips">
                   {[
@@ -270,7 +281,15 @@ export function ClientRuns({
                   ))}
                 </div>
               )}
-            </article>
+            </RequestMessage>
+            {current.task.queuedInstructions?.map((message) => (
+              <RequestMessage
+                key={message.id}
+                text={message.text}
+                sender={displaySender(message.sender, state)}
+                sentAt={message.sentAt}
+              />
+            ))}
             {loadError && (
               <p role="alert" className="is-error">
                 {loadError}
@@ -291,9 +310,17 @@ export function ClientRuns({
                   : "このタスクには詳細な行動ログがありません。新しい実行から記録されます。"}
               </div>
             )}
-            {entries.map((entry) => (
-              <ActivityItem key={entry.id} entry={entry} />
-            ))}
+            {entries
+              .filter((entry) =>
+                showStart(entry, current.task.createdAt, entries),
+              )
+              .map((entry) => (
+                <ActivityItem
+                  key={entry.id}
+                  entry={entry}
+                  sender={displaySender(entry.sender, state)}
+                />
+              ))}
             {current.result &&
               !entries.some(
                 (entry) =>
@@ -302,7 +329,6 @@ export function ClientRuns({
                   entry.revision === current.task.revision,
               ) && (
                 <article className="agent-message">
-                  <div className="entry-meta">IDO Agent · 結果</div>
                   <MessageText text={current.result} />
                 </article>
               )}

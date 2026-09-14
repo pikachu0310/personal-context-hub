@@ -193,12 +193,28 @@ test("Manual discusses twice, waits for explicit execute, keeps policy and allow
       revision: 1,
       specRevision: 3,
       text: "今の作業では公開しないで",
+      sender: { id: "teammate", name: "Teammate" },
+      sentAt: 12345,
     },
     [mapping],
     true,
     1,
   );
   assert.deepEqual(steers, ["今の作業では公開しないで"]);
+  const instruction = value.activity?.find(
+    (entry) => entry.id === "1:instruction:live",
+  );
+  assert.equal(instruction?.sentAt, 12345);
+  assert.equal(instruction?.sender?.name, "Teammate");
+  assert.equal(instruction?.status, "accepted");
+  await executor.save();
+  const restored = new Executor(directory, () => {});
+  await restored.load();
+  const savedInstruction = restored.runs.run.activity?.find(
+    (entry) => entry.id === instruction?.id,
+  );
+  assert.equal(savedInstruction?.sentAt, 12345);
+  assert.equal(savedInstruction?.sender?.id, "teammate");
   releaseExecution!();
   await job;
   assert.equal(value.state, "completed");

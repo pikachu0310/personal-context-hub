@@ -53,7 +53,8 @@ export async function execute(
     recordActivity(value, {
       kind: "status",
       title: value.progressMode === "manual" ? "相談を開始" : "作業を開始",
-      text: `実行 ${value.task.revision}`,
+      event: "started",
+      requestAt: value.requestAt,
       status: "running",
     });
     await this.save();
@@ -162,12 +163,21 @@ export async function execute(
             if (item.delivery === "sending") {
               item.delivery = "accepted";
               value.activeSpecRevision = item.specRevision;
+              recordActivity(value, {
+                id: `instruction-start:${item.id}`,
+                kind: "status",
+                title: "作業を開始",
+                event: "started",
+                requestAt: item.sentAt,
+              });
               this.controlReceipt(value, item, "applied");
               recordActivity(value, {
                 id: `instruction:${item.id}`,
                 kind: "instruction",
                 title: "追加指示",
                 text: item.text,
+                sender: item.sender,
+                sentAt: item.sentAt,
                 status: "accepted",
               });
             }

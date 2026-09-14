@@ -129,7 +129,8 @@ export async function startLocalTask(
         requestId: requestKey,
         projectId,
         meetingId: "local",
-        authorId: "local",
+        authorId: localSender(client).id,
+        participants: [localSender(client)],
         text: instruction,
         title,
         state: "assigned",
@@ -182,6 +183,15 @@ export async function startLocalTask(
   return operation;
 }
 
+function localSender(client: Client) {
+  return {
+    id: client.settings.deviceId ?? "local",
+    identityId: client.settings.identityId,
+    name: client.settings.profile?.name || "自分",
+    avatar: client.settings.profile?.avatar,
+  };
+}
+
 export async function localInstruction(
   client: Client,
   runId: string,
@@ -202,6 +212,8 @@ export async function localInstruction(
       runId,
       revision: value.task.revision,
       text: instruction,
+      sender: localSender(client),
+      sentAt: Date.now(),
     },
     [value.localMapping],
     true,
@@ -266,6 +278,8 @@ export async function continueLocalTask(
           runId,
           task,
           continuation: instruction,
+          sender: localSender(client),
+          sentAt: Date.now(),
         },
         [value.localMapping],
         true,

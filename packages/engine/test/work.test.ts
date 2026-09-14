@@ -119,6 +119,11 @@ test("scheduler negotiates read-only execution before dispatch without blocking 
   scheduler.schedule(new Set(["legacy", "modern"]));
   const dispatched = store.pending("modern")[0].task as Task;
   assert.equal(dispatched.id, restricted.id);
+  assert.ok(
+    dispatched.participants?.some(
+      (person) => person.id === restricted.authorId,
+    ),
+  );
   assert.deepEqual(dispatched.executionPolicy, { sandboxMode: "read-only" });
   assert.deepEqual(dispatched.sourceIds, ["message-1"]);
 });
@@ -140,6 +145,12 @@ test("durable controls distinguish input versions, retries and client delivery r
   assert.equal(receipt.accepted, true);
   assert.equal(receipt.delivery, "pending");
   assert.equal(receipt.specRevision, 2);
+  const dispatched = store
+    .pending("client")
+    .find((command) => command.type === "steer")!;
+  assert.equal(dispatched.sender?.id, request.authorId);
+  assert.equal(dispatched.sender?.name, "operator");
+  assert.equal(typeof dispatched.sentAt, "number");
   assert.equal(store.get<Task>("task", task.id)?.revision, 1);
   assert.equal(work.control(control).id, receipt.id);
   assert.equal(
@@ -357,4 +368,25 @@ test("Codex-unlinked approved Clients receive no task even with execution grants
   store.put("device", client.id, client);
   scheduler.schedule(new Set([client.id]));
   assert.equal(store.get<Task>("task", task.id)?.clientId, client.id);
+});
+
+test("queued instructions retain separate authors and timestamps without changing execution text", async (t) => {
+  const { store, tasks, work, request, user } = await fixture(t);
+  const task = work.submit(request);
+  tasks.control(task.id, user.id, "steer", "queued follow-up", {
+    requestKey: "queued-message",
+  });
+  const saved = store.get<Task>("task", task.id)!;
+  assert.equal(saved.initialText, request.request);
+  assert.match(saved.text, /queued follow-up/);
+  assert.equal(saved.queuedInstructions?.[0].sender?.id, user.id);
+  assert.equal(saved.queuedInstructions?.[0].text, "queued follow-up");
+  assert.equal(typeof saved.queuedInstructions?.[0].sentAt, "number");
+  tasks.control(task.id, user.id, "steer", "queued follow-up", {
+    requestKey: "queued-message",
+  });
+  assert.deepEqual(
+    store.get<Task>("task", task.id)?.queuedInstructions,
+    saved.queuedInstructions,
+  );
 });
