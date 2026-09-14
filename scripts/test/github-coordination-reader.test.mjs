@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   MAX_OUTPUT_CHARS,
   readCoordination,
-} from "../../../scripts/read-github-coordination.mjs";
+} from "../read-github-coordination.mjs";
 
 const REPO = "pikachu0310/personal-context-hub-discord-voice";
 const DATE = "2026-09-13T00:00:00.000Z";

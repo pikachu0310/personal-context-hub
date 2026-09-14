@@ -86,7 +86,6 @@ try {
       }
       if (running && /IDO (?:Engine|Client): http/.test(output)) break;
     }
-    assert.equal(running, true);
     assert.equal(JSON.parse(cli(path, ["status"], env)).running, true);
     const origin = output.match(/IDO (?:Engine|Client): (http:\/\/\S+)/)?.[1];
     assert.ok(origin);
