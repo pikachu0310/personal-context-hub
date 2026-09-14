@@ -18,6 +18,7 @@ import { AppServerCodex } from "../codex/app-server.mjs";
 import { load } from "../storage/load.js";
 import { save } from "../storage/save.js";
 import { execute } from "./run.js";
+import { TaskBoardConnection } from "../connection/task-board.js";
 import type { AgentKind } from "../agents/types.js";
 import { ClaudeRuntime } from "../agents/claude.js";
 import {
@@ -40,6 +41,7 @@ export interface WorkInstruction extends RequestMessage {
 export interface Run {
   requestAt?: number;
   contextSources?: TaskContextSource[];
+  boardToolsEnabled?: boolean;
   model?: string;
   reasoningEffort?: string;
   agent?: AgentKind;
@@ -81,6 +83,7 @@ export { codexBinary } from "../codex/binary.js";
 export class Executor {
   contextProfile: () => { name: string; context: string } | undefined = () =>
     undefined;
+  readonly board: TaskBoardConnection;
   createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
     new ClaudeRuntime(options);
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
@@ -113,7 +116,9 @@ export class Executor {
     readonly emit: (message: Command) => void,
     readonly createCodex: (options: any) => AppServerCodex = (options) =>
       new AppServerCodex(options),
-  ) {}
+  ) {
+    this.board = new TaskBoardConnection(emit);
+  }
   get home() {
     return join(this.directory, "codex");
   }
@@ -270,6 +275,7 @@ export class Executor {
         requestAt: previous ? command.sentAt : task.createdAt,
         directory,
         threadId: previous?.threadId,
+        boardToolsEnabled: previous?.boardToolsEnabled,
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],
         instructions: structuredClone(previous?.instructions ?? []),
@@ -546,6 +552,7 @@ export class Executor {
   execute = execute.bind(this);
   readonly approve = approve.bind(this);
   async close() {
+    this.board.close();
     for (const request of this.approvals.values()) {
       clearTimeout(request.timer);
       request.resolve({ decision: "decline" });

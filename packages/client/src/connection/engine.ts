@@ -17,6 +17,7 @@ export async function connect(this: Client) {
   clearTimeout(this.reconnect);
   this.ws?.close();
   this.connected = false;
+  this.executor.board.close();
   this.controlSupported = false;
   this.lifecycleSupported = false;
   this.continuationSupported = false;
@@ -55,6 +56,7 @@ export async function connect(this: Client) {
           type: "authenticate",
           deviceId: this.settings.deviceId,
           lifecycleVersion: 1,
+          taskBoardVersion: 1,
           profile: {
             ...this.settings.profile,
             name: this.settings.profile?.name || "参加者",
@@ -79,6 +81,7 @@ export async function connect(this: Client) {
           : undefined;
       this.generation = Number(data.generation);
       this.connected = true;
+      this.executor.board.supported = data.taskBoardVersion === 1;
       this.controlSupported = data.controlVersion === 1;
       this.continuationSupported = data.continuationVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
@@ -116,6 +119,7 @@ export async function connect(this: Client) {
       return;
     }
     if (data.generation !== this.generation) return;
+    if (this.executor.board.receive(data)) return;
     if (data.type === "projects.updated") {
       this.syncProjects(
         data.projects as Project[],
@@ -214,6 +218,7 @@ export async function connect(this: Client) {
   ws.once("close", (code) => {
     if (this.ws !== ws) return;
     this.connected = false;
+    this.executor.board.close();
     this.controlSupported = false;
     this.lifecycleSupported = false;
     this.continuationSupported = false;

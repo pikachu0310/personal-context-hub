@@ -24,6 +24,11 @@ flowchart LR
     O --> P
 ```
 
+Engine-delegated Codex tasks can discuss work through the [free-form task board](task-board.md).
+Each task has a thread in Engine SQLite. Clients access same-project discussions over their current
+authenticated execution connection; completed threads are omitted from normal browsing and search.
+Board posts do not change task ownership, execution policy, or approval state.
+
 ## Plugin contract
 
 `common/src/contracts/plugins.ts` defines protocol **2**, manifests, normalized conversation input, replies and business events. `common/src/runtime/rpc.ts` implements request/reply IDs, errors and bounded deadlines. Client protocol remains version 1. A protocol/manifest identity mismatch rejects launch and terminates the child.

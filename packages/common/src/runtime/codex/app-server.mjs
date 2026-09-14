@@ -35,6 +35,7 @@ export class AppServerCodex extends EventEmitter {
     this.sequence = 0;
     this.closed = false;
     this.threadUsage = new Map();
+    this.dynamicHandlers = new Map();
   }
 
   connect() {
@@ -71,6 +72,44 @@ export class AppServerCodex extends EventEmitter {
           return this.fail(new Error("Invalid Codex App Server message"));
         }
         if (message.id !== undefined && message.method) {
+          if (message.method === "item/tool/call") {
+            void Promise.resolve()
+              .then(() => {
+                const handler = this.dynamicHandlers.get(
+                  message.params?.threadId,
+                );
+                if (!handler) throw new Error("No active tool handler");
+                return handler(message.params);
+              })
+              .then((value) => {
+                if (!this.closed)
+                  this.send({
+                    id: message.id,
+                    result: {
+                      success: true,
+                      contentItems: [
+                        { type: "inputText", text: JSON.stringify(value) },
+                      ],
+                    },
+                  });
+              })
+              .catch(() => {
+                if (!this.closed)
+                  this.send({
+                    id: message.id,
+                    result: {
+                      success: false,
+                      contentItems: [
+                        {
+                          type: "inputText",
+                          text: "Tool request failed. No success is confirmed; check arguments or retry.",
+                        },
+                      ],
+                    },
+                  });
+              });
+            return;
+          }
           if (
             this.options.onApprovalRequest &&
             [
