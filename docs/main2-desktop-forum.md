@@ -78,20 +78,21 @@ ClaudeはCodexのOSサンドボックスと同一ではありません。アプ�
 
 このAPIは既存のloopback Host/Origin制限内だけで使用します。外部公開・Botへの自動転送・配送確認・再送はまだ実装していません。後続の連携は、この概要を読み取るアダプターを追加し、ローカル実行処理とは分離します。
 
-EngineのDiscordプラグイン設定で、既存のGuild・テキストチャンネル・会議・プロジェクトに加えて次を設定します。
+EngineのDiscordプラグイン設定で、既存のGuild・テキストチャンネルなどに加えて `issueForumChannelId`（同じGuildのissueフォーラムID）を設定します。空欄なら同期しません。
 
-| 設定                  | 内容                                               |
-| --------------------- | -------------------------------------------------- |
-| `issueForumChannelId` | 同じGuildのissueフォーラムID。空欄なら同期しません |
-| `windowsDownloadUrl`  | 公開したWindows SetupのHTTPS URL                   |
-| `macArmDownloadUrl`   | 公開したMac Apple Silicon DMGのHTTPS URL           |
-| `macIntelDownloadUrl` | 公開したMac Intel DMGのHTTPS URL                   |
+参加者向けアプリの配布URLは開発者がconfigで管理する項目で、管理ダッシュボードのDiscord設定には表示しません。既存の設定値は保持し、接続案内ページのダウンロードリンクに引き続き使用します。
+
+| 設定                  | 内容                                     |
+| --------------------- | ---------------------------------------- |
+| `windowsDownloadUrl`  | 公開したWindows SetupのHTTPS URL         |
+| `macArmDownloadUrl`   | 公開したMac Apple Silicon DMGのHTTPS URL |
+| `macIntelDownloadUrl` | 公開したMac Intel DMGのHTTPS URL         |
 
 フォーラムの閲覧者にはタスク概要・状態・Client IDが見えます。共有してよいメンバーだけが閲覧できるDiscord権限を設定してください。BotにはView Channel / Send Messages（フォーラム投稿作成）/ Send Messages in Threads / Read Message Historyを付与し、Message Content Intentを有効にします。必須タグを設定したフォーラムは避けてください。チャンネルの自動作成や権限変更は行いません。
 
 タスク同期は10秒周期。再起動時にもEngineの現状を取得します。Bot自身・Webhookの投稿、別Guild・別フォーラム・未登録スレッドの投稿はタスク操作として受け付けません。Discordの許可ユーザー設定とEngine側のメンバー権限の両方が適用されます。
 
-配布URLが空欄のOSは「配布準備中」と表示します。Releaseを実際に公開してから、その配布物のURLを設定してください。この変更はRelease公開やBot起動を自動では行いません。HTTPS接続先にはEngineで設定した公開originを使用します。参加者向けにlocalhostのURLを配らないようにしてください。
+配布URLが空欄のOSは「配布準備中」と表示します。開発者がReleaseを実際に公開してから、その配布物のURLをconfigへ設定します。この変更はRelease公開やBot起動を自動では行いません。HTTPS接続先にはEngineで設定した公開originを使用します。参加者向けにlocalhostのURLを配らないようにしてください。
 
 ## ビルドと配布
 
