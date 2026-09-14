@@ -63,6 +63,7 @@ export class Plugins {
   state() {
     return this.catalog.map((entry) => ({
       id: entry.id,
+      version: entry.version,
       manifest: this.get(entry.id).manifest,
       installed:
         this.store.get("plugin", entry.id) ??

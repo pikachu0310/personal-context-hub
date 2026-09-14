@@ -1,4 +1,5 @@
 import { createPublicKey, randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { id, text } from "@ido/common/contracts/protocol";
 import {
@@ -232,9 +233,26 @@ export async function route(
         ...d,
         connected: this.ready.has(d.id),
       })),
-      plugins: this.plugins
-        .state()
-        .map((plugin) => ({ ...plugin, config: admin ? plugin.config : {} })),
+      plugins: await Promise.all(
+        this.plugins.state().map(async (plugin) => ({
+          ...plugin,
+          config: admin ? plugin.config : {},
+          secrets: admin
+            ? Object.fromEntries(
+                await Promise.all(
+                  (plugin.manifest?.fields ?? [])
+                    .filter((field) => field.secret)
+                    .map(async (field) => [
+                      field.key,
+                      !!(await this.credentials.get(
+                        `${plugin.id}.${field.key}`,
+                      )),
+                    ]),
+                ),
+              )
+            : {},
+        })),
+      ),
       tunnels: {
         status: this.tunnels.status,
         installed: this.store.list("tunnel"),
@@ -248,8 +266,22 @@ export async function route(
       secrets: admin
         ? {
             openai: !!(await this.credentials.get("openai")),
+            tunnels: Object.fromEntries(
+              await Promise.all(
+                ["ngrok", "cloudflare"].map(async (provider) => [
+                  provider,
+                  !!(await this.credentials.get(`tunnel.${provider}`)),
+                ]),
+              ),
+            ),
           }
         : {},
+      credentialStorage: admin
+        ? {
+            backend: this.credentials.backend,
+            path: resolve(this.credentials.directory, "secrets.json"),
+          }
+        : undefined,
     });
     return;
   }

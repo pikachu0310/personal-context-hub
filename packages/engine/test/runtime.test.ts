@@ -91,8 +91,16 @@ test("only administrators can read Engine diagnostics", async (t) => {
       state.diagnostics.map((d: any) => d.id),
       role === "admin" ? [entry.id] : [],
     );
-    if (role !== "admin")
+    if (role !== "admin") {
       assert.ok(!JSON.stringify(state).includes("private-event"));
+      assert.equal(state.credentialStorage, undefined);
+      assert.deepEqual(state.secrets, {});
+      assert.ok(
+        state.plugins.every(
+          (plugin: any) => Object.keys(plugin.secrets).length === 0,
+        ),
+      );
+    }
   }
 });
 test("local bootstrap required; password hashing, write-only secrets, CSRF, role changes and host checks", async (t) => {
@@ -107,6 +115,20 @@ test("local bootstrap required; password hashing, write-only secrets, CSRF, role
   });
   const state = (await res.json()) as any;
   assert.equal(state.secrets.openai, true);
+  assert.deepEqual(state.secrets.tunnels, { ngrok: false, cloudflare: false });
+  assert.equal(state.credentialStorage.backend, "file");
+  assert.equal(
+    state.credentialStorage.path,
+    join(e.options.directory, "secrets.json"),
+  );
+  await e.credentials.set("tunnel.ngrok", "synthetic-ngrok-token");
+  const updated = (await (
+    await fetch(e.origin + "/api/admin/state", {
+      headers: { cookie: session.cookie },
+    })
+  ).json()) as any;
+  assert.deepEqual(updated.secrets.tunnels, { ngrok: true, cloudflare: false });
+  assert.ok(!JSON.stringify(updated).includes("synthetic-ngrok-token"));
   assert.ok(!JSON.stringify(state).includes("test-only-secret"));
   assert.equal(
     (
