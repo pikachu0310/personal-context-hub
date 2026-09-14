@@ -198,6 +198,8 @@ export class Engine {
         });
       this.conversation.coordinated = new CoordinatedConversation(this.store, {
         coordinator: this.coordinatorFactory,
+        updateMinutes: (meetingId) =>
+          this.conversation.document.refresh(meetingId),
         work: createWorkPort({
           repository: this.store,
           tasks: this.tasks,
@@ -322,6 +324,7 @@ export class Engine {
     return this;
   }
   async close() {
+    this.conversation.document.stop();
     clearInterval(this.timer);
     const inputs = this.input.close();
     await this.conversation.coordinated?.close();

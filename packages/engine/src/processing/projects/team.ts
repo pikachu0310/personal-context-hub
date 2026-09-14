@@ -1,3 +1,4 @@
+import { MAX_MINUTES_LENGTH } from "@ido/common/contracts/api";
 import {
   seedParticipants,
   taskBusy,
@@ -242,10 +243,53 @@ export class ProjectTeam {
     this.store.put("project", project.id, project);
     return project;
   }
+  updateMinutes(deviceId: string, input: Record<string, unknown>) {
+    return this.store.transaction(() => {
+      const projectId = id(input.projectId),
+        meetingId = id(input.meetingId);
+      this.require(deviceId, projectId);
+      if (!this.canEditMinutes(deviceId)) throw new Error("PERMISSION_DENIED");
+      const meeting = this.store.get<Meeting>("meeting", meetingId);
+      if (!meeting || meeting.projectId !== projectId)
+        throw new Error("MEETING_NOT_FOUND");
+      if (
+        typeof input.markdown !== "string" ||
+        input.markdown.length > MAX_MINUTES_LENGTH
+      )
+        throw new Error("INVALID_MINUTES");
+      if (
+        !Number.isSafeInteger(input.expectedRevision) ||
+        Number(input.expectedRevision) < 0
+      )
+        throw new Error("INVALID_REVISION");
+      if ((meeting.summaryRevision ?? 0) !== input.expectedRevision)
+        throw new Error("MINUTES_CONFLICT");
+      meeting.summary = input.markdown;
+      meeting.summaryContextRevision = this.store.get<{ revision: number }>(
+        "project-context",
+        projectId,
+      )?.revision;
+      meeting.summaryRevision = (meeting.summaryRevision ?? 0) + 1;
+      meeting.summaryUpdatedAt = Date.now();
+      this.store.put("meeting", meetingId, meeting);
+      this.store.audit(
+        `client-${deviceId}`,
+        "project.minutes.update",
+        meetingId,
+      );
+      return meeting;
+    });
+  }
+  canEditMinutes(deviceId: string) {
+    const device = this.approved(deviceId);
+    const user = this.store.user(device.userId);
+    return !!user && user.role !== "viewer";
+  }
   snapshot(deviceId: string, projectId: string) {
     this.require(deviceId, projectId);
     return {
       project: this.store.get<Project>("project", projectId),
+      canEditMinutes: this.canEditMinutes(deviceId),
       minutes: this.store
         .list<Meeting>("meeting")
         .filter((m) => m.projectId === projectId)

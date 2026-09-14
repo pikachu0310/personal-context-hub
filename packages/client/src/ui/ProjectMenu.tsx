@@ -1,3 +1,4 @@
+import { Icon } from "./Icons.js";
 import { Button, Group, Menu, Modal, Select, Stack, Text } from "@mantine/core";
 import { useState } from "react";
 import { Form, lifecycleError } from "@ido/common-ui";
@@ -10,11 +11,15 @@ export function ProjectMenu({
   deviceId,
   action,
   mapping,
+  newTask,
+  canCreate,
 }: {
   project: Project;
   deviceId?: string;
   action: Action;
   mapping: () => void;
+  newTask: () => void;
+  canCreate: boolean;
 }) {
   const [rename, setRename] = useState(false),
     [url, setUrl] = useState(""),
@@ -80,10 +85,13 @@ export function ProjectMenu({
             className="icon-button project-menu"
             aria-label={`${project.name}の設定`}
           >
-            ⋯
+            {<Icon name="dots" />}
           </button>
         </Menu.Target>
         <Menu.Dropdown>
+          <Menu.Item disabled={!canCreate} onClick={newTask}>
+            新しいタスク
+          </Menu.Item>
           <Menu.Item onClick={mapping}>接続・設定</Menu.Item>
           {owner && (
             <>

@@ -79,6 +79,10 @@ test("Codex receives board tools for new engine work and retains them on resume 
   );
   await first.load();
   first.board.supported = true;
+  first.contextProfile = () => ({
+    name: "Test user",
+    context: "Include a reproducible verification procedure.",
+  });
   const value: Run = { task: task(), directory, state: "assigned" };
   first.runs.run = value;
   const mapping = { projectId: "project", directory, network: false, slots: 1 };
@@ -102,6 +106,11 @@ test("Codex receives board tools for new engine work and retains them on resume 
     options.slice(0, 2).every((input) => input.dynamicTools.length === 2),
   );
   assert.match(prompts[0], /自由な掲示板/);
+  for (const prompt of prompts.slice(0, 2)) {
+    assert.match(prompt, /参考コンテキスト/);
+    assert.match(prompt, /Include a reproducible verification procedure\./);
+    assert.match(prompt, /自由な掲示板/);
+  }
   await restarted.receive(
     {
       v: 1,

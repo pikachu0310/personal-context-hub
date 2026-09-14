@@ -7,7 +7,9 @@ export interface AgentRuntimeOptions {
   ) => Promise<{ decision: string }>;
 }
 export interface AgentThreadOptions {
+  approvalPolicy?: string;
   model?: string;
+  reasoningEffort?: string;
   workingDirectory: string;
   sandboxMode: string;
   networkAccessEnabled: boolean;

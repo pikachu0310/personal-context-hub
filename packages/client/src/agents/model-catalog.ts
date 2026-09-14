@@ -74,6 +74,9 @@ export async function claudeModels(
       .map((value) => ({
         id: selectedModel(value.value)!,
         name: value.displayName.slice(0, 120),
+        ...(value.supportedEffortLevels
+          ? { supportedEfforts: value.supportedEffortLevels }
+          : {}),
       }))
       .filter((value) => value.id);
   } finally {
@@ -122,7 +125,7 @@ export async function codexModels(
 ) {
   const runtime = create();
   try {
-    const models = new Map<string, { id: string; name: string }>();
+    const models = new Map<string, AgentCatalogEntry["models"][number]>();
     let cursor: string | undefined;
     for (let page = 0; page < 5; page++) {
       const result = await runtime.request("model/list", {
@@ -136,6 +139,16 @@ export async function codexModels(
           models.set(id, {
             id,
             name: String(value.displayName ?? id).slice(0, 120),
+            ...(Array.isArray(value.supportedReasoningEfforts)
+              ? {
+                  supportedEfforts: value.supportedReasoningEfforts
+                    .map((item: any) => item.reasoningEffort)
+                    .filter((item: unknown) => typeof item === "string"),
+                }
+              : {}),
+            ...(typeof value.defaultReasoningEffort === "string"
+              ? { defaultEffort: value.defaultReasoningEffort }
+              : {}),
           });
       }
       cursor = result.nextCursor;

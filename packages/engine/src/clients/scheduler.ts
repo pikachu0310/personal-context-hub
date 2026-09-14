@@ -1,4 +1,7 @@
-import { addParticipant } from "../processing/projects/task-participants.js";
+import {
+  addParticipant,
+  taskParticipants,
+} from "../processing/projects/task-participants.js";
 import type { Task } from "@ido/common/contracts/protocol";
 import type { Device } from "../domain/models.js";
 import type { Repository } from "../ports/repository.js";
@@ -20,6 +23,7 @@ export class Scheduler {
         (t) =>
           t.state === "queued" &&
           !t.clientId &&
+          !t.localMirror &&
           !this.repository.get("project-lock", t.projectId),
       )) {
         const active = (device: Device) =>
@@ -73,7 +77,10 @@ export class Scheduler {
           type: "execute",
           taskId: task.id,
           runId: task.runId,
-          task,
+          task: {
+            ...task,
+            participants: taskParticipants(this.repository, task, true),
+          },
         });
       }
     });

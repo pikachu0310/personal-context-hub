@@ -2,6 +2,7 @@ import { Button, FileInput, Group, Text } from "@mantine/core";
 import { useState } from "react";
 import { Form, type Action, type ClientState } from "@ido/common-ui";
 import { UserAvatar } from "./TaskAvatars.js";
+import { AppearanceSettings } from "./AppearanceSettings.js";
 
 async function readAvatar(file: File) {
   if (
@@ -51,6 +52,7 @@ export function ProfileSettings({
   const [loading, setLoading] = useState(false);
   return (
     <>
+      <AppearanceSettings />
       <Text mb="md">
         アイコン・表示名・個人コンテキストは、参加しているプロジェクトで共有されます。
       </Text>

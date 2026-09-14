@@ -23,6 +23,37 @@ test("default Engine answers, restores local history and delegates work using on
     const request = JSON.parse(
       input instanceof Request ? await input.text() : init.body,
     );
+    if (request.instructions?.startsWith("日本語の議事録")) {
+      assert.equal(request.store, false);
+      assert.deepEqual(request.tools, []);
+      const minutes = JSON.parse(request.input);
+      return new Response(
+        JSON.stringify({
+          id: "resp_minutes",
+          object: "response",
+          status: "completed",
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "output_text",
+                  text: [
+                    minutes.previousMinutes,
+                    ...minutes.messages.map((m: any) => `- ${m.text}`),
+                  ]
+                    .filter(Boolean)
+                    .join("\n"),
+                  annotations: [],
+                },
+              ],
+            },
+          ],
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
     requests.push(request);
     const observation = JSON.parse(request.input.split("\n").at(-1));
     const sourceIds = observation.events
@@ -117,6 +148,7 @@ test("default Engine answers, restores local history and delegates work using on
       context,
     );
     await engine.conversation.coordinated!.flush("meeting");
+    await engine.conversation.document.refresh("meeting");
   };
   await send("first", "前提を覚えて説明してください");
   assert.ok(

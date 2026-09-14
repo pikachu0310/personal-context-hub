@@ -49,13 +49,23 @@ class ClaudeThread {
   }
   async runStreamed(
     prompt: string,
-    turn: { signal: AbortSignal; collaborationMode?: string },
+    turn: {
+      signal: AbortSignal;
+      collaborationMode?: string;
+      model?: string;
+      reasoningEffort?: string | null;
+    },
   ) {
     return { events: this.events(prompt, turn) };
   }
   async *events(
     prompt: string,
-    turn: { signal: AbortSignal; collaborationMode?: string },
+    turn: {
+      signal: AbortSignal;
+      collaborationMode?: string;
+      model?: string;
+      reasoningEffort?: string | null;
+    },
   ): AsyncGenerator<any> {
     if (this.closed) throw new Error("CLAUDE_CLOSED");
     const planning = turn.collaborationMode === "plan";
@@ -66,7 +76,9 @@ class ClaudeThread {
       while (true) {
         turn.signal.throwIfAborted();
         const options: Options = {
-          model: this.options.model,
+          model: turn.model ?? this.options.model,
+          effort: (turn.reasoningEffort ??
+            this.options.reasoningEffort) as Options["effort"],
           cwd: this.options.workingDirectory,
           env: this.runtime.config.env,
           resume: this.id,
@@ -129,10 +141,13 @@ class ClaudeThread {
               !turn.signal.aborted &&
               (await claudeToolAllowed(tool, input, this.options, planning))
             ) {
-              const decision = await this.runtime.config.onApprovalRequest(
-                `claude/${tool}`,
-                input,
-              );
+              const decision =
+                this.options.approvalPolicy === "never"
+                  ? { decision: "accept" }
+                  : await this.runtime.config.onApprovalRequest(
+                      `claude/${tool}`,
+                      input,
+                    );
               if (
                 decision.decision === "accept" &&
                 !turn.signal.aborted &&

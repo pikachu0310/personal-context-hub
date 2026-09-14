@@ -186,7 +186,11 @@ test("plan/default collaboration modes use the configured model without widening
       approvalPolicy: "on-request",
     });
     for (const mode of ["plan", "default"]) {
-      const result = await thread.run("Discuss", { collaborationMode: mode });
+      const result = await thread.run("Discuss", {
+        collaborationMode: mode,
+        model: "selected-model",
+        reasoningEffort: "high",
+      });
       assert.equal(result.finalResponse, "Read, then discuss.");
     }
     const turns = fake.messages.filter(
@@ -203,13 +207,19 @@ test("plan/default collaboration modes use the configured model without widening
     for (const turn of turns) {
       assert.equal(
         turn.params.collaborationMode.settings.model,
-        "fixture-model",
+        "selected-model",
       );
       assert.deepEqual(turn.params.sandboxPolicy, {
         type: "readOnly",
         networkAccess: false,
       });
       assert.equal(turn.params.approvalPolicy, "on-request");
+      assert.equal(turn.params.model, "selected-model");
+      assert.equal(turn.params.effort, "high");
+      assert.equal(
+        turn.params.collaborationMode.settings.reasoning_effort,
+        "high",
+      );
     }
   } finally {
     await fake.client.close();

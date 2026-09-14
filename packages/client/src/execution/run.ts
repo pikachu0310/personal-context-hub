@@ -7,6 +7,7 @@ import { restrictExecutionPolicy } from "@ido/common/contracts/work";
 
 import { codexBinary } from "../codex/binary.js";
 import { activityText, recordActivity, recordEvent } from "./activity.js";
+import { taskContextSources, contextPrompt } from "./task-context.js";
 import type { Executor, Run } from "../execution/executor.js";
 import {
   taskBoardTools,
@@ -30,7 +31,7 @@ export async function execute(
   const createRuntime =
     value.agent === "claude" ? this.createClaude : this.createCodex;
   const codex = createRuntime({
-    experimentalApi: value.progressMode === "manual" || boardAvailable,
+    experimentalApi: true,
     codexPathOverride: codexBinary(),
     env: workerEnvironment(this.home),
     onApprovalRequest: (method: string, params: unknown) =>
@@ -67,7 +68,8 @@ export async function execute(
     recordActivity(value, {
       kind: "status",
       title: value.progressMode === "manual" ? "相談を開始" : "作業を開始",
-      text: `実行 ${value.task.revision}`,
+      event: "started",
+      requestAt: value.requestAt,
       status: "running",
     });
     await this.save();
@@ -89,6 +91,10 @@ export async function execute(
       value.task.effectiveExecutionPolicy,
       value.effectiveExecutionPolicy,
     );
+    const localAccess =
+      !policy.sandboxMode && policy.networkAccessEnabled !== false
+        ? value.accessMode
+        : undefined;
     const options = {
       ...(board
         ? {
@@ -97,18 +103,30 @@ export async function execute(
           }
         : {}),
       model: value.model,
+      reasoningEffort: value.reasoningEffort,
       workingDirectory: value.directory,
-      sandboxMode: policy.sandboxMode ?? "workspace-write",
-      requireWritableSandbox: policy.sandboxMode !== "read-only",
+      sandboxMode: localAccess
+        ? "danger-full-access"
+        : (policy.sandboxMode ?? "workspace-write"),
+      requireWritableSandbox:
+        !localAccess && policy.sandboxMode !== "read-only",
       networkAccessEnabled:
-        mapping.network &&
-        value.task.network &&
-        policy.networkAccessEnabled !== false,
-      approvalPolicy: "on-request",
+        !!localAccess ||
+        (mapping.network &&
+          value.task.network &&
+          policy.networkAccessEnabled !== false),
+      approvalPolicy:
+        localAccess === "full"
+          ? "never"
+          : localAccess === "approval"
+            ? "untrusted"
+            : "on-request",
       webSearchMode: "disabled",
     };
     value.effectiveExecutionPolicy = {
-      sandboxMode: options.sandboxMode,
+      sandboxMode: localAccess
+        ? undefined
+        : (policy.sandboxMode ?? "workspace-write"),
       networkAccessEnabled: options.networkAccessEnabled,
     };
     value.activeSpecRevision ??= value.task.specRevision ?? 1;
@@ -121,6 +139,11 @@ export async function execute(
       stopBoardWatch = watchTaskBoard(board, active.thread);
     }
     value.state = "running";
+    value.contextSources = taskContextSources(
+      value.task,
+      this.contextProfile(),
+      value.contextSources,
+    );
     await this.save();
     this.report(value);
     let prompt = [
@@ -131,13 +154,20 @@ export async function execute(
         ? "これは読み取り専用の調査です。ファイル変更・送信・公開・サービス操作などの外部変更は行わず、根拠と不明点を報告してください。"
         : "",
       value.task.text,
+      contextPrompt(value.contextSources),
       board ? taskBoardGuidelines : "",
     ]
       .filter(Boolean)
       .join("\n\n");
     while (true) {
       abort.signal.throwIfAborted();
-      const planning = value.progressMode === "manual" && !value.planApproved;
+      if (value.pendingProgressMode) {
+        value.progressMode = value.pendingProgressMode;
+        value.pendingProgressMode = undefined;
+        if (value.progressMode === "manual") value.planApproved = false;
+      }
+      const progressMode = value.progressMode;
+      const planning = progressMode === "manual" && !value.planApproved;
       if (planning) value.plan = undefined;
       value.phase = planning ? "planning" : "executing";
       const discussion = (value.instructions ?? []).filter(
@@ -150,7 +180,9 @@ export async function execute(
       await this.save();
       const { events } = await active.thread.runStreamed(prompt, {
         signal: abort.signal,
-        ...(value.progressMode === "manual"
+        model: value.model,
+        reasoningEffort: value.reasoningEffort ?? null,
+        ...(progressMode === "manual"
           ? { collaborationMode: planning ? "plan" : "default" }
           : {}),
       });
@@ -166,12 +198,21 @@ export async function execute(
             if (item.delivery === "sending") {
               item.delivery = "accepted";
               value.activeSpecRevision = item.specRevision;
+              recordActivity(value, {
+                id: `instruction-start:${item.id}`,
+                kind: "status",
+                title: "作業を開始",
+                event: "started",
+                requestAt: item.sentAt,
+              });
               this.controlReceipt(value, item, "applied");
               recordActivity(value, {
                 id: `instruction:${item.id}`,
                 kind: "instruction",
                 title: "追加指示",
                 text: item.text,
+                sender: item.sender,
+                sentAt: item.sentAt,
                 status: "accepted",
               });
             }

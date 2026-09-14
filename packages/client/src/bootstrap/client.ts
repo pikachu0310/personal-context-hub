@@ -13,6 +13,7 @@ import { Credentials } from "@ido/common/runtime/credentials";
 import { HttpError, send } from "@ido/common/runtime/http";
 import { atomic, hash, json, secret } from "@ido/common/runtime/platform";
 import { restoreIdentity } from "../storage/identity.js";
+import { syncLocalShares } from "../connection/local-sharing.js";
 import { connect } from "../connection/engine.js";
 import { control } from "../connection/control.js";
 import type { WorkReceipt } from "@ido/common/contracts/work";
@@ -71,6 +72,10 @@ export class Client {
   lifecycleSupported = false;
   controlSupported = false;
   continuationSupported = false;
+  localSharingSupported = false;
+  localSharingBusy = false;
+  localSharingTimer?: NodeJS.Timeout;
+  readonly syncLocalShares = syncLocalShares.bind(this);
   workspaceSupported = false;
   workspaceRequests = new Map<
     string,
@@ -173,6 +178,7 @@ export class Client {
   ) {
     this.credentials = new Credentials(directory, "ido-client");
     this.executor = new Executor(directory, (data) => this.emit(data));
+    this.executor.contextProfile = () => this.settings.profile;
     this.preview = new ClientPreview((data) => this.emit(data));
   }
   async start(port = 4320) {
@@ -214,6 +220,11 @@ export class Client {
     });
     const address = this.server.address();
     this.origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}`;
+    this.localSharingTimer = setInterval(
+      () => void this.syncLocalShares(),
+      5000,
+    );
+    this.localSharingTimer.unref();
     void this.checkAccount();
     if (this.pairing) this.pollPair();
     else if (this.settings.deviceId) void this.connect();
@@ -272,6 +283,7 @@ export class Client {
   readonly route = route.bind(this);
   async close() {
     this.stopping = true;
+    clearInterval(this.localSharingTimer);
     clearTimeout(this.reconnect);
     clearTimeout(this.pairTimer);
     this.login?.kill();

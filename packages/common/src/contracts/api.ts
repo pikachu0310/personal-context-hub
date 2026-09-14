@@ -1,5 +1,24 @@
+import type { MinutesMetadata } from "./minutes.js";
+export {
+  taskUrl,
+  parseTaskUrl,
+  taskMarkdown,
+  MAX_MINUTES_LENGTH,
+} from "./minutes.js";
+export type {
+  TaskReference,
+  MinutesMetadata,
+  MinutesUpdateInput,
+} from "./minutes.js";
 import type { PluginManifest } from "./plugins.js";
-import type { Grant, Mapping, Project, Task, User } from "./protocol.js";
+import type {
+  Grant,
+  Mapping,
+  Project,
+  Task,
+  User,
+  RequestMessage,
+} from "./protocol.js";
 export interface MessageView {
   id: string;
   authorId: string;
@@ -12,7 +31,7 @@ export interface MessageView {
   stage: string;
   steps?: Record<string, { state: string; errorId?: string }>;
 }
-export interface MeetingView {
+export interface MeetingView extends MinutesMetadata {
   startedAt?: number;
   closedAt?: number;
   id: string;
@@ -34,6 +53,7 @@ export interface WorkspaceState {
   tasks: Task[];
 }
 export interface ProjectWorkspace {
+  canEditMinutes?: boolean;
   project: Project;
   minutes: MeetingView[];
   tasks: Task[];
@@ -84,6 +104,7 @@ export interface AdminState {
     meetingId?: string;
     messageId?: string;
     model?: string;
+    reasoningEffort?: string;
     error: {
       reason: string;
       type: string;
@@ -100,7 +121,9 @@ export interface AdminState {
   tunnels: { status: string; busy: boolean; error?: string };
 }
 /** Local Client activity. Never part of Engine result frames or forum updates. */
-export interface ClientActivity {
+export interface ClientActivity extends RequestMessage {
+  event?: "started";
+  requestAt?: number;
   id: string;
   revision: number;
   at: number;
@@ -124,6 +147,21 @@ export interface ClientAccount {
   type?: string;
   email?: string;
 }
+/** Context actually supplied to a local agent; never included in team summaries. */
+export interface TaskContextSource {
+  id: string;
+  title: string;
+  kind: "minutes" | "profile" | "context";
+  text: string;
+  detail?: string;
+}
+export interface TaskEnvironment {
+  directory: string;
+  branch?: string;
+  commit?: string;
+  deviceName: string;
+  ownerName?: string;
+}
 export interface ClientState {
   lifecycleSupported?: boolean;
   deletionSync?: { pendingTasks: number };
@@ -140,7 +178,9 @@ export interface ClientState {
   suggestedInvite?: { engineUrl: string; token: string };
   settings: {
     profile?: { name: string; context: string; avatar?: string };
+    accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
+    pendingProgressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
     identityId?: string;
@@ -159,16 +199,26 @@ export interface ClientState {
   desktop?: { name: string; version: string; pid: number; platform: string };
   pairing?: { url: string; fingerprint: string };
   runs: Array<{
+    contextSources?: TaskContextSource[];
     agent?: "codex" | "claude";
     model?: string;
+    reasoningEffort?: string;
     origin?: "local";
+    discordShare?: {
+      projectId: string;
+      taskId?: string;
+      status?: "pending" | "synced" | "error";
+      error?: string;
+    };
     task: Task;
     directory: string;
     state: string;
     result?: string;
     progress?: string;
     activityVersion?: number;
+    accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
+    pendingProgressMode?: "auto" | "manual";
     phase?: "planning" | "awaiting-plan" | "executing";
     updatedAt?: number;
   }>;
@@ -208,7 +258,12 @@ export interface TeamTaskSnapshot {
 export interface AgentCatalogEntry {
   agent: "codex" | "claude";
   authenticated: boolean;
-  models: Array<{ id: string; name: string }>;
+  models: Array<{
+    id: string;
+    name: string;
+    supportedEfforts?: string[];
+    defaultEffort?: string;
+  }>;
   error?: string;
 }
 export interface ApiResult {

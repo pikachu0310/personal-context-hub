@@ -1,3 +1,5 @@
+import { ModelControls } from "./ModelControls.js";
+import type { ProjectDraft } from "./project-drafts.js";
 import { useState } from "react";
 import type { Task } from "@ido/common/contracts/protocol";
 import { api } from "./api.js";
@@ -7,18 +9,20 @@ export function ProjectTaskDraft({
   draft,
   onChange,
   sendingText,
+  settled,
   connected,
   created,
 }: {
   projectId: string;
-  draft: { text: string; requestId: string; sentText?: string };
+  draft: ProjectDraft;
   onChange: (text: string) => void;
   sendingText: (text: string) => void;
+  settled: (requestId: string) => void;
   connected: boolean;
   created: (task: Task) => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+  const busy = draft.busy ?? false;
+  const [error, setError] = useState("");
   const text = draft.text;
   async function send() {
     if (busy || !connected || !text.trim()) return;
@@ -31,7 +35,6 @@ export function ProjectTaskDraft({
     }
     const sentText = draft.sentText ?? text.trim();
     sendingText(sentText);
-    setBusy(true);
     try {
       const task = await api<Task>("project/task", {
         projectId,
@@ -42,7 +45,7 @@ export function ProjectTaskDraft({
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      settled(draft.requestId);
     }
   }
   return (
@@ -86,7 +89,7 @@ export function ProjectTaskDraft({
             }}
           />
           <div className="composer-toolbar">
-            <span className="composer-spacer" />
+            <ModelControls key={projectId} projectId={projectId} />
             <ComposerAction
               running={false}
               text={text}
