@@ -172,6 +172,51 @@ export async function route(
       }
       return;
     }
+    case "/api/model-settings": {
+      const value = input.runId
+        ? this.executor.runs[id(input.runId)]
+        : this.settings.mappings.find(
+            (m) => m.projectId === id(input.projectId),
+          );
+      if (
+        !value ||
+        ("task" in value && this.executor.deletedTasks[value.task.id])
+      )
+        throw new HttpError(404, "RUN_NOT_FOUND");
+      const agent = "task" in value ? (value.agent ?? "codex") : "codex";
+      if (!input.read) {
+        const available = (await this.agentCatalog()).find(
+          (entry) => entry.agent === agent && entry.authenticated,
+        );
+        if (!available) throw new HttpError(409, "AGENT_LOGIN_REQUIRED");
+        const model = available.models.find(
+          (entry) => entry.id === input.model,
+        );
+        if (!model) throw new HttpError(409, "MODEL_UNAVAILABLE");
+        const effort = input.reasoningEffort || undefined;
+        if (
+          effort !== undefined &&
+          (typeof effort !== "string" ||
+            !model.supportedEfforts?.includes(effort))
+        )
+          throw new HttpError(400, "EFFORT_UNAVAILABLE");
+        value.model = model.id;
+        value.reasoningEffort = effort;
+        if ("task" in value) await this.executor.save();
+        else await this.save();
+      }
+      send(res, 200, {
+        model: value.model,
+        reasoningEffort: value.reasoningEffort,
+        progressMode:
+          ("pendingProgressMode" in value
+            ? value.pendingProgressMode
+            : undefined) ??
+          value.progressMode ??
+          "auto",
+      });
+      return;
+    }
     case "/api/agents/models":
       send(res, 200, { agents: await this.agentCatalog() });
       return;
@@ -435,6 +480,11 @@ export async function route(
           accessMode: this.settings.mappings.find(
             (m) => m.projectId === projectId,
           )?.accessMode,
+          model: this.settings.mappings.find((m) => m.projectId === projectId)
+            ?.model,
+          reasoningEffort: this.settings.mappings.find(
+            (m) => m.projectId === projectId,
+          )?.reasoningEffort,
           progressMode:
             input.progressMode === "manual" || input.progressMode === "auto"
               ? input.progressMode
@@ -519,6 +569,22 @@ export async function route(
     case "/api/progress-mode": {
       if (!["auto", "manual"].includes(String(input.mode)))
         throw new HttpError(400, "INVALID_PROGRESS_MODE");
+      if (input.runId) {
+        const value = this.executor.runs[id(input.runId)];
+        if (!value || this.executor.deletedTasks[value.task.id])
+          throw new HttpError(404, "RUN_NOT_FOUND");
+        const mode = input.mode as "auto" | "manual";
+        if (this.executor.active.has(value.task.runId)) {
+          value.pendingProgressMode =
+            mode === (value.progressMode ?? "auto") ? undefined : mode;
+        } else {
+          value.progressMode = mode;
+          value.pendingProgressMode = undefined;
+          if (mode === "manual") value.planApproved = false;
+        }
+        await this.executor.save();
+        break;
+      }
       const projectId = id(input.projectId);
       if (!this.settings.projects.some((p) => p.id === projectId))
         throw new HttpError(400, "UNKNOWN_PROJECT");

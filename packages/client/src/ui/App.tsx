@@ -1,3 +1,4 @@
+import { Collapsible } from "./Collapsible.js";
 import { SidebarTaskList } from "./SidebarTaskList.js";
 import { sidebarTasks, sidebarTaskTitle } from "./sidebar-tasks.js";
 import { useTaskReadState, TaskReadObserver } from "./useTaskReadState.js";
@@ -234,92 +235,101 @@ export function App() {
                 data-project-id={id}
                 className={`project-group ${!projectConnected ? "project-disconnected" : ""}`}
               >
-                <div className="project-name">
-                  <Icon name="folder" size={16} />
-                  <span>
-                    {state.settings.projects.find((p) => p.id === id)?.name ??
-                      "ローカルプロジェクト"}
-                  </span>
+                <Collapsible
+                  storageKey={id}
+                  className="project-collapse"
+                  title={
+                    <>
+                      <Icon name="folder" size={16} />
+                      <span>
+                        {state.settings.projects.find((p) => p.id === id)
+                          ?.name ?? "ローカルプロジェクト"}
+                      </span>
+                    </>
+                  }
+                  actions={
+                    project && (
+                      <div className="project-actions">
+                        <ProjectMenu
+                          project={project}
+                          deviceId={state.settings.deviceId}
+                          action={action}
+                          startLocal={() => setLocalTaskProject(id)}
+                          mapping={() => setSettingsProject(id)}
+                        />
+                        <button
+                          className="icon-button project-compose"
+                          aria-label={`${project.name}に新しいタスクを追加`}
+                          title="新しいタスク"
+                          disabled={!projectConnected}
+                          onClick={() => {
+                            setTaskDrafts((drafts) => ({
+                              ...drafts,
+                              [id]: drafts[id] ?? {
+                                text: "",
+                                requestId: crypto.randomUUID(),
+                              },
+                            }));
+                            setProjectView({ projectId: id, draft: true });
+                            selectShared(undefined);
+                          }}
+                        >
+                          <Icon name="plus" size={18} />
+                        </button>
+                      </div>
+                    )
+                  }
+                >
                   {project && (
-                    <div className="project-actions">
-                      <ProjectMenu
-                        project={project}
-                        deviceId={state.settings.deviceId}
-                        action={action}
-                        startLocal={() => setLocalTaskProject(id)}
-                        mapping={() => setSettingsProject(id)}
-                      />
-                      <button
-                        className="icon-button project-compose"
-                        aria-label={`${project.name}に新しいタスクを追加`}
-                        title="新しいタスク"
-                        disabled={!projectConnected}
-                        onClick={() => {
-                          setTaskDrafts((drafts) => ({
-                            ...drafts,
-                            [id]: drafts[id] ?? {
-                              text: "",
-                              requestId: crypto.randomUUID(),
-                            },
-                          }));
-                          setProjectView({ projectId: id, draft: true });
-                          selectShared(undefined);
-                        }}
-                      >
-                        <Icon name="plus" size={18} />
-                      </button>
-                    </div>
+                    <button
+                      disabled={!projectConnected}
+                      className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
+                      onClick={() => setProjectView({ projectId: id })}
+                    >
+                      <Icon name="file" size={15} />
+                      <span>議事録</span>
+                    </button>
                   )}
-                </div>
-                {project && (
-                  <button
-                    disabled={!projectConnected}
-                    className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
-                    onClick={() => setProjectView({ projectId: id })}
-                  >
-                    <Icon name="file" size={15} />
-                    <span>議事録</span>
-                  </button>
-                )}
-                {Object.hasOwn(taskDrafts, id) && (
-                  <button
-                    disabled={!projectConnected}
-                    className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
-                    onClick={() =>
-                      setProjectView({ projectId: id, draft: true })
-                    }
-                  >
-                    <span>新しいタスク</span>
-                    <TaskAvatars
-                      state={state}
-                      task={{ id: `draft-${id}` }}
-                      local
-                    />
-                  </button>
-                )}
-                <SidebarTaskList
-                  items={items}
-                  state={state}
-                  connected={projectConnected}
-                  selected={viewedTask?.task.runId}
-                  action={action}
-                  seen={seen}
-                  scope={readScope}
-                  select={(item) => {
-                    if (item.run) {
-                      setProjectView(undefined);
-                      select(item.task.runId);
-                      selectShared(undefined);
-                    } else if ("text" in item.task) {
-                      setProjectView({ projectId: id, taskId: item.task.id });
-                      selectShared(undefined);
-                    } else {
-                      setProjectView(undefined);
-                      selectShared(item.task.id);
-                    }
-                    setPage("runs");
-                  }}
-                />
+                  {Object.hasOwn(taskDrafts, id) && (
+                    <button
+                      disabled={!projectConnected}
+                      className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
+                      onClick={() =>
+                        setProjectView({ projectId: id, draft: true })
+                      }
+                    >
+                      <span>新しいタスク</span>
+                      <TaskAvatars
+                        state={state}
+                        task={{ id: `draft-${id}` }}
+                        local
+                      />
+                    </button>
+                  )}
+                  <SidebarTaskList
+                    items={items}
+                    state={state}
+                    connected={projectConnected}
+                    selected={viewedTask?.task.runId}
+                    action={action}
+                    seen={seen}
+                    scope={readScope}
+                    select={(item) => {
+                      if (item.run) {
+                        setProjectView(undefined);
+                        select(item.task.runId);
+                        selectShared(undefined);
+                      } else if ("text" in item.task) {
+                        setProjectView({ projectId: id, taskId: item.task.id });
+                        selectShared(undefined);
+                      } else {
+                        setProjectView(undefined);
+                        selectShared(item.task.id);
+                      }
+                      setPage("runs");
+                    }}
+                  />
+                </Collapsible>
               </section>
             );
           })}
@@ -395,7 +405,7 @@ export function App() {
         opened={!!settingsProject}
         onClose={() => setSettingsProject(undefined)}
         title={`${state.settings.projects.find((p) => p.id === settingsProject)?.name ?? "プロジェクト"} · 接続・設定`}
-        size={800}
+        size={640}
         centered
         className="project-settings-modal"
       >
@@ -463,7 +473,7 @@ export function App() {
       </Modal>
       <Modal
         centered
-        size={800}
+        size={640}
         className="project-settings-modal"
         opened={projectDialog !== undefined}
         onClose={() => setProjectDialog(undefined)}

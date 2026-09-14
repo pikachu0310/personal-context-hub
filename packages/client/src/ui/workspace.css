@@ -1122,12 +1122,11 @@ button {
 
 .project-form-row {
   display: grid;
-  grid-template-columns: minmax(190px, 0.62fr) minmax(0, 1fr);
+  grid-template-columns: minmax(165px, 0.62fr) minmax(0, 1fr);
   align-items: center;
-  gap: 24px;
-  min-height: 96px;
-  padding: 22px 0;
-  border-bottom: 1px solid var(--mantine-color-default-border);
+  gap: 16px;
+  min-height: 52px;
+  padding: 8px 0;
 }
 .project-form-control {
   min-width: 0;
@@ -1136,33 +1135,32 @@ button {
   border-radius: 12px;
 }
 .project-settings-modal .mantine-Modal-header {
-  padding: 28px 36px;
-  border-bottom: 1px solid var(--mantine-color-default-border);
+  padding: 16px 20px 8px;
 }
 .project-settings-modal .mantine-Modal-title {
-  font-size: 26px;
+  font-size: 18px;
   font-weight: 600;
 }
 .project-settings-modal .mantine-Modal-body {
-  padding: 4px 36px 24px;
+  padding: 4px 20px 20px;
 }
 .project-settings-modal .mantine-Text-root {
-  font-size: 16px;
+  font-size: 14px;
 }
 .project-settings-modal .mantine-Input-input,
 .project-settings-modal .mantine-Button-root {
-  height: 48px;
-  font-size: 16px;
+  height: 36px;
+  font-size: 14px;
   border-radius: 8px;
 }
 .project-settings-modal .mantine-SegmentedControl-root {
-  min-height: 48px;
+  min-height: 36px;
   border: 1px solid var(--mantine-color-default-border);
   border-radius: 8px;
 }
 .project-settings-modal .mantine-SegmentedControl-label {
-  padding: 10px 8px;
-  font-size: 16px;
+  padding: 5px 8px;
+  font-size: 14px;
   font-weight: 500;
 }
 .project-settings-modal .project-help {
@@ -1180,13 +1178,13 @@ button {
 }
 .project-add-form > form > .mantine-Stack-root > .mantine-Button-root {
   align-self: flex-end;
-  margin-top: 24px;
-  min-width: 120px;
+  margin-top: 16px;
+  min-width: 88px;
   background: #386ad8;
   color: white;
 }
 .project-advanced {
-  margin-top: 20px;
+  margin-top: 12px;
 }
 .project-advanced summary {
   width: fit-content;
@@ -1194,21 +1192,30 @@ button {
   color: var(--mantine-color-dimmed);
   font-size: 14px;
 }
-@media (max-width: 600px) {
+@media (max-width: 480px) {
   .project-form-row {
     grid-template-columns: 1fr;
-    gap: 12px;
-    padding: 18px 0;
+    gap: 6px;
+    padding: 8px 0;
   }
   .project-settings-modal .mantine-Modal-header {
     padding: 20px;
   }
   .project-settings-modal .mantine-Modal-title {
-    font-size: 22px;
+    font-size: 18px;
   }
   .project-settings-modal .mantine-Modal-body {
     padding: 0 20px 20px;
   }
+}
+.project-form-group + .project-form-group {
+  border-top: 1px solid var(--mantine-color-default-border);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+.project-advanced {
+  border-top: 1px solid var(--mantine-color-default-border);
+  padding-top: 12px;
 }
 /* Task details stay beside the conversation and scroll independently. */
 .with-inspector {
@@ -1472,6 +1479,8 @@ button {
   opacity: 0;
   pointer-events: none;
 }
+.project-collapse > .collapse-heading:hover .project-menu,
+.project-collapse > .collapse-heading:focus-within .project-menu,
 .project-name:hover .project-menu,
 .project-name:focus-within .project-menu,
 .project-menu[aria-expanded="true"],
@@ -1597,4 +1606,63 @@ button {
   .with-inspector {
     padding: 0;
   }
+}
+.collapse-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 8px 4px;
+  cursor: pointer;
+}
+.collapse-toggle > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-subgroup > .collapse-heading {
+  color: var(--muted, #999);
+  font-size: 12px;
+}
+.collapse-toggle:focus-visible {
+  outline: 2px solid #719bea;
+  border-radius: 5px;
+}
+.composer-model-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.composer-model-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.composer-model-controls select {
+  max-width: 200px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 6px;
+  padding: 5px;
+  color: inherit;
+  background: var(--mantine-color-body);
+}
+.composer-model-controls small {
+  flex-basis: 100%;
+  color: #aaa;
+  font-size: 11px;
+}
+.composer-toolbar {
+  flex-wrap: wrap;
 }

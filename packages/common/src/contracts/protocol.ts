@@ -35,6 +35,8 @@ export interface Grant {
   slots: number;
 }
 export interface Mapping extends Grant {
+  model?: string;
+  reasoningEffort?: string;
   accessMode?: "full" | "approval";
   progressMode?: "auto" | "manual";
   directory: string;

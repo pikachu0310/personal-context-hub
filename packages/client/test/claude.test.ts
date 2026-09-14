@@ -76,7 +76,8 @@ test("Claude adapter normalizes public events, preserves sessions and queues liv
           session_id: "session-fixture",
         };
         assert.deepEqual(input.options.settingSources, []);
-        assert.equal(input.options.model, "opus");
+        assert.equal(input.options.model, "sonnet");
+        assert.equal(input.options.effort, "high");
         assert.deepEqual(input.options.settings.permissions.ask, [
           "Read",
           "Glob",
@@ -151,7 +152,11 @@ test("Claude adapter normalizes public events, preserves sessions and queues liv
   });
   const events: any[] = [];
   for await (const event of (
-    await thread.runStreamed("Start", { signal: new AbortController().signal })
+    await thread.runStreamed("Start", {
+      signal: new AbortController().signal,
+      model: "sonnet",
+      reasoningEffort: "high",
+    })
   ).events) {
     events.push(event);
     if (event.item?.text === "Visible work note" && queries.length === 1)
