@@ -554,6 +554,8 @@ test("unlinked speakers can create extracted tasks, but revocation during analys
   });
   assert.equal(f.store.list<Task>("task").length, 1);
   assert.equal(f.store.list<Task>("task")[0].authorId, "discord-100");
+  assert.equal(f.store.list<Task>("task")[0].participantPolicy, "execution");
+  assert.deepEqual(f.store.list<Task>("task")[0].memberStates, {});
   let resolve!: (v: any) => void;
   (f.ai.models as OpenAIModels).api = async () =>
     ({

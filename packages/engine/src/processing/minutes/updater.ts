@@ -43,6 +43,7 @@ export class MinutesUpdater {
     diagnosticContext?: Pick<DiagnosticContext, "source" | "eventId">,
     acceptedMessageId?: string,
     reservation?: MinutesReservation,
+    sourcePluginId?: string,
   ) {
     const { meeting, message } = this.messages.record(
       meetingId,
@@ -60,6 +61,7 @@ export class MinutesUpdater {
           projectId,
           mayCreateTask,
           diagnosticContext,
+          sourcePluginId,
         ),
       )
       .finally(turn.release);
@@ -71,6 +73,7 @@ export class MinutesUpdater {
     projectId: string | null | undefined,
     mayCreateTask: () => boolean,
     diagnosticContext?: Pick<DiagnosticContext, "source" | "eventId">,
+    sourcePluginId?: string,
   ) {
     const meeting = this.store.get<Meeting>("meeting", meetingId);
     if (!meeting) throw new Error("MEETING_NOT_FOUND");
@@ -178,6 +181,8 @@ export class MinutesUpdater {
         message.stage = "taskifying";
         save();
         this.tasks.createTask({
+          sourcePluginId,
+          createdByBot: sourcePluginId === "discord" ? true : undefined,
           projectId: target,
           meetingId,
           authorId,
