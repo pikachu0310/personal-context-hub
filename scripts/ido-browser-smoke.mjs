@@ -1,6 +1,7 @@
 import { mkdtemp, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 import { Engine } from "../packages/engine/dist/index.js";
@@ -55,6 +56,218 @@ try {
     .waitFor();
   await page.getByRole("button", { name: "説明をスキップ" }).click();
   await page.getByRole("button", { name: "説明を再表示" }).waitFor();
+  // Setup uses text credentials, reports server storage, and never requires a plugin.
+  const keyInput = page.getByRole("textbox", { name: /^OpenAI APIキー/ });
+  assert.equal(await keyInput.getAttribute("type"), "text");
+  assert.equal(await keyInput.getAttribute("autocomplete"), "off");
+  assert.equal(await page.locator('input[type="password"]').count(), 0);
+  await page
+    .getByText(join(directory, "engine", "secrets.json"), { exact: true })
+    .waitFor();
+  await keyInput.fill("synthetic-browser-key");
+  await page
+    .getByRole("button", { name: "保存して公開URLへ", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "公開URLを設定" }).waitFor();
+  await page.getByRole("button", { name: "ローカルのみで続ける" }).click();
+  await page
+    .getByRole("button", { name: "インストール", exact: true })
+    .waitFor();
+  assert.equal(await page.getByLabel("Botトークン（変更時のみ）").count(), 0);
+  await page
+    .getByRole("button", { name: "プラグインはあとで設定して完了" })
+    .click();
+  await page.getByText("基本設定が完了しました", { exact: true }).waitFor();
+  assert.equal(
+    engine.plugins.state().find((p) => p.id === "discord").installed,
+    undefined,
+  );
+  await page.getByRole("button", { name: "1 OpenAI", exact: true }).click();
+  assert.equal(await keyInput.inputValue(), "********");
+  assert.equal(await keyInput.getAttribute("readonly"), "");
+  await page
+    .getByRole("button", { name: "OpenAI APIキーを変更", exact: true })
+    .click();
+  await keyInput.fill("discarded-browser-key");
+  await page
+    .getByRole("button", {
+      name: "OpenAI APIキーを変更せずに戻る",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: "保存して公開URLへ", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "公開URLを設定" }).waitFor();
+  assert.equal(await engine.credentials.get("openai"), "synthetic-browser-key");
+  await page.getByRole("button", { name: "1 OpenAI", exact: true }).click();
+  await page
+    .getByRole("button", { name: "OpenAI APIキーを変更", exact: true })
+    .click();
+  await keyInput.fill("replacement-browser-key");
+  await page
+    .getByRole("button", { name: "保存して公開URLへ", exact: true })
+    .click();
+  await page.getByRole("heading", { name: "公開URLを設定" }).waitFor();
+  assert.equal(
+    await engine.credentials.get("openai"),
+    "replacement-browser-key",
+  );
+  await engine.credentials.set("tunnel.ngrok", "synthetic-browser-tunnel");
+  await page.reload();
+  await page.getByRole("button", { name: "2 公開URL", exact: true }).click();
+  await page.getByRole("combobox", { name: "公開方法" }).click();
+  await page.getByRole("option", { name: "ngrokで公開" }).click();
+  assert.equal(
+    await page.getByRole("textbox", { name: /^ngrok Authtoken/ }).inputValue(),
+    "********",
+  );
+  await page.getByRole("combobox", { name: "公開方法" }).click();
+  await page.getByRole("option", { name: "Cloudflareで公開" }).click();
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: /^Cloudflare Tunnelトークン/ })
+      .inputValue(),
+    "",
+  );
+  await page.getByRole("button", { name: "1 OpenAI", exact: true }).click();
+  assert.equal(await keyInput.inputValue(), "********");
+  const setupState = await (
+    await page.request.get(engine.origin + "/api/admin/state")
+  ).text();
+  assert.ok(!setupState.includes("replacement-browser-key"));
+  assert.ok(!setupState.includes("synthetic-browser-tunnel"));
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  // Include tablet/sidebar widths: a wide viewport can still leave too little
+  // content space for three cards. Compare the visible card edges, not wrappers.
+  const stepCards = page
+    .getByRole("button", { name: /^[123] (OpenAI|公開URL|プラグイン接続)$/ })
+    .locator(":scope > .mantine-Paper-root");
+  for (const width of [320, 390, 768, 820, 1024, 1120, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    // AppShell animates its padding across the sidebar breakpoint. Measure the
+    // completed layout, not the transient narrow space during that transition.
+    await page.locator(".mantine-AppShell-main").evaluate(async (element) => {
+      await Promise.all(
+        element
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
+    const boxes = await stepCards.evaluateAll((cards) =>
+      cards.map((card) => {
+        const { x, y, width, height } = card.getBoundingClientRect();
+        return { x, y, width, height };
+      }),
+    );
+    assert.equal(boxes.length, 3);
+    assert.ok(
+      Math.max(...boxes.map((box) => box.height)) -
+        Math.min(...boxes.map((box) => box.height)) <
+        1,
+      `step card heights at ${width}px`,
+    );
+    if (width <= 1120) {
+      assert.ok(
+        boxes.every((box) => Math.abs(box.x - boxes[0].x) < 1),
+        `single column at ${width}px`,
+      );
+      assert.ok(
+        boxes[1].y >= boxes[0].y + boxes[0].height &&
+          boxes[2].y >= boxes[1].y + boxes[1].height,
+        `no overlap at ${width}px`,
+      );
+    } else {
+      assert.ok(
+        boxes.every((box) => Math.abs(box.y - boxes[0].y) < 1),
+        `aligned card tops at ${width}px`,
+      );
+      assert.ok(
+        boxes[1].x >= boxes[0].x + boxes[0].width &&
+          boxes[2].x >= boxes[1].x + boxes[1].width,
+        `three columns at ${width}px`,
+      );
+    }
+    assert.equal(
+      await page.evaluate(
+        () =>
+          globalThis.document.documentElement.scrollWidth <=
+          globalThis.innerWidth + 1,
+      ),
+      true,
+      `no horizontal overflow at ${width}px`,
+    );
+    if (width === 1024)
+      await page.screenshot({
+        path: ".ido-build/screenshots/setup-tablet.png",
+        fullPage: true,
+      });
+  }
+  await page.screenshot({
+    path: ".ido-build/screenshots/setup-openai.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: ".ido-build/screenshots/setup-mobile.png",
+    fullPage: true,
+  });
+  assert.equal(
+    await page.evaluate(
+      () =>
+        globalThis.document.documentElement.scrollWidth <=
+        globalThis.innerWidth + 1,
+    ),
+    true,
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "2 公開URL", exact: true }).click();
+  await page.screenshot({
+    path: ".ido-build/screenshots/setup-public-url.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "3 プラグイン接続", exact: true })
+    .click();
+  await page.screenshot({
+    path: ".ido-build/screenshots/setup-plugins.png",
+    fullPage: true,
+  });
+  // A locally installed fixture exercises plugin credentials without contacting Discord/npm.
+  engine.plugins.catalog.find((entry) => entry.id === "discord").builtin =
+    fileURLToPath(
+      new URL("../packages/plugin-discord/dist/index.js", import.meta.url),
+    );
+  await engine.plugins.configure("discord", {
+    botToken: "synthetic-plugin-token",
+    userPolicy: "allowlist",
+    allowedUserIds: "123,456",
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "3 プラグイン接続", exact: true })
+    .click();
+  await page.getByRole("button", { name: "設定する", exact: true }).click();
+  const botToken = page.getByRole("textbox", { name: /^Botトークン/ });
+  assert.equal(await botToken.inputValue(), "********");
+  assert.equal(await botToken.getAttribute("type"), "text");
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: /^OAuthクライアントシークレット/ })
+      .inputValue(),
+    "",
+  );
+  const configSaved = page.waitForResponse((response) =>
+    response.url().endsWith("/api/admin/plugins/configure"),
+  );
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  assert.equal((await configSaved).status(), 200);
+  assert.equal(
+    await engine.credentials.get("discord.botToken"),
+    "synthetic-plugin-token",
+  );
+  assert.equal(await botToken.inputValue(), "********");
+  assert.equal(await page.locator('input[type="password"]').count(), 0);
   await page.getByText("エラーログ", { exact: true }).click();
   await page.getByText(/記録されたエラーはありません/).waitFor();
   const diagnostic = engine.store.logError(
@@ -132,6 +345,9 @@ try {
     .getByRole("heading", { name: "Dashboard", exact: true })
     .locator("..")
     .locator("..");
+  await page
+    .getByRole("button", { name: "3 プラグイン接続", exact: true })
+    .click();
   await dashboardCard
     .getByRole("button", { name: "起動", exact: true })
     .click();

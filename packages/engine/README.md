@@ -19,6 +19,8 @@ Engine and Client Codex homes/authentication are independent. Engine defaults to
 
 Administration is a bundled React/Mantine UI at `/admin`. The independent Dashboard plugin is also bundled and starts at `/dashboard/`; its failure does not stop administration or Client processing. Discord remains optional. Plugins communicate over versioned IPC and cannot import Engine internals.
 
+Administration setup proceeds through OpenAI, public URL (only for external access), and optional plugin connections. Discord is installed before its configuration fields are shown. Credential fields use ordinary text inputs; saved values display a read-only mask with an explicit change action. Only actual account passwords use password inputs. The admin state API exposes credential presence and the Engine storage path, never saved credential values. By default, credentials are stored unencrypted in `<engine-data>/secrets.json`, not browser storage; unchanged masked fields are omitted from save requests.
+
 Existing Engine data is upgraded transactionally to schema version 1 after creating `engine.before-v1.sqlite`. Messages and provider IDs are separated without replaying uncertain processing. Stop the previous Engine before upgrading; keep its data directory and backup. See `docs/packages-architecture.md` in the repository for rollback and extension contracts.
 
 Normal conversation inputs queue while the main model is busy; urgent inputs use steering. Read-only investigations are independent Client tasks with negotiated restrictions. Coordinated modes build the minutes projection mechanically from message records. Raw PCM/WAV is not retained. Bot output records distinguish text delivery from unconfirmed audio playback.
