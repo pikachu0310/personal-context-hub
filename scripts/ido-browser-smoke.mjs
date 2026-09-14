@@ -150,7 +150,7 @@ try {
   await page.goto(await link.getAttribute("href"));
   await page.getByRole("button", { name: "この端末を承認する" }).click();
   await clientPage
-    .getByText("connected", { exact: true })
+    .getByText("チームに接続中", { exact: true })
     .first()
     .waitFor({ timeout: 15000 });
   await page.getByText("クライアント", { exact: true }).first().click();

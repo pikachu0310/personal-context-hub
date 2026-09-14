@@ -72,9 +72,31 @@ export interface AdminState {
   config: Record<string, string>;
   tunnels: { status: string; busy: boolean; error?: string };
 }
+/** Local Client activity. Never part of Engine result frames or forum updates. */
+export interface ClientActivity {
+  id: string;
+  revision: number;
+  at: number;
+  updatedAt: number;
+  kind: "message" | "command" | "files" | "tool" | "status" | "instruction";
+  title: string;
+  status?: string;
+  text?: string;
+  output?: string;
+  exitCode?: number;
+  files?: Array<{ path: string; kind: string }>;
+  truncated?: boolean;
+}
+export interface ClientActivityState {
+  entries: ClientActivity[];
+  dropped: number;
+  version: number;
+}
 export interface ClientState {
+  controlSupported?: boolean;
   csrf: string;
   settings: {
+    progressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
     engineUrl?: string;
@@ -95,8 +117,17 @@ export interface ClientState {
     state: string;
     result?: string;
     progress?: string;
+    activityVersion?: number;
+    progressMode?: "auto" | "manual";
+    phase?: "planning" | "awaiting-plan" | "executing";
+    updatedAt?: number;
   }>;
-  approvals: Array<{ id: string; method: string; params: unknown }>;
+  approvals: Array<{
+    id: string;
+    runId?: string;
+    method: string;
+    params: unknown;
+  }>;
 }
 export interface ApiResult {
   url?: string;

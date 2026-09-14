@@ -1,4 +1,7 @@
 import { join } from "node:path";
+import type { ClientActivity } from "@ido/common/contracts/api";
+import { executionError, recordActivity } from "./activity.js";
+import { waitForPlan, startPlannedWork } from "./planning.js";
 import type { Command, Mapping, Task } from "@ido/common/contracts/protocol";
 import { approve } from "../approvals/resolve.js";
 import { artifact } from "../artifacts/diff.js";
@@ -24,6 +27,14 @@ export interface WorkInstruction {
 }
 
 export interface Run {
+  progressMode?: "auto" | "manual";
+  phase?: "planning" | "awaiting-plan" | "executing";
+  planApproved?: boolean;
+  plan?: string;
+  activity?: ClientActivity[];
+  activityDropped?: number;
+  activityVersion?: number;
+  updatedAt?: number;
   task: Task;
   directory: string;
   threadId?: string;
@@ -38,6 +49,10 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
+  progressMode: "auto" | "manual" = "auto";
+  planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
+  readonly waitForPlan = waitForPlan.bind(this);
+  readonly startPlannedWork = startPlannedWork.bind(this);
   runs: Record<string, Run> = {};
   commands: string[] = [];
   running = new Map<string, Promise<void>>();
@@ -49,6 +64,7 @@ export class Executor {
   approvals = new Map<
     string,
     {
+      runId?: string;
       method: string;
       params: unknown;
       resolve: (value: { decision: string }) => void;
@@ -145,6 +161,10 @@ export class Executor {
       const directory =
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
       const value: Run = {
+        progressMode: previous?.progressMode ?? this.progressMode,
+        activity: structuredClone(previous?.activity ?? []),
+        activityDropped: previous?.activityDropped,
+        activityVersion: previous?.activityVersion,
         task: structuredClone(task),
         directory,
         threadId: previous?.threadId,
@@ -198,11 +218,24 @@ export class Executor {
         return;
       }
       const running = this.execute(value, mapping, !previous)
-        .catch(async () => {
+        .catch(async (error) => {
           if (!["cancelled", "interrupted"].includes(value.state))
             value.state = "failed";
           value.progress =
             "Execution stopped or failed. Inspect the local repository and Codex login.";
+          recordActivity(value, {
+            id: "terminal",
+            kind: "status",
+            title:
+              value.state === "cancelled"
+                ? "停止しました"
+                : "実行を完了できませんでした",
+            status: value.state,
+            text:
+              value.state === "cancelled"
+                ? "停止要求を受けて実行を終了しました。"
+                : executionError(error),
+          });
           await this.save();
           this.report(value);
         })
@@ -241,6 +274,12 @@ export class Executor {
       await this.running.get(previous.task.runId);
       previous.state = "cancelled";
       this.controlReceipt(previous, command, "stopped");
+      recordActivity(previous, {
+        id: "terminal",
+        kind: "status",
+        title: "停止しました",
+        status: "cancelled",
+      });
       await this.save();
       this.report(previous);
       this.emit({ v: 1, type: "ack", id: command.id });
@@ -270,9 +309,18 @@ export class Executor {
             ? command.controlVersion
             : undefined,
       });
+      recordActivity(previous, {
+        id: `instruction:${command.id}`,
+        kind: "instruction",
+        title: "追加指示",
+        text: command.text,
+        status: "pending",
+      });
       this.controlReceipt(previous, command, "queued");
       await this.save();
       await this.deliverInstructions(previous);
+      if (previous.phase === "awaiting-plan")
+        this.planWaiters.get(previous.task.runId)?.("discuss");
       this.report(previous);
       this.emit({ v: 1, type: "ack", id: command.id });
     }
@@ -321,6 +369,13 @@ export class Executor {
           try {
             const applied = await current.thread.steer(instruction.text);
             instruction.delivery = applied ? "accepted" : "pending";
+            recordActivity(value, {
+              id: `instruction:${instruction.id}`,
+              kind: "instruction",
+              title: "追加指示",
+              text: instruction.text,
+              status: instruction.delivery,
+            });
             if (applied) value.activeSpecRevision = instruction.specRevision;
             this.controlReceipt(
               value,
@@ -334,6 +389,13 @@ export class Executor {
             if (!applied) return;
           } catch {
             instruction.delivery = "uncertain";
+            recordActivity(value, {
+              id: `instruction:${instruction.id}`,
+              kind: "instruction",
+              title: "追加指示",
+              text: instruction.text,
+              status: "uncertain",
+            });
             this.controlReceipt(value, instruction, "uncertain");
             value.progress =
               "Instruction delivery is unknown; no automatic replay.";

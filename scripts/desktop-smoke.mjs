@@ -116,7 +116,7 @@ try {
   );
   assert.match(native, /codex/i);
   await page
-    .locator(".mantine-AppShell-navbar")
+    .getByRole("navigation", { name: "メインメニュー" })
     .getByText("実行と承認", { exact: true })
     .click();
   await page

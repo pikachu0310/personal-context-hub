@@ -40,6 +40,7 @@ export class AppServerThread {
           },
         );
         this.id = response.thread.id;
+        this.model = response.model ?? response.thread.model ?? options.model;
         if (
           options.requireWritableSandbox &&
           response.sandbox?.type === "readOnly"
@@ -90,9 +91,14 @@ export class AppServerThread {
     return { events: this.stream(input, turnOptions) };
   }
 
-  async *stream(input, { signal, outputSchema } = {}) {
+  async *stream(input, { signal, outputSchema, collaborationMode } = {}) {
     signal?.throwIfAborted();
     await this.prepare();
+    if (
+      collaborationMode &&
+      (!this.model || !["plan", "default"].includes(collaborationMode))
+    )
+      throw new Error("COLLABORATION_MODE_UNAVAILABLE");
     if (this.activeTurnId || this.starting)
       throw new Error("A turn is already active");
     this.starting = true;
@@ -184,6 +190,21 @@ export class AppServerThread {
         effort: this.options.modelReasoningEffort ?? "low",
         approvalPolicy: this.options.approvalPolicy ?? "never",
         sandboxPolicy: sandboxPolicy(this.options),
+        ...(collaborationMode
+          ? {
+              collaborationMode: {
+                mode: collaborationMode,
+                settings: {
+                  model: this.model,
+                  reasoning_effort: this.options.modelReasoningEffort ?? "low",
+                  developer_instructions:
+                    collaborationMode === "plan"
+                      ? "相談・計画モードです。既存の権限制約を守って情報を読み取り、方針と質問を会話で示してください。ファイル編集・実装・外部への書き込みは行わないでください。実行開始はアプリの実行するボタンでのみ切り替わります。ユーザーへの質問は通常の文章で提示し、request_user_inputは使用しないでください。計画を提示したら、このターンを終了して返答を待ってください。"
+                      : null,
+                },
+              },
+            }
+          : {}),
         ...(outputSchema ? { outputSchema } : {}),
       });
       this.activeTurnId ??= result.turn.id;

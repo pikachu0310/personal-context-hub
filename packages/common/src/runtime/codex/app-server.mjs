@@ -144,6 +144,9 @@ export class AppServerCodex extends EventEmitter {
         } else if (message.method) this.emit("notification", message);
       });
       await this.requestRaw("initialize", {
+        ...(this.options.experimentalApi
+          ? { capabilities: { experimentalApi: true } }
+          : {}),
         clientInfo: {
           name: "idobata_voice",
           title: "Idobata Voice",

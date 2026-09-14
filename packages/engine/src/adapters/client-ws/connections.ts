@@ -3,6 +3,7 @@ import { WebSocket } from "ws";
 import {
   frame,
   id,
+  text,
   type Command,
   type Grant,
   type Task,
@@ -16,6 +17,7 @@ import { Scheduler } from "../../clients/scheduler.js";
 import type { Device } from "../../domain/models.js";
 import type { Repository } from "../../ports/repository.js";
 import { Tasks } from "../../processing/tasks/service.js";
+import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
@@ -93,6 +95,7 @@ export class ClientConnections {
               v: 1,
               type: "authenticated",
               generation,
+              controlVersion: 1,
               projects: this.store.list("project"),
             }),
           );
@@ -117,6 +120,59 @@ export class ClientConnections {
             clearTimeout(pending.timer);
             this.artifactRequests.delete(String(data.requestId));
             pending.resolve(data);
+          }
+          return;
+        }
+        if (data.type === "work.control") {
+          const requestKey = id(data.requestKey);
+          try {
+            const task = this.store.get<Task>("task", id(data.taskId));
+            if (
+              !task ||
+              task.clientId !== device.id ||
+              task.runId !== data.runId ||
+              task.revision !== data.revision
+            )
+              throw new Error("TASK_NOT_OWNED_BY_DEVICE");
+            const receipt = createWorkPort({
+              repository: this.store,
+              tasks: this.tasks,
+            }).control({
+              taskId: task.id,
+              authorId: device.userId,
+              type: "instruction",
+              instruction: text(data.instruction, 8000),
+              requestKey: `client:${device.id}:${requestKey}`,
+            });
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "work.control.result",
+                generation,
+                requestKey,
+                receipt,
+              }),
+            );
+            this.flush();
+            this.changed();
+          } catch (error) {
+            const allowed = [
+              "PERMISSION_DENIED",
+              "TASK_NOT_OWNED_BY_DEVICE",
+              "TASK_NOT_RUNNING",
+              "WORKER_POLICY_UNSUPPORTED",
+              "INVALID_TEXT",
+            ];
+            const reason = (error as Error).message;
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "work.control.result",
+                generation,
+                requestKey,
+                error: allowed.includes(reason) ? reason : "CONTROL_REJECTED",
+              }),
+            );
           }
           return;
         }

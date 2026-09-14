@@ -49,6 +49,74 @@ function server({ handle, requestTimeoutMs = 1000 } = {}) {
   };
 }
 
+test("plan/default collaboration modes use the configured model without widening sandbox or approvals", async () => {
+  const fake = server({
+    handle(message, emit) {
+      if (message.method === "thread/start") {
+        emit({
+          id: message.id,
+          result: { thread: { id: "planning" }, model: "fixture-model" },
+        });
+        return true;
+      }
+      if (message.method === "turn/start") {
+        emit({ id: message.id, result: { turn: { id: "turn" } } });
+        emit({
+          method: "item/completed",
+          params: {
+            threadId: "planning",
+            turnId: "turn",
+            item: { type: "plan", id: "plan", text: "Read, then discuss." },
+          },
+        });
+        emit({
+          method: "turn/completed",
+          params: {
+            threadId: "planning",
+            turn: { id: "turn", status: "completed" },
+          },
+        });
+        return true;
+      }
+    },
+  });
+  try {
+    const thread = fake.client.startThread({
+      sandboxMode: "read-only",
+      networkAccessEnabled: false,
+      approvalPolicy: "on-request",
+    });
+    for (const mode of ["plan", "default"]) {
+      const result = await thread.run("Discuss", { collaborationMode: mode });
+      assert.equal(result.finalResponse, "Read, then discuss.");
+    }
+    const turns = fake.messages.filter(
+      (message) => message.method === "turn/start",
+    );
+    assert.deepEqual(
+      turns.map((turn) => turn.params.collaborationMode.mode),
+      ["plan", "default"],
+    );
+    assert.equal(
+      turns[1].params.collaborationMode.settings.developer_instructions,
+      null,
+    );
+    for (const turn of turns) {
+      assert.equal(
+        turn.params.collaborationMode.settings.model,
+        "fixture-model",
+      );
+      assert.deepEqual(turn.params.sandboxPolicy, {
+        type: "readOnly",
+        networkAccess: false,
+      });
+      assert.equal(turn.params.approvalPolicy, "on-request");
+    }
+  } finally {
+    await fake.client.close();
+  }
+});
+
 test("desktop fails before turn start if effective sandbox is read-only", async () => {
   const fake = server({
     handle(message, emit) {
