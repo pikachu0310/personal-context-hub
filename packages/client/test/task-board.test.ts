@@ -102,6 +102,22 @@ test("Codex receives board tools for new engine work and retains them on resume 
     options.slice(0, 2).every((input) => input.dynamicTools.length === 2),
   );
   assert.match(prompts[0], /自由な掲示板/);
+  await restarted.receive(
+    {
+      v: 1,
+      id: "retry-board-task",
+      type: "retry",
+      taskId: value.task.id,
+      runId: value.task.runId,
+      task: { ...value.task, revision: 2 },
+    },
+    [mapping],
+    true,
+    1,
+  );
+  await restarted.running.get(value.task.runId);
+  assert.equal(restarted.runs.run.state, "completed");
+  assert.equal(options.at(-1).dynamicTools?.length, 2);
   await restarted.execute(
     { task: task(), directory, state: "assigned", origin: "local" },
     mapping,

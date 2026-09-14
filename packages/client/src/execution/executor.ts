@@ -225,6 +225,7 @@ export class Executor {
         task: structuredClone(task),
         directory,
         threadId: previous?.threadId,
+        boardToolsEnabled: previous?.boardToolsEnabled,
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],
         instructions: structuredClone(previous?.instructions ?? []),
