@@ -66,6 +66,9 @@ export interface Task {
   queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;
   attachedSources?: AttachedTaskSource[];
   localMirror?: { deviceId: string; runId: string; sequence: number };
+  // New Discord bot tasks separate execution membership from source authors.
+  // Absence preserves the participant behavior of existing tasks.
+  participantPolicy?: "execution";
   memberStates?: Record<string, boolean>;
   membershipVersion?: number;
   canDelete?: boolean;
