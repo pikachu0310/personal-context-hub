@@ -1,0 +1,122 @@
+// Serializable contracts shared by the conversation engine and a model host.
+// Provider objects, credentials, local directories and sockets do not cross it.
+export const COORDINATOR_PROTOCOL = 1;
+export type ConversationMode = "text-speech" | "live";
+
+export interface CoordinatorHandle {
+  backend: string;
+  meetingId: string;
+  threadId: string;
+}
+
+export interface CoordinatorSource {
+  id: string;
+  authorId: string;
+  authorName?: string;
+  text: string;
+  at: number;
+  origin: "audio" | "text";
+  command?: "ask" | "task" | "stop" | "steer";
+  projectId?: string;
+  complete?: boolean;
+  requestReply?: boolean;
+  direct?: boolean;
+  workAllowed?: boolean;
+  researchAllowed?: boolean;
+  contextOnly?: boolean;
+}
+
+export type CoordinatorEvent =
+  | {
+      id: string;
+      type: "message";
+      source: CoordinatorSource;
+      priority?: "normal" | "immediate";
+    }
+  | {
+      id: string;
+      type: "task_result";
+      taskId: string;
+      revision: number;
+      text: string;
+      sourceIds: string[];
+      superseded?: boolean;
+    }
+  | {
+      id: string;
+      type: "assistant_output";
+      text: string;
+      provider: string;
+      at: number;
+    }
+  | { id: string; type: "attention"; sourceIds: string[] };
+
+export interface CoordinatorTask {
+  id: string;
+  text: string;
+  state: string;
+  revision: number;
+  result?: string;
+}
+
+export interface CoordinatorObservation {
+  meetingId: string;
+  projectId?: string;
+  mode: ConversationMode;
+  events: CoordinatorEvent[];
+  activeTasks: CoordinatorTask[];
+  // Initial/recovery context is bounded by the engine. Later turns send deltas.
+  context?: string;
+}
+
+export interface CoordinatorResponse {
+  reply: null | {
+    text: string;
+    reason: "direct_answer" | "verified_correction" | "new_finding";
+    sourceIds: string[];
+  };
+  tasks: Array<{
+    title: string;
+    kind: "research" | "implementation" | "test" | "benchmark";
+    sourceIds: string[];
+    acceptanceCriteria: string[];
+  }>;
+  controls: Array<{
+    type: "stop" | "instruction";
+    taskId: string;
+    sourceIds: string[];
+  }>;
+}
+
+export interface CoordinatorOptions {
+  meetingId: string;
+  projectId?: string;
+  handle?: CoordinatorHandle;
+  onCheckpoint?: (handle: CoordinatorHandle) => void | Promise<void>;
+}
+
+export interface CoordinatorRuntime {
+  run(
+    observation: CoordinatorObservation,
+    options?: { signal?: AbortSignal },
+  ): Promise<CoordinatorResponse>;
+  // False means definitely not accepted. Unknown delivery must throw.
+  steer(observation: CoordinatorObservation): Promise<boolean>;
+  // Resolve only after the active model operation has settled.
+  interrupt(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface CoordinatorFactory {
+  createCoordinator(options: CoordinatorOptions): Promise<CoordinatorRuntime>;
+}
+
+export class CoordinatorDeliveryError extends Error {
+  constructor(
+    readonly code: string,
+    readonly delivery: "rejected" | "unknown",
+  ) {
+    super(code);
+    this.name = "CoordinatorDeliveryError";
+  }
+}

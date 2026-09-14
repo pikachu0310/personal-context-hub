@@ -8,28 +8,12 @@ permissions:
   contents: read
 
 jobs:
-  verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run verify
-      - run: npm run hud:install
-      - run: npm run hud:build
-      - run: npx prettier --check "ui/src/**/*.{ts,tsx,css}" "ui/*.{json,mjs,html}"
-      - run: npm --prefix ui audit
-      - run: npx playwright install --with-deps chromium
-      - run: npm run smoke:discord:voice:hud
-      - run: npm run smoke:studio
-
-  desktop:
-    runs-on: windows-latest
+  ido:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
@@ -38,11 +22,16 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run agent:desktop:package
-      - run: npm run agent:desktop:smoke
+      - run: npm run verify:ido
+      - run: npm run pack:ido
+      - run: npm run smoke:ido:pack
+      - run: npx playwright install --with-deps chromium
+      - run: npm run smoke:ido
       - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          name: IDO-Agent-Windows-unsigned
-          path: dist/desktop/IDO-Agent-Setup-*.exe
-          if-no-files-found: error
-          retention-days: 7
+          name: ido-${{ matrix.os }}
+          path: |
+            .ido-build/tarballs/*.tgz
+            .ido-build/screenshots/*.png
+          if-no-files-found: ignore

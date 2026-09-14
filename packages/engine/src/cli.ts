@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+import { createInterface } from "node:readline/promises";
+import { spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { codexBinary } from "../../common/src/runtime/codex/binary.js";
+import {
+  control,
+  lifetime,
+  recover,
+} from "../../common/src/runtime/lifecycle.js";
+import {
+  dataDirectory,
+  openBrowser,
+  workerEnvironment,
+} from "../../common/src/runtime/platform.js";
+import { Store } from "./adapters/sqlite/store.js";
+import { Engine } from "./bootstrap/engine.js";
+const args = process.argv.slice(2),
+  command = args[0] ?? "start",
+  directory = dataDirectory("engine");
+const option = (name: string) => args[args.indexOf(name) + 1];
+async function init() {
+  const store = new Store(directory);
+  try {
+    if (store.users().length) return;
+    let name: string, password: string;
+    if (args.includes("--password-stdin")) {
+      name = option("--name");
+      const chunks: Buffer[] = [];
+      for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+      password = Buffer.concat(chunks).toString().trim();
+    } else {
+      if (!process.stdin.isTTY)
+        throw new Error(
+          "Initialize with: ido-engine init --name admin --password-stdin",
+        );
+      const rl = createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      });
+      name = await rl.question("管理者名: ");
+      rl.close();
+      process.stdout.write("パスワード（12文字以上）: ");
+      password = await new Promise<string>((resolve) => {
+        let value = "";
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
+        const read = (chunk: Buffer) => {
+          for (const c of chunk.toString()) {
+            if (c === "\r" || c === "\n") {
+              process.stdin.off("data", read);
+              process.stdin.setRawMode(false);
+              process.stdin.pause();
+              process.stdout.write("\n");
+              resolve(value);
+              return;
+            }
+            if (c === "\u0003") process.exit(130);
+            if (c === "\u007f") value = value.slice(0, -1);
+            else value += c;
+          }
+        };
+        process.stdin.on("data", read);
+      });
+    }
+    if (!name || name.length > 100) throw new Error("INVALID_ADMIN_NAME");
+    store.createUser(name, password, "admin");
+    process.stdout.write("管理者を作成しました。\n");
+  } finally {
+    store.close();
+  }
+}
+try {
+  if (Number(process.versions.node.split(".")[0]) !== 24)
+    throw new Error("IDO requires Node.js 24.x");
+  if (command === "init") await init();
+  else if (command === "codex-login" || command === "codex-status") {
+    const codexHome = args.includes("--codex-home")
+      ? option("--codex-home")
+      : join(directory, "codex");
+    await mkdir(codexHome, { recursive: true, mode: 0o700 });
+    const child = spawn(
+      codexBinary(),
+      command === "codex-login"
+        ? ["login", "--device-auth"]
+        : ["login", "status"],
+      {
+        env: workerEnvironment(codexHome),
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    process.exitCode = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code ?? 1));
+    });
+  } else if (command === "status" || command === "stop")
+    console.log(JSON.stringify(await control(directory, command)));
+  else if (command === "doctor") {
+    if (args.includes("--recover")) await recover(directory);
+    console.log(
+      JSON.stringify({
+        node: process.version,
+        storage: directory,
+        ...(await control(directory, "status")),
+      }),
+    );
+  } else if (command === "start") {
+    await init();
+    const mode = args.includes("--conversation-mode")
+      ? option("--conversation-mode")
+      : "text-speech";
+    if (!["legacy", "text-speech", "live"].includes(mode))
+      throw new Error("INVALID_CONVERSATION_MODE");
+    const engine = new Engine({
+      directory,
+      conversation:
+        mode === "legacy"
+          ? false
+          : {
+              mode: mode as "text-speech" | "live",
+              codexHome: args.includes("--codex-home")
+                ? option("--codex-home")
+                : undefined,
+              model: args.includes("--main-model")
+                ? option("--main-model")
+                : undefined,
+            },
+      port: args.includes("--port") ? Number(option("--port")) : 4310,
+      previewPort: args.includes("--preview-port")
+        ? Number(option("--preview-port"))
+        : 4311,
+    });
+    const close = await lifetime(directory, () => engine.close());
+    try {
+      await engine.listen();
+    } catch (e) {
+      await close();
+      throw e;
+    }
+    console.log(`IDO Engine: ${engine.origin}`);
+    if (!args.includes("--no-open")) openBrowser(engine.origin);
+  } else if (command === "plugin-install") {
+    const engine = new Engine({ directory });
+    await engine.plugins.install(
+      args.includes("--plugin") ? option("--plugin") : "discord",
+      "0.2.0",
+      args.includes("--tarball") ? option("--tarball") : undefined,
+    );
+    engine.store.close();
+    console.log("Discord plugin installed");
+  } else
+    throw new Error(
+      "Commands: init, start, stop, status, doctor, plugin-install, codex-login, codex-status",
+    );
+} catch (e) {
+  console.error((e as Error).message);
+  process.exitCode = 1;
+}

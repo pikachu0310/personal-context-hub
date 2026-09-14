@@ -1,147 +1,138 @@
 # Conversation-to-work contract
 
-The conversation engine depends on a data-only work port. The default adapter
-is `createWorkPort(queue)` in `src/engine/work-port.mjs`. A runtime can replace
-the work implementation without making the conversation depend on worker
-sockets, Discord surfaces, Codex thread objects, credentials or workspace paths.
+The current contract is `packages/engine/src/ports/work.ts`. Its implementation,
+`processing/tasks/work.ts`, adapts the packages task service and repository. The
+Engine's persistent main model proposes work; the Engine validates the source
+and supervises approved Clients. Clients own repository access, execution,
+approvals, worktrees, artifacts and previews. No runtime imports the `v0` archive.
 
-Source authorization belongs to the conversation application before submission.
-Durable acceptance, assignment, execution, review and delivery belong to the
-work implementation. A model proposal and a worker capability announcement do
-not create permission for an external operation.
+## Operations
 
-## Operations and current adapter
+| Operation                                       | Current result            | Meaning                                                                |
+| ----------------------------------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `submit(request)`                               | Cloned `Task`             | Transactionally accepted or existing task; does not wait for execution |
+| `control(control)`                              | Cloned `WorkReceipt`      | Durable control receipt, separate from Client delivery/settlement      |
+| `list(meetingId?)`                              | Cloned tasks              | Meeting-filtered current task state                                    |
+| `getReceipt({requestKey, authorId, projectId})` | Task or undefined         | Lookup by the same identity used for deduplication                     |
+| `getResult(taskId)`                             | `WorkResult` or undefined | Text, source references, versions and supersession state               |
 
-| Work operation            | Current TaskQueue mapping                       | Semantics                                                                                                         |
-| ------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `submit(request)`         | `enqueueDurable(request)`                       | Resolves `true` after durable acceptance; `false` when unavailable/full. It does not wait for execution.          |
-| `submitResearch(request)` | `enqueueDurable` with explicit read-only policy | Same receipt semantics; forces `kind: "research"` and `sandboxMode: "read-only"`.                                 |
-| `control(control)`        | `handleVoiceControlDurable(control)`            | Preserves the queue's data receipt. Durable receipt is not proof that the worker has stopped or consumed a steer. |
-| `list()`                  | `list()`                                        | Returns cloned task summaries.                                                                                    |
-| `getReceipt(requestKey)`  | `getReceipt(requestKey)`                        | Resolves submission identity and current state for retry/recovery.                                                |
-| `getResult(taskId)`       | `getTaskResult(taskId)`                         | Returns result text, execution/specification versions, verification and supersession state.                       |
-
-Requests preserve `id`, `meetingId`, `requestKey`, `title`, `request`, `context`,
-`sourceSequences`, `sourceStatements`, `acceptanceCriteria`, `kind`, `complexity`,
-`modelSelection`, specification versions and execution restrictions. The
-conversation uses `requestKey` to reconcile duplicate submission; it must not
-retry an ambiguous acceptance under a newly invented key.
-
-A control contains `type` (`stop` or a follow-up), `taskId`, `requestKey`, optional
-`expectedControlVersion`, and the follow-up `instruction`. The caller authorizes
-the operation before invoking this internal port. Existing queue methods for
-transport-specific identity checks remain available to their adapters.
-
-State and result events return through the runtime's existing TaskQueue
-`checkpoint`/`onResult` callbacks. There is no second event bus or parallel task
-state store. A replacement implementation supplies equivalent callbacks and
-feeds results to the main model's input queue. Optional delivery references in
-the legacy summaries, such as `threadId`, are opaque UI metadata, not model or
-task identity.
-
-## Execution boundary
-
-The work implementation calls `bindExecution(backend)`. `runTask` and `reviewTask`
-receive cloned task data. Live execution objects stay inside the backend;
-checkpoint callbacks return only the permitted execution state. Reviews now
-cross this same port instead of reaching directly into `CodexVoiceRunner` from
-the runtime. Review support remains optional, and the current local review does
-not promise remote review support.
-
-The present mappings are:
+These methods are synchronous in the current SQLite-backed adapter. They are
+not the old `TaskQueue` boolean-returning API. `submitResearch`, `bindExecution`,
+Discord thread surfaces and the old WorkerGateway are not part of this port.
 
 ```mermaid
 flowchart TB
-    C["Conversation"] --> W["WorkPort"]
-    W --> Q["TaskQueue"]
-    Q --> D["Existing execution routing"]
-    D --> L["Execution port and local backend"]
-    D --> R["Worker gateway and remote executor"]
+    C["Meeting coordinator"] --> W["WorkPort"]
+    W --> T["Task service and SQLite"]
+    T --> S["Scheduler and durable Client outbox"]
+    S <--> X["Client execution"]
+    X --> R["Versioned task result"]
+    R --> C
 ```
 
-An unsupported active steer must remain unsupported or become a queued
-follow-up, rather than being reported as consumed. Remote cancellation currently
-acknowledges dispatch and settles the gateway lease; it has no worker-stopped
-acknowledgement. This adapter preserves that limitation and does not rename its
-receipt into a termination guarantee.
+`WorkRequest` carries `requestKey`, meeting/project/author IDs, request text,
+optional title and kind, source IDs/statements/sequences, execution policy and
+network request. The adapter maps `requestKey` to `Task.requestId`. Deduplication
+uses `[authorId, projectId, requestKey]` and rejects reuse across meetings.
+Unknown acceptance must be reconciled with that identity rather than retried
+under a new key.
 
-## Research restrictions and worker compatibility
+Source identity and permission are established from Engine records and live
+input contexts before submission. The port also rejects missing actors and
+viewers. Model-supplied task text, speaker identity, project or permission claims
+are not authorization. The coordinator preserves the accepted source statements
+and their provenance, and may include the model's title and acceptance criteria
+as task instructions. Author, project and source grants still come from Engine
+records. Discussion and incomplete speech segments do
+not become implementation requests solely because the model proposes a task.
 
-`executionPolicy` permits only:
+## Versions and control receipts
+
+| Field                            | Meaning                                     |
+| -------------------------------- | ------------------------------------------- |
+| `Task.id`                        | Stable task identity                        |
+| `Task.runId` and `Task.revision` | Current execution identity and run revision |
+| `specRevision`                   | Requested specification version             |
+| `resultSpecRevision`             | Specification version covered by the result |
+| `controlVersion`                 | Ordered task-control version                |
+| `requestKey` / receipt ID        | Idempotent operation identity               |
+
+`WorkControl` supports `stop`, `instruction` and explicit `retry`, with an
+optional `expectedControlVersion`. The adapter maps `instruction` to the task
+service's `steer`. Receipts retain `accepted: true` independently of `delivery`:
+`pending`, `queued`, `applied`, `stopped`, `uncertain` or `rejected`.
+
+A queued instruction is not proof that the active model consumed it. A stop
+receipt is not a stopped process until the Client reports settlement. Commands
+and returned receipts retain run, specification and control versions; stale
+devices or results cannot update another run. Unknown steering delivery is not
+automatically repeated. An explicit retry can carry
+`instructionResolution: "retry" | "discard"` after reconciliation.
+
+`getResult` exposes both the current specification version and the result's
+covered version. A result from an older specification, or a task with uncertain
+control delivery, is marked superseded. The conversation inbox receives current
+completed/failed results and the main model decides the user-facing answer.
+There is no worker-to-Live shortcut for announcing completion.
+
+## Read-only investigations
+
+Read-only research is an ordinary independent work task with explicit execution
+restrictions. `kind: "research"` is a label and does not itself enforce a sandbox.
+The coordinator supplies the read-only policy when delegating eligible questions:
 
 ```json
 {
-  "sandboxMode": "read-only",
-  "networkAccessEnabled": false
+  "kind": "research",
+  "executionPolicy": {
+    "sandboxMode": "read-only"
+  },
+  "network": false
 }
 ```
 
-Each field is optional; supported sandbox values are `read-only` and
-`workspace-write`. The policy restricts existing executor settings. In
-particular, a task cannot enable networking on a worker whose local network
-setting disables it. `kind: "research"` alone is classification and does not
-grant or restrict authority; the trusted application submits read-only research
-through `submitResearch` or sets an explicit restrictive policy.
+`common/src/contracts/work.ts` defines `ExecutionPolicy` and its normalization.
+Supported sandbox values are `read-only` and `workspace-write`; the optional
+`networkAccessEnabled` field further restricts network use. A request cannot
+widen a Client's project mapping or network grant. Effective restrictions are
+persisted and intersected on continuation/retry; read-only or network-disabled
+work cannot silently become less restrictive.
 
-`authorizeMeetingResearchTasks` accepts only source statements marked by the
-application as `readOnlyResearchEligible: true`, using the existing permitted
-actor projection. It rejects context-only statements, already handled actions,
-missing sources and unpermitted actors. A question can therefore remain
-`taskEligible: false` for implementation while authorizing a read-only
-investigation. Task text and author attribution are reconstructed from the
-original statements; model-supplied permission fields are discarded.
+Clients advertise `executionPolicyVersion: 1`. The scheduler leaves a restrictive
+task queued when no compatible Client is available, and the connection/executor
+also checks support. Older Clients can continue eligible unrestricted work but
+are not selected as read-only research executors merely because network access
+is disabled. Raw paths, credentials and local Codex handles are not supplied by
+the conversation request.
 
-The effective restrictions are checkpointed as `effectiveExecutionPolicy` and
-retained when a task resumes. A follow-up or a model change cannot widen a
-previous read-only/network-disabled execution. Widening requires a separately
-authorized task. Local Codex and the remote worker both apply these restrictions
-to their sandbox and web-search options. The worker persists them before model
-execution, including runs that fail or are interrupted.
+The main model itself uses an Engine-local, restricted Codex environment with
+separate authentication. It is not the executor for these research tasks.
+Client policy negotiation and local opt-in still apply even when Engine and
+Client happen to run on the same machine. Engine archival logs are not exposed
+as a general log-reading tool to the main model or arbitrary Clients; read-only
+repository investigation does not imply access to that full history.
 
-The current worker wire carries restrictions as `executionPolicy`; it does not
-allow the sender to select local paths, credentials or cached thread IDs. Workers
-advertise `executionPolicyVersion: 1` during authentication/pairing. The gateway
-rejects restrictive tasks for older workers with `WORKER_POLICY_UNSUPPORTED`
-before dispatch. Existing unrestricted tasks remain compatible. The current
-router may reassign this pre-execution rejection to another eligible executor.
+## Replacement and validation
 
-A future worker transport must preserve explicit restrictions, task/request
-identity, specification versions, receipt meaning and the distinction between
-unsupported, accepted and completed operations. These requirements belong to the
-work adapter; the conversation engine does not depend on a particular wire
-message format.
+`CoordinatedConversation` receives a `WorkPort` through its options. Default
+bootstrap wiring uses `createWorkPort({repository, tasks, onChange})`; `onChange`
+wakes the existing scheduler. A replacement supplies equivalent identities,
+durable acceptance, versioned controls/results and restrictions. It must not
+start another task-state store alongside the authoritative repository without
+an explicit ownership design.
 
-## Engine/client rewrite integration
+Current task transport remains Client protocol 1 with additive work-policy and
+receipt fields. Plugin protocol 2 is a separate input/output contract. Old
+WorkerGateway policy announcements and Codex thread IDs are not interchangeable
+with Client connection identities.
 
-The `codex/engine-client-rewrite` snapshot `78e07d2` introduces a separate
-`packages/common/src/protocol.ts` and `packages/engine` store. This branch does
-not modify those packages. The following is an adapter mapping for integrating
-the conversation internals with that work subsystem, not a claim that it is
-already connected:
+The current integration does not provide the old automatic peer-review loop,
+Forum task threads or every legacy artifact/evidence field. Existing packages
+Client artifacts and previews remain its work output mechanisms.
 
-| Conversation/work data                   | Rewrite protocol                            | Integration requirement                                                                                           |
-| ---------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `requestKey`                             | `Task.requestId`                            | Preserve the same retry identity; do not regenerate on ambiguous acceptance.                                      |
-| `meetingId`                              | `Task.meetingId`                            | Preserve meeting isolation.                                                                                       |
-| Authorized source actor                  | `Task.authorId`                             | Resolve from trusted actor records; never model output.                                                           |
-| Runtime project binding                  | `Task.projectId`                            | Supply from trusted meeting/project configuration.                                                                |
-| `request`, source references and context | `Task.text` plus adapter metadata           | Retain structured source provenance separately; a text concatenation alone loses attribution and source versions. |
-| `specRevision`, `runRevision`            | `Task.revision`, `Task.runId`               | Distinguish requested specification from actual execution. These fields are not interchangeable counters.         |
-| `control(stop/instruction)`              | Store `control(stop/steer)`                 | Adapt durable receipts and version checks; retain unknown delivery state on recovery.                             |
-| `getResult`                              | Stored `Task.result`                        | Also provide result version, supersession and verification metadata.                                              |
-| `executionPolicy.networkAccessEnabled`   | `Task.network` and client `Mapping.network` | Effective networking is the intersection of request restriction and client grant.                                 |
-| `executionPolicy.sandboxMode`            | No field in this snapshot                   | Add a negotiated restriction before routing read-only investigations to that client executor.                     |
-
-In that snapshot the client executor uses `sandboxMode: "workspace-write"` and
-`requireWritableSandbox: true` unconditionally. It must not be treated as a
-read-only research executor merely because `Task.network` is false. The old
-worker's `executionPolicyVersion` is specific to its existing protocol; a new
-transport may negotiate capabilities differently while preserving the same
-restriction contract.
-
-The rewrite's `Conversation.process()` currently performs its own Responses
-analysis, minutes generation and task creation. When connecting the new meeting
-coordinator, replace that conversation entry path with the engine adapter; do
-not run both task-creation paths on the same input. Worker distribution, grants,
-Discord transport and the package store remain owned by the surrounding work
-subsystem.
+`engine/test/work.test.ts`, Client execution/control tests and the coordinated
+conversation tests cover deduplication, restrictions, version checks and recovery
+with synthetic inputs and fake execution. Run `npm run verify:ido` from the
+repository root. These tests do not establish live Client authentication or real
+repository execution. See [the migration mapping](main2-conversation-integration.md)
+for the reused and replaced components.

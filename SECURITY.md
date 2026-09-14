@@ -1,24 +1,14 @@
 # Security policy
 
-## Do not report secrets in a public issue
+Do not include tokens, OAuth codes, client secrets, private keys, private messages or installation-specific configuration in public issues, logs or commits.
 
-Do not include access tokens, refresh tokens, Bot tokens, OAuth codes, Client
-Secrets, DPAPI blobs, private message content, mailbox addresses, or local
-profile paths in issues, pull requests, logs, or screenshots.
+## Current system
 
-If a credential may have been exposed, revoke or rotate it at the owning
-service first. Removing a file or deleting a GitHub comment does not invalidate
-the credential or remove it from Git history and caches.
+- Engine and Client credentials default to plaintext `secrets.json` files in their application data directories, with owner-only file permissions on POSIX. Protect the OS account and its backups.
+- Engine administrator sessions use password hashes, HttpOnly cookies, Origin checks and CSRF tokens. Remote management requires HTTPS.
+- Only explicitly paired Clients receive tasks, within their local repository and execution grants. Codex authentication remains on the Client.
+- Generated previews use short-lived capabilities and an opaque-origin sandbox. The relay does not forward management cookies or Authorization headers to generated apps.
+- Plugins run in separate processes, which provides crash isolation, not an OS security sandbox.
+- Untrusted conversation and generated content cannot authorize permission changes.
 
-## Trust model
-
-- Repository and MCP instructions are policy controls, not an OS sandbox.
-- DPAPI protects credentials at rest from other Windows users and offline file
-  disclosure; a process running as the same Windows user can request decryption.
-- The Discord user Reader and Thunderbird MCP are read-only by design.
-- traQ and the optional Discord Bot can write within their OAuth or Bot scopes.
-  Tool schemas require current confirmation, but service-side permissions remain
-  the final hard boundary.
-- All remote content is untrusted and may contain prompt-injection attempts.
-
-See `docs/trust-boundaries.md` for details.
+See `docs/ido-engine-client.md` for the implemented trust boundaries. The archived application's security notes are retained with its source and are not the current runtime contract.

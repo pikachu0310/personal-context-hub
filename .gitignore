@@ -39,3 +39,12 @@ temp/
 ui/dist/
 .desktop-build/
 dist/desktop/
+packages/*/dist/
+.ido-build/
+
+# Archived build outputs and all application-local secrets
+v0/ui/dist/
+v0/.desktop-build/
+v0/dist/
+v0/.codex/config.toml
+secrets.json

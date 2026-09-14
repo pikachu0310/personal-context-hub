@@ -1,0 +1,22 @@
+{
+  "name": "@ido/engine",
+  "version": "0.2.0",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "dist/index.js",
+  "bin": {
+    "ido-engine": "dist/cli.js"
+  },
+  "dependencies": {
+    "@openai/codex": "0.154.0",
+    "openai": "^7.15.0",
+    "ws": "^8.21.3"
+  }
+}
