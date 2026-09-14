@@ -1,3 +1,4 @@
+import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { ProjectView } from "./ProjectView.js";
 import { ProjectMenu } from "./ProjectMenu.js";
@@ -23,10 +24,14 @@ export function App() {
   const [sidebar, showSidebar] = useState(true);
   const [projectDialog, setProjectDialog] = useState<string | undefined>();
   const [profileDialog, showProfile] = useState(false);
+  const [settingsProject, setSettingsProject] = useState<string>();
+  const [taskDrafts, setTaskDrafts] = useState<
+    Record<string, { text: string; requestId: string; sentText?: string }>
+  >({});
   const [projectView, setProjectView] = useState<{
     projectId: string;
     taskId?: string;
-    settings?: boolean;
+    draft?: boolean;
   }>();
   const [invite, setInvite] = useState<{ engineUrl: string; token: string }>();
   const [dismissedInvite, dismissInvite] = useState("");
@@ -69,6 +74,17 @@ export function App() {
       selectShared(undefined);
     }
   }, [selectedShared, state]);
+  useEffect(() => {
+    const local = state?.runs.find(
+      (run) => run.task.id === projectView?.taskId,
+    );
+    if (local) {
+      select(local.task.runId);
+      selectShared(undefined);
+      setPage("runs");
+      setProjectView(undefined);
+    }
+  }, [projectView?.taskId, state?.runs]);
   if (!state)
     return (
       <div className="workspace-loading">
@@ -205,34 +221,52 @@ export function App() {
                     {state.settings.projects.find((p) => p.id === id)?.name ??
                       "ローカルプロジェクト"}
                   </span>
-                  {!state.settings.mappings.some((m) => m.projectId === id) && (
-                    <button
-                      className="icon-button"
-                      aria-label="保存先を選択"
-                      disabled={!state.connected}
-                      onClick={() => setProjectDialog(id)}
-                    >
-                      ＋
-                    </button>
-                  )}
                   {project && (
-                    <ProjectMenu
-                      project={project}
-                      deviceId={state.settings.deviceId}
-                      action={action}
-                      mapping={() =>
-                        setProjectView({ projectId: id, settings: true })
-                      }
-                    />
+                    <div className="project-actions">
+                      <ProjectMenu
+                        project={project}
+                        deviceId={state.settings.deviceId}
+                        action={action}
+                        mapping={() => setSettingsProject(id)}
+                      />
+                      <button
+                        className="icon-button project-compose"
+                        aria-label={`${project.name}に新しいタスクを追加`}
+                        title="新しいタスク"
+                        onClick={() => {
+                          setTaskDrafts((drafts) => ({
+                            ...drafts,
+                            [id]: drafts[id] ?? {
+                              text: "",
+                              requestId: crypto.randomUUID(),
+                            },
+                          }));
+                          setProjectView({ projectId: id, draft: true });
+                          selectShared(undefined);
+                        }}
+                      >
+                        <Icon name="compose" size={19} />
+                      </button>
+                    </div>
                   )}
                 </div>
                 {project && (
                   <button
-                    className={`task-link ${projectView?.projectId === id && !projectView.taskId ? "selected" : ""}`}
+                    className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
                     onClick={() => setProjectView({ projectId: id })}
                   >
                     <Icon name="file" size={15} />
                     <span>議事録</span>
+                  </button>
+                )}
+                {Object.hasOwn(taskDrafts, id) && (
+                  <button
+                    className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
+                    onClick={() =>
+                      setProjectView({ projectId: id, draft: true })
+                    }
+                  >
+                    <span>新しいタスク</span>
                   </button>
                 )}
                 {shared.map((task) => (
@@ -388,6 +422,22 @@ export function App() {
           </button>
         </footer>
       </aside>
+      <Modal
+        opened={!!settingsProject}
+        onClose={() => setSettingsProject(undefined)}
+        title={`${state.settings.projects.find((p) => p.id === settingsProject)?.name ?? "プロジェクト"} · 接続・設定`}
+        size="lg"
+        className="project-settings-modal"
+      >
+        {settingsProject && (
+          <ProjectSettings
+            key={settingsProject}
+            projectId={settingsProject}
+            state={state}
+            action={action}
+          />
+        )}
+      </Modal>
       <InviteDialog
         invite={invite}
         connected={state.connected}
@@ -523,12 +573,39 @@ export function App() {
             {error}
           </div>
         )}
-        {projectView?.settings ? (
-          <ProjectSettings
+        {projectView?.draft ? (
+          <ProjectTaskDraft
             key={projectView.projectId}
             projectId={projectView.projectId}
-            state={state}
-            action={action}
+            draft={taskDrafts[projectView.projectId]}
+            sendingText={(sentText) =>
+              setTaskDrafts((drafts) => ({
+                ...drafts,
+                [projectView.projectId]: {
+                  ...drafts[projectView.projectId],
+                  sentText,
+                },
+              }))
+            }
+            connected={state.connected}
+            onChange={(text) =>
+              setTaskDrafts((drafts) => ({
+                ...drafts,
+                [projectView.projectId]: {
+                  ...drafts[projectView.projectId],
+                  text,
+                },
+              }))
+            }
+            created={async (task) => {
+              setProjectView({ projectId: task.projectId, taskId: task.id });
+              setTaskDrafts((drafts) => {
+                const copy = { ...drafts };
+                delete copy[task.projectId];
+                return copy;
+              });
+              await refresh();
+            }}
           />
         ) : projectView ? (
           <ProjectView
@@ -537,12 +614,7 @@ export function App() {
             taskId={projectView.taskId}
             deviceId={state.settings.deviceId}
             clientState={state}
-            openSettings={() =>
-              setProjectView({
-                projectId: projectView.projectId,
-                settings: true,
-              })
-            }
+            openSettings={() => setSettingsProject(projectView.projectId)}
           />
         ) : currentPage === "new-local" ? (
           <NewLocalTask
@@ -583,12 +655,7 @@ export function App() {
           sharedCurrent ? (
             <TeamTaskDetail
               state={state}
-              openSettings={() =>
-                setProjectView({
-                  projectId: sharedCurrent!.projectId,
-                  settings: true,
-                })
-              }
+              openSettings={() => setSettingsProject(sharedCurrent!.projectId)}
               task={sharedCurrent}
               local={sharedCurrent.clientId === state.settings.deviceId}
               stale={sharedStale}
@@ -607,7 +674,14 @@ export function App() {
             current={current}
             action={action}
             invoke={invoke}
-            setup={() => setPage("overview")}
+            setup={() =>
+              current &&
+              state.settings.projects.some(
+                (p) => p.id === current.task.projectId,
+              )
+                ? setSettingsProject(current.task.projectId)
+                : setPage("overview")
+            }
           />
         )}
       </main>

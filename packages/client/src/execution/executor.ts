@@ -156,13 +156,23 @@ export class Executor {
       const occupied = Object.values(this.runs).filter((r) =>
         ["assigned", "running"].includes(r.state),
       );
+      const ownsSlot =
+        !!previous && ["assigned", "running"].includes(previous.state);
       if (
         !allow ||
         !mapping ||
-        (occupied.length >= slots && !previous) ||
+        (occupied.length >= slots && !ownsSlot) ||
         (occupied.filter((r) => r.task.projectId === task.projectId).length >=
           mapping.slots &&
-          !previous)
+          !ownsSlot)
+      )
+        return;
+      // A completed turn can still be releasing its worker when the next request arrives.
+      if (
+        previous &&
+        command.type === "retry" &&
+        task.revision > previous.task.revision &&
+        this.active.has(task.runId)
       )
         return;
       if (
@@ -198,8 +208,9 @@ export class Executor {
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],
         instructions: structuredClone(previous?.instructions ?? []),
-        activeSpecRevision:
-          previous?.activeSpecRevision ?? task.specRevision ?? 1,
+        activeSpecRevision: command.continuation
+          ? (task.specRevision ?? 1)
+          : (previous?.activeSpecRevision ?? task.specRevision ?? 1),
         effectiveExecutionPolicy: restrictExecutionPolicy(
           previous?.effectiveExecutionPolicy,
           previous?.task.effectiveExecutionPolicy,
@@ -234,6 +245,14 @@ export class Executor {
         command,
         value.state === "interrupted" ? "uncertain" : "queued",
       );
+      if (typeof command.continuation === "string")
+        recordActivity(value, {
+          id: `continuation:${command.id}`,
+          kind: "instruction",
+          title: "追加依頼",
+          text: command.continuation,
+          status: "accepted",
+        });
       this.runs[task.runId] = value;
       this.commands.push(command.id);
       await this.save();

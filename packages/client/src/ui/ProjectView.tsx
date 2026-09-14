@@ -8,8 +8,8 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useRef, useState } from "react";
-import { Form } from "@ido/common-ui";
+import { useEffect, useState } from "react";
+import { TaskFollowup } from "./TaskFollowup.js";
 import type { ProjectWorkspace } from "@ido/common/contracts/api";
 import { TaskDispatchNotice } from "./TaskDispatchNotice.js";
 import { stateLabel } from "./ActivityFeed.js";
@@ -30,9 +30,6 @@ export function ProjectView({
 }) {
   const [state, setState] = useState<ProjectWorkspace>(),
     [error, setError] = useState("");
-  const pending = useRef<{ text: string; requestId: string } | undefined>(
-    undefined,
-  );
   useEffect(() => {
     let active = true;
     const refresh = async () => {
@@ -85,6 +82,7 @@ export function ProjectView({
               {state.participants.find((p) => p.id === task.clientId)?.name ??
                 "割り当て待ち"}
             </Text>
+            <TaskFollowup key={task.id} task={task} state={clientState} />
             {task.state === "queued" && !task.clientId && (
               <TaskDispatchNotice
                 state={clientState}
@@ -173,31 +171,6 @@ export function ProjectView({
                 ))}
               </Stack>
             </details>
-            <Paper p="lg" withBorder>
-              <Title order={3} mb="md">
-                タスクを追加
-              </Title>
-              <TaskDispatchNotice
-                state={clientState}
-                task={{ projectId }}
-                waiting={false}
-                openSettings={openSettings}
-              />
-              <Text size="sm" mt="md">
-                追加したタスクは、実行条件を満たすClientへ順番に割り当てます。同じ依頼を追加し直す必要はありません。
-              </Text>
-              <Form
-                fields={[{ key: "text", label: "依頼内容", multiline: true }]}
-                submit={async (data) => {
-                  const text = String(data.text ?? "");
-                  if (!pending.current || pending.current.text !== text)
-                    pending.current = { text, requestId: crypto.randomUUID() };
-                  await api("project/task", { projectId, ...pending.current });
-                  pending.current = undefined;
-                }}
-                label="タスクを追加"
-              />
-            </Paper>
           </>
         )}
       </Stack>

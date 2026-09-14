@@ -5,6 +5,7 @@ import { activityText } from "../execution/activity.js";
 import {
   startLocalTask,
   localInstruction,
+  continueLocalTask,
   localProgress,
 } from "../execution/local-tasks.js";
 import { randomUUID } from "node:crypto";
@@ -56,6 +57,7 @@ export async function route(
       projectTasks: this.projectTasks,
       connected: this.connected,
       controlSupported: this.controlSupported,
+      continuationSupported: this.continuationSupported,
       projectCreationSupported: this.projectCreationSupported,
       teamTasksSupported: this.teamTasksSupported,
       teamTasks: this.connected ? this.teamTasks : undefined,
@@ -167,12 +169,19 @@ export async function route(
     case "/api/project/rename":
     case "/api/project/remove-member":
     case "/api/project/snapshot":
-    case "/api/project/task": {
+    case "/api/project/task":
+    case "/api/project/continue": {
+      if (
+        url.pathname === "/api/project/continue" &&
+        !this.continuationSupported
+      )
+        throw new HttpError(409, "CONTINUATION_UNSUPPORTED");
       const operations: Record<string, string> = {
         "/api/project/rename": "project.rename",
         "/api/project/remove-member": "project.remove-member",
         "/api/project/snapshot": "project.snapshot",
         "/api/project/task": "task.create",
+        "/api/project/continue": "task.continue",
       };
       const result = await this.workspaceRequest(
         operations[url.pathname],
@@ -413,6 +422,33 @@ export async function route(
         throw new HttpError(409, "MAPPING_REQUIRED");
       await this.executor.startPlannedWork(value.task.runId);
       break;
+    }
+    case "/api/continue": {
+      const value = this.executor.runs[id(input.runId)];
+      if (!value) throw new HttpError(404, "RUN_NOT_FOUND");
+      const requestKey = id(input.requestKey),
+        instruction = text(input.instruction, 8000);
+      let receipt;
+      if (value.origin === "local")
+        receipt = await continueLocalTask(
+          this,
+          value.task.runId,
+          requestKey,
+          instruction,
+          Number(input.revision),
+        );
+      else {
+        if (!this.continuationSupported)
+          throw new HttpError(409, "CONTINUATION_UNSUPPORTED");
+        receipt = await this.workspaceRequest("task.continue", {
+          taskId: value.task.id,
+          requestId: requestKey,
+          text: instruction,
+          revision: input.revision,
+        });
+      }
+      send(res, 200, { ok: true, receipt });
+      return;
     }
     case "/api/instruction": {
       const handler =

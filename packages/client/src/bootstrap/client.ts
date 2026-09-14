@@ -67,6 +67,7 @@ export class Client {
   generation = 0;
   connected = false;
   controlSupported = false;
+  continuationSupported = false;
   workspaceSupported = false;
   workspaceRequests = new Map<
     string,

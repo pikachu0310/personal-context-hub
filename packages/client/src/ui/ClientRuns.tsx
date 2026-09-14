@@ -1,3 +1,4 @@
+import { ComposerAction } from "./ComposerAction.js";
 import { Modal } from "@mantine/core";
 import { useEffect, useRef, useState } from "react";
 import type { Action, ClientState, Invoke } from "@ido/common-ui";
@@ -15,7 +16,15 @@ const controlError = (code: string) =>
   ({
     ENGINE_CONTROL_UNAVAILABLE:
       "Engineに接続してください。アプリからの追加指示に対応したEngineが必要です。",
-    EXECUTION_NOT_ALLOWED: "接続設定でタスクの実行を許可してください。",
+    EXECUTION_NOT_ALLOWED: "プロジェクトの接続・設定で実行を許可してください。",
+    CONTINUATION_UNSUPPORTED:
+      "Engineを更新すると、このタスクの続きを依頼できます。",
+    TASK_STILL_ACTIVE:
+      "タスクがすでに再開されています。最新の状態を確認してください。",
+    LOCAL_SLOTS_FULL:
+      "実行枠が埋まっています。実行中のタスクが終わってから送信してください。",
+    INSTRUCTION_DELIVERY_UNCERTAIN:
+      "前の指示の実行結果が未確認です。先にその指示を確認してください。",
     TASK_NOT_RUNNING:
       "このタスクは実行中ではありません。再実行はチームのDashboardから操作してください。",
     CONTROL_DELIVERY_UNKNOWN:
@@ -49,7 +58,12 @@ export function ClientRuns({
   const [details, showDetails] = useState(false);
   const [port, setPort] = useState("");
   const [follow, setFollow] = useState(true);
-  const request = useRef<{ text: string; id: string }>(undefined);
+  const request = useRef<{
+    text: string;
+    id: string;
+    continuation: boolean;
+    revision: number;
+  }>(undefined);
   const scroll = useRef<HTMLDivElement>(null);
   const runId = current?.task.runId;
   useEffect(() => {
@@ -109,24 +123,35 @@ export function ClientRuns({
   );
   const policy =
     current.task.effectiveExecutionPolicy ?? current.task.executionPolicy;
+  const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(
+    current.state,
+  );
   const canSend =
-    running &&
+    (running || terminal) &&
     (local ||
       (state.connected &&
-        state.controlSupported &&
-        (state.allowedProjectIds?.includes(current.task.projectId) ??
-          state.allow)));
+        (terminal
+          ? state.continuationSupported === true
+          : state.controlSupported &&
+            (state.allowedProjectIds?.includes(current.task.projectId) ??
+              state.allow))));
   async function submit() {
     const instruction = draft.trim();
     if (!instruction || sending || !canSend) return;
     if (request.current?.text !== instruction)
-      request.current = { text: instruction, id: crypto.randomUUID() };
+      request.current = {
+        text: instruction,
+        id: crypto.randomUUID(),
+        continuation: terminal,
+        revision: current!.task.revision,
+      };
     setSending(true);
     setNotice("");
     try {
-      await action("instruction", {
+      await action(request.current.continuation ? "continue" : "instruction", {
         runId,
         requestKey: request.current.id,
+        revision: request.current.revision,
         instruction,
       });
       setDraft("");
@@ -220,9 +245,11 @@ export function ClientRuns({
         <div className="conversation-content">
           <article className="user-message initial-request">
             <div className="entry-meta">
-              {local ? "このアプリからの依頼" : "Discordからの依頼"}
+              {local ? "このアプリからの依頼" : "プロジェクトへの依頼"}
             </div>
-            <MessageText text={current.task.text} />
+            <MessageText
+              text={current.task.history[0]?.text ?? current.task.text}
+            />
           </article>
           {loadError && (
             <p role="alert" className="is-error">
@@ -365,15 +392,13 @@ export function ClientRuns({
           <textarea
             aria-label="エージェントへの追加指示"
             placeholder={
-              canSend
-                ? "追加の指示や確認したいことをどうぞ"
-                : running
-                  ? "接続と実行許可を確認してください"
-                  : "このタスクは終了しています"
+              terminal
+                ? "このタスクの続きを依頼する"
+                : "追加の指示や確認したいことをどうぞ"
             }
             value={draft}
             maxLength={8000}
-            disabled={!canSend || sending}
+            disabled={sending}
             onChange={(e) => setDraft(e.currentTarget.value)}
             onKeyDown={(e) => {
               if (
@@ -405,32 +430,20 @@ export function ClientRuns({
             <span className="model-label">
               {agentName} · {current.model ?? "既定モデル"}
             </span>
-            <button
-              type="submit"
-              className="send-button"
-              aria-label="追加指示を送信"
-              disabled={!canSend || sending || !draft.trim()}
-            >
-              <Icon name="arrow" size={18} />
-            </button>
-            <button
-              type="button"
-              className="stop-button"
-              aria-label="タスクを停止"
-              title="タスクを停止"
-              disabled={!running}
-              onClick={() => invoke("stop", { runId })}
-            >
-              <Icon name="stop" size={14} />
-            </button>
+            <ComposerAction
+              running={running}
+              text={draft}
+              busy={sending}
+              canSend={!!canSend}
+              sendLabel="追加指示を送信"
+              stop={() => invoke("stop", { runId })}
+            />
           </div>
         </form>
         <p className="composer-footnote">
           {canSend
             ? "Enterで送信 · Shift + Enterで改行"
-            : local
-              ? "新しい実験は左の「新しいローカルタスク」から"
-              : "新しい依頼と再実行はDiscord・Dashboardから"}
+            : "送信するには接続とプロジェクトの実行設定を確認してください"}
           <span>
             {current.agent === "claude"
               ? "追加指示は現在の処理後に同じセッションで続行"
