@@ -6,6 +6,12 @@ import {
   type Action,
   type PluginState,
 } from "@ido/common-ui";
+// Installer distribution is managed by developers, outside the admin form.
+const downloadUrlFields = new Set([
+  "windowsDownloadUrl",
+  "macArmDownloadUrl",
+  "macIntelDownloadUrl",
+]);
 const errors: Record<string, string> = {
   DISCORD_TOKEN_REQUIRED: "Botトークンを入力してください。",
   DISCORD_TOKEN_INVALID: "Botトークンを確認してください。",
@@ -156,6 +162,7 @@ export function DiscordSetup({
           initial={Object.fromEntries(
             Object.entries(plugin.config).filter(
               ([key]) =>
+                !downloadUrlFields.has(key) &&
                 ![
                   "botToken",
                   "guildId",
@@ -170,6 +177,7 @@ export function DiscordSetup({
           fields={(plugin.manifest?.fields ?? [])
             .filter(
               (f) =>
+                !downloadUrlFields.has(f.key) &&
                 !["botToken", "guildId", "textChannelId", "appId"].includes(
                   f.key,
                 ),
