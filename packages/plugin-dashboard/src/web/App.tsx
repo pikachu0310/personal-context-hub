@@ -544,6 +544,12 @@ export function App() {
         select={select}
         stale={stale}
         refresh={refresh}
+        deleted={async (deletedProjectId) => {
+          select(undefined);
+          if (deletedProjectId && deletedProjectId === projectId)
+            setProjectId("");
+          else await refresh();
+        }}
         openRaw={openRaw}
       />
     </AppShell>

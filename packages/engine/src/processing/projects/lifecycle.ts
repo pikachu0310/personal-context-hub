@@ -93,6 +93,11 @@ export class WorkspaceLifecycle {
       if (!task) throw new Error("TASK_NOT_FOUND");
       this.authorize(actor, task.projectId);
       if (!this.canDelete(actor, task)) throw new Error("PERMISSION_DENIED");
+      if (
+        input.force === true &&
+        (!("user" in actor) || this.store.user(actor.user.id)?.role !== "admin")
+      )
+        throw new Error("PERMISSION_DENIED");
       if (input.confirm !== true)
         throw new Error("DELETE_CONFIRMATION_REQUIRED");
       if (
@@ -101,7 +106,8 @@ export class WorkspaceLifecycle {
         input.membershipVersion !== (task.membershipVersion ?? 0)
       )
         throw new Error("WORKSPACE_CONFLICT");
-      if (taskBusy(task)) throw new Error("TASK_ACTIVE");
+      if (input.force !== true && taskBusy(task))
+        throw new Error("TASK_ACTIVE");
       return task;
     };
     const task = check();
@@ -139,7 +145,8 @@ export class WorkspaceLifecycle {
       const tasks = this.store
         .list<Task>("task")
         .filter((t) => t.projectId === projectId);
-      if (tasks.some(taskBusy)) throw new Error("PROJECT_TASKS_ACTIVE");
+      if (input.force !== true && tasks.some(taskBusy))
+        throw new Error("PROJECT_TASKS_ACTIVE");
       return tasks;
     };
     const tasks = check();
@@ -147,8 +154,8 @@ export class WorkspaceLifecycle {
       projectId,
       tasks.map((t) => t.id),
       () => {
-        check();
-        for (const task of tasks) this.purgeTask(task);
+        const current = check();
+        for (const task of current) this.purgeTask(task);
         const meetings = this.store
           .list<Meeting>("meeting")
           .filter((m) => m.projectId === projectId);
