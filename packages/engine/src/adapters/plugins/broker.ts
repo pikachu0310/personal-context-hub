@@ -76,6 +76,19 @@ export class PluginBroker {
         .list<Task>("task")
         .filter((task) => task.projectId === config.projectId);
     }
+    if (operation === "projects.current") {
+      if (!plugin.manifest?.capabilities.includes("project-conversation"))
+        throw new Error("PERMISSION_DENIED");
+      const config =
+        this.store.get<Record<string, string>>("config", pluginId) ?? {};
+      const projects = new Projects(this.store);
+      const projectId = projects.project(config.projectId || DEFAULT_PROJECT);
+      const conversation = projects.current(projectId);
+      return {
+        project: this.store.get("project", projectId),
+        meeting: this.store.get("meeting", conversation.meetingId),
+      };
+    }
     if (operation === "projects.list" || operation === "projects.select") {
       if (!plugin.manifest?.capabilities.includes("project-conversation"))
         throw new Error("PERMISSION_DENIED");
@@ -89,9 +102,11 @@ export class PluginBroker {
           projects: this.store.list("project"),
           projectId: config.projectId || DEFAULT_PROJECT,
         };
-      const projectId = new Projects(this.store).project(
-        text(input.projectId, 100),
+      const selected = new Projects(this.store).selectByNameOrId(
+        input.projectId,
       );
+      const projectId = selected.id;
+      if (projectId === (config.projectId || DEFAULT_PROJECT)) return selected;
       this.store.put("config", pluginId, {
         ...config,
         projectId,
@@ -300,8 +315,19 @@ export function validateMediaInput(event: ConversationInput) {
     )
       throw new Error("INVALID_MEDIA_INPUT");
   }
-  if (event.activity && !["start", "end", "quiet"].includes(event.activity))
+  if (
+    event.activity &&
+    !["start", "end", "quiet", "interrupt"].includes(event.activity)
+  )
     throw new Error("INVALID_AUDIO_ACTIVITY");
+  if (
+    event.silenceMs !== undefined &&
+    (event.activity !== "end" ||
+      !Number.isFinite(event.silenceMs) ||
+      event.silenceMs < 0 ||
+      event.silenceMs > 1000)
+  )
+    throw new Error("INVALID_AUDIO_SILENCE");
   if (event.audioFrame) {
     const frame = event.audioFrame;
     if (

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/bootstrap/engine.js";
 import { Client } from "../../client/src/bootstrap/client.js";
+import { TaskBoard } from "../src/processing/tasks/board.js";
 import type { Task } from "@ido/common/contracts/protocol";
 import type { Run } from "../../client/src/execution/executor.js";
 
@@ -104,6 +105,28 @@ test("different Clients discuss engine tasks over authenticated board connection
   assert.equal(clientA.executor.board.supported, true);
   const aPort = clientA.executor.board.forTask(a, new AbortController().signal);
   const bPort = clientB.executor.board.forTask(b, new AbortController().signal);
+  assert.deepEqual(
+    await bPort.read({ query: "", limit: null, taskId: null }),
+    await bPort.read({}),
+  );
+  await assert.rejects(
+    bPort.read({ limit: 20 }),
+    /INVALID_BOARD_LIMIT: limit.*1 to 10/,
+  );
+  await assert.rejects(
+    bPort.read({ query: 123 }),
+    /INVALID_BOARD_QUERY: query/,
+  );
+  await assert.rejects(
+    bPort.read({ offset: -1 }),
+    /INVALID_BOARD_OFFSET: offset/,
+  );
+  // Unexpected storage failures must not expose internal details to callers.
+  const read = t.mock.method(TaskBoard.prototype, "read", () => {
+    throw new Error("private storage failure");
+  });
+  await assert.rejects(bPort.read({}), { message: "BOARD_REQUEST_REJECTED" });
+  read.mock.restore();
   const first = (await aPort.post(
     { body: "共通APIについて相談" },
     "first",

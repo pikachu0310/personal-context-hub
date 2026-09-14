@@ -76,12 +76,19 @@ export function TasksTable({
           </Table.Thead>
           <Table.Tbody>
             {tasks.slice((current - 1) * size, current * size).map((t) => (
-              <Table.Tr key={t.id}>
+              <Table.Tr
+                key={t.id}
+                className="selectable-row"
+                onClick={() => select({ kind: "task", id: t.id })}
+              >
                 <Table.Td>
                   <Button
                     variant="transparent"
                     className="row-link"
-                    onClick={() => select({ kind: "task", id: t.id })}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      select({ kind: "task", id: t.id });
+                    }}
                   >
                     {t.title}
                   </Button>
@@ -165,12 +172,19 @@ export function ProjectsTable({
           {state.projects
             .filter((p) => !projectId || p.id === projectId)
             .map((p) => (
-              <Table.Tr key={p.id}>
+              <Table.Tr
+                key={p.id}
+                className="selectable-row"
+                onClick={() => select({ kind: "project", id: p.id })}
+              >
                 <Table.Td>
                   <Button
                     variant="transparent"
                     className="row-link"
-                    onClick={() => select({ kind: "project", id: p.id })}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      select({ kind: "project", id: p.id });
+                    }}
                   >
                     {p.name}
                   </Button>

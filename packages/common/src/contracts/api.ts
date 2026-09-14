@@ -1,4 +1,5 @@
 import type { MinutesMetadata } from "./minutes.js";
+import type { AccessMode } from "./work.js";
 export {
   taskUrl,
   parseTaskUrl,
@@ -32,6 +33,7 @@ export interface MessageView {
   steps?: Record<string, { state: string; errorId?: string }>;
 }
 export interface MeetingView extends MinutesMetadata {
+  knowledge?: import("./knowledge.js").MeetingKnowledge;
   startedAt?: number;
   closedAt?: number;
   id: string;
@@ -40,7 +42,14 @@ export interface MeetingView extends MinutesMetadata {
   summary: string;
   messages: MessageView[];
 }
+export interface ConversationBinding {
+  pluginId: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+}
 export interface WorkspaceState {
+  conversationBindings?: ConversationBinding[];
   deletionSync?: { pendingClients: number };
   user: User;
   projects: Project[];
@@ -178,7 +187,7 @@ export interface ClientState {
   suggestedInvite?: { engineUrl: string; token: string };
   settings: {
     profile?: { name: string; context: string; avatar?: string };
-    accessMode?: "full" | "approval";
+    accessMode?: AccessMode;
     progressMode?: "auto" | "manual";
     pendingProgressMode?: "auto" | "manual";
     slots: number;
@@ -216,7 +225,7 @@ export interface ClientState {
     result?: string;
     progress?: string;
     activityVersion?: number;
-    accessMode?: "full" | "approval";
+    accessMode?: AccessMode;
     progressMode?: "auto" | "manual";
     pendingProgressMode?: "auto" | "manual";
     phase?: "planning" | "awaiting-plan" | "executing";
@@ -309,6 +318,7 @@ export interface DashboardConnection {
   projectIds: string[];
 }
 export interface DashboardState {
+  conversationBindings?: ConversationBinding[];
   deletionSync?: { pendingClients: number };
   user: User;
   updatedAt: number;

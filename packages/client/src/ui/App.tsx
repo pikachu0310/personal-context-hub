@@ -274,7 +274,9 @@ export function App() {
         }}
       >
         <div className="sidebar-brand">
-          <span className="brand-symbol">i</span>
+          <span className="brand-symbol">
+            <Icon name="bot" size={20} />
+          </span>
           <strong>IDO Agent</strong>
           <button
             className="icon-button"
@@ -651,6 +653,10 @@ export function App() {
           <ProjectTaskDraft
             key={projectView.projectId}
             projectId={projectView.projectId}
+            mapping={state.settings.mappings.find(
+              (mapping) => mapping.projectId === projectView.projectId,
+            )}
+            action={action}
             draft={taskDrafts[projectView.projectId]}
             sendingText={(sentText) =>
               dispatchDraft({

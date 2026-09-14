@@ -1,3 +1,4 @@
+import { pcmSignalRms } from "@ido/common/runtime/audio-signal";
 const WAV_HEADER_BYTES = 44;
 
 // A conservative signal gate, not a speech recognizer: reject silence, DC and
@@ -27,18 +28,8 @@ export function qualifyTranscriptionAudio(wav) {
   let activeMs = 0;
   for (let offset = 0; offset < pcm.length; offset += frameBytes) {
     const end = Math.min(pcm.length, offset + frameBytes);
-    let sum = 0,
-      square = 0,
-      samples = 0;
-    for (let i = offset; i + 1 < end; i += 2) {
-      const sample = pcm.readInt16LE(i);
-      sum += sample;
-      square += sample * sample;
-      samples++;
-    }
-    const rms = samples
-      ? Math.sqrt(Math.max(0, square / samples - (sum / samples) ** 2))
-      : 0;
+    const rms = pcmSignalRms(pcm.subarray(offset, end));
+    const samples = Math.floor((end - offset) / 2);
     if (rms >= 80) activeMs += (samples / channels / rate) * 1000;
   }
   return { accepted: activeMs >= 80, activeMs };

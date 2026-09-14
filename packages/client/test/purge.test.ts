@@ -110,3 +110,75 @@ test("purge removes managed task histories and model logs across restart, preser
   assert.equal(executed, false);
   assert.deepEqual(restarted.runs, {});
 });
+
+test(
+  "purge interrupts active work and declines approvals before waiting for execution to finish",
+  { timeout: 5000 },
+  async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), "ido-purge-active-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const events: Command[] = [];
+    const executor = new Executor(directory, (event) => events.push(event));
+    await executor.load();
+    const task = {
+      id: "active-task",
+      runId: "active-run",
+      revision: 1,
+      text: "active",
+      projectId: "project",
+      state: "running",
+      history: [],
+    } as unknown as Task;
+    const run = { task, state: "running" as const, directory, activity: [] };
+    executor.runs[task.runId] = run;
+    const abort = new AbortController();
+    executor.active.set(task.runId, {
+      abort,
+      thread: undefined,
+      codex: { close: async () => {} },
+    });
+    let resolveApproval!: (value: { decision: string }) => void;
+    const approval = new Promise<{ decision: string }>((resolve) => {
+      resolveApproval = resolve;
+    });
+    const timer = setTimeout(
+      () => resolveApproval({ decision: "timeout" }),
+      60000,
+    );
+    t.after(() => clearTimeout(timer));
+    executor.approvals.set("approval", {
+      runId: task.runId,
+      method: "execute",
+      params: {},
+      timer,
+      resolve: resolveApproval,
+    });
+    let finished = false;
+    executor.running.set(
+      task.runId,
+      approval.then((value) => {
+        assert.equal(abort.signal.aborted, true);
+        assert.equal(value.decision, "decline");
+        executor.report(run);
+        finished = true;
+      }),
+    );
+    await executor.receive(
+      { v: 1, type: "task.purge", id: "purge-active", taskId: task.id },
+      [],
+      false,
+      0,
+    );
+    assert.equal(finished, true);
+    assert.equal(executor.approvals.size, 0);
+    assert.equal(executor.runs[task.runId], undefined);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["ack"],
+    );
+    const restarted = new Executor(directory, () => {});
+    await restarted.load();
+    assert.equal(restarted.deletedTasks[task.id], true);
+    assert.equal(restarted.runs[task.runId], undefined);
+  },
+);

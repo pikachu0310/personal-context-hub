@@ -19,6 +19,7 @@ import { Projects } from "../src/processing/projects/service.js";
 import { Engine } from "../src/bootstrap/engine.js";
 import type { Message } from "../src/domain/models.js";
 import { wrapPcmAsWav } from "../src/input/audio/signal.mjs";
+import type { TaskApplication } from "../src/processing/coordinator/traces.js";
 
 const silent = (): CoordinatorResponse => ({
   reply: null,
@@ -302,7 +303,332 @@ async function fixture(t: TestContext) {
   };
 }
 
-test("InputRouter keeps transcripts separate from Markdown minutes and the main thread receives only new messages", async (t) => {
+test("successive weather and access requests correct historical source IDs and retain every model decision after restart", async (t) => {
+  const f = await fixture(t);
+  let previous: string[] = [];
+  const titles = [
+    "明日の天気を調べる",
+    "今日の天気を調べる",
+    "駅から会場へのアクセスを調べる",
+  ];
+  for (const title of titles) {
+    f.respond((observation) => {
+      const response = taskResponse(observation);
+      response.tasks[0].title = title;
+      if (previous.length && !observation.taskValidation)
+        response.tasks[0].sourceIds = previous;
+      if (observation.taskValidation) {
+        assert.deepEqual(
+          observation.taskValidation.allowedSourceIds,
+          sourceIds(observation),
+        );
+        assert.equal(
+          observation.taskValidation.rejectedTasks[0].reason,
+          "source_outside_current_batch",
+        );
+        assert.deepEqual(
+          observation.taskValidation.rejectedTasks[0].task.sourceIds,
+          previous,
+        );
+      }
+      return response;
+    });
+    await f.input({
+      text: `${title}依頼です。調べてください`,
+      interaction: true,
+    });
+    await f.idle();
+    previous = sourceIds(f.calls.at(-1)!.observation);
+  }
+  assert.deepEqual(
+    f.tasks().map((task) => task.title),
+    titles,
+  );
+  assert.equal(f.calls.length, 5);
+  assert.equal(f.delivered.length, 3);
+  assert.ok(
+    f
+      .tasks()
+      .every((task) => task.executionPolicy?.sandboxMode === "read-only"),
+  );
+  assert.equal(new Set(f.tasks().flatMap((task) => task.sourceIds!)).size, 3);
+  const traces = f.engine.store.list<any>("coordinator-trace");
+  assert.equal(traces.filter((trace) => trace.kind === "run").length, 5);
+  const applications = traces.filter(
+    (trace): trace is TaskApplication => trace.kind === "application",
+  );
+  assert.equal(applications.length, 3);
+  assert.deepEqual(
+    applications.map((entry) => entry.decisions[0].reason),
+    ["accepted", "accepted", "accepted"],
+  );
+  assert.equal(
+    applications.filter((entry) => entry.repair?.status === "completed").length,
+    2,
+  );
+  await f.restart();
+  assert.deepEqual(f.engine.store.list("coordinator-trace"), traces);
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.calls.length, 5);
+  assert.equal(f.tasks().length, 3);
+});
+
+test("one failed source correction produces a current-request receipt and does not execute history", async (t) => {
+  for (const corrected of ["invalid", "empty", "error"] as const) {
+    await t.test(corrected, async (t) => {
+      const f = await fixture(t);
+      f.respond((observation) => {
+        if (observation.taskValidation) {
+          if (corrected === "empty") return silent();
+          if (corrected === "error") throw new Error("private-provider-secret");
+        }
+        const response = taskResponse(observation);
+        response.tasks[0].sourceIds = ["historical-source"];
+        response.reply = {
+          text: "作業を開始しました",
+          reason: "direct_answer",
+          sourceIds: sourceIds(observation),
+        };
+        return response;
+      });
+      await f.input({ text: "今日の天気を調べて", interaction: true });
+      await f.idle();
+      await f.core.flush("meeting");
+      await f.idle();
+      assert.equal(f.calls.length, 2);
+      assert.equal(f.tasks().length, 0);
+      assert.equal(f.delivered.length, 1);
+      assert.match(JSON.stringify(f.delivered), /開始・変更していません/);
+      assert.doesNotMatch(JSON.stringify(f.delivered), /作業を開始しました/);
+      assert.doesNotMatch(
+        JSON.stringify(f.engine.store.list("coordinator-trace")),
+        /private-provider-secret/,
+      );
+      const application = f.engine.store
+        .list<TaskApplication>("coordinator-trace")
+        .find((entry) => entry.kind === "application")!;
+      assert.equal(
+        application.rejections[0].reason,
+        "source_outside_current_batch",
+      );
+      assert.ok(application.completedAt);
+    });
+  }
+});
+
+test("correction preserves valid sibling proposals and rechecks permissions before submission", async (t) => {
+  const f = await fixture(t);
+  const ctx = f.context();
+  f.respond((observation) => {
+    if (observation.taskValidation) {
+      ctx.access.valid = false;
+      return taskResponse(observation);
+    }
+    const response = taskResponse(observation);
+    response.tasks.push({
+      ...response.tasks[0],
+      title: "別の調査",
+      sourceIds: ["past"],
+    });
+    return response;
+  });
+  await f.input(
+    { text: "天気とアクセスを調べて", interaction: true },
+    ctx.value,
+  );
+  await f.idle();
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.tasks().length, 0);
+  const application = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .find((entry) => entry.kind === "application")!;
+  assert.deepEqual(
+    application.decisions.map((entry) => entry.reason),
+    ["inactive_source", "inactive_source"],
+  );
+});
+
+test("valid sibling task survives an uncorrectable proposal and silent responses remain logged", async (t) => {
+  const f = await fixture(t);
+  await f.input({ text: "こんにちは", interaction: true });
+  await f.idle();
+  f.respond((observation) => {
+    if (observation.taskValidation) return silent();
+    const response = taskResponse(observation);
+    response.tasks.push({
+      ...response.tasks[0],
+      title: "過去の別の調査",
+      sourceIds: ["past"],
+    });
+    return response;
+  });
+  await f.input({ text: "今日の天気を調べて", interaction: true });
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.calls.length, 3);
+  const applications = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .filter((entry) => entry.kind === "application");
+  assert.deepEqual(applications[0].initialResponse.tasks, []);
+  assert.ok(applications[0].completedAt);
+  assert.equal(applications[1].decisions[0].reason, "accepted");
+});
+
+test("one current request can create distinct outcomes while an exact repeated task is rejected with a reason", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => {
+    const response = taskResponse(observation);
+    response.tasks[0].title = "今日の天気";
+    response.tasks.push({ ...response.tasks[0], title: "会場へのアクセス" });
+    return response;
+  });
+  await f.input({
+    text: "今日の天気と会場へのアクセスを調べて",
+    interaction: true,
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 2);
+  assert.deepEqual(f.tasks()[0].sourceIds, f.tasks()[1].sourceIds);
+  await f.input({
+    text: "今日の天気と会場へのアクセスを調べて",
+    interaction: true,
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 2);
+  const last = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .filter((entry) => entry.kind === "application")
+    .at(-1)!;
+  assert.deepEqual(
+    last.decisions.map((entry) => entry.reason),
+    ["duplicate_task", "duplicate_task"],
+  );
+});
+
+test("saved source corrections are reused after authentication and uncertain corrections are never resent", async (t) => {
+  for (const status of ["completed", "sending"] as const) {
+    await t.test(status, async (t) => {
+      const f = await fixture(t);
+      f.respond((observation) => {
+        const response = taskResponse(observation);
+        if (!observation.taskValidation) response.tasks[0].sourceIds = ["past"];
+        return response;
+      });
+      f.core.options.work.submit = () => {
+        throw new Error("UNAVAILABLE");
+      };
+      await f.input({ text: "ソースを調べて", interaction: true });
+      await f.idle();
+      assert.equal(f.calls.length, 2);
+      const application = f.engine.store
+        .list<TaskApplication>("coordinator-trace")
+        .find((entry) => entry.kind === "application")!;
+      assert.equal(application.repair?.status, "completed");
+      if (status === "sending") {
+        application.repair = { status: "sending" };
+        f.engine.store.put("coordinator-trace", application.id, application);
+      }
+      await f.restart();
+      await f.core.flush("meeting");
+      await f.idle();
+      assert.equal(f.tasks().length, 0);
+      await f.core.resume("meeting", f.context().value, application.sourceIds);
+      await f.idle();
+      assert.equal(f.calls.length, 2);
+      assert.equal(f.tasks().length, status === "completed" ? 1 : 0);
+      assert.equal(f.delivered.length, 1);
+    });
+  }
+});
+
+test("partially applied batches resume without duplicate tasks or announcements and keep accepted decisions", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => {
+    const response = taskResponse(observation);
+    response.tasks.push({ ...response.tasks[0], title: "別のアクセス調査" });
+    return response;
+  });
+  const work = f.core.options.work;
+  const submit = work.submit.bind(work);
+  work.submit = (request) => {
+    if (request.title === "別のアクセス調査") throw new Error("UNAVAILABLE");
+    return submit(request);
+  };
+  await f.input({ text: "今日の天気とアクセスを調べて", interaction: true });
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.delivered.length, 1);
+  await f.restart();
+  await f.core.resume(
+    "meeting",
+    f.context().value,
+    sourceIds(f.calls[0].observation),
+  );
+  await f.idle();
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.tasks().length, 2);
+  assert.equal(f.delivered.length, 2);
+  const application = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .find((entry) => entry.kind === "application")!;
+  assert.deepEqual(
+    application.decisions.map((entry) => entry.reason),
+    ["accepted", "accepted"],
+  );
+});
+
+test("coordinator trace pages are admin-only, project scoped and do not change ordinary output logs", async (t) => {
+  const f = await fixture(t);
+  const admin = f.engine.store.createUser(
+    "trace-admin",
+    "fixture-password",
+    "admin",
+  );
+  const viewer = f.engine.store.createUser(
+    "trace-viewer",
+    "fixture-password",
+    "viewer",
+  );
+  for (let i = 0; i < 25; i++)
+    f.engine.store.put("coordinator-trace", `trace-${i}`, {
+      id: `trace-${i}`,
+      projectId: "project",
+      meetingId: "meeting",
+      kind: "run",
+    });
+  f.engine.store.put("coordinator-trace", "foreign", {
+    id: "foreign",
+    projectId: "foreign",
+    meetingId: "foreign",
+  });
+  const query = (input: Record<string, unknown>, actor = admin) =>
+    f.engine.workspace.request(
+      "conversation/log",
+      { meetingId: "meeting", ...input },
+      { ...f.context().value, actor },
+    );
+  await assert.rejects(
+    query({ kind: "coordinator" }, viewer),
+    /PERMISSION_DENIED/,
+  );
+  const first = (await query({ kind: "coordinator" })) as any;
+  assert.equal(first.entries.length, 20);
+  assert.equal(first.entries[0].id, "trace-24");
+  const next = (await query({
+    kind: "coordinator",
+    before: first.nextBefore,
+  })) as any;
+  assert.equal(next.entries.length, 5);
+  assert.equal(next.nextBefore, undefined);
+  assert.deepEqual(await query({}), []);
+  await assert.rejects(
+    query({ kind: "coordinator", before: "foreign" }),
+    /INVALID_CURSOR/,
+  );
+});
+
+test("InputRouter keeps raw statements separate from minutes and one main thread receives only new messages", async (t) => {
   const f = await fixture(t);
   await f.input({ text: "前提の一つ目", eventId: "first" });
   assert.equal(f.calls.length, 0);
@@ -325,8 +651,137 @@ test("InputRouter keeps transcripts separate from Markdown minutes and the main 
   );
   await f.engine.conversation.document.refresh("meeting");
   const meeting = f.engine.store.get<any>("meeting", "meeting");
-  assert.match(meeting.summary, /話者A.*前提の一つ目/);
-  assert.match(meeting.summary, /話者B.*前提の二つ目/);
+  assert.equal(meeting.summary, "- 話者A: 前提の一つ目\n- 話者B: 前提の二つ目");
+  assert.equal(meeting.summaryRevision, 2);
+  assert.deepEqual(
+    meeting.messages.map((message: Message) => [
+      message.authorName,
+      message.text,
+    ]),
+    [
+      ["話者A", "前提の一つ目"],
+      ["話者B", "前提の二つ目"],
+    ],
+  );
+  assert.equal(f.tasks().length, 0);
+});
+
+test("a polite spoken request creates work and immediately acknowledges the actual accepted task", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => taskResponse(observation, "implementation"));
+  await f.input({
+    text: "井戸Bot、検索画面のモックを作ってくれるかな？",
+    priority: "immediate",
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.tasks()[0].trigger, "requested");
+  assert.equal(
+    f.delivered.filter(
+      (output) =>
+        output.kind === "reply" && output.content?.includes("受け付けました"),
+    ).length,
+    1,
+  );
+});
+
+test("unaddressed concrete opportunities create bounded work, repeated discussion does not proliferate, and explicit requests bypass automatic cooldown", async (t) => {
+  const f = await fixture(t);
+  let title = "検索画面の比較モック";
+  f.respond((observation) => ({
+    ...silent(),
+    tasks: [{ ...taskResponse(observation, "implementation").tasks[0], title }],
+  }));
+  await f.input({
+    text: "検索画面は小さな比較モックがあると判断しやすいね。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.tasks()[0].trigger, "proactive");
+  await f.input({
+    text: "そうだね、検索画面の比較モックで見たい。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  title = "音声接続の遅延調査";
+  await f.input({
+    text: "音声接続の遅延も原因を調査できるといいね。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  await f.input({
+    text: "井戸Bot、音声接続の遅延の原因を調べてください。",
+    priority: "immediate",
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 2);
+  assert.equal(f.tasks()[1].trigger, "requested");
+});
+
+test("a requested outcome can cite a teammate's relevant statement without attributing the request to that teammate", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => taskResponse(observation, "implementation"));
+  await f.input({
+    text: "検索は一覧から絞り込むモックにしたい。",
+    priority: "normal",
+  });
+  await f.input(
+    { text: "井戸Bot、その検索モックを作ってください。", priority: "normal" },
+    f.context("speaker-b").value,
+  );
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.tasks()[0].authorId, "speaker-b");
+  assert.equal(f.tasks()[0].sourceStatements?.length, 2);
+});
+
+test("automatic topic minutes are published and keep raw speaker statements as citations", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => ({
+    ...silent(),
+    minutes: [
+      {
+        meetingId: "meeting",
+        topics: [
+          {
+            id: null,
+            title: "検索方式",
+            summary: "一覧から絞り込む方式を採用する。速度は未確認。",
+            decisions: ["一覧から絞り込む"],
+            openQuestions: ["検索速度"],
+            sourceIds: sourceIds(observation),
+          },
+        ],
+      },
+    ],
+  }));
+  await f.input({
+    text: "一覧からの絞り込みに決定。検索速度は後で測ろう。",
+    priority: "normal",
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  const meeting = f.engine.store.get<any>("meeting", "meeting");
+  assert.equal(meeting.knowledge.topics.length, 1);
+  assert.equal(meeting.knowledge.topics[0].sourceIds[0], f.messages()[0].id);
+  assert.equal(
+    f.messages()[0].text,
+    "一覧からの絞り込みに決定。検索速度は後で測ろう。",
+  );
+  assert.ok(
+    f.publications.some(
+      (event) =>
+        event.type === "minutes" &&
+        (event.data as any).knowledge?.topics.length,
+    ),
+  );
   assert.equal(f.tasks().length, 0);
 });
 
@@ -424,10 +879,32 @@ for (const liveMode of [false, true])
     );
     assert.deepEqual(
       f.speech,
-      liveMode ? [] : ["確認できた結果を説明します。"],
+      liveMode
+        ? []
+        : [
+            "タスク「対象の調査」を受け付けました。実行先の空き・許可を待っています。",
+            "確認できた結果を説明します。",
+          ],
     );
-    if (liveMode)
-      assert.deepEqual(f.live[0].comments, ["確認できた結果を説明します。"]);
+    if (liveMode) {
+      await until(() =>
+        f.live.some((session) =>
+          session.comments.includes("確認できた結果を説明します。"),
+        ),
+      );
+      assert.deepEqual(
+        f.live.flatMap((session) => session.comments),
+        [
+          "タスク「対象の調査」を受け付けました。実行先の空き・許可を待っています。",
+          "確認できた結果を説明します。",
+        ],
+      );
+      assert.equal(
+        f.live[0].closed,
+        true,
+        "new reply fences the prior Live output",
+      );
+    }
     f.engine.flush();
     await f.core.flush("meeting");
     assert.equal(f.calls.length, 2);
@@ -557,6 +1034,44 @@ test("hypothetical requests, viewer speech and incomplete capture never become w
   assert.equal(f.messages().at(-1)?.authorId, "speaker-a");
 });
 
+test("Discord route carries execution membership through explicit and model-created tasks and controls", async (t) => {
+  const f = await fixture(t);
+  const context = { ...f.context().value, pluginId: "discord" };
+  await f.input(
+    { text: "画面を実装して", command: "task", priority: "immediate" },
+    context,
+  );
+  await f.idle();
+  const explicit = f.tasks()[0];
+  assert.equal(explicit.participantPolicy, "execution");
+  assert.deepEqual(explicit.memberStates, {});
+  await f.input(
+    {
+      text: "青色に変更して",
+      command: "steer",
+      taskId: explicit.id,
+      priority: "immediate",
+    },
+    context,
+  );
+  await f.idle();
+  assert.equal(f.tasks()[0].queuedInstructions?.[0].sender?.id, "idobot");
+  assert.deepEqual(f.tasks()[0].memberStates, {});
+  f.engine.store.put("task", explicit.id, {
+    ...f.tasks()[0],
+    state: "completed",
+  });
+  f.respond((observation) => taskResponse(observation));
+  await f.input(
+    { text: "井戸Bot、別の機能を調査してください", priority: "immediate" },
+    context,
+  );
+  await until(() => f.tasks().length === 2);
+  await f.idle();
+  assert.equal(f.tasks()[1].participantPolicy, "execution");
+  assert.deepEqual(f.tasks()[1].memberStates, {});
+});
+
 test("model-suggested controls require an explicit permitted control source", async (t) => {
   const f = await fixture(t);
   const task = f.engine.tasks.createTask({
@@ -606,6 +1121,75 @@ test("a natural implementation request uses its actual actor and project rather 
   assert.equal(f.tasks()[0].kind, "implementation");
 });
 
+test("teammates can steer and stop a unique mock before the main model responds", async (t) => {
+  const f = await fixture(t);
+  f.respond(() => undefined);
+  const task = f.engine.tasks.createTask({
+    authorId: "speaker-a",
+    projectId: "project",
+    meetingId: "meeting",
+    requestId: "mock",
+    title: "検索画面のモック",
+    text: "検索画面を作る",
+    network: false,
+  });
+  await f.input(
+    { text: "そのモックを青にして", priority: "normal" },
+    f.context("speaker-b").value,
+  );
+  assert.match(f.tasks()[0].text, /青にして/u);
+  assert.equal(f.tasks()[0].controlVersion, 1);
+  assert.ok(
+    f.delivered.some(
+      (output) =>
+        output.kind === "reply" &&
+        /追加指示を受け付け/u.test(output.content ?? ""),
+    ),
+  );
+  await f.input(
+    { text: "そのモックを止めて", priority: "normal" },
+    f.context("speaker-b").value,
+  );
+  assert.equal(f.tasks()[0].id, task.id);
+  assert.equal(f.tasks()[0].state, "cancelled");
+  assert.equal(f.calls.length, 0);
+  assert.ok(
+    f.delivered.some(
+      (output) =>
+        output.kind === "reply" && /停止しました/u.test(output.content ?? ""),
+    ),
+  );
+});
+
+test("ambiguous or quoted controls do not choose an arbitrary task", async (t) => {
+  const f = await fixture(t);
+  for (const requestId of ["one", "two"])
+    f.engine.tasks.createTask({
+      authorId: "speaker-a",
+      projectId: "project",
+      meetingId: "meeting",
+      requestId,
+      title: `${requestId}のモック`,
+      text: requestId,
+      network: false,
+    });
+  await f.input({ text: "そのモックを止めて", priority: "normal" });
+  await f.input({
+    text: "「そのモックを止めて」という文例です",
+    priority: "normal",
+  });
+  assert.ok(
+    f
+      .tasks()
+      .every((task) => task.state === "queued" && task.controlVersion === 0),
+  );
+  assert.ok(
+    f.delivered.some(
+      (output) => output.kind === "reply" && /複数/u.test(output.content ?? ""),
+    ),
+  );
+});
+
 for (const mismatch of ["target", "operation"] as const)
   test(`a natural stop request cannot authorize a model-changed ${mismatch}`, async (t) => {
     const f = await fixture(t);
@@ -635,10 +1219,21 @@ for (const mismatch of ["target", "operation"] as const)
     });
     await until(() => f.calls.length === 1);
     await f.idle();
-    assert.ok(
-      f
-        .tasks()
-        .every((task) => task.state === "queued" && task.controlVersion === 0),
+    assert.equal(
+      f.tasks().find((task) => task.id === first.id)?.state,
+      "cancelled",
+    );
+    assert.equal(
+      f.tasks().find((task) => task.id === first.id)?.controlVersion,
+      1,
+    );
+    assert.equal(
+      f.tasks().find((task) => task.id === second.id)?.state,
+      "queued",
+    );
+    assert.equal(
+      f.tasks().find((task) => task.id === second.id)?.controlVersion,
+      0,
     );
   });
 
@@ -1282,6 +1877,128 @@ test("Dashboard can explicitly queue an otherwise direct chat input as normal pr
   assert.equal(f.calls.length, 1);
 });
 
+test("uncaptured blank STT results leave no messages or model work", async (t) => {
+  const f = await fixture(t);
+  const results = ["", " ", "　", "\t", "\r\n", " \t　\n"];
+  let count = 0;
+  f.transcribe(async () => results[count++]);
+  for (let index = 0; index < results.length; index++) {
+    const event = { eventId: `blank-${index}`, audio: audio() };
+    await f.input(event);
+    await f.input(event);
+    assert.equal(count, index + 1);
+    const input = f.engine.store.get<any>("input", `fixture:${event.eventId}`);
+    assert.equal(input.stage, "ignored");
+    assert.equal(input.messageId, undefined);
+    assert.deepEqual(f.messages(), []);
+  }
+  await f.core.flush("meeting");
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(f.tasks(), []);
+  assert.deepEqual(f.delivered, []);
+  assert.deepEqual(f.engine.store.diagnostics(), []);
+  assert.ok(
+    f.publications.every((event) => (event.data as any).messages.length === 0),
+  );
+  await f.restart();
+  for (let index = 0; index < results.length; index++)
+    await f.input({ eventId: `blank-${index}`, audio: audio() });
+  assert.equal(count, results.length);
+  assert.deepEqual(f.messages(), []);
+});
+
+for (const order of [
+  [0, 1, 2, 3, 4],
+  [4, 2, 3, 0, 1],
+])
+  test(`blank leading, middle and final segments preserve speech when STT finishes in order ${order}`, async (t) => {
+    const f = await fixture(t);
+    const results = ["　", " はい ", "\n\t", "二つ目の発言", ""];
+    const gates = results.map(() => deferred<string>());
+    let count = 0;
+    f.transcribe(() => gates[count++].promise);
+    const events: Partial<ConversationInput>[] = results.map((_, index) => ({
+      eventId: `piece-${index}`,
+      audio: audio(),
+      command: "ask",
+      capture: {
+        sessionId: "voice",
+        utteranceId: "with-gaps",
+        segmentIndex: index,
+        startedAt: 100 + index * 100,
+        endedAt: 200 + index * 100,
+        final: index === results.length - 1,
+        complete: index === results.length - 1,
+      },
+    }));
+    const pending = events.map((event) => f.input(event));
+    await until(() => count === results.length);
+    const ignoredIds = [0, 2, 4].map(
+      (index) =>
+        f.engine.store.get<any>("input", `fixture:piece-${index}`).messageId,
+    );
+    for (const [position, index] of order.entries()) {
+      gates[index].resolve(results[index]);
+      await pending[index];
+      if (position < order.length - 1) assert.equal(f.calls.length, 0);
+    }
+    await until(() => f.calls.length === 1);
+    await f.idle();
+    const messages = f.messages();
+    assert.deepEqual(
+      messages.map((message) => message.text),
+      [results[1], results[3]],
+    );
+    assert.deepEqual(
+      messages.map((message) => message.at),
+      [200, 400],
+    );
+    assert.deepEqual(
+      messages.map((message) => message.capture?.segmentIndex),
+      [1, 3],
+    );
+    assert.ok(
+      messages.every(
+        (message) =>
+          message.authorId === "speaker-a" && message.stage === "completed",
+      ),
+    );
+    const source = f.calls[0].observation.events[0];
+    assert.equal(source.type, "message");
+    if (source.type === "message") {
+      assert.equal(source.source.text, `${results[1]}\n${results[3]}`);
+      assert.equal(source.source.complete, true);
+      assert.equal(source.source.at, 200);
+      assert.equal(source.source.authorId, "speaker-a");
+      assert.deepEqual(
+        f.engine.store.get<any>("speech-sources", source.source.id).partIds,
+        messages.map((message) => message.id),
+      );
+    }
+    for (const index of [0, 2, 4]) {
+      const input = f.engine.store.get<any>("input", `fixture:piece-${index}`);
+      assert.equal(input.stage, "ignored");
+      assert.equal(input.messageId, undefined);
+    }
+    for (const id of ignoredIds)
+      assert.equal(f.engine.store.get("message", id), undefined);
+    assert.deepEqual(f.engine.store.list("speech-assembly"), []);
+    const lastTranscript = f.publications
+      .filter((event) => event.type === "transcript")
+      .at(-1)!;
+    assert.deepEqual(
+      (lastTranscript.data as any).messages.map(
+        (message: Message) => message.text,
+      ),
+      [results[1], results[3]],
+    );
+    for (const event of events) await f.input(event);
+    await f.core.flush("meeting");
+    assert.equal(count, results.length);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.messages().length, 2);
+  });
+
 test("an empty final STT piece completes the earlier recognized utterance exactly once", async (t) => {
   const f = await fixture(t);
   let count = 0;
@@ -1327,6 +2044,15 @@ test("an empty final STT piece completes the earlier recognized utterance exactl
     assert.equal(event.source.complete, true);
   }
   assert.equal(f.engine.store.list("speech-assembly").length, 0);
+  assert.equal(f.messages().length, 1);
+  assert.equal(
+    f.engine.store.get<any>("input", "fixture:empty-final").stage,
+    "ignored",
+  );
+  assert.equal(
+    f.engine.store.get<any>("input", "fixture:empty-final").messageId,
+    undefined,
+  );
   await f.core.flush("meeting");
   assert.equal(f.calls.length, 1);
 });
@@ -1354,10 +2080,13 @@ test("an all-silent captured utterance clears assembly without invoking the main
   assert.equal(f.calls.length, 0);
   assert.equal(f.tasks().length, 0);
   assert.equal(f.engine.store.list("speech-assembly").length, 0);
+  assert.deepEqual(f.messages(), []);
+  for (const input of f.engine.store.list<any>("input")) {
+    assert.equal(input.stage, "ignored");
+    assert.equal(input.messageId, undefined);
+  }
   assert.ok(
-    f
-      .messages()
-      .every((message) => message.text === "" && message.stage === "ignored"),
+    f.publications.every((event) => (event.data as any).messages.length === 0),
   );
 });
 
@@ -1468,4 +2197,87 @@ test("minutes rollover preserves the project model, recent context and original 
     f.calls.at(-1)!.observation.context!,
     /前提を覚えてください/,
   );
+});
+
+test("speech review uses the main inbox immediately, cannot grant work, and is not restored", async (t) => {
+  const f = await fixture(t);
+  await f.input({
+    audio: audio(),
+    capture: {
+      sessionId: "voice",
+      utteranceId: "question",
+      segmentIndex: 0,
+      startedAt: 100,
+      complete: true,
+      final: true,
+    },
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  const message = f.messages().find((message) => message.role === "user")!;
+  const manager = f.core.session("meeting").audio;
+  manager.turns.offer({
+    text: "元の長い回答",
+    sourceIds: [message.id],
+    targets: [],
+    provider: "text-speech",
+  });
+  f.respond((observation) => {
+    const event = observation.events.find(
+      (event) => event.type === "speech_review",
+    );
+    if (!event) return silent();
+    return {
+      ...silent(),
+      speech: {
+        candidateId: event.review.candidateId,
+        revision: event.review.revision,
+        action: "replace",
+        text: "必要な要点だけです",
+      },
+      // A speech review must not grant authority using historical source IDs.
+      tasks: [
+        {
+          title: "unauthorized",
+          kind: "implementation",
+          sourceIds: [message.id],
+          acceptanceCriteria: [],
+        },
+      ],
+      reply: {
+        text: "重複する回答",
+        reason: "new_finding",
+        sourceIds: [message.id],
+      },
+    };
+  });
+  const before = f.calls.length;
+  await manager.turns.interrupt();
+  await until(() => f.speech.length === 1);
+  await f.idle();
+  assert.equal(
+    f.calls.length,
+    before + 1,
+    "does not wait for the normal 60s test observation interval",
+  );
+  assert.equal(
+    f.factories.length,
+    1,
+    "uses the same conversation model runtime",
+  );
+  assert.deepEqual(f.speech, ["必要な要点だけです"]);
+  assert.equal(f.tasks().length, 0);
+  assert.equal(
+    f.delivered.filter((output) => output.kind === "audio").length,
+    1,
+  );
+  const saved = f.engine.store.get<any>("coordinator", "meeting");
+  assert.equal(
+    JSON.stringify(saved.inbox.pending).includes("speech_review"),
+    false,
+  );
+  await f.restart();
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.speech.length, 1);
 });

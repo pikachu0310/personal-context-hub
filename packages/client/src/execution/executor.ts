@@ -23,6 +23,7 @@ import type { AgentKind } from "../agents/types.js";
 import { ClaudeRuntime } from "../agents/claude.js";
 import {
   normalizeExecutionPolicy,
+  type AccessMode,
   restrictExecutionPolicy,
   type ExecutionPolicy,
   type ClientControlReceipt,
@@ -42,6 +43,7 @@ export interface Run {
   requestAt?: number;
   contextSources?: TaskContextSource[];
   boardToolsEnabled?: boolean;
+  knowledgeToolsEnabled?: boolean;
   model?: string;
   reasoningEffort?: string;
   agent?: AgentKind;
@@ -57,7 +59,7 @@ export interface Run {
     status?: "pending" | "synced" | "error";
     error?: string;
   };
-  accessMode?: "full" | "approval";
+  accessMode?: AccessMode;
   progressMode?: "auto" | "manual";
   pendingProgressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
@@ -81,6 +83,10 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
+  knowledge?: (
+    task: Task,
+    input: import("@ido/common/contracts/knowledge").KnowledgeQuery,
+  ) => Promise<import("@ido/common/contracts/knowledge").KnowledgePage>;
   contextProfile: () => { name: string; context: string } | undefined = () =>
     undefined;
   readonly board: TaskBoardConnection;
@@ -148,7 +154,7 @@ export class Executor {
     slots: number,
     local?: {
       discordShare?: Run["discordShare"];
-      accessMode?: "full" | "approval";
+      accessMode?: AccessMode;
       progressMode: "auto" | "manual";
       agent?: AgentKind;
       model?: string;
@@ -276,6 +282,7 @@ export class Executor {
         directory,
         threadId: previous?.threadId,
         boardToolsEnabled: previous?.boardToolsEnabled,
+        knowledgeToolsEnabled: previous?.knowledgeToolsEnabled,
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],
         instructions: structuredClone(previous?.instructions ?? []),

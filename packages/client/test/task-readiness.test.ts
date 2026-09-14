@@ -59,3 +59,16 @@ test("queue guidance distinguishes missing directory, Codex, network and occupie
     "connection",
   );
 });
+
+test("readiness uses effective access mode networking without changing the sandbox default", () => {
+  const state = fixture();
+  state.allowedProjectIds = ["project"];
+  for (const accessMode of ["full", "approval", "sandbox"] as const) {
+    state.settings.mappings[0].accessMode = accessMode;
+    assert.equal(
+      taskReadiness(state, { projectId: "project", network: true }).reason,
+      accessMode === "sandbox" ? "network" : "ready",
+    );
+    assert.equal(state.settings.mappings[0].network, false);
+  }
+});

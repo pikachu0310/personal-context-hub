@@ -39,6 +39,7 @@ export function normalizeInput(
     audioFrame: event.audioFrame as ConversationInput["audioFrame"],
     activity: event.activity as ConversationInput["activity"],
     capture,
+    silenceMs: event.silenceMs as number | undefined,
     priority: event.priority as ConversationInput["priority"],
     conversationMode:
       event.conversationMode as ConversationInput["conversationMode"],
@@ -53,6 +54,7 @@ export function normalizeInput(
       channelId: forumTask ? event.channelId : config.textChannelId,
       interaction: Boolean(event.interaction),
       speechEpoch: event.speechEpoch,
+      playbackRevision: event.playbackRevision,
       audioSessionId: capture?.sessionId ?? audioSessionId,
     },
   };

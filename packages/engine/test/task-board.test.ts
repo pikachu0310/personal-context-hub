@@ -148,6 +148,59 @@ test("bounded thread and post reads retain full Unicode text and incremental his
   assert.throws(() => board.post(a, { body: "x".repeat(16001) }, "long"));
 });
 
+test("empty search and null optional read fields behave like omitted arguments", async (t) => {
+  const { board, a, b } = await fixture(t);
+  board.post(a, { body: "API discussion" }, "a");
+  board.post(b, { body: "UI discussion" }, "b");
+  const omitted = {
+    taskId: null,
+    includeFinished: null,
+    id: null,
+    offset: null,
+    after: null,
+    limit: null,
+    query: null,
+    replyTo: null,
+  };
+  for (const query of [undefined, null, "", "  \n\t"]) {
+    assert.deepEqual(board.read(a, { query }), board.read(a));
+    assert.deepEqual(board.read(a, { ...omitted, query }), board.read(a));
+    assert.deepEqual(
+      board.read(a, { ...omitted, taskId: b.id, query }),
+      board.read(a, { taskId: b.id }),
+    );
+  }
+  assert.deepEqual(
+    board.read(a, { ...omitted, taskId: b.id, id: 1 }),
+    board.read(a, { taskId: b.id, id: 1 }),
+  );
+  assert.equal((board.read(a, { query: "API" }) as any).threads.length, 1);
+});
+
+test("invalid reads identify the argument without silently dropping filters or bounds", async (t) => {
+  const { board, a } = await fixture(t);
+  for (const limit of [0, 11, -1, 1.5, "10"])
+    assert.throws(() => board.read(a, { limit }), /INVALID_BOARD_LIMIT.*limit/);
+  for (const query of [false, 123, {}, "x".repeat(201)])
+    assert.throws(() => board.read(a, { query }), /INVALID_BOARD_QUERY.*query/);
+  assert.throws(
+    () => board.read(a, { offset: -1 }),
+    /INVALID_BOARD_OFFSET.*offset/,
+  );
+  assert.throws(
+    () => board.read(a, { taskId: a.id, after: -1 }),
+    /INVALID_BOARD_AFTER.*after/,
+  );
+  assert.throws(
+    () => board.read(a, { includeFinished: "false" }),
+    /INVALID_BOARD_FILTER.*includeFinished/,
+  );
+  assert.throws(
+    () => board.post(a, { body: "" }, "empty"),
+    /INVALID_BOARD_TEXT/,
+  );
+});
+
 test("SQLite persists discussions, rejects changed retries and rolls back failed writes", async (t) => {
   const { board, store, directory, a } = await fixture(t);
   const first = board.post(a, { body: "原文" }, "retry");

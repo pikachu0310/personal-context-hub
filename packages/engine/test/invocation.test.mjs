@@ -17,6 +17,7 @@ test("vocatives tolerate fillers, greetings, repetition and bounded ASR aliases"
     "井戸Bot教えて",
     "えーと、井戸Bot、結果は？",
     "あ、リドボット、何かしゃべって。",
+    "ビドボット、今話したボタンのモックを作ってくれるかな?",
     "移動、移動ボットを、接続を確認して。",
     "いど、イドボット、返事して。",
     "井戸Bot挨拶文のテキストファイルを作ってください。",
@@ -54,6 +55,7 @@ test("mentions, quotations, different addressees and unrelated words remain quie
     "「あ。井戸Bot、止めて",
     "あ、井戸Bot、返事してって言っても聞いてないね",
     "リドボットって認識されたね",
+    "ビドボットって認識されたね",
     "井戸Botを紹介して",
     "井戸Botに依頼したことを紹介する",
   ])

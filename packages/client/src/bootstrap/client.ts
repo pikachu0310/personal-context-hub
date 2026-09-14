@@ -28,6 +28,7 @@ import { ClientPreview } from "../preview/relay.js";
 import { checkAccount } from "../auth/account.js";
 import { workspaceRequest } from "../connection/workspace.js";
 import { createProject } from "../connection/projects.js";
+import { isUnrestrictedAccess } from "@ido/common/contracts/work";
 interface Settings {
   pendingPair?: { id: string; engineUrl: string; expires: number };
   identityId?: string;
@@ -130,11 +131,16 @@ export class Client {
       );
   }
   executionMappings() {
-    return this.settings.mappings.filter(
-      (m) =>
-        this.allowedProjects.has(m.projectId) &&
-        this.settings.projects.some((p) => p.id === m.projectId),
-    );
+    return this.settings.mappings
+      .filter(
+        (m) =>
+          this.allowedProjects.has(m.projectId) &&
+          this.settings.projects.some((p) => p.id === m.projectId),
+      )
+      .map((mapping) => ({
+        ...mapping,
+        network: isUnrestrictedAccess(mapping.accessMode) || mapping.network,
+      }));
   }
   projectBusy(projectId: string) {
     return (
@@ -178,6 +184,13 @@ export class Client {
   ) {
     this.credentials = new Credentials(directory, "ido-client");
     this.executor = new Executor(directory, (data) => this.emit(data));
+    this.executor.knowledge = (task, input) =>
+      this.workspaceRequest("task.knowledge", {
+        ...input,
+        taskId: task.id,
+        runId: task.runId,
+        revision: task.revision,
+      });
     this.executor.contextProfile = () => this.settings.profile;
     this.preview = new ClientPreview((data) => this.emit(data));
   }
@@ -187,6 +200,15 @@ export class Client {
       this.settings,
     );
     this.settings.profile ??= { name: "参加者", context: "" };
+    this.allowedProjects.clear();
+    for (const mapping of this.settings.mappings)
+      if (
+        mapping.executionAllowed === true &&
+        this.settings.projects.some(
+          (project) => project.id === mapping.projectId,
+        )
+      )
+        this.allowedProjects.add(mapping.projectId);
     await this.executor.load();
     if (this.settings.progressMode) {
       for (const mapping of this.settings.mappings)
@@ -232,6 +254,8 @@ export class Client {
   }
   private saving: Promise<void> = Promise.resolve();
   save() {
+    for (const mapping of this.settings.mappings)
+      mapping.executionAllowed = this.allowedProjects.has(mapping.projectId);
     const snapshot = structuredClone(this.settings);
     this.saving = this.saving
       .catch(() => {})

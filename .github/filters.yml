@@ -67,4 +67,5 @@ browser:
   - "scripts/ido*-browser-smoke.mjs"
   - "scripts/ido-dashboard-smoke.mjs"
   - "scripts/client-workspace-smoke.mjs"
+  - "scripts/client-access-smoke.mjs"
   - "examples/ido-preview/**"

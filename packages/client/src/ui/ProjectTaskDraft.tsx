@@ -1,9 +1,13 @@
 import { ModelControls } from "./ModelControls.js";
 import type { ProjectDraft } from "./project-drafts.js";
 import { useState } from "react";
-import type { Task } from "@ido/common/contracts/protocol";
+import type { Task, Mapping } from "@ido/common/contracts/protocol";
+import type { Action } from "@ido/common-ui";
+import { ComposerDropdown } from "./ComposerDropdown.js";
+import { accessOptions, accessHelp, projectAccessHelp } from "./access-mode.js";
 import { api } from "./api.js";
 import { ComposerAction } from "./ComposerAction.js";
+import newTaskMascot from "./assets/new-task-mascot.gif";
 export function ProjectTaskDraft({
   projectId,
   draft,
@@ -12,7 +16,11 @@ export function ProjectTaskDraft({
   settled,
   connected,
   created,
+  mapping,
+  action,
 }: {
+  mapping?: Mapping;
+  action: Action;
   projectId: string;
   draft: ProjectDraft;
   onChange: (text: string) => void;
@@ -21,7 +29,8 @@ export function ProjectTaskDraft({
   connected: boolean;
   created: (task: Task) => Promise<void>;
 }) {
-  const busy = draft.busy ?? false;
+  const [savingAccess, setSavingAccess] = useState(false);
+  const busy = !!draft.busy || savingAccess;
   const [error, setError] = useState("");
   const text = draft.text;
   async function send() {
@@ -50,8 +59,15 @@ export function ProjectTaskDraft({
   }
   return (
     <section className="task-workspace" aria-label="新しいタスク">
-      <div className="conversation-scroll">
+      <div className="conversation-scroll new-task-welcome">
         <div className="empty-workspace">
+          <img
+            className="new-task-mascot"
+            src={newTaskMascot}
+            alt=""
+            width={336}
+            height={336}
+          />
           <h2>新しいタスク</h2>
           <p>依頼を書いて送信すると、このプロジェクトに追加されます。</p>
         </div>
@@ -90,6 +106,23 @@ export function ProjectTaskDraft({
           />
           <div className="composer-toolbar">
             <ModelControls key={projectId} projectId={projectId} />
+            <ComposerDropdown
+              label="新しいタスクの権限"
+              value={mapping?.accessMode ?? "sandbox"}
+              options={accessOptions}
+              disabled={busy || !mapping}
+              onChange={async (accessMode) => {
+                setSavingAccess(true);
+                setError("");
+                try {
+                  await action("access-mode", { projectId, accessMode });
+                } catch (error) {
+                  setError((error as Error).message);
+                } finally {
+                  setSavingAccess(false);
+                }
+              }}
+            />
             <ComposerAction
               running={false}
               text={text}
@@ -98,6 +131,9 @@ export function ProjectTaskDraft({
             />
           </div>
         </form>
+        <p className="composer-footnote">
+          {projectAccessHelp} {accessHelp[mapping?.accessMode ?? "sandbox"]}
+        </p>
         <p className="composer-footnote">
           {connected
             ? "Enterで送信 · Shift + Enterで改行"

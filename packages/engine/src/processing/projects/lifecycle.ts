@@ -93,6 +93,11 @@ export class WorkspaceLifecycle {
       if (!task) throw new Error("TASK_NOT_FOUND");
       this.authorize(actor, task.projectId);
       if (!this.canDelete(actor, task)) throw new Error("PERMISSION_DENIED");
+      if (
+        input.force === true &&
+        (!("user" in actor) || this.store.user(actor.user.id)?.role !== "admin")
+      )
+        throw new Error("PERMISSION_DENIED");
       if (input.confirm !== true)
         throw new Error("DELETE_CONFIRMATION_REQUIRED");
       if (
@@ -101,7 +106,8 @@ export class WorkspaceLifecycle {
         input.membershipVersion !== (task.membershipVersion ?? 0)
       )
         throw new Error("WORKSPACE_CONFLICT");
-      if (taskBusy(task)) throw new Error("TASK_ACTIVE");
+      if (input.force !== true && taskBusy(task))
+        throw new Error("TASK_ACTIVE");
       return task;
     };
     const task = check();
@@ -139,7 +145,8 @@ export class WorkspaceLifecycle {
       const tasks = this.store
         .list<Task>("task")
         .filter((t) => t.projectId === projectId);
-      if (tasks.some(taskBusy)) throw new Error("PROJECT_TASKS_ACTIVE");
+      if (input.force !== true && tasks.some(taskBusy))
+        throw new Error("PROJECT_TASKS_ACTIVE");
       return tasks;
     };
     const tasks = check();
@@ -147,8 +154,8 @@ export class WorkspaceLifecycle {
       projectId,
       tasks.map((t) => t.id),
       () => {
-        check();
-        for (const task of tasks) this.purgeTask(task);
+        const current = check();
+        for (const task of current) this.purgeTask(task);
         const meetings = this.store
           .list<Meeting>("meeting")
           .filter((m) => m.projectId === projectId);
@@ -192,6 +199,7 @@ export class WorkspaceLifecycle {
               "utterance-route",
               "conversation-output",
               "coordinator",
+              "coordinator-trace",
               "coordinator-source-route",
               "speech-assembly",
               "speech-sources",
@@ -320,6 +328,17 @@ export class WorkspaceLifecycle {
       .filter((m) => m.projectId === projectId);
     const meetingIds = new Set(meetings.map((m) => m.id));
     for (const entry of this.store.entries()) {
+      // Model inputs/outputs contain free-form references to prior task content.
+      // Purge the project's traces when a task is completely deleted rather
+      // than trying to redact arbitrary text by matching identifiers.
+      if (
+        entry.kind === "coordinator-trace" &&
+        (entry.value?.projectId === projectId ||
+          meetingIds.has(entry.value?.meetingId))
+      ) {
+        this.store.remove(entry.kind, entry.id);
+        continue;
+      }
       if (
         entry.kind !== "conversation-output" ||
         !meetingIds.has(entry.value?.meetingId) ||
