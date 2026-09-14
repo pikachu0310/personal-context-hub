@@ -24,7 +24,7 @@ export function NewLocalTask({
 }) {
   const [directory, setDirectory] = useState(initialDirectory ?? "");
   const [detailsOpen, setDetailsOpen] = useState(!initialDirectory);
-  const [shareDiscord, setShareDiscord] = useState(true);
+  const [shareDiscord, setShareDiscord] = useState(projects.length > 0);
   const [shareProjectId, setShareProjectId] = useState(
     initialProjectId ?? projects[0]?.id ?? "",
   );

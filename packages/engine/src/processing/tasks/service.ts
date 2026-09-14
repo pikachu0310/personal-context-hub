@@ -25,6 +25,10 @@ type CreateTaskInput = { sourcePluginId?: string } & Pick<
     Pick<
       Task,
       | "createdByBot"
+      | "agent"
+      | "model"
+      | "reasoningEffort"
+      | "progressMode"
       | "trigger"
       | "title"
       | "kind"

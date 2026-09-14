@@ -1,4 +1,6 @@
 import { TaskFollowup } from "./TaskFollowup.js";
+import { TaskConversation } from "./TaskConversation.js";
+import { accessOptions } from "./access-mode.js";
 import type { TaskDetailRead } from "@ido/common/contracts/api";
 import { TaskOwner } from "./TaskOwner.js";
 import {
@@ -80,6 +82,7 @@ export function ClientRuns({
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [savingModel, setSavingModel] = useState(false);
   const [notice, setNotice] = useState("");
   const [tab, setTab] = useState<string | null>("environment");
   const [reveal, setReveal] = useState(0);
@@ -215,7 +218,7 @@ export function ClientRuns({
               state.allow))));
   async function submit() {
     const instruction = draft.trim();
-    if (!instruction || sending || !canSend) return;
+    if (!instruction || sending || savingModel || !canSend) return;
     if (request.current?.text !== instruction)
       request.current = {
         text: instruction,
@@ -453,6 +456,23 @@ export function ClientRuns({
                 )}
               </div>
             )}
+            {(!local || current.discordShare?.taskId) && (
+              <details className="shared-conversation-panel">
+                <summary>チームとの共有会話</summary>
+                <TaskConversation
+                  projectId={current.task.projectId}
+                  taskId={
+                    local ? current.discordShare?.taskId : current.task.id
+                  }
+                  connected={
+                    state.connected &&
+                    state.settings.projects.some(
+                      (p) => p.id === current.task.projectId,
+                    )
+                  }
+                />
+              </details>
+            )}
             {running && !waitingPlan && (
               <div className="working-indicator" role="status">
                 <span className="task-dot active" />
@@ -574,16 +594,15 @@ export function ClientRuns({
                   />
                   <ComposerDropdown
                     label="実行権限"
-                    value="current"
-                    options={[
-                      {
-                        value: "current",
-                        label: accessLabel,
-                      },
-                      { value: "settings", label: "接続・設定を開く" },
-                    ]}
+                    value={current.accessMode ?? "sandbox"}
+                    disabled={running || sending}
+                    options={accessOptions.filter(
+                      (option) =>
+                        current.agent !== "claude" ||
+                        option.value !== "sandbox",
+                    )}
                     onChange={(value) => {
-                      if (value === "settings") setup();
+                      invoke("access-mode", { runId, accessMode: value });
                     }}
                   />
                   <span className="composer-spacer" />
@@ -591,11 +610,12 @@ export function ClientRuns({
                     key={runId}
                     runId={runId}
                     agent={current.agent ?? "codex"}
+                    onBusyChange={setSavingModel}
                   />
                   <ComposerAction
                     running={running}
                     text={draft}
-                    busy={sending}
+                    busy={sending || savingModel}
                     canSend={!!canSend}
                     sendLabel="追加指示を送信"
                     stop={() => invoke("stop", { runId })}
@@ -603,6 +623,11 @@ export function ClientRuns({
                 </div>
               </form>
               <p className="composer-footnote">
+                {running && (
+                  <span>
+                    権限を変える場合はタスクを停止し、変更後に追加指示を送って再開できます。
+                  </span>
+                )}
                 {canSend
                   ? "Enterで送信 · Shift + Enterで改行"
                   : "送信するには接続とプロジェクトの実行設定を確認してください"}

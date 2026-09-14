@@ -58,7 +58,15 @@ export function sharedLocalSnapshot(value: Run) {
   };
 }
 
-export async function syncLocalShares(this: Client) {
+export function syncLocalShares(this: Client): Promise<void> {
+  if (this.localSharingPending) return this.localSharingPending;
+  const operation = Promise.resolve().then(() => sync.call(this));
+  this.localSharingPending = operation.finally(() => {
+    this.localSharingPending = undefined;
+  });
+  return this.localSharingPending;
+}
+async function sync(this: Client) {
   if (this.stopping || this.localSharingBusy || !this.connected) return;
   this.localSharingBusy = true;
   try {

@@ -4,6 +4,7 @@ import type { Repository } from "../../ports/repository.js";
 import type { Device } from "../../domain/models.js";
 import { ProjectTeam } from "../projects/team.js";
 import { Tasks } from "./service.js";
+import { forumProjects } from "./forum-binding.js";
 
 /** A mirror is owned by its originating device and never enters the scheduler queue. */
 export function shareLocalTask(
@@ -21,7 +22,10 @@ export function shareLocalTask(
   if (!device || device.revoked || device.generation !== generation)
     throw new Error("STALE_CONNECTION");
   const config = store.get<Record<string, string>>("config", "discord");
-  if (!config?.issueForumChannelId || config.projectId !== projectId)
+  if (
+    !config?.issueForumChannelId ||
+    !forumProjects(store, "discord", config, true).includes(projectId)
+  )
     throw new Error("DISCORD_FORUM_REQUIRED");
   for (const field of ["sequence", "revision", "specRevision"])
     if (!Number.isSafeInteger(input[field]) || Number(input[field]) < 1)

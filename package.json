@@ -48,6 +48,7 @@
     "smoke:membership": "node scripts/client-membership-smoke.mjs",
     "smoke:task-participants": "node --import tsx scripts/client-task-participants-smoke.mjs",
     "smoke:chat": "node scripts/client-chat-smoke.mjs",
+    "smoke:discussion": "node --import tsx scripts/client-discussion-smoke.mjs",
     "smoke:workspace": "node scripts/client-workspace-smoke.mjs",
     "smoke:shared-history": "node scripts/client-shared-history-smoke.mjs",
     "smoke:access": "node scripts/client-access-smoke.mjs",

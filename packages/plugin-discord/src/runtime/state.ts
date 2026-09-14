@@ -6,6 +6,7 @@ export interface DiscordState {
   config: Record<string, string>;
   client?: Client;
   forum?: ForumSync;
+  forums?: Map<string, ForumSync>;
   projectCommand?: (
     subject: string,
     projectId?: string,

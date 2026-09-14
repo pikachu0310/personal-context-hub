@@ -77,9 +77,11 @@ export class Client {
   continuationSupported = false;
   localSharingSupported = false;
   localSharingBusy = false;
+  localSharingPending?: Promise<void>;
   localSharingTimer?: NodeJS.Timeout;
   readonly syncLocalShares = syncLocalShares.bind(this);
   workspaceSupported = false;
+  taskOptionsSupported = false;
   workspaceRequests = new Map<
     string,
     {
@@ -195,6 +197,25 @@ export class Client {
       });
     this.executor.onSaved = () => this.details.changed();
     this.executor.contextProfile = () => this.settings.profile;
+    this.executor.sharedTask = async (value) => {
+      if (!value.discordShare || !this.connected) return undefined;
+      await this.localSharingPending;
+      await this.syncLocalShares();
+      const share = value.discordShare;
+      if (
+        share.status !== "synced" ||
+        !share.taskId ||
+        share.engineUrl !== this.settings.engineUrl ||
+        share.deviceId !== this.settings.deviceId
+      )
+        return undefined;
+      return {
+        ...value.task,
+        id: share.taskId,
+        projectId: share.projectId,
+        clientId: share.deviceId,
+      };
+    };
     this.preview = new ClientPreview((data) => this.emit(data));
   }
   async start(port = 4320) {
@@ -276,11 +297,21 @@ export class Client {
       this.ws.send(JSON.stringify({ ...data, generation: this.generation }));
   }
   grants() {
-    return this.executionMappings().map(({ projectId, network, slots }) => ({
-      projectId,
-      network,
-      slots,
-    }));
+    return this.executionMappings().map(
+      ({ projectId, network, slots, accessMode }) => ({
+        projectId,
+        network,
+        slots,
+        ...(this.claudeLoginStatus === "authenticated"
+          ? {
+              agents: [
+                "codex",
+                ...(accessMode === "sandbox" ? [] : ["claude"]),
+              ] as Array<"codex" | "claude">,
+            }
+          : {}),
+      }),
+    );
   }
   ready() {
     this.emit({
@@ -291,6 +322,8 @@ export class Client {
         ...this.settings.profile,
         name: this.settings.profile?.name || "参加者",
         codexConnected: this.loginStatus === "authenticated",
+        claudeConnected: this.claudeLoginStatus === "authenticated",
+        taskOptionsVersion: 1,
       },
       grants: this.grants(),
       slots: this.settings.slots,

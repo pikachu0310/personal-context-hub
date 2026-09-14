@@ -80,7 +80,7 @@ ClaudeはCodexのOSサンドボックスと同一ではありません。アプ�
 
 EngineのDiscordプラグイン設定で、既存のGuild・テキストチャンネルなどに加えて `issueForumChannelId`（同じGuildのissueフォーラムID）を設定します。空欄なら同期しません。
 
-参加者向けアプリの配布URLは開発者がconfigで管理する項目で、管理ダッシュボードのDiscord設定には表示しません。既存の設定値は保持し、接続案内ページのダウンロードリンクに引き続き使用します。
+参加者向けアプリの配布URLは管理ダッシュボードのDiscord設定 →「詳細設定」で編集します。接続案内ページのダウンロードリンクに使用します。
 
 | 設定                  | 内容                                     |
 | --------------------- | ---------------------------------------- |
@@ -113,12 +113,14 @@ npm run pack:desktop -- --mac --x64
 
 開発ビルドは未署名です。一般配布にはWindowsのコード署名、MacのDeveloper ID署名・notarizationが必要です。配布担当が証明書を保護されたCI環境で設定し、electron-builderの署名設定を使用してください。秘密情報を設定ファイルに書きません。Macの実機起動とGatekeeper確認はMac上で行います。Windowsでのビルド成功はMac実機検証の代わりにはなりません。
 
-自動アップデートは含めません。終了して新版を上書きインストールします。main2のClientデータ領域（Windows: LocalAppData内のido/client、Mac: Library/Application Support内のido/client）を維持します。旧v0アプリの認証・接続設定は自動移行しません。CLI Clientとの同時起動は同じロックで拒否します。
+自動アップデートは含めません。ユーザー設定の「更新を確認」から公開Releaseを確認し、終了して新版を上書きインストールします。main2のClientデータ領域（Windows: LocalAppData内のido/client、Mac: Library/Application Support内のido/client）を維持します。旧v0アプリの認証・接続設定は自動移行しません。CLI Clientとの同時起動は同じロックで拒否します。
 
 ## 同期エラーと境界
 
 Discordのスレッド作成要求は冪等ではないため、送信前に作成意図を永続化します。応答が不明なときはBotが作成したタスクマーカー付きスレッドを探し、再利用します。検索はアクティブと直近100件のアーカイブに限定し、見つからなくても重複作成しません。`forum-sync-error` の場合はBot権限・フォーラム種別・必須タグを確認し、該当スレッドを削除・改名せず管理者が対応を確認してください。1件の失敗で他タスクの同期は停止しません。
 
-ローカルUIはloopbackだけにbindし、既存Host/Origin/CSRF検証を維持します。Electron rendererはNode APIを持たず、context isolationとsandboxを有効にします。IPCはフォルダー選択だけで、呼び出し元のウィンドウ・メインフレーム・originを検証します。外部ブラウザーで開けるのは現在の公式ログインURLと端末承認URLだけです。タスクのログ・差分・認証情報はフォーラムへ投稿しません。
+ローカルUIはloopbackだけにbindし、既存Host/Origin/CSRF検証を維持します。Electron rendererはNode APIを持たず、context isolationとsandboxを有効にします。IPCはフォルダー選択・更新確認・固定の配布ページを開く操作に限定し、呼び出し元のウィンドウ・メインフレーム・originを検証します。外部ブラウザーでは現在の公式ログインURL・端末承認URLと、固定の公式配布ページを開けます。タスクのログ・差分・認証情報はフォーラムへ投稿しません。
 
 参考: [Electron security](https://www.electronjs.org/docs/latest/tutorial/security)、[macOS notarization](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)、[公式Codex認証](https://learn.chatgpt.com/docs/auth)。
+
+操作・会話の統合と復旧の手順は[アプリ・Engine・Discordの接続](agent-wiring.md)を参照してください。
