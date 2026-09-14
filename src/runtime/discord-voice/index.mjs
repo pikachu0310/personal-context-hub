@@ -25,6 +25,8 @@ import { createDiscordTranscriptPublisher } from "../../adapters/discord/transcr
 import { createConversationEngine } from "../../engine/conversation.mjs";
 import { createCodexBackend } from "../../execution/codex/backend.mjs";
 import { bindExecution } from "../../execution/port.mjs";
+import { bindCoordinator } from "../../execution/coordinator-port.mjs";
+import { createLiveConversationMode } from "../../engine/conversation-mode.mjs";
 import { discordPresentation } from "../../adapters/discord/presentation.mjs";
 import {
   createDiscordPlayer,
@@ -124,10 +126,13 @@ export async function startDiscordVoiceCodex({
     (dependencies.executionBackend
       ? undefined
       : new CodexVoiceRunner(config, { agentTeam }));
-  const execution = bindExecution(
+  const backend =
     dependencies.executionBackend ??
-      createCodexBackend(config, { runner: codexRunner }),
-  );
+    createCodexBackend(config, { runner: codexRunner });
+  const execution = bindExecution(backend);
+  const coordinator =
+    dependencies.coordinator ??
+    (backend.createCoordinator ? bindCoordinator(backend) : undefined);
   await execution.prepare?.();
   const credential = await (
     dependencies.readCredential ?? readDiscordTokenStore
@@ -510,9 +515,10 @@ export async function startDiscordVoiceCodex({
       onEvent: (event) => hudStore.publish(event),
       config,
       audio,
+      coordinator,
+      workPort: dependencies.workPort,
       execution: {
         ...execution,
-        reviewTask: (task, options) => codexRunner?.reviewTask?.(task, options),
         runTask: async (task, options) => {
           await previews.stop(task.id, "superseded");
           const result = await distributedRunTask(task, options);
@@ -535,9 +541,10 @@ export async function startDiscordVoiceCodex({
       logger,
       dependencies: { ...dependencies, agentTeam },
       hooks: {
-        onTaskState: (tasks) => live?.taskState(tasks),
-        onTaskResult: (result) => {
-          if (result.meetingId === session?.meetingId) live?.taskResult(result);
+        onMeetingReset: async () => {
+          if (!live?.ready) return;
+          await setLiveMode(false);
+          await setLiveMode(true);
         },
         getRuntimeContext: () => ({
           voiceStatus: connection.state?.status,
@@ -554,15 +561,6 @@ export async function startDiscordVoiceCodex({
           allParticipantsOperate: config.allParticipantsOperate,
           autonomousTasks: config.autonomousTasks,
         }),
-        onStatement: (statement) => {
-          if (!live?.ready) return;
-          if (
-            /(?:井戸|いど|コーデックス|codex)/iu.test(statement.text) &&
-            !/(?:読み上げ|音声).*(?:止め|停止)/u.test(statement.text)
-          )
-            live.resume();
-          live.recordStatement(statement);
-        },
       },
       output: {
         capabilities: {
@@ -578,9 +576,6 @@ export async function startDiscordVoiceCodex({
         upsertLiveTranscript,
         upsertMinutes,
         playAudio,
-        speak: (text) => (live?.ready ? live.commentary(text) : undefined),
-        isLive: () => live?.ready === true,
-        stopSpeech: () => live?.silence(),
         restoreTaskSurface: async (task) => {
           const missingThread = () =>
             new VoiceServiceError(
@@ -707,7 +702,8 @@ export async function startDiscordVoiceCodex({
       if (liveChanging) return "busy";
       if (enabled && live?.ready) return "live";
       liveChanging = true;
-      const fallback = () => {
+      const fallback = async () => {
+        await session.conversationModes.select();
         playAudio?.dispose?.();
         playAudio =
           dependencies.playAudio ??
@@ -717,29 +713,58 @@ export async function startDiscordVoiceCodex({
       try {
         live?.close();
         if (!enabled) {
-          fallback();
+          await fallback();
           return "legacy";
         }
-        await session.silenceSpeech();
-        live = new DiscordLiveBridge({
+        await session.conversationModes.stopSpeech();
+        const liveMeetingId = session.meetingId;
+        const bridge = new DiscordLiveBridge({
           apiKey: config.openaiApiKey,
           output: createDiscordLiveOutput(connection, logger),
           logger,
-          onDelegation: () => session.observeNow(),
+          onDelegation: (event) =>
+            session.meetingId === liveMeetingId &&
+            session.requestAttention({
+              id: event.delegation.id,
+              sourceSequences: event.sourceSequences,
+            }),
+          onAssistantTranscript: (event) =>
+            session.recordAssistantOutput({
+              ...event,
+              meetingId: liveMeetingId,
+            }),
           onFailure: () => {
-            fallback();
+            if (live !== bridge) return;
+            void fallback().catch(() => {});
             logInfoQuietly(logger, {
               component: "discord-voice",
               event: "live_fallback_to_stt_tts",
             });
           },
         });
+        live = bridge;
         await live.start();
+        await session.conversationModes.select(
+          createLiveConversationMode({
+            isReady: () => bridge.ready,
+            sendReply: (reply) => bridge.commentary(reply.text),
+            observeStatement: (statement) => {
+              if (
+                /(?:井戸|いど|コーデックス|codex)/iu.test(statement.text) &&
+                !/(?:読み上げ|音声).*(?:止め|停止)/u.test(statement.text)
+              )
+                bridge.resume();
+              bridge.recordStatement(statement);
+            },
+            onTaskState: (tasks) => bridge.taskState(tasks),
+            stopSpeech: () => bridge.silence(),
+          }),
+        );
         live.thinking(session.getContextSnapshot());
-        live.taskState(taskQueue?.list() ?? []);
+        live.taskState(engine.workPort.list());
         return "live";
       } catch {
-        fallback();
+        await fallback();
         logInfoQuietly(logger, {
           component: "discord-voice",
           event: "live_start_failed_using_stt_tts",

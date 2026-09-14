@@ -1,5 +1,14 @@
-import OpenAI from "openai";
-import { LiveWS } from "openai/resources/live/ws";
+import { randomUUID } from "node:crypto";
+
+async function createLiveSocket(apiKey) {
+  // Only load the Live SDK when this mode starts. Text/STT/TTS and injected
+  // transports do not require the optional Live resource to be installed.
+  const [{ default: OpenAI }, { LiveWS }] = await Promise.all([
+    import("openai"),
+    import("openai/resources/live/ws"),
+  ]);
+  return new LiveWS(new OpenAI({ apiKey }), { reconnect: null });
+}
 
 const FRAME_BYTES = 960; // 20 ms, 24 kHz mono PCM16.
 const INSTRUCTIONS = `あなたは4人の開発会議の参加者「井戸Bot」です。日本語で短く自然に話してください。
@@ -66,10 +75,10 @@ export class DiscordLiveBridge {
     voice = "marin",
     output,
     onDelegation = () => {},
+    onAssistantTranscript = () => {},
     onFailure = () => {},
     logger = console,
-    socketFactory = () =>
-      new LiveWS(new OpenAI({ apiKey }), { reconnect: null }),
+    socketFactory = () => createLiveSocket(apiKey),
     scheduleInterval = setInterval,
     cancelInterval = clearInterval,
   }) {
@@ -77,6 +86,7 @@ export class DiscordLiveBridge {
       voice,
       output,
       onDelegation,
+      onAssistantTranscript,
       onFailure,
       logger,
       socketFactory,
@@ -93,10 +103,27 @@ export class DiscordLiveBridge {
     };
     this.pendingDelegations = new Map();
     this.sources = [];
+    this.sessionInstanceId = randomUUID();
+    this.transcriptSequence = 0;
+    this.seenTranscriptEvents = new Set();
+    this.seenDelegations = new Set();
   }
 
   async start({ timeoutMs = 15_000, maximumSessionMs = 30 * 60_000 } = {}) {
-    this.socket = this.socketFactory();
+    if (this.closed || this.starting || this.socket)
+      throw new Error("Live bridge must be started once");
+    this.starting = true;
+    try {
+      const socket = this.socketFactory();
+      this.socket = typeof socket?.then === "function" ? await socket : socket;
+      if (this.closed) {
+        this.socket?.close();
+        throw new Error("Live bridge closed during startup");
+      }
+    } catch (error) {
+      this.close();
+      throw error;
+    }
     await new Promise((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error("Live session startup timed out")),
@@ -113,6 +140,7 @@ export class DiscordLiveBridge {
       });
       this.socket.on("session.started", () => {
         clearTimeout(timer);
+        if (this.closed) return;
         this.ready = true;
         this.startedAt = Date.now();
         resolve();
@@ -128,25 +156,72 @@ export class DiscordLiveBridge {
           this.fail(error);
         }
       });
+      this.socket.on("session.output_transcript.delta", (event) => {
+        if (this.closed || typeof event.delta !== "string") return;
+        if (event.event_id && this.seenTranscriptEvents.has(event.event_id))
+          return;
+        if (event.event_id) {
+          this.seenTranscriptEvents.add(event.event_id);
+          if (this.seenTranscriptEvents.size > 500)
+            this.seenTranscriptEvents.delete(
+              this.seenTranscriptEvents.values().next().value,
+            );
+        }
+        // Fragments are not complete turns, and their arrival is not proof of
+        // playback. Retain even muted output to distinguish model and user history.
+        const fragment = {
+          id: `${this.sessionInstanceId}:assistant:${++this.transcriptSequence}`,
+          meetingId: this.meetingId,
+          provider: "live",
+          role: "assistant",
+          userId: "assistant:live",
+          speakerName: "井戸Bot",
+          text: event.delta,
+          startedAt: Date.now(),
+          sessionInstanceId: this.sessionInstanceId,
+          sourceEventId: event.event_id,
+          sourceStartMs: event.start_ms,
+          sourceEndMs: event.end_ms,
+          final: false,
+          playbackStatus: "unknown",
+          playbackSuppressedAtReceipt: Boolean(
+            this.muted || this.speakers.size,
+          ),
+        };
+        void Promise.resolve()
+          .then(() => this.onAssistantTranscript(fragment))
+          .catch(() =>
+            this.logger.warn?.({
+              component: "discord-voice",
+              event: "live_transcript_record_failed",
+            }),
+          );
+      });
       this.socket.on("session.delegation.created", (event) => {
-        if (event.delegation.target !== "client" || this.closed) return;
+        if (
+          event.delegation?.target !== "client" ||
+          !event.delegation.id ||
+          this.closed ||
+          this.seenDelegations.has(event.delegation.id)
+        )
+          return;
+        this.seenDelegations.add(event.delegation.id);
+        if (this.seenDelegations.size > 200)
+          this.seenDelegations.delete(
+            this.seenDelegations.values().next().value,
+          );
         this.metrics.delegations++;
         this.pendingDelegations.set(event.delegation.id, {
           offsetMs: event.offset_ms,
           sequences: [],
+          event,
+          notified: false,
         });
         this.matchDelegations();
         if (this.pendingDelegations.size > 32)
           this.pendingDelegations.delete(
             this.pendingDelegations.keys().next().value,
           );
-        // A delegation has no task text. Only settled, attributed STT sources
-        // may enter the existing authorization/receipt path.
-        void Promise.resolve(this.onDelegation(event)).catch(() =>
-          this.thinking(
-            "依頼の確認が保留中です。開始や完了を伝えないでください。",
-          ),
-        );
       });
       this.socket.on("session.usage.updated", (event) => {
         this.usage = event.usage;
@@ -205,12 +280,15 @@ export class DiscordLiveBridge {
     this.muted = false;
   }
   recordStatement(statement) {
+    if (this.closed) return;
     if (this.meetingId && this.meetingId !== statement.meetingId) {
       this.sources = [];
       this.pendingDelegations.clear();
     }
     this.meetingId = statement.meetingId;
     this.sources.push({
+      id: statement.id,
+      meetingId: statement.meetingId,
       sequence: statement.sequence,
       startedAt: statement.startedAt,
     });
@@ -222,6 +300,7 @@ export class DiscordLiveBridge {
   }
   matchDelegations() {
     for (const delegation of this.pendingDelegations.values()) {
+      if (delegation.notified) continue;
       const time = this.startedAt + delegation.offsetMs;
       const source = this.sources
         .filter(
@@ -229,7 +308,24 @@ export class DiscordLiveBridge {
             item.startedAt <= time + 1000 && time - item.startedAt < 30_000,
         )
         .at(-1);
-      if (source) delegation.sequences = [source.sequence];
+      if (!source) continue;
+      delegation.sequences = [source.sequence];
+      delegation.notified = true;
+      // A delegation is an attention hint, never a separate task request. The
+      // coordinator reuses attributed STT input and its authorization/receipt.
+      const notice = {
+        ...delegation.event,
+        meetingId: source.meetingId,
+        sourceSequences: delegation.sequences,
+        sourceIds: source.id ? [source.id] : [],
+      };
+      void Promise.resolve()
+        .then(() => this.onDelegation(notice))
+        .catch(() =>
+          this.thinking(
+            "依頼の確認が保留中です。開始や完了を伝えないでください。",
+          ),
+        );
     }
   }
   taskResult(result) {

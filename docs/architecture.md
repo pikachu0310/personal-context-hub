@@ -1,5 +1,7 @@
 # 会話パイプラインと実行レイヤー
 
+永続メインモデル、入力キュー、STT/TTS・Liveの選択、発話制御の現在の契約は[会話方式と差し替え境界](conversation-modes.md)、外部タスク基盤の注入と読み取り調査の制約は[WorkPort契約](work-port-contract.md)を参照してください。以下は従来の観測バックエンドも含むレイヤー構成です。
+
 `src` は以下の責務に分かれています。各モジュールは担当するレイヤーから直接importし、ルート直下には互換用の再exportファイルを置きません。
 
 traQ、Thunderbird、Discord Bot MCP、Discord RPCは `src/integrations/` 配下の独立した連携機能です。

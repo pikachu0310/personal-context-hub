@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { createConversationEngine } from "../../engine/conversation.mjs";
 import { createCodexBackend } from "../../execution/codex/backend.mjs";
 import { bindExecution } from "../../execution/port.mjs";
+import { bindCoordinator } from "../../execution/coordinator-port.mjs";
 import { MeetingStateStore } from "../../storage/meeting-state.mjs";
 import {
   TaskPreviewManager,
@@ -148,10 +149,13 @@ export async function startBrowserStudio({
       await store.acquire();
       const saved = await store.load();
       const hudStore = createHudStore();
-      const execution = (resource.execution = bindExecution(
+      const backend =
         dependencies.executionBackend?.(project, engineConfig) ??
-          createCodexBackend(engineConfig),
-      ));
+        createCodexBackend(engineConfig);
+      const execution = (resource.execution = bindExecution(backend));
+      const coordinator =
+        dependencies.coordinator?.(project, engineConfig) ??
+        (backend.createCoordinator ? bindCoordinator(backend) : undefined);
       await execution.prepare();
       const previews = (resource.previews = new TaskPreviewManager({
         command: project.previewCommand,
@@ -170,6 +174,8 @@ export async function startBrowserStudio({
       }));
       const engine = (resource.engine = await createConversationEngine({
         config: engineConfig,
+        coordinator,
+        workPort: dependencies.workPort?.(project, engineConfig),
         store,
         initialState: saved,
         logger,

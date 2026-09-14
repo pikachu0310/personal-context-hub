@@ -1,8 +1,16 @@
 import { invocationAcknowledgement } from "./observation/invocation.mjs";
-import { createSpeechTicket } from "./reply/speech-ticket.mjs";
+import { CoordinatorInbox } from "./input/coordinator-inbox.mjs";
+import {
+  classifyConversationInput,
+  statementEvent,
+} from "./input/conversation-input.mjs";
+import {
+  createConversationModeController,
+  createTextSpeechConversationMode,
+} from "./conversation-mode.mjs";
+import { createSpeechController } from "./output/speech-controller.mjs";
 import { createTelemetry } from "./telemetry.mjs";
 import { MeetingMemory } from "./observation/memory.mjs";
-import { deliverSpeech } from "./output/speech.mjs";
 import { randomUUID } from "node:crypto";
 import {
   mayReplyImmediately,
@@ -46,6 +54,7 @@ import {
   formatMeetingObservationTranscript,
   parseMeetingObservation,
   authorizeMeetingTasks,
+  authorizeMeetingResearchTasks,
   authorizeMeetingTaskControls,
 } from "./observation/observation.mjs";
 export class MeetingSession {
@@ -55,6 +64,10 @@ export class MeetingSession {
     speechEnabled = true,
     transcribe,
     observe,
+    createCoordinator,
+    conversationModes,
+    createSpeechOutput = createSpeechController,
+    classifyInput = classifyConversationInput,
     quickReply,
     classifyVoiceNeed,
     revalidateReply,
@@ -67,10 +80,9 @@ export class MeetingSession {
     postText,
     synthesize,
     playAudio,
-    speak,
-    isLive = () => false,
     stopSpeech = () => {},
     onStatement = () => {},
+    onMeetingReset = async () => {},
     enqueueTask = () => false,
     controlTask = () => false,
     getTaskReceipt = () => undefined,
@@ -99,6 +111,7 @@ export class MeetingSession {
     this.speechEnabled = speechEnabled;
     this.dependencies = {
       transcribe,
+      classifyInput,
       observe,
       quickReply,
       classifyVoiceNeed,
@@ -112,10 +125,9 @@ export class MeetingSession {
       postText,
       synthesize,
       playAudio,
-      speak,
-      isLive,
       stopSpeech,
       onStatement,
+      onMeetingReset,
       enqueueTask,
       controlTask,
       getTaskReceipt,
@@ -139,8 +151,6 @@ export class MeetingSession {
     this.audioQueue = [];
     this.activeTranscriptions = 0;
     this.replyContextRevision = 0;
-    this.speechCandidates = new Map();
-    this.latestSpeechOrders = new Map();
     this.announcedResults = new Set();
     this.activeTranscriptionJobs = new Set();
     this.activeOperations = new Set();
@@ -190,13 +200,58 @@ export class MeetingSession {
     this.shutdownController = new AbortController();
     this.liveUpdate = Promise.resolve();
     this.speechQueue = Promise.resolve();
-    this.pendingSpeechCount = 0;
     this.activeQuickReplies = 0;
     this.activeInvestigations = 0;
     this.voicePaused = false;
-    this.speechController = new AbortController();
     this.silencedThroughSequence = initialState.silencedThroughSequence ?? null;
     this.speechStopSavePending = false;
+    this.completedCoordinatorBatches =
+      initialState.completedCoordinatorBatches ?? [];
+    this.coordinatorState = initialState.coordinator;
+    this.createCoordinator = createCoordinator;
+    this.conversationModes =
+      conversationModes ??
+      createConversationModeController({
+        textSpeech: createTextSpeechConversationMode({
+          enqueueSpeech: (reply) =>
+            this.#queueTextSpeech(reply.text, reply.targets),
+          stopSpeech: async () => {
+            this.speechOutput.cancel();
+            await this.speechOutput.idle();
+          },
+        }),
+      });
+    this.speechOutput = createSpeechOutput({
+      getState: () => ({
+        meetingId: this.meetingId,
+        modeRevision: this.conversationModes.revision,
+        enabled: this.speechEnabled,
+        closed: this.closed,
+        paused: this.voicePaused,
+        revision: this.replyContextRevision,
+        pendingTranscripts:
+          this.activeTranscriptions +
+          this.audioQueue.length +
+          this.speechTurns.turns.size +
+          this.activeTextInputs,
+        conversation: this.recentConversation,
+        results: this.results,
+      }),
+      synthesize: (...args) => this.dependencies.synthesize(...args),
+      playAudio: (...args) => this.dependencies.playAudio(...args),
+      validate: this.dependencies.revalidateReply
+        ? (...args) => this.dependencies.revalidateReply(...args)
+        : undefined,
+      signal: this.shutdownController.signal,
+      stageTimeouts: this.stageTimeouts,
+      telemetry: this.telemetry,
+      onError: (error) =>
+        this.#log("meeting_speech_failed", {
+          errorCode: voiceErrorCode(error),
+        }),
+      onValidated: (detail) => this.#log("meeting_speech_revalidated", detail),
+    });
+    if (createCoordinator) this.#createCoordinatorInbox();
     this.interval = scheduleInterval(
       () => void this.observeNow(),
       observationIntervalMs,
@@ -246,6 +301,10 @@ export class MeetingSession {
     return true;
   }
 
+  get pendingSpeechCount() {
+    return this.speechOutput.pending;
+  }
+
   #recordQueuedAudio(queued) {
     if (queued.sequence === undefined || queued.hudRecorded) return;
     queued.hudRecorded = true;
@@ -288,9 +347,216 @@ export class MeetingSession {
       pendingControls: structuredClone(this.pendingControls),
       speechTurns: this.speechTurns.snapshot(),
       silencedThroughSequence,
+      coordinator: this.coordinator?.snapshot() ?? this.coordinatorState,
+      completedCoordinatorBatches: this.completedCoordinatorBatches,
     });
     if (this.silencedThroughSequence === silencedThroughSequence)
       this.speechStopSavePending = false;
+  }
+
+  #createCoordinatorInbox() {
+    this.coordinator = new CoordinatorInbox({
+      initialState: this.coordinatorState,
+      createRuntime: async (options) => {
+        const runtime = await this.createCoordinator({
+          meetingId: this.meetingId,
+          ...options,
+        });
+        return {
+          steer: (observation) => runtime.steer(observation),
+          interrupt: () => runtime.interrupt(),
+          close: () => runtime.close(),
+          run: async (observation, options) => {
+            const taskVersions = this.getActiveTasks().map((task) => [
+              task.id,
+              task.controlVersion ?? 0,
+            ]);
+            this.processingConversation = true;
+            this.#queueLiveUpdate();
+            try {
+              const run = this.telemetry.wrap(
+                "OBSERVE",
+                runtime.run.bind(runtime),
+                (input) => ({
+                  inputIds: input.statements.map(
+                    (statement) => `${this.meetingId}:I-${statement.sequence}`,
+                  ),
+                }),
+              );
+              return {
+                text: await withTimeout(
+                  (signal) => run(observation, { ...options, signal }),
+                  this.stageTimeouts.observing ??
+                    Math.min(this.stageTimeouts.running_codex, 60_000),
+                  "processing meeting input",
+                  options.signal,
+                ),
+                modeRevision: observation.modeRevision,
+                taskVersions,
+              };
+            } finally {
+              this.processingConversation = false;
+              this.#queueLiveUpdate();
+            }
+          },
+        };
+      },
+      buildObservation: (events) => this.#coordinatorObservation(events),
+      checkpoint: async (state) => {
+        this.coordinatorState = state;
+        await this.persist();
+      },
+      onResponse: async (raw, batch) => {
+        if (this.completedCoordinatorBatches.includes(batch.id)) return;
+        const observation = this.#coordinatorObservation(batch.events);
+        await this.#applyObservation(raw.text, observation.statements, {
+          taskVersions: new Map(raw.taskVersions ?? []),
+          batchId: batch.id,
+          events: batch.events,
+          modeRevision: raw.modeRevision,
+        });
+      },
+      onError: (error) => {
+        this.observationRetryPending = true;
+        this.observationFailureMessage = this.coordinator.uncertain
+          ? "モデルへの入力結果が不明です。重複送信を避けるため保留しています。"
+          : "保存済みの応答処理を再試行します。";
+        this.#log("coordinator_input_pending", {
+          errorCode: voiceErrorCode(error),
+        });
+        this.#queueLiveUpdate();
+      },
+    });
+  }
+
+  #coordinatorObservation(events) {
+    const sources = new Map();
+    for (const event of events) {
+      if (event.type !== "statement") continue;
+      const source =
+        this.statements.find((item) => item.id === event.statement.id) ??
+        event.statement;
+      sources.set(source.sequence, source);
+    }
+    // Result/attention references recover context, not new permission to work.
+    const referenced = events.flatMap(
+      (event) => event.sourceSequences ?? event.result?.sourceSequences ?? [],
+    );
+    for (const sequence of referenced) {
+      if (sources.has(sequence)) continue;
+      const source =
+        this.statements.find((item) => item.sequence === sequence) ??
+        this.memory.sources.find((item) => item.sequence === sequence);
+      if (source)
+        sources.set(sequence, {
+          ...source,
+          contextOnly: true,
+          taskEligible: false,
+        });
+    }
+    const statements = [...sources.values()].sort(
+      (a, b) => a.sequence - b.sequence,
+    );
+    return {
+      meetingId: this.meetingId,
+      statements: statements.map((statement) => ({
+        ...statement,
+        readOnlyResearchEligible:
+          !statement.contextOnly &&
+          statement.complete !== false &&
+          !statement.handledAction &&
+          mayReplyImmediately(statement) &&
+          Boolean(statement.userId) &&
+          (this.allParticipantsOperate ||
+            statement.userId === this.ownerUserId ||
+            this.operatorUserIds.includes(statement.userId)),
+      })),
+      transcript: formatMeetingObservationTranscript(statements),
+      events,
+      conversationMode: this.conversationModes.kind,
+      modeRevision: this.conversationModes.revision,
+      responsePolicy: this.conversationModes.observationContext,
+      memory: this.memory.context(
+        statements.map((item) => item.text).join("\n"),
+      ),
+      ...this.getObservationTaskContext(statements),
+      results: events
+        .filter((event) => event.type === "task_result")
+        .map((event) => event.result),
+      recentReplies: this.recentConversation
+        .filter((item) => item.role === "assistant")
+        .map((item) => item.text),
+      runtime: this.dependencies.getRuntimeContext(),
+    };
+  }
+
+  async #enqueueCoordinatorStatement(statement, { schedule = true } = {}) {
+    if (!this.coordinator || this.closed || statement.observed) return;
+    const classification = await this.dependencies.classifyInput(statement);
+    await this.coordinator.submit([statementEvent(statement, classification)], {
+      urgent: schedule && classification.priority === "immediate",
+    });
+  }
+
+  async #flushCoordinator() {
+    if (this.closed || this.resetting) return false;
+    await this.#archivePendingStatements();
+    await this.#dispatchPendingControls();
+    await this.#dispatchPendingTasks();
+    for (const statement of this.statements)
+      await this.#enqueueCoordinatorStatement(statement, { schedule: false });
+    return this.coordinator.flush();
+  }
+
+  async requestAttention({ id, sourceSequences = [] } = {}) {
+    if (!this.coordinator) return this.observeNow();
+    if (!id || !sourceSequences.length || this.closed) return false;
+    for (const statement of this.statements)
+      await this.#enqueueCoordinatorStatement(statement, { schedule: false });
+    return this.coordinator.submit(
+      [
+        {
+          id: `attention:${this.meetingId}:${id}`,
+          type: "attention",
+          sourceSequences,
+        },
+      ],
+      { urgent: true },
+    );
+  }
+
+  async recordAssistantOutput(event) {
+    if (this.closed || (event.meetingId && event.meetingId !== this.meetingId))
+      return false;
+    const record = {
+      ...event,
+      meetingId: this.meetingId,
+      speakerName: "井戸Bot",
+      role: "assistant",
+      taskEligible: false,
+    };
+    await this.dependencies.archiveTranscript(record);
+    this.recentConversation.push({
+      role: "assistant",
+      text: boundText(event.text, 1200),
+      provider: event.provider,
+    });
+    this.recentConversation = this.recentConversation.slice(-24);
+    this.replyContextRevision++;
+    await this.coordinator?.submit([
+      { ...record, id: `assistant:${record.id}`, type: "assistant_output" },
+    ]);
+    await this.persist();
+    return true;
+  }
+
+  async resolveCoordinatorInput(options) {
+    if (
+      !this.coordinator ||
+      !(await this.coordinator.resolveUncertain(options))
+    )
+      return false;
+    return this.coordinator.flush();
   }
 
   addText(text, metadata = {}) {
@@ -444,6 +710,8 @@ export class MeetingSession {
       sequence: this.resetting ? undefined : ++this.sequence,
       taskEligible: metadata.taskEligible !== false,
       requestReply: metadata.requestReply === true,
+      priority: metadata.priority,
+      origin: "audio",
       inputId: metadata.inputId,
       taskId: metadata.taskId,
       requestKey: metadata.requestKey,
@@ -460,6 +728,7 @@ export class MeetingSession {
     for (const statement of completed) {
       await this.#tryImmediateTaskAction(statement);
       await this.#archiveStatement(statement);
+      await this.#enqueueCoordinatorStatement(statement);
     }
     await this.persist();
     this.#queueLiveUpdate();
@@ -492,6 +761,8 @@ export class MeetingSession {
         speakerName: metadata.speakerName,
         taskEligible: metadata.taskEligible !== false,
         requestReply: metadata.requestReply === true,
+        priority: metadata.priority,
+        origin: "text",
         startedAt: receivedAt,
         text: boundText(text, MAX_TRANSCRIPT_CHARACTERS),
         observed: false,
@@ -500,6 +771,7 @@ export class MeetingSession {
       this.statements.push(statement);
       await this.#tryImmediateTaskAction(statement);
       await this.#archiveStatement(statement);
+      await this.#enqueueCoordinatorStatement(statement);
       await this.persist();
       this.#queueLiveUpdate();
       if (
@@ -539,6 +811,7 @@ export class MeetingSession {
     this.replyContextRevision++;
     this.memory.remember(statement);
     this.dependencies.onStatement(statement);
+    this.conversationModes.observeStatement(statement);
     if (
       !this.recentConversation.some(
         (item) => item.role === "user" && item.sequence === statement.sequence,
@@ -554,6 +827,7 @@ export class MeetingSession {
     }
     if (isImmediateSpeechStop(statement.text))
       return this.#tryImmediateSpeechStop(statement);
+    if (this.coordinator) return false;
     if (!mayReplyImmediately(statement)) return false;
     if (await this.#tryImmediateInstruction(statement)) return true;
     if (await this.#tryImmediateCreation(statement)) return true;
@@ -740,7 +1014,7 @@ export class MeetingSession {
 
   #startQuickReply(statement) {
     if (
-      this.dependencies.isLive() ||
+      this.conversationModes.suppressesLocalQuickReply ||
       !this.dependencies.quickReply ||
       statement.handledAction ||
       !mayReplyImmediately(statement, this.immediateReactions) ||
@@ -954,18 +1228,14 @@ export class MeetingSession {
   silenceSpeech() {
     if (this.closed) return Promise.resolve(undefined);
     this.dependencies.stopSpeech();
+    void Promise.resolve(this.conversationModes.stopSpeech()).catch((error) =>
+      this.#log("speech_stop_failed", { errorCode: voiceErrorCode(error) }),
+    );
     const count = this.pendingSpeechCount;
     this.silencedThroughSequence = this.sequence;
     this.speechStopSavePending = true;
     for (const control of this.pendingControls) control.spokenNotification = "";
-    this.speechController.abort(
-      new VoiceServiceError(
-        "SPEECH_STOPPED",
-        "Speech stopped by an operator",
-        "読み上げを停止しました。",
-      ),
-    );
-    this.speechController = new AbortController();
+    this.speechOutput.cancel();
     return this.#trackOperation(
       this.persist()
         .then(() => ({ count, persisted: true }))
@@ -1236,6 +1506,18 @@ export class MeetingSession {
       });
       this.results = this.results.slice(-20);
       await this.persist();
+      if (this.coordinator && !result.superseded) {
+        await this.coordinator.submit(
+          [
+            {
+              id: `result:${meetingId}:${result.id}:${result.runRevision ?? 0}`,
+              type: "task_result",
+              result: this.results.at(-1),
+            },
+          ],
+          { start: true },
+        );
+      }
     }
     while (this.resetting) await this.meetingBoundary;
     if (this.closed)
@@ -1265,7 +1547,8 @@ export class MeetingSession {
   #announceTaskResult(result) {
     if (
       result.superseded ||
-      this.dependencies.isLive() ||
+      this.coordinator ||
+      this.conversationModes.suppressesLocalQuickReply ||
       !this.dependencies.revalidateReply
     )
       return;
@@ -1288,6 +1571,8 @@ export class MeetingSession {
       this.closed ||
       this.resetting ||
       this.observing ||
+      this.coordinator?.busy ||
+      this.coordinator?.uncertain ||
       this.activeQuickReplies ||
       this.pendingSpeechCount ||
       this.activeTextInputs ||
@@ -1311,6 +1596,9 @@ export class MeetingSession {
       revision: this.revision,
       silencedThroughSequence: this.silencedThroughSequence,
       memory: this.memory,
+      coordinator: this.coordinator,
+      coordinatorState: this.coordinatorState,
+      completedCoordinatorBatches: this.completedCoordinatorBatches,
       observationRetryPending: this.observationRetryPending,
       observationFailureMessage: this.observationFailureMessage,
     };
@@ -1318,6 +1606,7 @@ export class MeetingSession {
       await this.#archivePendingStatements();
       if (this.statements.some((statement) => !statement.archived))
         return false;
+      await this.coordinator?.close();
       await withTimeout(
         resetObserver,
         this.stageTimeouts.posting,
@@ -1334,13 +1623,32 @@ export class MeetingSession {
       this.lastReplyDecision = undefined;
       this.silencedThroughSequence = null;
       this.revision = 0;
+      this.coordinatorState = undefined;
+      this.completedCoordinatorBatches = [];
+      if (this.createCoordinator) this.#createCoordinatorInbox();
       this.observationRetryPending = false;
       this.observationFailureMessage = "";
       await this.persist();
       this.#queueLiveUpdate();
+      await Promise.resolve()
+        .then(() =>
+          this.dependencies.onMeetingReset({
+            meetingId: this.meetingId,
+            previousMeetingId: previous.meetingId,
+          }),
+        )
+        .catch((error) =>
+          this.#log("meeting_transport_reset_failed", {
+            errorCode: voiceErrorCode(error),
+          }),
+        );
       return true;
     } catch (error) {
       Object.assign(this, previous);
+      if (this.coordinator?.closed && this.createCoordinator) {
+        this.coordinatorState = this.coordinator.snapshot();
+        this.#createCoordinatorInbox();
+      }
       await this.persist().catch(() => undefined);
       this.#log("meeting_reset_failed", { errorCode: voiceErrorCode(error) });
       return false;
@@ -1380,6 +1688,7 @@ export class MeetingSession {
   }
 
   #observeNow() {
+    if (this.coordinator) return this.#flushCoordinator();
     return this.telemetry.scope(
       {
         inputIds: this.statements
@@ -1456,198 +1765,12 @@ export class MeetingSession {
         "observing meeting",
         this.shutdownController.signal,
       );
-      const observation = parseMeetingObservation(raw, this.minutes);
-      const authorizedStatements = statements.map((statement) => ({
-        ...statement,
-        sourceUserId: statement.userId,
-        userId:
-          ((this.allParticipantsOperate && Boolean(statement.userId)) ||
-            statement.userId === this.ownerUserId ||
-            this.operatorUserIds.includes(statement.userId)) &&
-          (!this.requireWakeWord ||
-            statement.requestReply === true ||
-            isBotAddressed(statement.text))
-            ? this.ownerUserId
-            : undefined,
-      }));
-      const tasks = this.tasksEnabled
-        ? authorizeMeetingTasks(
-            observation.tasks.filter((task) =>
-              hasTaskCommitment(task, authorizedStatements, {
-                autonomousTasks: this.autonomousTasks,
-              }),
-            ),
-            authorizedStatements,
-            this.ownerUserId,
-          )
-        : [];
-      const taskControls = this.tasksEnabled
-        ? authorizeMeetingTaskControls(
-            observation.taskControls,
-            authorizedStatements,
-            this.ownerUserId,
-          )
-        : [];
-      await withTimeout(
-        (signal) =>
-          this.dependencies.upsertMinutes(
-            this.presentation.minutes(this.revision + 1, observation.minutes),
-            { signal, minutes: observation.minutes },
-          ),
-        this.stageTimeouts.posting,
-        "updating meeting minutes",
-        this.shutdownController.signal,
-      );
-      analyzingConversation = false;
-      this.observationRetryPending = false;
-      this.observationFailureMessage = "";
-      this.minutes = observation.minutes;
-      this.memory.update(observation.decisions, statements);
-      this.revision += 1;
-      for (const task of tasks) {
-        const topic = normalizeTaskTopic(task.title);
-        if (
-          [...this.getActiveTasks(), ...this.pendingTasks].some(
-            (existing) =>
-              normalizeTaskTopic(existing.title) === topic &&
-              !["cancelled", "failed"].includes(existing.state),
-          )
-        )
-          continue;
-        // Check late deferrals immediately before dispatch without requiring the
-        // entire conversation to stay silent while the observer is working.
-        const proposal = observation.tasks.find(
-          (candidate) =>
-            candidate.title === task.title &&
-            candidate.sourceSequences.join(",") ===
-              task.sourceSequences.join(","),
-        );
-        const latestStatements = [
-          ...authorizedStatements,
-          ...this.statements.filter(
-            (statement) =>
-              !statements.some(
-                (source) => source.sequence === statement.sequence,
-              ),
-          ),
-        ];
-        if (
-          !hasTaskCommitment(proposal, latestStatements, {
-            autonomousTasks: this.autonomousTasks,
-          })
-        )
-          continue;
-        task.id = randomUUID().slice(0, 8);
-        task.meetingId = this.meetingId;
-        task.context = this.getContextSnapshot();
-        task.requestKey = `${this.meetingId}:voice:${[...task.sourceSequences].sort((a, b) => a - b).join(",")}`;
-        if (
-          !this.pendingTasks.some(
-            (pending) => pending.requestKey === task.requestKey,
-          )
-        )
-          this.pendingTasks.push(task);
-      }
-      for (const control of taskControls) {
-        control.requestKey = `${this.meetingId}:control:${control.type}:${[...control.sourceSequences].sort((a, b) => a - b).join(",")}`;
-        if (!control.taskId) {
-          const active = this.getActiveTasks().filter((task) =>
-            ["queued", "running", "awaiting_receipt"].includes(task.state),
-          );
-          if (active.length === 1) control.taskId = active[0].id;
-          else
-            control.notification =
-              "操作対象を一つに特定できません。タスクIDか対象スレッドを指定して再度依頼してください。";
-        }
-        if (control.type === "instruction")
-          control.expectedControlVersion = taskVersions.get(control.taskId);
-        if (
-          !this.pendingControls.some(
-            (pending) => pending.requestKey === control.requestKey,
-          )
-        )
-          this.pendingControls.push(control);
-      }
-      const conversationReply =
-        !observation.tasks.length &&
-        !observation.taskControls.length &&
-        shouldDeliverObservationReply(
-          observation,
-          statements,
-          this.recentConversation,
-        ) &&
-        !this.statements.some(
-          (statement) =>
-            statement.handledAction?.type !== "speech_stop" &&
-            statement.sequence >
-              Math.max(...statements.map((item) => item.sequence)),
-        )
-          ? observation.reply
-          : "";
-      if (conversationReply)
-        this.pendingControls.push({
-          type: "reply",
-          meetingId: this.meetingId,
-          requestKey: `${this.meetingId}:reply:${this.revision}`,
-          sourceSequences: observation.replySourceSequences,
-          participantUserIds: [
-            ...new Set(
-              statements
-                .filter((statement) =>
-                  observation.replySourceSequences.includes(statement.sequence),
-                )
-                .map((statement) => statement.userId)
-                .filter(Boolean),
-            ),
-          ],
-          notification: conversationReply,
-          speechTargets: statements
-            .filter((s) =>
-              observation.replySourceSequences.includes(s.sequence),
-            )
-            .map(({ sequence, text }) => ({ sequence, text })),
-          spokenNotification:
-            statements.some(
-              (statement) =>
-                observation.replySourceSequences.includes(statement.sequence) &&
-                mayReplyImmediately(statement),
-            ) &&
-            this.#canSpeakFor(
-              statements
-                .filter((statement) => !statement.handledAction)
-                .map((statement) => statement.sequence),
-            )
-              ? speechExcerpt(conversationReply)
-              : "",
-        });
-      for (const statement of statements) statement.observed = true;
-      this.statements = this.statements.filter(
-        (statement) => !statement.observed || !statement.archived,
-      );
-      await this.persist();
-      this.droppedAudio = 0;
-      this.failedTranscriptions = 0;
-      this.#queueLiveUpdate();
-
-      await this.#dispatchPendingControls();
-      const { accepted: acceptedTasks } = await this.#dispatchPendingTasks();
-
-      this.#log("meeting_observation_completed", {
-        elapsedMs: Date.now() - startedAt,
-        statements: statements.length,
-        replied: Boolean(conversationReply),
-        tasks: acceptedTasks.length,
+      const applied = await this.#applyObservation(raw, statements, {
+        taskVersions,
+        startedAt,
       });
-      if (
-        this.statements.some(
-          (statement) =>
-            !statement.observed &&
-            !statement.handledAction &&
-            mayReplyImmediately(statement, this.immediateReactions),
-        )
-      )
-        this.immediateObservationRequested = true;
-      return true;
+      analyzingConversation = false;
+      return applied;
     } catch (error) {
       if (!this.closed) {
         if (analyzingConversation) {
@@ -1671,6 +1794,290 @@ export class MeetingSession {
       }
       this.#scheduleImmediateObservation();
     }
+  }
+
+  async #applyObservation(
+    raw,
+    statements,
+    {
+      taskVersions,
+      startedAt = Date.now(),
+      batchId,
+      events = [],
+      modeRevision,
+    } = {},
+  ) {
+    const observation = parseMeetingObservation(raw, this.minutes);
+    const authorizedStatements = statements.map((statement) => ({
+      ...statement,
+      sourceUserId: statement.userId,
+      userId:
+        ((this.allParticipantsOperate && Boolean(statement.userId)) ||
+          statement.userId === this.ownerUserId ||
+          this.operatorUserIds.includes(statement.userId)) &&
+        (!this.requireWakeWord ||
+          statement.requestReply === true ||
+          isBotAddressed(statement.text))
+          ? this.ownerUserId
+          : undefined,
+    }));
+    const tasks = this.tasksEnabled
+      ? authorizeMeetingTasks(
+          observation.tasks.filter(
+            (task) =>
+              (!this.coordinator || task.kind !== "research") &&
+              hasTaskCommitment(task, authorizedStatements, {
+                autonomousTasks: this.autonomousTasks,
+              }),
+          ),
+          authorizedStatements,
+          this.ownerUserId,
+        )
+      : [];
+    if (this.tasksEnabled && this.coordinator)
+      tasks.push(
+        ...authorizeMeetingResearchTasks(
+          observation.tasks,
+          authorizedStatements,
+          this.ownerUserId,
+        ),
+      );
+    const taskControls = this.tasksEnabled
+      ? authorizeMeetingTaskControls(
+          observation.taskControls,
+          authorizedStatements,
+          this.ownerUserId,
+        )
+      : [];
+    if (!this.coordinator)
+      await withTimeout(
+        (signal) =>
+          this.dependencies.upsertMinutes(
+            this.presentation.minutes(this.revision + 1, observation.minutes),
+            { signal, minutes: observation.minutes },
+          ),
+        this.stageTimeouts.posting,
+        "updating meeting minutes",
+        this.shutdownController.signal,
+      );
+    this.observationRetryPending = false;
+    this.observationFailureMessage = "";
+    if (!this.coordinator) this.minutes = observation.minutes;
+    this.memory.update(observation.decisions, statements);
+    this.revision += 1;
+    for (const task of tasks) {
+      const topic = normalizeTaskTopic(task.title);
+      if (
+        [...this.getActiveTasks(), ...this.pendingTasks].some(
+          (existing) =>
+            normalizeTaskTopic(existing.title) === topic &&
+            !["cancelled", "failed"].includes(existing.state),
+        )
+      )
+        continue;
+      // Check late deferrals immediately before dispatch without requiring the
+      // entire conversation to stay silent while the observer is working.
+      const proposal = observation.tasks.find(
+        (candidate) =>
+          candidate.title === task.title &&
+          candidate.sourceSequences.join(",") ===
+            task.sourceSequences.join(","),
+      );
+      const latestStatements = [
+        ...authorizedStatements,
+        ...this.statements.filter(
+          (statement) =>
+            !statements.some(
+              (source) => source.sequence === statement.sequence,
+            ),
+        ),
+      ];
+      if (
+        !this.#researchAuthorized(proposal, latestStatements) &&
+        !hasTaskCommitment(proposal, latestStatements, {
+          autonomousTasks: this.autonomousTasks,
+        })
+      )
+        continue;
+      task.id = randomUUID().slice(0, 8);
+      task.meetingId = this.meetingId;
+      task.context = this.getContextSnapshot();
+      task.requestKey = `${this.meetingId}:voice:${[...task.sourceSequences].sort((a, b) => a - b).join(",")}`;
+      if (
+        !this.pendingTasks.some(
+          (pending) => pending.requestKey === task.requestKey,
+        )
+      )
+        this.pendingTasks.push(task);
+    }
+    for (const control of taskControls) {
+      control.requestKey = `${this.meetingId}:control:${control.type}:${[...control.sourceSequences].sort((a, b) => a - b).join(",")}`;
+      if (!control.taskId) {
+        const active = this.getActiveTasks().filter((task) =>
+          ["queued", "running", "awaiting_receipt"].includes(task.state),
+        );
+        if (active.length === 1) control.taskId = active[0].id;
+        else
+          control.notification =
+            "操作対象を一つに特定できません。タスクIDか対象スレッドを指定して再度依頼してください。";
+      }
+      if (control.type === "instruction")
+        control.expectedControlVersion = taskVersions.get(control.taskId);
+      if (
+        !this.pendingControls.some(
+          (pending) => pending.requestKey === control.requestKey,
+        )
+      )
+        this.pendingControls.push(control);
+    }
+    const conversationReply =
+      (modeRevision === undefined ||
+        modeRevision === this.conversationModes.revision) &&
+      this.conversationModes.acceptCoordinatorReply({ observation, events }) &&
+      !observation.tasks.length &&
+      !observation.taskControls.length &&
+      (this.#resultReplyAuthorized(observation, events) ||
+        shouldDeliverObservationReply(
+          observation,
+          statements,
+          this.recentConversation,
+        )) &&
+      !(this.coordinator
+        ? this.statements.some(
+            (statement) =>
+              !statement.observed &&
+              mayReplyImmediately(statement) &&
+              statement.sequence >
+                Math.max(0, ...statements.map((item) => item.sequence)),
+          )
+        : this.statements.some(
+            (statement) =>
+              statement.handledAction?.type !== "speech_stop" &&
+              statement.sequence >
+                Math.max(...statements.map((item) => item.sequence)),
+          ))
+        ? observation.reply
+        : "";
+    if (conversationReply)
+      this.pendingControls.push({
+        type: "reply",
+        meetingId: this.meetingId,
+        requestKey: `${this.meetingId}:reply:${batchId ?? this.revision}`,
+        modeRevision,
+        sourceSequences: observation.replySourceSequences,
+        participantUserIds: [
+          ...new Set(
+            statements
+              .filter((statement) =>
+                observation.replySourceSequences.includes(statement.sequence),
+              )
+              .map((statement) => statement.userId)
+              .filter(Boolean),
+          ),
+        ],
+        notification: conversationReply,
+        speechTargets: [
+          ...statements
+            .filter((s) =>
+              observation.replySourceSequences.includes(s.sequence),
+            )
+            .map(({ sequence, text }) => ({ sequence, text })),
+          ...events
+            .filter((event) => event.type === "task_result")
+            .map((event) => ({
+              text: `タスク結果: ${event.result.title ?? event.result.id}`,
+              resultId: event.result.id,
+              runRevision: event.result.runRevision ?? 0,
+            })),
+        ],
+        spokenNotification:
+          (this.#resultReplyAuthorized(observation, events) ||
+            statements.some(
+              (statement) =>
+                observation.replySourceSequences.includes(statement.sequence) &&
+                mayReplyImmediately(statement),
+            )) &&
+          this.#canSpeakFor(
+            statements
+              .filter((statement) => !statement.handledAction)
+              .map((statement) => statement.sequence),
+          )
+            ? speechExcerpt(conversationReply)
+            : "",
+      });
+    for (const statement of statements) statement.observed = true;
+    const observedIds = new Set(statements.map((statement) => statement.id));
+    for (const statement of this.statements)
+      if (observedIds.has(statement.id)) statement.observed = true;
+    this.statements = this.statements.filter(
+      (statement) => !statement.observed || !statement.archived,
+    );
+    await this.persist();
+    this.droppedAudio = 0;
+    this.failedTranscriptions = 0;
+    this.#queueLiveUpdate();
+
+    await this.#dispatchPendingControls();
+    const { accepted: acceptedTasks } = await this.#dispatchPendingTasks();
+
+    if (batchId) {
+      this.completedCoordinatorBatches.push(batchId);
+      this.completedCoordinatorBatches =
+        this.completedCoordinatorBatches.slice(-100);
+      await this.persist();
+    }
+
+    this.#log("meeting_observation_completed", {
+      elapsedMs: Date.now() - startedAt,
+      statements: statements.length,
+      replied: Boolean(conversationReply),
+      tasks: acceptedTasks.length,
+    });
+    if (
+      this.statements.some(
+        (statement) =>
+          !statement.observed &&
+          !statement.handledAction &&
+          mayReplyImmediately(statement, this.immediateReactions),
+      )
+    )
+      this.immediateObservationRequested = true;
+    return true;
+  }
+
+  #researchAuthorized(task, statements) {
+    if (
+      !this.coordinator ||
+      task?.kind !== "research" ||
+      !task.sourceSequences?.length
+    )
+      return false;
+    const sources = task.sourceSequences.map((sequence) =>
+      statements.find((item) => item.sequence === sequence),
+    );
+    return sources.every(
+      (source) =>
+        source &&
+        !source.contextOnly &&
+        !source.handledAction &&
+        source.userId === this.ownerUserId &&
+        source.readOnlyResearchEligible === true,
+    );
+  }
+
+  #resultReplyAuthorized(observation, events) {
+    return (
+      this.coordinator &&
+      observation.shouldReply &&
+      Boolean(observation.reply) &&
+      events.some(
+        (event) =>
+          event.type === "task_result" &&
+          !event.result.superseded &&
+          (this.results.find((result) => result.id === event.result.id)
+            ?.runRevision ?? 0) === (event.result.runRevision ?? 0),
+      )
+    );
   }
 
   async #applyMeetingControl(control) {
@@ -1742,6 +2149,20 @@ export class MeetingSession {
           await this.persist();
         }
         if (control.type === "reply" && control.notification) {
+          if (this.coordinator && !control.archived) {
+            await this.dependencies.archiveTranscript({
+              id: control.requestKey,
+              meetingId: this.meetingId,
+              startedAt: Date.now(),
+              speakerName: "井戸Bot",
+              role: "assistant",
+              provider: "coordinator",
+              text: control.notification,
+              playbackStatus: "not_confirmed",
+              sourceSequences: control.sourceSequences,
+            });
+            control.archived = true;
+          }
           this.replyContextRevision++;
           this.recentConversation.push({
             role: "assistant",
@@ -1769,6 +2190,7 @@ export class MeetingSession {
                 item.role === "user" &&
                 control.sourceSequences?.includes(item.sequence),
             ),
+          { modeRevision: control.modeRevision },
         );
       } catch (error) {
         this.#log("meeting_control_dispatch_pending", {
@@ -1788,115 +2210,34 @@ export class MeetingSession {
     );
   }
 
-  #queueMeetingSpeech(spoken, targets = []) {
+  #queueMeetingSpeech(spoken, targets = [], context = {}) {
     if (!this.speechEnabled || !spoken || this.closed || this.voicePaused)
       return Promise.resolve();
-    if (this.dependencies.isLive()) {
-      this.dependencies.speak(spoken);
-      return Promise.resolve();
-    }
-    const speechSignal = AbortSignal.any([
-      this.shutdownController.signal,
-      this.speechController.signal,
-    ]);
-    const key = targets
-      .map((target) =>
-        target.text
-          .normalize("NFKC")
-          .replace(/[\s、。！？!?]/gu, " ")
-          .trim(),
-      )
-      .join("\n");
-    const order = Math.max(
-      -1,
-      ...targets.map((target) => target.sequence ?? -1),
-    );
-    const historyKey = `${this.meetingId}:${key}`;
-    if (key && (this.latestSpeechOrders.get(historyKey) ?? -1) > order)
-      return Promise.resolve();
-    if (key) this.latestSpeechOrders.set(historyKey, order);
-    if (this.latestSpeechOrders.size > 200)
-      this.latestSpeechOrders.delete(
-        this.latestSpeechOrders.keys().next().value,
-      );
-    const candidate = { order };
-    if (key) this.speechCandidates.set(key, candidate);
-    const ticket = createSpeechTicket({
-      isCurrent: () =>
-        (!key || this.speechCandidates.get(key) === candidate) &&
-        targets.every((target) => {
-          if (!target.resultId) return true;
-          const current = this.results.find(
-            (result) => result.id === target.resultId,
-          );
-          return (
-            current &&
-            !current.superseded &&
-            (current.runRevision ?? 0) === target.runRevision
-          );
+    return this.#trackOperation(
+      Promise.resolve(
+        this.conversationModes.routeReply(
+          {
+            text: spoken,
+            targets,
+            meetingId: this.meetingId,
+          },
+          context,
+        ),
+      ).catch((error) =>
+        this.#log("meeting_reply_delivery_failed", {
+          errorCode: voiceErrorCode(error),
         }),
+      ),
+    );
+  }
+
+  #queueTextSpeech(spoken, targets = []) {
+    this.speechQueue = this.speechOutput.enqueue({
       text: spoken,
       targets,
-      validate: this.dependencies.revalidateReply
-        ? async (input, options) => {
-            const decision = await this.dependencies.revalidateReply(
-              input,
-              options,
-            );
-            this.#log("meeting_speech_revalidated", {
-              decision: decision.decision,
-              sourceSequences: targets
-                .map((t) => t.sequence)
-                .filter(Number.isInteger),
-            });
-            return decision;
-          }
-        : undefined,
-      getState: () => ({
-        revision: this.replyContextRevision,
-        pendingTranscripts:
-          this.activeTranscriptions +
-          this.audioQueue.length +
-          this.speechTurns.turns.size +
-          this.activeTextInputs,
-        conversation: this.recentConversation.filter(
-          (item) =>
-            !targets.some(
-              (target) =>
-                target.sequence === item.sequence ||
-                item.sourceSequences?.includes(target.sequence),
-            ),
-        ),
-      }),
+      meetingId: this.meetingId,
+      modeRevision: this.conversationModes.revision,
     });
-    const finishWait = this.telemetry.span("TTS", {
-      status: "waiting",
-      reason: "playback_queue",
-    });
-    this.pendingSpeechCount++;
-    this.speechQueue = this.speechQueue
-      .then(() => {
-        finishWait(speechSignal.aborted ? "interrupted" : "completed");
-        return deliverSpeech(spoken, {
-          synthesize: this.dependencies.synthesize,
-          playAudio: this.dependencies.playAudio,
-          stageTimeouts: this.stageTimeouts,
-          signal: speechSignal,
-          beforeStart: ticket.beforeStart,
-          canStart: ticket.canStart,
-        });
-      })
-      .catch((error) => {
-        if (!this.closed && error?.code !== "SPEECH_STOPPED")
-          this.#log("meeting_speech_failed", {
-            errorCode: voiceErrorCode(error),
-          });
-      })
-      .finally(() => {
-        this.pendingSpeechCount--;
-        if (key && this.speechCandidates.get(key) === candidate)
-          this.speechCandidates.delete(key);
-      });
     return this.#trackOperation(this.speechQueue);
   }
 
@@ -2010,12 +2351,16 @@ export class MeetingSession {
       ),
     );
     this.stopping = (async () => {
+      await this.coordinator?.close();
+      await this.conversationModes.stopSpeech();
+      await this.speechOutput.close();
       await this.meetingBoundary;
       await Promise.allSettled([
         ...this.activeOperations,
         ...this.activeTranscriptionJobs,
       ]);
       await this.liveUpdate;
+      await this.minutesUpdate;
       try {
         this.speechTurns.interrupt();
         await this.#flushSpeechTurns();
@@ -2118,6 +2463,8 @@ export class MeetingSession {
         requestKey: item.metadata.requestKey,
         taskEligible: item.metadata.taskEligible !== false,
         requestReply: item.metadata.requestReply === true,
+        priority: item.metadata.priority,
+        origin: "audio",
         meetingId: this.meetingId,
         sequence: item.sequence,
         userId: item.metadata.userId,
@@ -2142,6 +2489,7 @@ export class MeetingSession {
         this.statements.push(statement);
         await this.#tryImmediateTaskAction(statement);
         await this.#archiveStatement(statement);
+        await this.#enqueueCoordinatorStatement(statement);
         await this.persist();
       }
       this.#log("meeting_transcript_completed", {
@@ -2289,6 +2637,29 @@ export class MeetingSession {
     }
     try {
       await this.dependencies.archiveTranscript(statement);
+      if (this.coordinator && !statement.minutesRecorded) {
+        this.minutes = boundRecentText(
+          [this.minutes, `[${speakerLabel(statement)}] ${statement.text}`]
+            .filter(Boolean)
+            .join("\n"),
+          10_000,
+        );
+        statement.minutesRecorded = true;
+        const minutes = this.minutes;
+        this.minutesUpdate = (this.minutesUpdate ?? Promise.resolve())
+          .catch(() => {})
+          .then(() =>
+            this.dependencies.upsertMinutes(
+              this.presentation.minutes(++this.revision, minutes),
+              { minutes },
+            ),
+          )
+          .catch((error) =>
+            this.#log("meeting_log_display_failed", {
+              errorCode: voiceErrorCode(error),
+            }),
+          );
+      }
       statement.archived = true;
       this.archiveFailures = this.statements.filter(
         (candidate) => !candidate.archived,
@@ -2312,6 +2683,7 @@ export class MeetingSession {
   }
 
   #scheduleImmediateObservation() {
+    if (this.coordinator) return;
     if (
       this.closed ||
       this.observing ||

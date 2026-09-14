@@ -35,6 +35,21 @@ export function createLocalTranscriptArchive({
       userId: statement.userId,
       speakerName: speakerName(statement),
       text: String(statement.text ?? ""),
+      role: statement.role ?? "user",
+      ...(statement.provider ? { provider: statement.provider } : {}),
+      ...(statement.sourceSequences
+        ? { sourceSequences: statement.sourceSequences }
+        : {}),
+      ...(statement.sourceStartMs !== undefined
+        ? {
+            sourceStartMs: statement.sourceStartMs,
+            sourceEndMs: statement.sourceEndMs,
+          }
+        : {}),
+      ...(statement.final !== undefined ? { final: statement.final } : {}),
+      ...(statement.playbackStatus
+        ? { playbackStatus: statement.playbackStatus }
+        : {}),
     };
     const file = join(
       directory,

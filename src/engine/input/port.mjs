@@ -7,10 +7,16 @@ export function normalizeInput(event) {
     throw new TypeError("audio must be a PCM WAV Buffer");
   if (event.type === "text" && typeof event.text !== "string")
     throw new TypeError("text must be a string");
+  if (
+    event.priority !== undefined &&
+    !["normal", "immediate"].includes(event.priority)
+  )
+    throw new TypeError("input priority must be normal or immediate");
   return {
     ...event,
     metadata: {
       ...event.metadata,
+      ...(event.priority !== undefined ? { priority: event.priority } : {}),
       ...(event.id !== undefined ? { inputId: event.id } : {}),
       ...(event.sessionId !== undefined ? { meetingId: event.sessionId } : {}),
       ...(event.actor !== undefined

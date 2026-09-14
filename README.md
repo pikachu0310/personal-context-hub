@@ -391,6 +391,8 @@ OpenAI音声API、単一Codexバックエンド、保存先を組み立てます
 差し替えて追加できます。現在の実接続はDiscordと単一Codexバックエンドです。
 [責務・インターフェース・互換性・拡張手順](docs/architecture.md)を参照してください。
 
+会議では、永続メインモデル・入力キュー・話者別ログを共通化し、STT/TTS方式とLive方式を選択できます。[会話方式と差し替え境界](docs/conversation-modes.md)に設定、データフロー、復旧手順を、[WorkPort契約](docs/work-port-contract.md)に作業基盤との接続条件を記載しています。
+
 ## ライブHUD
 
 音声エンジンの処理位置、会話から派生したタスク、実行中の検索をlocalhostの

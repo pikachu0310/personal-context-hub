@@ -5,6 +5,7 @@ import { TaskQueue } from "./task-queue.mjs";
 import { plainPresentation } from "./output/presentation.mjs";
 import { createInputPort } from "./input/port.mjs";
 import { normalizeOutput } from "./output/port.mjs";
+import { createWorkPort } from "./work-port.mjs";
 
 // Composition independent of devices, SDKs, credentials and filesystem paths.
 // The caller prepares execution and owns store acquisition/release and transport lifecycle.
@@ -12,7 +13,9 @@ export async function createConversationEngine({
   config,
   onEvent,
   audio = {},
-  execution,
+  execution = {},
+  coordinator: coordinatorPort,
+  workPort: suppliedWorkPort,
   output: suppliedOutput,
   store,
   initialState: saved,
@@ -75,18 +78,6 @@ export async function createConversationEngine({
     text,
   }));
   output.playAudio = telemetry.wrap("PLAYBACK", output.playAudio);
-  if (output.speak) {
-    const speak = output.speak;
-    output.speak = (...args) => {
-      telemetry.emit({
-        stage: "PLAYBACK",
-        spanId: "live-request-" + Date.now(),
-        status: "skipped",
-        reason: "live_playback_unprovided",
-      });
-      return speak(...args);
-    };
-  }
 
   const {
     postText,
@@ -122,43 +113,46 @@ export async function createConversationEngine({
   const presentation = output.presentation ?? plainPresentation;
   let taskQueue, session;
   try {
-    taskQueue = config.powerMode
-      ? new TaskQueue({
-          presentation,
-          agentTeam: dependencies.agentTeam,
-          reviewTask: execution.reviewTask,
-          runTask: (task, options) => execution.runTask(task, options),
-          steerTask: execution.steerTask,
-          confirmPreview: execution.confirmPreview,
-          restartPreview: execution.restartPreview,
-          invalidatePreview: execution.invalidatePreview,
-          postText,
-          createTaskThread,
-          logger,
-          concurrency: config.taskConcurrency,
-          maximumPendingTasks: config.maximumPendingTasks,
-          taskTimeoutMs: config.stageTimeouts?.running_codex,
-          checkpoint: async (tasks) => {
-            for (const task of tasks) telemetry.taskState(task);
-            await store?.save({ tasks });
-            hooks.onTaskState?.(tasks);
-          },
-          onResult: async (result, options) => {
-            await session?.addTaskResult?.(result, {
-              ...options,
-              resultAlreadyDelivered:
-                output.capabilities.threadedResults === true,
-            });
-            hooks.onTaskResult?.(result);
-          },
-          applyTask: (task) => execution.applyTask(task),
-        })
-      : undefined;
+    taskQueue =
+      config.powerMode && !suppliedWorkPort
+        ? new TaskQueue({
+            presentation,
+            agentTeam: dependencies.agentTeam,
+            reviewTask: execution.reviewTask,
+            runTask: (task, options) => execution.runTask(task, options),
+            steerTask: execution.steerTask,
+            confirmPreview: execution.confirmPreview,
+            restartPreview: execution.restartPreview,
+            invalidatePreview: execution.invalidatePreview,
+            postText,
+            createTaskThread,
+            logger,
+            concurrency: config.taskConcurrency,
+            maximumPendingTasks: config.maximumPendingTasks,
+            taskTimeoutMs: config.stageTimeouts?.running_codex,
+            checkpoint: async (tasks) => {
+              for (const task of tasks) telemetry.taskState(task);
+              await store?.save({ tasks });
+              hooks.onTaskState?.(tasks);
+              session?.conversationModes?.onTaskState(tasks);
+            },
+            onResult: async (result, options) => {
+              await session?.addTaskResult?.(result, {
+                ...options,
+                resultAlreadyDelivered:
+                  output.capabilities.threadedResults === true,
+              });
+              hooks.onTaskResult?.(result);
+            },
+            applyTask: (task) => execution.applyTask(task),
+          })
+        : undefined;
     if (taskQueue && saved?.tasks?.length) {
       await taskQueue.restore(saved.tasks, async (task) =>
         instrumentSurface(await output.restoreTaskSurface(task), task),
       );
     }
+    const workPort = suppliedWorkPort ?? createWorkPort(taskQueue);
     session =
       config.voiceMode === "meeting"
         ? new MeetingSession({
@@ -166,14 +160,18 @@ export async function createConversationEngine({
             presentation,
             speechEnabled: output.capabilities.audio,
             transcribe: audio.transcribe?.bind(audio),
+            createCoordinator:
+              coordinatorPort?.createCoordinator?.bind(coordinatorPort),
+            conversationModes: dependencies.conversationModes,
+            classifyInput: dependencies.classifyInput,
+            createSpeechOutput: dependencies.createSpeechOutput,
             quickReply: audio.quickReply?.bind(audio),
             classifyVoiceNeed: audio.classifyVoiceNeed?.bind(audio),
             revalidateReply: audio.revalidateReply?.bind(audio),
             investigateQuestion: execution.investigateQuestion,
             getRuntimeContext: hooks.getRuntimeContext,
             onStatement: hooks.onStatement,
-            speak: output.speak,
-            isLive: output.isLive,
+            onMeetingReset: hooks.onMeetingReset,
             stopSpeech: output.stopSpeech,
             observe: (observation, options) =>
               execution.observeMeeting(observation, options),
@@ -185,11 +183,14 @@ export async function createConversationEngine({
             postText,
             synthesize: audio.synthesize?.bind(audio),
             playAudio,
-            enqueueTask: (task) => taskQueue?.enqueueDurable(task) ?? false,
-            controlTask: (control) =>
-              taskQueue?.handleVoiceControlDurable(control) ?? false,
-            getTaskReceipt: (requestKey) => taskQueue?.getReceipt(requestKey),
-            getTaskResult: (taskId) => taskQueue?.getTaskResult(taskId),
+            enqueueTask: (task) =>
+              task.executionPolicy?.sandboxMode === "read-only" &&
+              task.kind === "research"
+                ? workPort.submitResearch(task)
+                : workPort.submit(task),
+            controlTask: (control) => workPort.control(control),
+            getTaskReceipt: (requestKey) => workPort.getReceipt(requestKey),
+            getTaskResult: (taskId) => workPort.getResult(taskId),
             ownerUserId: config.allowedUserId,
             tasksEnabled: config.powerMode,
             operatorUserIds: config.operatorUserIds,
@@ -199,7 +200,7 @@ export async function createConversationEngine({
             requireWakeWord: config.requireWakeWord,
             initialState: saved?.meeting,
             checkpoint: (meeting) => store?.save({ meeting }),
-            getTasks: () => taskQueue?.list() ?? [],
+            getTasks: () => workPort.list(),
             logger,
             observationIntervalMs: config.observationIntervalMs,
             immediateReactions: config.immediateReactions,
@@ -223,7 +224,18 @@ export async function createConversationEngine({
             stageTimeouts: config.stageTimeouts,
           });
 
-    return { session, taskQueue, telemetry, input: createInputPort(session) };
+    return {
+      session,
+      taskQueue,
+      workPort,
+      telemetry,
+      input: createInputPort(session),
+      acceptWorkResult: async (result, options) => {
+        await session.addTaskResult?.(result, options);
+        hooks.onTaskResult?.(result);
+      },
+      acceptWorkState: (tasks) => session.conversationModes?.onTaskState(tasks),
+    };
   } catch (error) {
     await Promise.allSettled([session?.stop(), taskQueue?.stop()]);
     throw error;

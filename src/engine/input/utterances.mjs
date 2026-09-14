@@ -92,6 +92,9 @@ export class SpeechTurnAssembler {
           turn.taskEligible !== false &&
           statements.every((statement) => statement.taskEligible !== false),
         requestReply: turn.requestReply === true,
+        priority: turn.priority,
+        origin: "audio",
+        complete: !incomplete,
         inputId: turn.inputId,
         taskId: turn.taskId,
         requestKey: turn.requestKey,
