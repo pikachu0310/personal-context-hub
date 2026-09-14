@@ -184,8 +184,13 @@ export class Client {
     if (this.settings.deviceId) this.connect();
     return this;
   }
+  private saving: Promise<void> = Promise.resolve();
   save() {
-    return atomic(join(this.directory, "client.json"), this.settings);
+    const snapshot = structuredClone(this.settings);
+    this.saving = this.saving
+      .catch(() => {})
+      .then(() => atomic(join(this.directory, "client.json"), snapshot));
+    return this.saving;
   }
   emit(data: Command) {
     if (this.ws?.readyState === WebSocket.OPEN && this.connected)
@@ -247,7 +252,9 @@ export class Client {
     }
     this.projectRequests.clear();
     this.preview.close();
+    await this.processing.catch(() => {});
     await this.executor.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await this.saving;
   }
 }

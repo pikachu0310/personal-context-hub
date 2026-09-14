@@ -110,11 +110,21 @@ try {
         }),
       });
       assert.equal(login.status, 200);
-      const state = await fetch(origin + "/dashboard/api/state", {
+      const state = await fetch(origin + "/api/admin/dashboard", {
         headers: { cookie: login.headers.get("set-cookie").split(";")[0] },
       });
       assert.equal(state.status, 200);
-      assert.deepEqual((await state.json()).meetings, []);
+      const snapshot = await state.json();
+      assert.deepEqual(snapshot.counts, {
+        running: 0,
+        waiting: 0,
+        connectedUsers: 0,
+        activeConversations: 0,
+        projects: 1,
+      });
+      assert.deepEqual(snapshot.tasks, []);
+      assert.equal(snapshot.meetings.length, 1);
+      assert.equal(snapshot.meetings[0].projectId, "default");
       const dependencies = JSON.parse(
         execFileSync(npm, ["ls", "--prefix", root, "--all", "--json"], {
           encoding: "utf8",

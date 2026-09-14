@@ -56,6 +56,8 @@ export interface Task {
   text: string;
   state: TaskState;
   clientId?: string;
+  assignedAt?: number;
+  assignmentReason?: string;
   runId: string;
   revision: number;
   network: boolean;

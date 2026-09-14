@@ -26,6 +26,141 @@ import { taskSnapshot } from "./task-list.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
+  readonly sessions = new Map<
+    string,
+    {
+      generation: number;
+      connectedAt: number;
+      lastSeenAt: number;
+      disconnecting: boolean;
+    }
+  >();
+  readonly disconnects = new Map<
+    string,
+    Promise<{ disconnected: boolean; unconfirmedTaskIds: string[] }>
+  >();
+
+  disconnect(
+    deviceId: string,
+    generation: number,
+    actor: string,
+    expected: Array<{
+      id: string;
+      runId: string;
+      revision: number;
+      controlVersion: number;
+    }>,
+  ) {
+    const key = `${deviceId}:${generation}`;
+    const previous = this.disconnects.get(key);
+    if (previous) return previous;
+    const socket = this.peers.get(deviceId),
+      session = this.sessions.get(deviceId);
+    if (!socket || !session || session.generation !== generation)
+      throw new Error("CONNECTION_CHANGED");
+    const tasks = this.store
+      .list<Task>("task")
+      .filter(
+        (t) =>
+          t.clientId === deviceId &&
+          ["assigned", "running", "interrupted"].includes(t.state),
+      );
+    if (
+      tasks.length !== expected.length ||
+      tasks.some(
+        (t) =>
+          !expected.some(
+            (e) =>
+              e.id === t.id &&
+              e.runId === t.runId &&
+              e.revision === t.revision &&
+              e.controlVersion === (t.controlVersion ?? 0),
+          ),
+      )
+    )
+      throw new Error("CONNECTION_TASKS_CHANGED");
+    // No await between validation and fencing this exact connection from scheduling.
+    session.disconnecting = true;
+    this.ready.delete(deviceId);
+    const receipts = tasks.map((t) =>
+      this.tasks.control(t.id, actor, "stop", undefined, {
+        requestKey: `disconnect:${deviceId}:${generation}:${t.id}`,
+        expectedRevision: t.revision,
+        expectedControlVersion: t.controlVersion ?? 0,
+      }),
+    );
+    this.store.audit(actor, "connection.disconnect.requested", deviceId);
+    // Do not replay an old execute/retry ahead of its stop after reconnecting.
+    for (const command of this.store.pending(deviceId))
+      if (
+        ["execute", "retry"].includes(command.type) &&
+        tasks.some(
+          (t) =>
+            t.id === command.taskId &&
+            t.runId === command.runId &&
+            (!command.revision || command.revision === t.revision),
+        )
+      )
+        this.store.ack(deviceId, command.id!);
+    const ids = new Set(receipts.map((r) => r.id));
+    for (const command of this.store.pending(deviceId))
+      if (
+        command.type === "stop" &&
+        ids.has(String(command.receiptId)) &&
+        socket.readyState === WebSocket.OPEN
+      )
+        socket.send(JSON.stringify({ ...command, generation }));
+    const operation = (async () => {
+      const unconfirmed = () =>
+        tasks
+          .filter((t) => {
+            const receipt = receipts.find((r) => r.taskId === t.id)!;
+            return (
+              this.store.get<Task>("task", t.id)?.controlReceipts?.[receipt.id]
+                ?.delivery !== "stopped"
+            );
+          })
+          .map((t) => t.id);
+      const deadline = Date.now() + 3000;
+      while (
+        unconfirmed().length &&
+        Date.now() < deadline &&
+        socket.readyState === WebSocket.OPEN &&
+        this.peers.get(deviceId) === socket
+      )
+        await new Promise((r) => setTimeout(r, 50));
+      // Never close or remove a replacement connection.
+      if (this.peers.get(deviceId) === socket) {
+        this.peers.delete(deviceId);
+        this.ready.delete(deviceId);
+        this.sessions.delete(deviceId);
+        this.preview.disconnected(deviceId);
+      }
+      const unknown = unconfirmed();
+      socket.close(4004, "disconnected by administrator");
+      const force = setTimeout(() => socket.terminate(), 1000);
+      force.unref();
+      socket.once("close", () => clearTimeout(force));
+      this.store.audit(
+        actor,
+        unknown.length
+          ? "connection.disconnected.stop_unconfirmed"
+          : "connection.disconnected",
+        deviceId,
+      );
+      this.changed();
+      return { disconnected: true, unconfirmedTaskIds: unknown };
+    })();
+    this.disconnects.set(key, operation);
+    void operation
+      .finally(() => {
+        // Keep a small in-memory idempotency window without retaining private content.
+        if (this.disconnects.size > 100)
+          this.disconnects.delete(this.disconnects.keys().next().value!);
+      })
+      .catch(() => {});
+    return operation;
+  }
   readonly artifactRequests = new Map<
     string,
     {
@@ -91,6 +226,10 @@ export class ClientConnections {
     ws.send(JSON.stringify({ v: 1, type: "challenge", challenge }));
     ws.on("pong", () => {
       (ws as WebSocket & { alive?: boolean }).alive = true;
+      if (deviceId && this.peers.get(deviceId) === ws) {
+        const session = this.sessions.get(deviceId);
+        if (session) session.lastSeenAt = Date.now();
+      }
     });
     ws.on("error", () => {});
     ws.on("message", (raw) => {
@@ -117,6 +256,12 @@ export class ClientConnections {
           this.peers.get(device.id)?.close(4000, "superseded");
           this.ready.delete(device.id);
           this.peers.set(device.id, ws);
+          this.sessions.set(device.id, {
+            generation,
+            connectedAt: Date.now(),
+            lastSeenAt: Date.now(),
+            disconnecting: false,
+          });
           new ProjectTeam(this.store).profile(device.id, data.profile);
           authenticated = true;
           clearTimeout(timeout);
@@ -140,9 +285,14 @@ export class ClientConnections {
           !device ||
           device.revoked ||
           device.generation !== generation ||
-          data.generation !== generation
+          data.generation !== generation ||
+          this.peers.get(device.id) !== ws
         )
           throw new Error("STALE_CONNECTION");
+        const session = this.sessions.get(device.id);
+        if (session) session.lastSeenAt = Date.now();
+        if (session?.disconnecting && !["result", "ack"].includes(data.type))
+          return;
         if (data.type === "project.create") {
           const requestId = id(data.requestId);
           try {
@@ -440,6 +590,7 @@ export class ClientConnections {
       if (deviceId && this.peers.get(deviceId) === ws) {
         this.peers.delete(deviceId);
         this.ready.delete(deviceId);
+        this.sessions.delete(deviceId);
         this.preview.disconnected(deviceId);
       }
     });
