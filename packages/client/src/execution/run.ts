@@ -7,6 +7,7 @@ import { restrictExecutionPolicy } from "@ido/common/contracts/work";
 
 import { codexBinary } from "../codex/binary.js";
 import { activityText, recordActivity, recordEvent } from "./activity.js";
+import { taskContextSources, contextPrompt } from "./task-context.js";
 import type { Executor, Run } from "../execution/executor.js";
 export async function execute(
   this: Executor,
@@ -111,6 +112,11 @@ export async function execute(
       ? codex.resumeThread(value.threadId, options)
       : codex.startThread(options);
     value.state = "running";
+    value.contextSources = taskContextSources(
+      value.task,
+      this.contextProfile(),
+      value.contextSources,
+    );
     await this.save();
     this.report(value);
     let prompt = [
@@ -121,6 +127,7 @@ export async function execute(
         ? "これは読み取り専用の調査です。ファイル変更・送信・公開・サービス操作などの外部変更は行わず、根拠と不明点を報告してください。"
         : "",
       value.task.text,
+      contextPrompt(value.contextSources),
     ]
       .filter(Boolean)
       .join("\n\n");

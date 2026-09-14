@@ -16,3 +16,7 @@ ido-client stop
 ```
 
 The local React/Mantine dashboard is bundled with Client at port 4320. Connection/setup and execution/approval pages are independent of the business Dashboard plugin. Local journals, worktrees, approvals and explicit preview registrations remain on this Client.
+
+The task workspace uses a white Mantine theme. Its right panel has Environment, Sources and Changes tabs; on narrow screens, Task details opens the panel from the right. Environment shows the actual Git branch (or detached HEAD), working directory, device and assignee. Changes shows the current local diff and can be refreshed.
+
+New executions snapshot the task's attached meeting statements and the executing user's configured profile context, pass that snapshot to the agent as reference material, and show the same text in Sources. Profile snapshots are preserved when continuing a task. Older executions without a snapshot are labelled accordingly. Shared task views show attached meeting statements and shared device metadata; local profile snapshots, paths and diffs are not added to team summaries.
