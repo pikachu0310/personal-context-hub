@@ -395,7 +395,7 @@ export function App() {
         opened={!!settingsProject}
         onClose={() => setSettingsProject(undefined)}
         title={`${state.settings.projects.find((p) => p.id === settingsProject)?.name ?? "プロジェクト"} · 接続・設定`}
-        size={800}
+        size={640}
         centered
         className="project-settings-modal"
       >
@@ -463,7 +463,7 @@ export function App() {
       </Modal>
       <Modal
         centered
-        size={800}
+        size={640}
         className="project-settings-modal"
         opened={projectDialog !== undefined}
         onClose={() => setProjectDialog(undefined)}
