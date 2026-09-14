@@ -1,3 +1,4 @@
+import { taskParticipants } from "../../processing/projects/task-participants.js";
 import { ProjectTeam } from "../../processing/projects/team.js";
 import { Projects } from "../../processing/projects/service.js";
 import { randomUUID, verify } from "node:crypto";
@@ -55,7 +56,11 @@ export class ClientConnections {
               .filter((t) =>
                 team.projects(deviceId).some((p) => p.id === t.projectId),
               )
-              .slice(-500),
+              .slice(-500)
+              .map((task) => ({
+                ...task,
+                participants: taskParticipants(this.store, task),
+              })),
           }),
         );
     }

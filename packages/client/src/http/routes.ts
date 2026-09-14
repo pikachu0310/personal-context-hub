@@ -11,7 +11,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
-import { id, text } from "@ido/common/contracts/protocol";
+import { avatar, id, text } from "@ido/common/contracts/protocol";
 import {
   asset,
   body,
@@ -128,6 +128,12 @@ export async function route(
       await this.pair(text(input.engineUrl, 2048));
       this.suggestedEngine = undefined;
       break;
+    case "/api/reconnect": {
+      if (!this.settings.deviceId || !this.settings.engineUrl)
+        throw new HttpError(409, "PAIRING_REQUIRED");
+      if (!this.connected && this.status !== "connecting") await this.connect();
+      break;
+    }
     case "/api/disconnect": {
       if (this.executor.active.size)
         throw new HttpError(409, "STOP_TASKS_FIRST");
@@ -149,6 +155,11 @@ export async function route(
     case "/api/profile": {
       this.settings.profile = {
         name: text(input.name, 100),
+        avatar: avatar(
+          input.avatar === undefined
+            ? this.settings.profile?.avatar
+            : input.avatar,
+        ),
         context:
           typeof input.context === "string" ? input.context.slice(0, 8000) : "",
       };

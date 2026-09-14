@@ -59,6 +59,7 @@ test("approved Client owns projects, invites participants, retries unknown resul
   await until(() => clients.every((c) => c.connected));
   const c = clients[0];
   await c.workspaceRequest("profile", {
+    avatar: "data:image/png;base64,iVBORw0KGgo=",
     name: "Alex",
     context: "バックエンド開発担当",
     codexConnected: false,
@@ -70,6 +71,16 @@ test("approved Client owns projects, invites participants, retries unknown resul
     (p: any) => p.id === c.settings.deviceId,
   );
   assert.equal(participant.name, "Alex");
+  assert.equal(participant.avatar, "data:image/png;base64,iVBORw0KGgo=");
+  const teammateView = await clients[1].workspaceRequest<any>(
+    "project.snapshot",
+    { projectId: "default" },
+  );
+  assert.equal(
+    teammateView.participants.find((p: any) => p.id === c.settings.deviceId)
+      .avatar,
+    participant.avatar,
+  );
   assert.equal(participant.context, "バックエンド開発担当");
   assert.equal(participant.codexConnected, false);
   const post = async (name: string, directory: string) =>

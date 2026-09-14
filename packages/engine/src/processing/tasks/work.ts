@@ -27,6 +27,7 @@ export function createWorkPort({
         network: request.network === true,
         title: request.title,
         kind: request.kind,
+        createdByBot: true,
         sourceIds: structuredClone(request.sourceIds),
         sourceStatements: structuredClone(request.sourceStatements),
         sourceSequences: structuredClone(request.sourceSequences),

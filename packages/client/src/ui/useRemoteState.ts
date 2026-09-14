@@ -10,6 +10,9 @@ export function useRemoteState() {
       setError("");
     } catch (error) {
       setError((error as Error).message);
+      setState((previous) =>
+        previous ? { ...previous, connected: false } : previous,
+      );
     }
   }, []);
   useEffect(() => {

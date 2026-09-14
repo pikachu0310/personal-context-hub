@@ -17,6 +17,7 @@ type CreateTaskInput = Pick<
   Partial<
     Pick<
       Task,
+      | "createdByBot"
       | "title"
       | "kind"
       | "sourceIds"

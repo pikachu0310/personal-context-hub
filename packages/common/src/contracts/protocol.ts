@@ -8,7 +8,14 @@ export interface User {
   name: string;
   role: Role;
 }
+export interface TaskParticipant {
+  id: string;
+  name: string;
+  avatar?: string;
+  bot?: boolean;
+}
 export interface ClientProfile {
+  avatar?: string;
   name: string;
   context: string;
   codexConnected: boolean;
@@ -39,6 +46,8 @@ export type TaskState =
   | "failed"
   | "cancelled";
 export interface Task {
+  createdByBot?: boolean;
+  participants?: TaskParticipant[];
   id: string;
   requestId: string;
   projectId: string;
@@ -142,4 +151,16 @@ export function clean(value: string): string {
       "[redacted]",
     )
     .slice(0, 16000);
+}
+
+/** Small, inert raster data only. Shared in profile frames, never external URLs. */
+export function avatar(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length > 4096 ||
+    !/^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)
+  )
+    throw new Error("INVALID_AVATAR");
+  return value;
 }

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Anchor, Button, Code, Group, Paper, Stack, Text } from "@mantine/core";
 import { Card, Form, Status } from "@ido/common-ui";
 import type { Action, ClientState, Invoke } from "@ido/common-ui";
@@ -13,6 +14,8 @@ export function ClientView({
   action: Action;
   invoke: Invoke;
 }) {
+  const [reconnecting, setReconnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
   return (
     <Stack>
       {state.desktop && (
@@ -31,8 +34,69 @@ export function ClientView({
       )}
       {page === "overview" ? (
         <>
+          <Card title="チームのEngineへ接続">
+            <Status value={state.status} />
+            {!state.settings.deviceId && (
+              <Form
+                key={state.suggestedEngine ?? "engine"}
+                initial={{ engineUrl: state.suggestedEngine ?? "" }}
+                fields={[
+                  {
+                    key: "engineUrl",
+                    label: "EngineのURL",
+                    placeholder: "https://engine.example.com",
+                  },
+                ]}
+                submit={(data) => action("pair", data)}
+                label="接続の確認へ"
+              />
+            )}
+            {state.settings.deviceId && (
+              <Group>
+                <Text size="sm">{state.settings.engineUrl}</Text>
+                <Button
+                  loading={reconnecting || state.status === "connecting"}
+                  disabled={state.connected}
+                  onClick={async () => {
+                    setReconnecting(true);
+                    setConnectionError("");
+                    try {
+                      await action("reconnect", {});
+                    } catch (e) {
+                      setConnectionError((e as Error).message);
+                    } finally {
+                      setReconnecting(false);
+                    }
+                  }}
+                >
+                  再接続
+                </Button>
+                <Button
+                  variant="subtle"
+                  color="red"
+                  onClick={() => invoke("disconnect", {})}
+                >
+                  接続先を変更
+                </Button>
+              </Group>
+            )}
+            {connectionError && (
+              <Text c="red" role="alert">
+                {connectionError}
+              </Text>
+            )}
+            {state.pairing && (
+              <>
+                <Anchor href={state.pairing.url} target="_blank">
+                  Engineへログインして、この端末を承認する
+                </Anchor>
+                <Text size="xs">確認値</Text>
+                <Code block>{state.pairing.fingerprint}</Code>
+              </>
+            )}
+          </Card>
           <Card
-            title="1. Codexと連携（タスクを実行する場合）"
+            title="Codexと連携（タスクを実行する場合）"
             description="普段のCodexとは認証・設定を分離します。ブラウザーでOpenAIの公式ログインを完了してください。"
           >
             <Group>
@@ -55,7 +119,7 @@ export function ClientView({
           </Card>
           <Card
             title="Claude Codeでログイン"
-            description="Claudeを使う場合に設定します。このPCの公式Claude Codeの認証を利用し、Botへ認証情報を渡しません。今はアプリから開始するローカルタスクで選べます。"
+            description="Claudeを使う場合に設定します。このPCの公式Claude Codeの認証を利用し、Botへ認証情報を渡しません。"
           >
             <Group>
               <Status value={state.claudeLoginStatus ?? "not checked"} />
@@ -85,45 +149,6 @@ export function ClientView({
             >
               公式の認証手順
             </Anchor>
-          </Card>
-          <Card title="2. チームのEngineへ接続">
-            <Status value={state.status} />
-            {!state.settings.deviceId && (
-              <Form
-                key={state.suggestedEngine ?? "engine"}
-                initial={{ engineUrl: state.suggestedEngine ?? "" }}
-                fields={[
-                  {
-                    key: "engineUrl",
-                    label: "EngineのURL",
-                    placeholder: "https://engine.example.com",
-                  },
-                ]}
-                submit={(data) => action("pair", data)}
-                label="接続の確認へ"
-              />
-            )}
-            {state.settings.deviceId && (
-              <Group>
-                <Text size="sm">{state.settings.engineUrl}</Text>
-                <Button
-                  variant="subtle"
-                  color="red"
-                  onClick={() => invoke("disconnect", {})}
-                >
-                  接続先を変更
-                </Button>
-              </Group>
-            )}
-            {state.pairing && (
-              <>
-                <Anchor href={state.pairing.url} target="_blank">
-                  Engineへログインして、この端末を承認する
-                </Anchor>
-                <Text size="xs">確認値</Text>
-                <Code block>{state.pairing.fingerprint}</Code>
-              </>
-            )}
           </Card>
         </>
       ) : null}

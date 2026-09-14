@@ -1,3 +1,5 @@
+import { ProfileSettings } from "./ProfileSettings.js";
+import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
 import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { ProjectView } from "./ProjectView.js";
@@ -6,18 +8,17 @@ import { InviteDialog } from "./InviteDialog.js";
 import { Modal, Text, Button, Anchor } from "@mantine/core";
 import { Form } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ClientView } from "./ClientView.js";
 import { ClientRuns } from "./ClientRuns.js";
 import { TeamTaskDetail } from "./TeamTasks.js";
-import { NewLocalTask } from "./NewLocalTask.js";
 import { useRemoteState } from "./useRemoteState.js";
 import { Icon } from "./Icons.js";
 import { activeState, stateLabel } from "./ActivityFeed.js";
 import "./workspace.css";
 export function App() {
   const { state, error, refresh, action, invoke } = useRemoteState();
-  const [page, setPage] = useState<"overview" | "runs" | "new-local">();
+  const [page, setPage] = useState<"overview" | "runs">();
   const [selected, select] = useState<string>();
   const [selectedShared, selectShared] = useState<string>();
   const [query, search] = useState("");
@@ -48,11 +49,6 @@ export function App() {
     )
       setInvite(state.suggestedInvite);
   }, [state?.suggestedInvite?.token, dismissedInvite]);
-  const wasConnected = useRef(false);
-  useEffect(() => {
-    if (state?.connected && !wasConnected.current) setPage("runs");
-    wasConnected.current = state?.connected ?? false;
-  }, [state?.connected]);
   useEffect(() => {
     if (!selected && state?.runs.length)
       select(
@@ -91,7 +87,6 @@ export function App() {
         {error || "IDO Agentを準備しています…"}
       </div>
     );
-  const currentPage = page ?? (state.settings.deviceId ? "runs" : "overview");
   const runs = [...state.runs].sort(
     (a, b) =>
       Number(activeState(b.state)) - Number(activeState(a.state)) ||
@@ -100,6 +95,15 @@ export function App() {
   const current = runs.find((run) => run.task.runId === selected) ?? runs[0];
   const shared = state.connected ? (state.teamTasks?.tasks ?? []) : [];
   const sharedCurrent = shared.find((task) => task.id === selectedShared);
+  const activeProjectId =
+    projectView?.projectId ??
+    sharedCurrent?.projectId ??
+    current?.task.projectId;
+  const workspaceConnected =
+    state.connected &&
+    (!activeProjectId ||
+      state.settings.projects.some((p) => p.id === activeProjectId));
+  const currentPage = !workspaceConnected ? "overview" : (page ?? "runs");
   const sharedStale =
     !!state.teamTasks && Date.now() - state.teamTasks.updatedAt > 15000;
   const sharedGroups = [
@@ -146,31 +150,7 @@ export function App() {
         </div>
         <nav className="sidebar-nav" aria-label="メインメニュー">
           <button
-            className={currentPage === "new-local" ? "nav-active" : ""}
-            onClick={() => {
-              setProjectView(undefined);
-              selectShared(undefined);
-              setPage("new-local");
-            }}
-          >
-            <Icon name="terminal" />
-            新しいローカルタスク
-          </button>
-          <button
-            className={currentPage === "runs" ? "nav-active" : ""}
-            onClick={() => {
-              setProjectView(undefined);
-              setPage("runs");
-            }}
-          >
-            <Icon name="terminal" />
-            実行と承認
-            {state.approvals.length > 0 && (
-              <span className="count-badge">{state.approvals.length}</span>
-            )}
-          </button>
-          <button
-            className={currentPage === "overview" ? "nav-active" : ""}
+            className={`${currentPage === "overview" ? "nav-active" : ""} ${!state.connected ? "connection-required" : ""}`}
             onClick={() => {
               setProjectView(undefined);
               setPage("overview");
@@ -178,6 +158,9 @@ export function App() {
           >
             <Icon name="settings" />
             接続とセットアップ
+            {!state.connected && (
+              <span className="connection-prompt">未接続</span>
+            )}
           </button>
         </nav>
         <label className="task-search">
@@ -203,6 +186,7 @@ export function App() {
           </div>
           {projects.map((id) => {
             const project = state.settings.projects.find((p) => p.id === id);
+            const projectConnected = state.connected && !!project;
             const shared = (state.projectTasks ?? []).filter(
               (t) =>
                 t.projectId === id &&
@@ -214,7 +198,10 @@ export function App() {
             const items = filtered.filter((r) => r.task.projectId === id);
             if (query && !items.length && !shared.length) return null;
             return (
-              <section key={id} className="project-group">
+              <section
+                key={id}
+                className={`project-group ${!projectConnected ? "project-disconnected" : ""}`}
+              >
                 <div className="project-name">
                   <Icon name="folder" size={16} />
                   <span>
@@ -233,6 +220,7 @@ export function App() {
                         className="icon-button project-compose"
                         aria-label={`${project.name}に新しいタスクを追加`}
                         title="新しいタスク"
+                        disabled={!projectConnected}
                         onClick={() => {
                           setTaskDrafts((drafts) => ({
                             ...drafts,
@@ -252,6 +240,7 @@ export function App() {
                 </div>
                 {project && (
                   <button
+                    disabled={!projectConnected}
                     className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
                     onClick={() => setProjectView({ projectId: id })}
                   >
@@ -261,23 +250,31 @@ export function App() {
                 )}
                 {Object.hasOwn(taskDrafts, id) && (
                   <button
+                    disabled={!projectConnected}
                     className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
                     onClick={() =>
                       setProjectView({ projectId: id, draft: true })
                     }
                   >
                     <span>新しいタスク</span>
+                    <TaskAvatars
+                      state={state}
+                      task={{ id: `draft-${id}` }}
+                      local
+                    />
                   </button>
                 )}
                 {shared.map((task) => (
                   <button
                     key={task.id}
+                    disabled={!projectConnected}
                     className={`task-link ${projectView?.taskId === task.id ? "selected" : ""}`}
                     onClick={() =>
                       setProjectView({ projectId: id, taskId: task.id })
                     }
                   >
                     <span>{task.title ?? task.text}</span>
+                    <TaskAvatars state={state} task={task} />
                     <span
                       className={`task-dot ${task.state}`}
                       aria-label={stateLabel(task.state)}
@@ -287,6 +284,7 @@ export function App() {
                 {items.map((run) => (
                   <button
                     key={run.task.runId}
+                    disabled={!projectConnected}
                     className={`task-link ${!selectedShared && currentPage === "runs" && run.task.runId === current?.task.runId ? "selected" : ""}`}
                     aria-current={
                       currentPage === "runs" &&
@@ -312,6 +310,7 @@ export function App() {
                         </small>
                       )}
                     </span>
+                    <TaskAvatars state={state} task={run.task} local />
                     <span
                       role="img"
                       aria-label={stateLabel(run.state)}
@@ -344,6 +343,7 @@ export function App() {
                 .map((task) => (
                   <button
                     key={task.id}
+                    disabled={!state.connected}
                     className={`task-link ${currentPage === "runs" && selectedShared === task.id ? "selected" : ""}`}
                     aria-current={
                       currentPage === "runs" && selectedShared === task.id
@@ -365,6 +365,7 @@ export function App() {
                         · {stateLabel(task.state)}
                       </small>
                     </span>
+                    <TaskAvatars state={state} task={task} />
                     <span
                       className={`task-dot ${activeState(task.state) && !sharedStale && task.deviceConnected ? "active" : task.state}`}
                     />
@@ -397,7 +398,13 @@ export function App() {
             aria-label="ユーザー設定を開く"
             onClick={() => showProfile(true)}
           >
-            {state.settings.profile?.name?.slice(0, 2) || "PC"}
+            <UserAvatar
+              person={{
+                id: "self",
+                name: state.settings.profile?.name || "PC",
+                avatar: state.settings.profile?.avatar,
+              }}
+            />
           </button>
           <div>
             <strong>
@@ -448,28 +455,16 @@ export function App() {
         }}
       />
       <Modal
+        centered
         opened={profileDialog}
         onClose={() => showProfile(false)}
         title="ユーザー設定"
       >
-        <Text mb="md">
-          表示名と個人コンテキストは、参加しているプロジェクトで共有し、Engineが会話や開発担当を理解するために使います。
-        </Text>
-        <Form
-          initial={state.settings.profile ?? { name: "参加者", context: "" }}
-          fields={[
-            { key: "name", label: "アカウント名" },
-            {
-              key: "context",
-              label: "個人コンテキスト（自己紹介・開発担当など）",
-              multiline: true,
-              optional: true,
-            },
-          ]}
-          submit={async (data) => {
-            await action("profile", data);
-            showProfile(false);
-          }}
+        <ProfileSettings
+          key={String(profileDialog)}
+          state={state}
+          action={action}
+          saved={() => showProfile(false)}
         />
         <Text mt="lg">
           {state.loginStatus === "authenticated"
@@ -504,6 +499,7 @@ export function App() {
         )}
       </Modal>
       <Modal
+        centered
         opened={projectDialog !== undefined}
         onClose={() => setProjectDialog(undefined)}
         title={
@@ -546,19 +542,17 @@ export function App() {
           </button>
           <Icon name="folder" size={17} />
           <h1>
-            {projectView
+            {projectView && workspaceConnected
               ? (state.settings.projects.find(
                   (p) => p.id === projectView.projectId,
                 )?.name ?? "プロジェクト")
               : currentPage === "overview"
                 ? "接続とセットアップ"
-                : currentPage === "new-local"
-                  ? "新しいローカルタスク"
-                  : (sharedCurrent?.title ??
-                    (selectedShared
-                      ? "共有タスク"
-                      : (current?.task.title ?? current?.task.text)) ??
-                    "実行と承認")}
+                : (sharedCurrent?.title ??
+                  (selectedShared
+                    ? "共有タスク"
+                    : (current?.task.title ?? current?.task.text)) ??
+                  "タスク")}
           </h1>
           <button
             className="icon-button"
@@ -573,7 +567,7 @@ export function App() {
             {error}
           </div>
         )}
-        {projectView?.draft ? (
+        {workspaceConnected && projectView?.draft ? (
           <ProjectTaskDraft
             key={projectView.projectId}
             projectId={projectView.projectId}
@@ -607,7 +601,7 @@ export function App() {
               await refresh();
             }}
           />
-        ) : projectView ? (
+        ) : workspaceConnected && projectView ? (
           <ProjectView
             key={projectView.projectId}
             projectId={projectView.projectId}
@@ -615,16 +609,6 @@ export function App() {
             deviceId={state.settings.deviceId}
             clientState={state}
             openSettings={() => setSettingsProject(projectView.projectId)}
-          />
-        ) : currentPage === "new-local" ? (
-          <NewLocalTask
-            action={action}
-            mode="auto"
-            started={(runId) => {
-              select(runId);
-              selectShared(undefined);
-              setPage("runs");
-            }}
           />
         ) : currentPage === "overview" ? (
           <div className="setup-scroll">
@@ -637,7 +621,9 @@ export function App() {
                   このPCで作業する。
                 </h2>
                 <p>
-                  アカウントと作業フォルダーを確認したら、タスクの準備は完了です。
+                  {state.connected
+                    ? "アカウントと作業フォルダーを確認したら、タスクの準備は完了です。"
+                    : "現在Engineに未接続です。接続すると、タスク・議事録の確認やメッセージの送信ができます。"}
                 </p>
               </div>
               <ClientView

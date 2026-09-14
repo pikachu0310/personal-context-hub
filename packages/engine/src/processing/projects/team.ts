@@ -1,6 +1,8 @@
+import { taskParticipants } from "./task-participants.js";
 import { randomBytes } from "node:crypto";
 import { hash } from "@ido/common/runtime/platform";
 import {
+  avatar,
   id,
   text,
   type Project,
@@ -74,6 +76,7 @@ export class ProjectTeam {
     const device = this.approved(deviceId);
     const value = input as Partial<ClientProfile>;
     const profile: ClientProfile = {
+      avatar: avatar(value?.avatar),
       name: text(value?.name || "参加者", 100),
       context:
         typeof value?.context === "string" ? value.context.slice(0, 8000) : "",
@@ -102,6 +105,7 @@ export class ProjectTeam {
             {
               id: device.id,
               name: device.profile?.name ?? device.name,
+              avatar: device.profile?.avatar,
               context: device.profile?.context ?? "",
               codexConnected: device.codexConnected === true,
             },
@@ -177,7 +181,11 @@ export class ProjectTeam {
       participants: this.participants(projectId),
       tasks: this.store
         .list<import("@ido/common/contracts/protocol").Task>("task")
-        .filter((t) => t.projectId === projectId),
+        .filter((t) => t.projectId === projectId)
+        .map((task) => ({
+          ...task,
+          participants: taskParticipants(this.store, task),
+        })),
     };
   }
 }

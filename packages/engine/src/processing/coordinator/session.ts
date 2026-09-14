@@ -240,7 +240,12 @@ class MeetingCoordinator {
       participants: new ProjectTeam(this.store)
         .participants(this.meeting()?.projectId ?? "")
         .slice(0, 30)
-        .map((p) => ({ ...p, context: p.context.slice(0, 1000) })),
+        .map(({ id, name, context, codexConnected }) => ({
+          id,
+          name,
+          context: context.slice(0, 1000),
+          codexConnected,
+        })),
     };
   }
 
