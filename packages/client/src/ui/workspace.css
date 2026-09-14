@@ -1670,3 +1670,50 @@ button {
 .with-inspector > .task-inspector .mantine-Tabs-list {
   position: static;
 }
+
+/* Keep both grid tracks during the slide so the chat reflows continuously. */
+@media (min-width: 1151px) {
+  .with-inspector {
+    --inspector-duration: 280ms;
+    --inspector-easing: cubic-bezier(0.22, 1, 0.36, 1);
+    transition:
+      grid-template-columns var(--inspector-duration) var(--inspector-easing),
+      column-gap var(--inspector-duration) var(--inspector-easing);
+  }
+  .with-inspector:has(> .task-inspector[data-closed]) {
+    grid-template-columns: minmax(0, 1fr) 0px;
+    column-gap: 0;
+  }
+  .with-inspector > .task-inspector {
+    width: 340px;
+    transform: translateX(0);
+    opacity: 1;
+    visibility: visible;
+    transition:
+      transform var(--inspector-duration) var(--inspector-easing),
+      opacity var(--inspector-duration) ease,
+      visibility 0s;
+  }
+  .with-inspector > .task-inspector[data-closed] {
+    transform: translateX(100%);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      transform var(--inspector-duration) var(--inspector-easing),
+      opacity var(--inspector-duration) ease,
+      visibility 0s var(--inspector-duration);
+  }
+  .with-inspector > .task-inspector[data-collapsed] {
+    max-height: 0;
+    margin-bottom: 0;
+    border-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .with-inspector,
+  .with-inspector > .task-inspector,
+  .with-inspector > .task-inspector[data-closed] {
+    transition: none;
+  }
+}

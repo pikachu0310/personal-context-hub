@@ -341,11 +341,87 @@ try {
     name: "タスクの詳細",
     exact: true,
   });
-  await panelToggle.click();
+  const samplePanelMotion = () =>
+    page.evaluate(async () => {
+      const chat = globalThis.document.querySelector(".task-conversation");
+      const panel = globalThis.document.querySelector(".task-inspector");
+      const widths = [chat.getBoundingClientRect().width];
+      const transforms = [globalThis.getComputedStyle(panel).transform];
+      globalThis.document.querySelector(".inspector-header-toggle").click();
+      const start = globalThis.performance.now();
+      await new Promise((resolve) => {
+        const frame = () => {
+          widths.push(chat.getBoundingClientRect().width);
+          transforms.push(globalThis.getComputedStyle(panel).transform);
+          if (globalThis.performance.now() - start >= 400) resolve();
+          else globalThis.requestAnimationFrame(frame);
+        };
+        globalThis.requestAnimationFrame(frame);
+      });
+      return { widths, transforms };
+    });
+  const closingMotion = await samplePanelMotion();
+  const closedWidth = closingMotion.widths.at(-1);
+  const openWidth = closingMotion.widths[0];
+  assert.ok(closedWidth - openWidth > 300);
+  assert.ok(
+    closingMotion.widths.some(
+      (width) => width > openWidth + 3 && width < closedWidth - 3,
+    ),
+  );
+  assert.ok(new Set(closingMotion.transforms).size > 2);
   await inspector.waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".task-inspector").getAttribute("inert"), "");
   assert.equal(await panelToggle.getAttribute("aria-expanded"), "false");
+  const openingMotion = await samplePanelMotion();
+  assert.ok(Math.abs(openingMotion.widths.at(-1) - openWidth) < 1);
+  assert.ok(
+    openingMotion.widths.some(
+      (width) => width > openWidth + 3 && width < closedWidth - 3,
+    ),
+  );
+  await inspector.waitFor();
+  await page.evaluate(async () => {
+    for (let index = 0; index < 4; index++) {
+      globalThis.document.querySelector(".inspector-header-toggle").click();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 45));
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
+  });
+  assert.equal(await panelToggle.getAttribute("aria-expanded"), "true");
+  assert.ok(
+    Math.abs(
+      (await page.locator(".task-conversation").boundingBox()).width -
+        openWidth,
+    ) < 1,
+  );
+  assert.equal(await inspector.getAttribute("data-collapsed"), null);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await panelToggle.click();
+  await page.waitForFunction(() =>
+    globalThis.document
+      .querySelector(".task-inspector")
+      .hasAttribute("data-collapsed"),
+  );
+  assert.equal(
+    await page
+      .locator(".with-inspector")
+      .evaluate(
+        (element) => globalThis.getComputedStyle(element).transitionDuration,
+      ),
+    "0s",
+  );
+  assert.equal(
+    await page
+      .locator(".task-inspector")
+      .evaluate(
+        (element) => globalThis.getComputedStyle(element).transitionDuration,
+      ),
+    "0s",
+  );
   await panelToggle.click();
   await inspector.waitFor();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   const scrollLayout = await page
     .locator(".with-inspector")
     .evaluate((element) => ({
