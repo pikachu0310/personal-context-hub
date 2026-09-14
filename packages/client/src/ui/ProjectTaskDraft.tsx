@@ -87,7 +87,6 @@ export function ProjectTaskDraft({
             }}
           />
           <div className="composer-toolbar">
-            <span className="composer-spacer" />
             <ModelControls key={projectId} projectId={projectId} />
             <ComposerAction
               running={false}

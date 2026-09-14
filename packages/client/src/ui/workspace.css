@@ -1644,20 +1644,6 @@ button {
   gap: 8px;
   min-width: 0;
 }
-.composer-model-controls label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-}
-.composer-model-controls select {
-  max-width: 200px;
-  border: 1px solid var(--mantine-color-default-border);
-  border-radius: 6px;
-  padding: 5px;
-  color: inherit;
-  background: var(--mantine-color-body);
-}
 .composer-model-controls small {
   flex-basis: 100%;
   color: #aaa;
@@ -1669,6 +1655,125 @@ button {
 
 .with-inspector > .task-inspector .mantine-Tabs-list {
   position: static;
+}
+
+.composer-dropdown {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  max-width: 100%;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--workspace-text, inherit);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.composer-dropdown:hover {
+  background: var(--workspace-soft, #f3f4f6);
+}
+.composer-dropdown:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.composer-dropdown:focus-visible {
+  outline: 2px solid #6a95e8;
+  outline-offset: 2px;
+}
+.composer-effort-label {
+  color: var(--mantine-color-dimmed);
+}
+.composer-model-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.composer-toolbar {
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.composer-model-menu {
+  padding: 8px;
+  border-radius: 16px;
+}
+.composer-model-options {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.composer-model-options button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: 10px;
+  cursor: pointer;
+}
+.composer-model-options button:hover,
+.composer-model-options button[aria-pressed="true"] {
+  background: var(--mantine-color-default-hover);
+}
+.composer-effort-picker {
+  padding: 14px 16px 30px;
+  border-top: 1px solid var(--mantine-color-default-border);
+  margin-top: 8px;
+}
+.composer-effort-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 22px;
+}
+.composer-effort-heading button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 20px;
+}
+.new-task-composer .composer-dock {
+  padding: 0;
+  width: 100%;
+}
+.new-task-details {
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.new-task-details summary {
+  cursor: pointer;
+  color: var(--mantine-color-dimmed);
+}
+.new-task-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.new-task-fields label {
+  display: grid;
+  gap: 4px;
+}
+.new-task-fields input {
+  width: 100%;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--mantine-color-body);
+  color: inherit;
+}
+.composer-project-controls {
+  flex: 1;
 }
 
 /* Keep both grid tracks during the slide so the chat reflows continuously. */

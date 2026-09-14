@@ -1,3 +1,5 @@
+import { ComposerDropdown, ComposerModelPicker } from "./ComposerDropdown.js";
+import { ComposerAction } from "./ComposerAction.js";
 import { useEffect, useRef, useState } from "react";
 import type { Action } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
@@ -19,6 +21,7 @@ export function NewLocalTask({
   mode: "auto" | "manual";
 }) {
   const [directory, setDirectory] = useState(initialDirectory ?? "");
+  const [detailsOpen, setDetailsOpen] = useState(!initialDirectory);
   const [shareDiscord, setShareDiscord] = useState(true);
   const [shareProjectId, setShareProjectId] = useState(
     initialProjectId ?? projects[0]?.id ?? "",
@@ -87,7 +90,16 @@ export function NewLocalTask({
   const [error, setError] = useState("");
   const request = useRef<{ fingerprint: string; key: string }>(undefined);
   async function submit() {
-    if (busy || loadingModels || !agent || !model) return;
+    if (
+      busy ||
+      loadingModels ||
+      !agent ||
+      !model ||
+      !text.trim() ||
+      !directory.trim() ||
+      (shareDiscord && !shareProjectId)
+    )
+      return;
     const input = {
       agent,
       model,
@@ -143,262 +155,189 @@ export function NewLocalTask({
     }
   }
   return (
-    <div className="setup-scroll">
-      <div className="setup-content">
-        <h2>新しいローカルタスク</h2>
-        <p>実験・調査・実装を、このPCから開始します。Botとの接続は不要です。</p>
+    <div className="new-task-composer">
+      <details
+        className="new-task-details"
+        open={detailsOpen}
+        onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+      >
+        <summary>保存先・共有設定</summary>
+        <div className="new-task-fields">
+          <label>
+            タイトル
+            <input
+              aria-label="タイトル"
+              value={title}
+              onChange={(event) => setTitle(event.currentTarget.value)}
+              maxLength={200}
+              placeholder="任意"
+            />
+          </label>
+          <label>
+            Gitリポジトリのフォルダー
+            <input
+              aria-label="Gitリポジトリのフォルダー"
+              value={directory}
+              onChange={(event) => setDirectory(event.currentTarget.value)}
+              required
+            />
+          </label>
+          {desktopBridge() && (
+            <button
+              type="button"
+              className="composer-dropdown"
+              onClick={() => {
+                void desktopBridge()!
+                  .pickDirectory()
+                  .then((path) => {
+                    if (path) setDirectory(path);
+                  })
+                  .catch(() => setError("フォルダー選択を開けませんでした。"));
+              }}
+            >
+              フォルダーを選択
+            </button>
+          )}
+          <ComposerDropdown
+            label="Discordにも共有"
+            value={shareDiscord ? "yes" : "no"}
+            options={[
+              { value: "yes", label: "Discordにも共有" },
+              { value: "no", label: "このPCのみ" },
+            ]}
+            onChange={(value) => setShareDiscord(value === "yes")}
+          />
+          {shareDiscord && (
+            <ComposerDropdown
+              label="共有先プロジェクト"
+              value={shareProjectId}
+              options={projects.map((project) => ({
+                value: project.id,
+                label: project.name,
+              }))}
+              onChange={setShareProjectId}
+            />
+          )}
+        </div>
+      </details>
+      <div className="composer-dock">
         <form
-          className="local-task-form"
+          className="composer"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <fieldset disabled={busy}>
+          <textarea
+            aria-label="依頼内容"
+            value={text}
+            onChange={(event) => setText(event.currentTarget.value)}
+            required
+            maxLength={16000}
+            disabled={busy}
+            placeholder="何を進めますか？"
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+          />
+          <div className="composer-toolbar">
+            <ComposerDropdown
+              label="入力欄の進め方"
+              value={progressMode}
+              disabled={busy}
+              options={[
+                { value: "auto", label: "Auto" },
+                { value: "manual", label: "Manual" },
+              ]}
+              onChange={(value) => setMode(value as "auto" | "manual")}
+            />
+            <ComposerDropdown
+              label="実行権限"
+              value={progressMode === "auto" ? "full" : accessMode}
+              disabled={busy}
+              options={
+                progressMode === "auto"
+                  ? [{ value: "full", label: "フルアクセス（Auto）" }]
+                  : [
+                      { value: "approval", label: "許可を求める" },
+                      { value: "full", label: "フルアクセス" },
+                    ]
+              }
+              onChange={(value) => {
+                if (progressMode === "manual") setAccessMode(value);
+              }}
+            />
+            <span className="composer-spacer" />
+            <ComposerDropdown
+              label="エージェント"
+              value={agent || "確認中…"}
+              disabled={busy || loadingModels || !available.length}
+              options={available.map((entry) => ({
+                value: entry.agent,
+                label: entry.agent === "claude" ? "Claude Code" : "Codex",
+              }))}
+              onChange={(value) => {
+                setAgent(value);
+                setEffort("");
+              }}
+            />
+            <ComposerModelPicker
+              models={options}
+              model={model}
+              effort={
+                options
+                  .find((entry) => entry.id === model)
+                  ?.supportedEfforts?.includes(effort)
+                  ? effort
+                  : undefined
+              }
+              disabled={busy || loadingModels}
+              onChange={(value, nextEffort) => {
+                setModels({ ...models, [agent]: value });
+                setEffort(nextEffort ?? "");
+              }}
+            />
+            <ComposerAction
+              running={false}
+              text={text}
+              busy={busy}
+              canSend={
+                !loadingModels &&
+                !!agent &&
+                !!model &&
+                !!directory.trim() &&
+                (!shareDiscord || !!shareProjectId)
+              }
+              sendLabel={
+                progressMode === "manual" ? "相談を開始" : "ローカルで開始"
+              }
+            />
+          </div>
+        </form>
+        <p className="composer-footnote">
+          Enterで送信 · Shift + Enterで改行<span>行動ログはこのPCに保存</span>
+        </p>
+        {(modelError || !available.length) && (
+          <div role="status">
+            {modelError || "ログイン済みのエージェントを確認してください。"}
             <button
               type="button"
-              className="soft-button"
+              className="composer-dropdown"
               disabled={loadingModels}
               onClick={() => void refreshModels()}
             >
-              {loadingModels
-                ? "ログインとモデルを確認中…"
-                : "ログイン状況・モデル一覧を更新"}
+              モデル一覧を更新
             </button>
-            {modelError && <p role="alert">{modelError}</p>}
-            {!loadingModels && !available.length && (
-              <p role="status">
-                ログイン済みのエージェントがありません。「接続とセットアップ」でログインしてから再確認してください。
-              </p>
-            )}
-            {!!available.length && (
-              <>
-                <label>
-                  エージェント
-                  <select
-                    aria-label="エージェント"
-                    value={agent}
-                    onChange={(event) => setAgent(event.currentTarget.value)}
-                  >
-                    {available.map((value) => (
-                      <option key={value.agent} value={value.agent}>
-                        {value.agent === "claude" ? "Claude Code" : "Codex"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  使用するモデル
-                  <select
-                    aria-label="使用するモデル"
-                    value={model}
-                    required
-                    onChange={(event) =>
-                      setModels({
-                        ...models,
-                        [agent]: event.currentTarget.value,
-                      })
-                    }
-                  >
-                    <option value="" disabled>
-                      モデルを選択してください
-                    </option>
-                    {options.map((value) => (
-                      <option key={value.id} value={value.id}>
-                        {value.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {!options.length && (
-                  <p role="alert">
-                    モデル一覧を取得できませんでした。認証と通信状態を確認し、再取得してください。
-                  </p>
-                )}
-              </>
-            )}
-            <p>
-              選択したモデルはこのタスクの相談・実行・追加指示に適用します。利用可否はログイン中のアカウントによって異なります。
-            </p>
-            <label className="local-network">
-              <input
-                type="checkbox"
-                checked={shareDiscord}
-                onChange={(e) => setShareDiscord(e.currentTarget.checked)}
-              />
-              Discordにも共有
-            </label>
-            {shareDiscord && (
-              <label>
-                共有先プロジェクト
-                <select
-                  aria-label="共有先プロジェクト"
-                  required
-                  value={shareProjectId}
-                  onChange={(e) => setShareProjectId(e.currentTarget.value)}
-                >
-                  <option value="" disabled>
-                    選択してください
-                  </option>
-                  {projects.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <p>
-              {shareDiscord
-                ? "依頼文・実行状態を共有し、Discordのissueスレッドから追加指示と停止を受け付けます。未接続・フォーラム未設定の場合は共有待ちになり、同じ接続先で再試行します。実行ログ・ファイル内容・認証情報は共有しません。"
-                : "このPCだけで実行します。Discordには送信しません。"}
-            </p>
-            <label>
-              タイトル
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.currentTarget.value)}
-                maxLength={200}
-                placeholder="例：新しい処理方式を試す"
-              />
-            </label>
-            <label>
-              Gitリポジトリのフォルダー
-              <input
-                value={directory}
-                onChange={(event) => setDirectory(event.currentTarget.value)}
-                required
-                placeholder="作業するリポジトリの絶対パス"
-              />
-            </label>
-            {desktopBridge() && (
-              <button
-                type="button"
-                className="soft-button"
-                onClick={() => {
-                  void desktopBridge()!
-                    .pickDirectory()
-                    .then((path) => {
-                      if (path) setDirectory(path);
-                    })
-                    .catch(() =>
-                      setError(
-                        "フォルダー選択を開けませんでした。パスを直接入力してください。",
-                      ),
-                    );
-                }}
-              >
-                フォルダーを選択
-              </button>
-            )}
-            <p>
-              現在のHEADから専用worktreeを作成します。未コミットの変更はコピーされません。
-            </p>
-            <label>
-              依頼内容
-              <textarea
-                value={text}
-                onChange={(event) => setText(event.currentTarget.value)}
-                required
-                maxLength={16000}
-                rows={6}
-                placeholder="試したいことや確認したいことを入力"
-              />
-            </label>
-            <label>
-              入力欄のモデル
-              <select
-                aria-label="入力欄のモデル"
-                value={model}
-                onChange={(e) => {
-                  setModels({ ...models, [agent]: e.currentTarget.value });
-                  setEffort("");
-                }}
-                disabled={!options.length}
-              >
-                {!model && <option value="">モデルを選択してください</option>}
-                {options.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              推論エフォート
-              <select
-                aria-label="推論エフォート"
-                value={
-                  options
-                    .find((entry) => entry.id === model)
-                    ?.supportedEfforts?.includes(effort)
-                    ? effort
-                    : ""
-                }
-                onChange={(e) => setEffort(e.currentTarget.value)}
-                disabled={
-                  !options.find((entry) => entry.id === model)?.supportedEfforts
-                    ?.length
-                }
-              >
-                <option value="">既定</option>
-                {options
-                  .find((entry) => entry.id === model)
-                  ?.supportedEfforts?.map((value) => (
-                    <option key={value}>{value}</option>
-                  ))}
-              </select>
-            </label>
-            <label>
-              進め方
-              <select
-                aria-label="進め方"
-                value={progressMode}
-                onChange={(event) =>
-                  setMode(event.currentTarget.value as "auto" | "manual")
-                }
-              >
-                <option value="auto">Auto · 作業を開始</option>
-                <option value="manual">Manual · まず相談・計画</option>
-              </select>
-            </label>
-            {progressMode === "auto" ? (
-              <p>実行権限：フルアクセス・承認なし（Autoでは固定）</p>
-            ) : (
-              <label>
-                実行権限
-                <select
-                  aria-label="実行権限"
-                  value={accessMode}
-                  onChange={(event) => setAccessMode(event.currentTarget.value)}
-                >
-                  <option value="approval">許可を求める</option>
-                  <option value="full">フルアクセス・承認なし</option>
-                </select>
-              </label>
-            )}
-            <p>
-              OSサンドボックスは使いません。作業フォルダー外のファイル操作や通信も可能です。
-              「許可を求める」ではエージェントの承認要求をアプリに表示します。安全な読み取りなどは確認なしで実行される場合があります。
-              Manualは相談・計画の後、「実行する」で作業を開始します。
-            </p>
-            <p>
-              権限はこのタスクに保存されます。共有を有効にしたタスクの送信状況は実行画面で確認できます。
-            </p>
-            {error && <p role="alert">{error}</p>}
-            <button
-              className="primary-button"
-              type="submit"
-              disabled={loadingModels || !agent || !model}
-            >
-              {busy
-                ? "開始しています…"
-                : progressMode === "manual"
-                  ? "相談を開始"
-                  : "ローカルで開始"}
-            </button>
-          </fieldset>
-        </form>
+          </div>
+        )}
+        {error && <p role="alert">{error}</p>}
       </div>
     </div>
   );
