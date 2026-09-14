@@ -14,7 +14,14 @@ const catalogAgents = [
   {
     agent: "codex",
     authenticated: true,
-    models: [{ id: "test-codex-model", name: "Test Codex" }],
+    models: [
+      {
+        id: "test-codex-model",
+        name: "Test Codex",
+        supportedEfforts: ["low", "high"],
+        defaultEffort: "low",
+      },
+    ],
   },
   {
     agent: "claude",
@@ -282,11 +289,171 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(client.origin);
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "入力欄のモデル", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Test Codex", exact: false }).click();
+  await page
+    .getByRole("slider", { name: "入力欄の推論エフォート" })
+    .press("End");
+  await page.waitForFunction(
+    () =>
+      !globalThis.document.querySelector('[aria-label="入力欄のモデル"]')
+        .disabled,
+  );
+  const configured = Object.values(client.executor.runs).find(
+    (run) => run.reasoningEffort === "high",
+  );
+  assert.equal(configured.model, "test-codex-model");
+  assert.equal(
+    await page.getByText("次の実行ターンから適用", { exact: true }).count(),
+    0,
+  );
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-model-effort.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  const originalAccess = configured.accessMode;
+  for (const mode of ["auto", "manual"]) {
+    const response = page.waitForResponse((value) =>
+      value.url().endsWith("/api/progress-mode"),
+    );
+    await page.getByRole("button", { name: "入力欄の進め方" }).click();
+    await page
+      .getByRole("menuitem", {
+        name: mode === "auto" ? "Auto" : "Manual",
+        exact: false,
+      })
+      .click();
+    assert.equal((await response).status(), 200);
+    assert.equal(
+      configured.pendingProgressMode ?? configured.progressMode,
+      mode,
+    );
+  }
+  assert.equal(configured.accessMode, originalAccess);
+  const projectToggle = page.locator(
+    '[data-project-id="project"] > .project-collapse > .collapse-heading > button',
+  );
+  await projectToggle.click();
+  assert.equal(await projectToggle.getAttribute("aria-expanded"), "false");
+  await page.reload();
+  assert.equal(await projectToggle.getAttribute("aria-expanded"), "false");
+  await projectToggle.click();
   assert.equal(
     await page.locator("html").getAttribute("data-mantine-color-scheme"),
     "light",
   );
   const inspector = page.getByRole("complementary", { name: "タスクの詳細" });
+  await page.evaluate(() => globalThis.document.fonts.ready);
+  assert.ok(
+    await page.evaluate(() =>
+      globalThis.document.fonts.check('15px "Noto Sans JP Variable"', "議事録"),
+    ),
+  );
+  assert.ok((await page.locator(".tabler-icon").count()) > 10);
+  const panelToggle = page.getByRole("button", {
+    name: "タスクの詳細",
+    exact: true,
+  });
+  const samplePanelMotion = () =>
+    page.evaluate(async () => {
+      const chat = globalThis.document.querySelector(".task-conversation");
+      const panel = globalThis.document.querySelector(".task-inspector");
+      const widths = [chat.getBoundingClientRect().width];
+      const transforms = [globalThis.getComputedStyle(panel).transform];
+      globalThis.document.querySelector(".inspector-header-toggle").click();
+      const start = globalThis.performance.now();
+      await new Promise((resolve) => {
+        const frame = () => {
+          widths.push(chat.getBoundingClientRect().width);
+          transforms.push(globalThis.getComputedStyle(panel).transform);
+          if (globalThis.performance.now() - start >= 400) resolve();
+          else globalThis.requestAnimationFrame(frame);
+        };
+        globalThis.requestAnimationFrame(frame);
+      });
+      return { widths, transforms };
+    });
+  const closingMotion = await samplePanelMotion();
+  const closedWidth = closingMotion.widths.at(-1);
+  const openWidth = closingMotion.widths[0];
+  assert.ok(closedWidth - openWidth > 300);
+  assert.ok(
+    closingMotion.widths.some(
+      (width) => width > openWidth + 3 && width < closedWidth - 3,
+    ),
+  );
+  assert.ok(new Set(closingMotion.transforms).size > 2);
+  await inspector.waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".task-inspector").getAttribute("inert"), "");
+  assert.equal(await panelToggle.getAttribute("aria-expanded"), "false");
+  const openingMotion = await samplePanelMotion();
+  assert.ok(Math.abs(openingMotion.widths.at(-1) - openWidth) < 1);
+  assert.ok(
+    openingMotion.widths.some(
+      (width) => width > openWidth + 3 && width < closedWidth - 3,
+    ),
+  );
+  await inspector.waitFor();
+  await page.evaluate(async () => {
+    for (let index = 0; index < 4; index++) {
+      globalThis.document.querySelector(".inspector-header-toggle").click();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 45));
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
+  });
+  assert.equal(await panelToggle.getAttribute("aria-expanded"), "true");
+  assert.ok(
+    Math.abs(
+      (await page.locator(".task-conversation").boundingBox()).width -
+        openWidth,
+    ) < 1,
+  );
+  assert.equal(await inspector.getAttribute("data-collapsed"), null);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await panelToggle.click();
+  await page.waitForFunction(() =>
+    globalThis.document
+      .querySelector(".task-inspector")
+      .hasAttribute("data-collapsed"),
+  );
+  assert.equal(
+    await page
+      .locator(".with-inspector")
+      .evaluate(
+        (element) => globalThis.getComputedStyle(element).transitionDuration,
+      ),
+    "0s",
+  );
+  assert.equal(
+    await page
+      .locator(".task-inspector")
+      .evaluate(
+        (element) => globalThis.getComputedStyle(element).transitionDuration,
+      ),
+    "0s",
+  );
+  await panelToggle.click();
+  await inspector.waitFor();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const scrollLayout = await page
+    .locator(".with-inspector")
+    .evaluate((element) => ({
+      outer: globalThis.getComputedStyle(element).overflowY,
+      inner: globalThis.getComputedStyle(
+        element.querySelector(".conversation-scroll"),
+      ).overflowY,
+      right: element.getBoundingClientRect().right,
+      inspectorRight: element
+        .querySelector(".task-inspector")
+        .getBoundingClientRect().right,
+    }));
+  assert.equal(scrollLayout.outer, "auto");
+  assert.equal(scrollLayout.inner, "visible");
+  assert.ok(scrollLayout.right > scrollLayout.inspectorRight);
   const conversation = await page.locator(".task-conversation").boundingBox();
   const inspectorBox = await inspector.boundingBox();
   assert.ok(inspectorBox.x >= conversation.x + conversation.width);
@@ -345,6 +512,33 @@ try {
     .click();
   await inspector
     .getByText("フォームのエラーは日本語で説明してください。", { exact: true })
+    .waitFor();
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  await inspector
+    .getByRole("button", { name: "ソースを追加", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "共有コンテキスト", exact: true })
+    .click();
+  const sourceDialog = page.getByRole("dialog", {
+    name: "共有コンテキストを追加",
+    exact: true,
+  });
+  await sourceDialog.getByLabel(/^タイトル/).fill("UI追加資料");
+  await sourceDialog.getByLabel(/^内容/).fill("追加した資料の保存を確認");
+  await sourceDialog
+    .getByRole("button", { name: "追加する", exact: true })
+    .click();
+  await sourceDialog.waitFor({ state: "hidden" });
+  await inspector
+    .getByRole("button", { name: "UI追加資料", exact: true })
+    .click();
+  await inspector
+    .getByText("追加した資料の保存を確認", { exact: true })
+    .waitFor();
+  await page.reload();
+  await inspector
+    .getByRole("button", { name: "UI追加資料", exact: true })
     .waitFor();
   await inspector.getByRole("tab", { name: "環境", exact: true }).click();
   const schemeIs = (scheme) =>
@@ -494,7 +688,8 @@ try {
   );
   const addTask = await voiceGroup.locator(".project-compose").boundingBox();
   const projectTitle = await voiceGroup
-    .locator(".project-name > span")
+    .locator(".project-collapse > .collapse-heading > .collapse-toggle > span")
+    .last()
     .boundingBox();
   assert.ok(
     Math.abs(
@@ -537,7 +732,7 @@ try {
     await page
       .locator('.project-group[data-project-id="project"]')
       .getByRole("region", { name: "ほかのPC", exact: true })
-      .getByRole("button")
+      .locator(".task-link")
       .count(),
     0,
   );
@@ -549,7 +744,7 @@ try {
     .click();
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
-  await page.locator(".conversation-scroll").evaluate((element) => {
+  await page.locator(".with-inspector").evaluate((element) => {
     element.scrollTop = 0;
   });
   await page.screenshot({
@@ -635,7 +830,9 @@ try {
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
   await page
-    .locator('.project-group[data-project-id="project"] .project-name')
+    .locator(
+      '.project-group[data-project-id="project"] .project-collapse > .collapse-heading',
+    )
     .hover();
   await page
     .getByRole("button", { name: "discord-voiceの設定", exact: true })
@@ -647,23 +844,28 @@ try {
     name: "このPCでタスクを開始",
     exact: true,
   });
-  assert.equal(
+  await localDialog.getByText("保存先・共有設定", { exact: true }).click();
+  assert.match(
     await localDialog
-      .getByRole("checkbox", { name: "Discordにも共有", exact: true })
-      .isChecked(),
-    true,
-  );
-  assert.equal(
-    await localDialog.getByLabel("共有先プロジェクト").inputValue(),
-    "project",
+      .getByRole("button", { name: "Discordにも共有", exact: true })
+      .innerText(),
+    /Discordにも共有/,
   );
   await localDialog
-    .getByRole("checkbox", { name: "Discordにも共有", exact: true })
-    .uncheck();
+    .getByRole("button", { name: "Discordにも共有", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "このPCのみ", exact: true }).click();
   assert.equal(await localDialog.getByLabel("共有先プロジェクト").count(), 0);
   await localDialog
-    .getByRole("checkbox", { name: "Discordにも共有", exact: true })
-    .check();
+    .getByRole("button", { name: "Discordにも共有", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Discordにも共有", exact: true })
+    .click();
+  await page.screenshot({
+    path: ".ido-build/screenshots/ido-new-composer.png",
+    animations: "disabled",
+  });
   let localInput;
   await page.route("**/api/local-tasks/start", async (route) => {
     localInput = route.request().postDataJSON();
@@ -673,12 +875,15 @@ try {
       body: JSON.stringify({ runId: "run" }),
     });
   });
-  await localDialog
-    .getByLabel("タイトル", { exact: true })
-    .fill("Local shared fixture");
+  await localDialog.getByLabel(/^タイトル/).fill("Local shared fixture");
+  await localDialog.getByText("保存先・共有設定", { exact: true }).click();
   await localDialog
     .getByLabel("依頼内容", { exact: true })
     .fill("Test local sharing");
+  await page.screenshot({
+    path: ".ido-build/screenshots/ido-new-composer.png",
+    animations: "disabled",
+  });
   await localDialog
     .getByRole("button", { name: "ローカルで開始", exact: true })
     .click();
@@ -699,7 +904,8 @@ try {
   };
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
-    .getByRole("button", { name: "フルアクセス・承認なし", exact: true })
+    .getByRole("button", { name: "実行権限", exact: true })
+    .filter({ hasText: "フルアクセス・承認なし" })
     .waitFor();
   await inspector.getByText("Discord共有", { exact: true }).waitFor();
   await inspector
@@ -712,7 +918,8 @@ try {
   value.discordShare.status = "synced";
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
-    .getByRole("button", { name: "許可を求める", exact: true })
+    .getByRole("button", { name: "実行権限", exact: true })
+    .filter({ hasText: "許可を求める" })
     .waitFor();
   await inspector
     .getByText(

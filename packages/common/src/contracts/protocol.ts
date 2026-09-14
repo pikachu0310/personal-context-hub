@@ -39,6 +39,8 @@ export interface Grant {
   slots: number;
 }
 export interface Mapping extends Grant {
+  model?: string;
+  reasoningEffort?: string;
   accessMode?: "full" | "approval";
   progressMode?: "auto" | "manual";
   directory: string;
@@ -52,9 +54,16 @@ export type TaskState =
   | "completed"
   | "failed"
   | "cancelled";
+export interface AttachedTaskSource {
+  id: string;
+  title: string;
+  kind: "minutes" | "context";
+  text: string;
+}
 export interface Task {
   initialText?: string;
   queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;
+  attachedSources?: AttachedTaskSource[];
   localMirror?: { deviceId: string; runId: string; sequence: number };
   memberStates?: Record<string, boolean>;
   membershipVersion?: number;
@@ -178,4 +187,24 @@ export function avatar(value: unknown): string | undefined {
   )
     throw new Error("INVALID_AVATAR");
   return value;
+}
+
+/** Attachments are bounded snapshots, not executable instructions. */
+export function attachTaskSource(
+  existing: AttachedTaskSource[] = [],
+  input: Record<string, unknown>,
+): AttachedTaskSource[] {
+  const source: AttachedTaskSource = {
+    id: `attachment-${id(input.sourceId)}`,
+    kind: input.kind === "minutes" ? "minutes" : "context",
+    title: text(input.title, 200),
+    text: text(input.text, 16000),
+  };
+  const next = [...existing.filter((item) => item.id !== source.id), source];
+  if (
+    next.length > 20 ||
+    next.reduce((size, item) => size + item.text.length, 0) > 64000
+  )
+    throw new Error("SOURCE_LIMIT_EXCEEDED");
+  return next;
 }

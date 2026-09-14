@@ -58,7 +58,7 @@
   --mantine-color-dimmed: var(--workspace-muted);
 }
 :root {
-  font-family: "Segoe UI", "Noto Sans JP", system-ui, sans-serif;
+  font-family: "Noto Sans JP Variable", "Noto Sans JP", sans-serif;
   color: var(--workspace-text);
   background: var(--workspace-surface);
   font-synthesis: none;
@@ -1479,6 +1479,8 @@ button {
   opacity: 0;
   pointer-events: none;
 }
+.project-collapse > .collapse-heading:hover .project-menu,
+.project-collapse > .collapse-heading:focus-within .project-menu,
 .project-name:hover .project-menu,
 .project-name:focus-within .project-menu,
 .project-menu[aria-expanded="true"],
@@ -1577,4 +1579,274 @@ button {
   margin-top: 5px;
   color: var(--workspace-muted);
   font-size: 12px;
+}
+/* The conversation and inspector share a scrollbar at the workspace's right edge. */
+.with-inspector {
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-items: start;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--workspace-muted) transparent;
+}
+.with-inspector:not(:has(> .task-inspector)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.with-inspector > .task-conversation {
+  min-height: 100%;
+}
+.with-inspector .conversation-scroll,
+.with-inspector > .project-document {
+  overflow: visible;
+  flex: 1 0 auto;
+}
+.with-inspector .composer-dock {
+  position: sticky;
+  bottom: 0;
+  background: var(--workspace-canvas);
+  z-index: 2;
+}
+.with-inspector > .task-inspector {
+  position: sticky;
+  top: 0;
+  max-height: none;
+  overflow: clip;
+  margin-bottom: 20px;
+}
+.inspector-header-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+}
+.inspector-header-toggle:hover {
+  background: var(--workspace-soft);
+  color: var(--workspace-text);
+}
+#task-inspector-control:empty {
+  display: none;
+}
+.source-picker-preview {
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+@media (max-width: 1150px) {
+  .with-inspector {
+    padding: 0;
+  }
+}
+.collapse-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 8px 4px;
+  cursor: pointer;
+}
+.collapse-toggle > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-subgroup > .collapse-heading {
+  color: var(--muted, #999);
+  font-size: 12px;
+}
+.collapse-toggle:focus-visible {
+  outline: 2px solid #719bea;
+  border-radius: 5px;
+}
+.composer-model-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.composer-model-controls small {
+  flex-basis: 100%;
+  color: #aaa;
+  font-size: 11px;
+}
+.composer-toolbar {
+  flex-wrap: wrap;
+}
+
+.with-inspector > .task-inspector .mantine-Tabs-list {
+  position: static;
+}
+
+.composer-dropdown {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  max-width: 100%;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--workspace-text, inherit);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.composer-dropdown:hover {
+  background: var(--workspace-soft, #f3f4f6);
+}
+.composer-dropdown:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.composer-dropdown:focus-visible {
+  outline: 2px solid #6a95e8;
+  outline-offset: 2px;
+}
+.composer-effort-label {
+  color: var(--mantine-color-dimmed);
+}
+.composer-model-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.composer-toolbar {
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.composer-model-menu {
+  padding: 8px;
+  border-radius: 16px;
+}
+.composer-model-options {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.composer-model-options button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  padding: 10px;
+  cursor: pointer;
+}
+.composer-model-options button:hover,
+.composer-model-options button[aria-pressed="true"] {
+  background: var(--mantine-color-default-hover);
+}
+.composer-effort-picker {
+  padding: 14px 16px 30px;
+  border-top: 1px solid var(--mantine-color-default-border);
+  margin-top: 8px;
+}
+.composer-effort-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 22px;
+}
+.composer-effort-heading button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 20px;
+}
+.new-task-composer .composer-dock {
+  padding: 0;
+  width: 100%;
+}
+.new-task-details {
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+.new-task-details summary {
+  cursor: pointer;
+  color: var(--mantine-color-dimmed);
+}
+.new-task-fields {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.new-task-fields label {
+  display: grid;
+  gap: 4px;
+}
+.new-task-fields input {
+  width: 100%;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--mantine-color-body);
+  color: inherit;
+}
+.composer-project-controls {
+  flex: 1;
+}
+
+/* Keep both grid tracks during the slide so the chat reflows continuously. */
+@media (min-width: 1151px) {
+  .with-inspector {
+    --inspector-duration: 280ms;
+    --inspector-easing: cubic-bezier(0.22, 1, 0.36, 1);
+    transition:
+      grid-template-columns var(--inspector-duration) var(--inspector-easing),
+      column-gap var(--inspector-duration) var(--inspector-easing);
+  }
+  .with-inspector:has(> .task-inspector[data-closed]) {
+    grid-template-columns: minmax(0, 1fr) 0px;
+    column-gap: 0;
+  }
+  .with-inspector > .task-inspector {
+    width: 340px;
+    transform: translateX(0);
+    opacity: 1;
+    visibility: visible;
+    transition:
+      transform var(--inspector-duration) var(--inspector-easing),
+      opacity var(--inspector-duration) ease,
+      visibility 0s;
+  }
+  .with-inspector > .task-inspector[data-closed] {
+    transform: translateX(100%);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition:
+      transform var(--inspector-duration) var(--inspector-easing),
+      opacity var(--inspector-duration) ease,
+      visibility 0s var(--inspector-duration);
+  }
+  .with-inspector > .task-inspector[data-collapsed] {
+    max-height: 0;
+    margin-bottom: 0;
+    border-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .with-inspector,
+  .with-inspector > .task-inspector,
+  .with-inspector > .task-inspector[data-closed] {
+    transition: none;
+  }
 }

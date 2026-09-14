@@ -37,10 +37,19 @@ try {
     .getByRole("textbox", { name: "保存先", exact: true })
     .fill(projectPath);
   await dialog.getByText("Manual", { exact: true }).click();
-  await dialog
-    .getByRole("switch", { name: "インターネット通信", exact: true })
-    .press("Space");
-  await dialog.getByRole("button", { name: "タスクの進め方のヘルプ" }).focus();
+  assert.equal(
+    await dialog
+      .getByRole("switch", { name: "インターネット通信", exact: true })
+      .isChecked(),
+    true,
+  );
+  assert.equal(
+    await dialog
+      .getByRole("switch", { name: "タスクの実行許可", exact: true })
+      .isChecked(),
+    true,
+  );
+  await dialog.getByRole("button", { name: "タスクの進め方のヘルプ" }).hover();
   await page.getByRole("tooltip").waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
@@ -51,11 +60,19 @@ try {
   await dialog.waitFor({ state: "hidden" });
   assert.equal(client.settings.mappings[0].progressMode, "manual");
   assert.equal(client.settings.mappings[0].network, true);
-  assert.equal(client.allow, false);
+  assert.equal(client.allow, true);
   await page
     .getByRole("button", { name: "Exampleの設定", exact: true })
     .press("Enter");
   await page.getByRole("menuitem", { name: "接続・設定", exact: true }).click();
+  const allowedResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/allow"),
+  );
+  await dialog
+    .getByRole("switch", { name: "タスクの実行許可", exact: true })
+    .press("Space");
+  assert.equal((await allowedResponse).status(), 200);
+  assert.equal(client.allow, false);
   const networkResponse = page.waitForResponse((response) =>
     response.url().endsWith("/api/mappings"),
   );
@@ -72,14 +89,6 @@ try {
       ),
     );
   assert.equal(new Set(controls.slice(0, 5)).size, 1);
-  const allowedResponse = page.waitForResponse((response) =>
-    response.url().endsWith("/api/allow"),
-  );
-  await dialog
-    .getByRole("switch", { name: "タスクの実行許可", exact: true })
-    .press("Space");
-  assert.equal((await allowedResponse).status(), 200);
-  assert.equal(client.allow, true);
   await dialog.getByRole("button", { name: "タスクの進め方のヘルプ" }).hover();
   await page.getByRole("tooltip").waitFor();
   await page.screenshot({
@@ -97,7 +106,7 @@ try {
     ),
   );
   console.log(
-    "Project forms: creation options, default execution Off, settings toggle, focus/hover help and mobile layout passed.",
+    "Project forms: creation options, default execution/network On, settings toggle, focus/hover help and mobile layout passed.",
   );
 } finally {
   await browser?.close();

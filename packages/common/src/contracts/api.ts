@@ -1,3 +1,15 @@
+import type { MinutesMetadata } from "./minutes.js";
+export {
+  taskUrl,
+  parseTaskUrl,
+  taskMarkdown,
+  MAX_MINUTES_LENGTH,
+} from "./minutes.js";
+export type {
+  TaskReference,
+  MinutesMetadata,
+  MinutesUpdateInput,
+} from "./minutes.js";
 import type { PluginManifest } from "./plugins.js";
 import type {
   Grant,
@@ -19,7 +31,7 @@ export interface MessageView {
   stage: string;
   steps?: Record<string, { state: string; errorId?: string }>;
 }
-export interface MeetingView {
+export interface MeetingView extends MinutesMetadata {
   startedAt?: number;
   closedAt?: number;
   id: string;
@@ -41,6 +53,7 @@ export interface WorkspaceState {
   tasks: Task[];
 }
 export interface ProjectWorkspace {
+  canEditMinutes?: boolean;
   project: Project;
   minutes: MeetingView[];
   tasks: Task[];
@@ -91,6 +104,7 @@ export interface AdminState {
     meetingId?: string;
     messageId?: string;
     model?: string;
+    reasoningEffort?: string;
     error: {
       reason: string;
       type: string;
@@ -166,6 +180,7 @@ export interface ClientState {
     profile?: { name: string; context: string; avatar?: string };
     accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
+    pendingProgressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
     identityId?: string;
@@ -187,6 +202,7 @@ export interface ClientState {
     contextSources?: TaskContextSource[];
     agent?: "codex" | "claude";
     model?: string;
+    reasoningEffort?: string;
     origin?: "local";
     discordShare?: {
       projectId: string;
@@ -202,6 +218,7 @@ export interface ClientState {
     activityVersion?: number;
     accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
+    pendingProgressMode?: "auto" | "manual";
     phase?: "planning" | "awaiting-plan" | "executing";
     updatedAt?: number;
   }>;
@@ -241,7 +258,12 @@ export interface TeamTaskSnapshot {
 export interface AgentCatalogEntry {
   agent: "codex" | "claude";
   authenticated: boolean;
-  models: Array<{ id: string; name: string }>;
+  models: Array<{
+    id: string;
+    name: string;
+    supportedEfforts?: string[];
+    defaultEffort?: string;
+  }>;
   error?: string;
 }
 export interface ApiResult {

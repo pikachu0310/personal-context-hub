@@ -1,3 +1,4 @@
+import { attachTaskSource } from "@ido/common/contracts/protocol";
 import { projectDirectory } from "../execution/project-directory.js";
 import { startLogin } from "../auth/login.js";
 import { startClaudeLogin, checkClaudeLogin } from "../auth/claude.js";
@@ -144,6 +145,78 @@ export async function route(
     throw new HttpError(403, "CSRF_REQUIRED");
   const input = await body(req);
   switch (url.pathname) {
+    case "/api/task/sources": {
+      const runId = input.runId ? id(input.runId) : undefined;
+      const value = runId ? this.executor.runs[runId] : undefined;
+      if (runId) {
+        if (
+          !value ||
+          value.task.id !== id(input.taskId) ||
+          this.executor.deletedTasks[value.task.id] ||
+          (value.origin !== "local" &&
+            !this.settings.projects.some(
+              (project) => project.id === value.task.projectId,
+            ))
+        )
+          throw new HttpError(404, "RUN_NOT_FOUND");
+        if (input.sourceId) {
+          value.task.attachedSources = attachTaskSource(
+            value.task.attachedSources,
+            input,
+          );
+          await this.executor.save();
+        }
+        send(res, 200, { sources: value.task.attachedSources ?? [] });
+      } else {
+        send(res, 200, await this.workspaceRequest("task.sources", input));
+      }
+      return;
+    }
+    case "/api/model-settings": {
+      const value = input.runId
+        ? this.executor.runs[id(input.runId)]
+        : this.settings.mappings.find(
+            (m) => m.projectId === id(input.projectId),
+          );
+      if (
+        !value ||
+        ("task" in value && this.executor.deletedTasks[value.task.id])
+      )
+        throw new HttpError(404, "RUN_NOT_FOUND");
+      const agent = "task" in value ? (value.agent ?? "codex") : "codex";
+      if (!input.read) {
+        const available = (await this.agentCatalog()).find(
+          (entry) => entry.agent === agent && entry.authenticated,
+        );
+        if (!available) throw new HttpError(409, "AGENT_LOGIN_REQUIRED");
+        const model = available.models.find(
+          (entry) => entry.id === input.model,
+        );
+        if (!model) throw new HttpError(409, "MODEL_UNAVAILABLE");
+        const effort = input.reasoningEffort || undefined;
+        if (
+          effort !== undefined &&
+          (typeof effort !== "string" ||
+            !model.supportedEfforts?.includes(effort))
+        )
+          throw new HttpError(400, "EFFORT_UNAVAILABLE");
+        value.model = model.id;
+        value.reasoningEffort = effort;
+        if ("task" in value) await this.executor.save();
+        else await this.save();
+      }
+      send(res, 200, {
+        model: value.model,
+        reasoningEffort: value.reasoningEffort,
+        progressMode:
+          ("pendingProgressMode" in value
+            ? value.pendingProgressMode
+            : undefined) ??
+          value.progressMode ??
+          "auto",
+      });
+      return;
+    }
     case "/api/agents/models":
       send(res, 200, { agents: await this.agentCatalog() });
       return;
@@ -241,6 +314,7 @@ export async function route(
     case "/api/project/transfer-owner":
     case "/api/project/rename":
     case "/api/project/remove-member":
+    case "/api/project/minutes/update":
     case "/api/project/snapshot":
     case "/api/project/task":
     case "/api/project/continue": {
@@ -257,6 +331,7 @@ export async function route(
         "/api/project/rename": "project.rename",
         "/api/project/remove-member": "project.remove-member",
         "/api/project/snapshot": "project.snapshot",
+        "/api/project/minutes/update": "project.minutes.update",
         "/api/project/task": "task.create",
         "/api/project/continue": "task.continue",
       };
@@ -407,6 +482,11 @@ export async function route(
           accessMode: this.settings.mappings.find(
             (m) => m.projectId === projectId,
           )?.accessMode,
+          model: this.settings.mappings.find((m) => m.projectId === projectId)
+            ?.model,
+          reasoningEffort: this.settings.mappings.find(
+            (m) => m.projectId === projectId,
+          )?.reasoningEffort,
           progressMode:
             input.progressMode === "manual" || input.progressMode === "auto"
               ? input.progressMode
@@ -491,6 +571,22 @@ export async function route(
     case "/api/progress-mode": {
       if (!["auto", "manual"].includes(String(input.mode)))
         throw new HttpError(400, "INVALID_PROGRESS_MODE");
+      if (input.runId) {
+        const value = this.executor.runs[id(input.runId)];
+        if (!value || this.executor.deletedTasks[value.task.id])
+          throw new HttpError(404, "RUN_NOT_FOUND");
+        const mode = input.mode as "auto" | "manual";
+        if (this.executor.active.has(value.task.runId)) {
+          value.pendingProgressMode =
+            mode === (value.progressMode ?? "auto") ? undefined : mode;
+        } else {
+          value.progressMode = mode;
+          value.pendingProgressMode = undefined;
+          if (mode === "manual") value.planApproved = false;
+        }
+        await this.executor.save();
+        break;
+      }
       const projectId = id(input.projectId);
       if (!this.settings.projects.some((p) => p.id === projectId))
         throw new HttpError(400, "UNKNOWN_PROJECT");

@@ -242,7 +242,7 @@ export class Tasks {
       task.controlReceipts ??= {};
       task.controlReceipts[receipt.id] = receipt;
       addParticipant(this.repository, task, actor);
-      const sender = taskParticipants(this.repository, task).find(
+      const sender = taskParticipants(this.repository, task, true).find(
         (person) => person.id === participantId(actor),
       );
       const sentAt = Date.now();
@@ -333,7 +333,7 @@ export class Tasks {
         text,
         task: {
           ...task,
-          participants: taskParticipants(this.repository, task),
+          participants: taskParticipants(this.repository, task, true),
         },
         receiptId: receipt.id,
         controlVersion: receipt.controlVersion,

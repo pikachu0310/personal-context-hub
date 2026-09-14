@@ -3,6 +3,8 @@ import {
   displaySender,
   showStart,
 } from "./chat-presentation.js";
+import { ComposerDropdown } from "./ComposerDropdown.js";
+import { ModelControls } from "./ModelControls.js";
 import { ComposerAction } from "./ComposerAction.js";
 import { Button, Group, Stack, Text } from "@mantine/core";
 import { EnvironmentRow, TaskInspector } from "./TaskInspector.js";
@@ -78,7 +80,7 @@ export function ClientRuns({
     continuation: boolean;
     revision: number;
   }>(undefined);
-  const scroll = useRef<HTMLDivElement>(null);
+  const scroll = useRef<HTMLElement>(null);
   const runId = current?.task.runId;
   useEffect(() => {
     if (!runId) return;
@@ -223,16 +225,14 @@ export function ClientRuns({
     <section
       className="task-workspace with-inspector"
       aria-label="タスクの会話と行動ログ"
+      ref={scroll}
+      onScroll={(e) => {
+        const el = e.currentTarget;
+        setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 100);
+      }}
     >
       <div className="task-conversation">
-        <div
-          className="conversation-scroll"
-          ref={scroll}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 100);
-          }}
-        >
+        <div className="conversation-scroll">
           <div className="conversation-content">
             <RequestMessage
               sender={displaySender(
@@ -463,34 +463,50 @@ export function ClientRuns({
               }}
             />
             <div className="composer-toolbar">
-              <span
-                className="progress-mode"
-                title="タスクの進め方。実行権限とは別です。"
-              >
-                {current.progressMode === "manual"
-                  ? "Manual · 会話する"
-                  : "Auto"}
-              </span>
-              <button type="button" className="policy-button" onClick={setup}>
-                <Icon name="shield" size={16} />
-                {!policy?.sandboxMode &&
-                policy?.networkAccessEnabled !== false &&
-                current.accessMode === "full"
-                  ? "フルアクセス・承認なし"
-                  : !policy?.sandboxMode &&
+              <ComposerDropdown
+                label="入力欄の進め方"
+                value={
+                  current.pendingProgressMode ?? current.progressMode ?? "auto"
+                }
+                options={[
+                  { value: "auto", label: "Auto" },
+                  { value: "manual", label: "Manual" },
+                ]}
+                onChange={(mode) => invoke("progress-mode", { runId, mode })}
+              />
+              <ComposerDropdown
+                label="実行権限"
+                value="current"
+                options={[
+                  {
+                    value: "current",
+                    label:
+                      !policy?.sandboxMode &&
                       policy?.networkAccessEnabled !== false &&
-                      current.accessMode === "approval"
-                    ? "許可を求める"
-                    : current.agent === "claude"
-                      ? "Claude · 操作ごとに承認"
-                      : policy?.sandboxMode === "read-only"
-                        ? "読み取り専用"
-                        : "作業フォルダー内で実行"}
-              </button>
+                      current.accessMode === "full"
+                        ? "フルアクセス・承認なし"
+                        : !policy?.sandboxMode &&
+                            policy?.networkAccessEnabled !== false &&
+                            current.accessMode === "approval"
+                          ? "許可を求める"
+                          : current.agent === "claude"
+                            ? "Claude · 操作ごとに承認"
+                            : policy?.sandboxMode === "read-only"
+                              ? "読み取り専用"
+                              : "作業フォルダー内で実行",
+                  },
+                  { value: "settings", label: "接続・設定を開く" },
+                ]}
+                onChange={(value) => {
+                  if (value === "settings") setup();
+                }}
+              />
               <span className="composer-spacer" />
-              <span className="model-label">
-                {agentName} · {current.model ?? "既定モデル"}
-              </span>
+              <ModelControls
+                key={runId}
+                runId={runId}
+                agent={current.agent ?? "codex"}
+              />
               <ComposerAction
                 running={running}
                 text={draft}
@@ -514,6 +530,11 @@ export function ClientRuns({
         </div>
       </div>
       <TaskInspector
+        sourceTarget={{
+          taskId: current.task.id,
+          projectId: current.task.projectId,
+          runId: current.task.runId,
+        }}
         sourceId={sourceId}
         onSourceChange={setSourceId}
         reveal={reveal}

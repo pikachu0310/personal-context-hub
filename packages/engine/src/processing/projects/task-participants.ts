@@ -27,7 +27,6 @@ function inferredParticipants(
       participants.set(device.id, {
         id: device.id,
         identityId,
-        avatar: device.profile?.avatar,
         name: clean(device.profile?.name ?? device.name).slice(0, 100),
       });
     } else if (!executor) {
@@ -75,7 +74,14 @@ export function addParticipant(store: Repository, task: Task, actor: string) {
 export function taskParticipants(
   store: Repository,
   task: Task,
+  includeAvatars = false,
 ): TaskParticipant[] {
+  // Keep task lists compact; only execution/message snapshots persist avatars.
+  if (includeAvatars)
+    return taskParticipants(store, task).map((person) => ({
+      ...person,
+      avatar: store.get<Device>("device", person.id)?.profile?.avatar,
+    }));
   if (!task.memberStates) return inferredParticipants(store, task);
   const inferred = inferredParticipants(store, task);
   return [
@@ -86,7 +92,6 @@ export function taskParticipants(
         return {
           id,
           identityId: device ? deviceIdentity(store, device) : undefined,
-          avatar: device?.profile?.avatar,
           name: clean(
             device?.profile?.name ??
               device?.name ??

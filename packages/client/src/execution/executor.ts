@@ -41,6 +41,7 @@ export interface Run {
   requestAt?: number;
   contextSources?: TaskContextSource[];
   model?: string;
+  reasoningEffort?: string;
   agent?: AgentKind;
   origin?: "local";
   localMapping?: Mapping;
@@ -56,6 +57,7 @@ export interface Run {
   };
   accessMode?: "full" | "approval";
   progressMode?: "auto" | "manual";
+  pendingProgressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
   planApproved?: boolean;
   plan?: string;
@@ -145,6 +147,7 @@ export class Executor {
       progressMode: "auto" | "manual";
       agent?: AgentKind;
       model?: string;
+      reasoningEffort?: string;
     },
   ) {
     if (!command.id) throw new Error("COMMAND_ID_REQUIRED");
@@ -229,12 +232,25 @@ export class Executor {
       }
       const directory =
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
+      task.attachedSources = [
+        ...new Map(
+          [
+            ...(previous?.task.attachedSources ?? []),
+            ...(task.attachedSources ?? []),
+          ].map((source) => [source.id, source]),
+        ).values(),
+      ];
       const value: Run = {
         contextSources: previous?.contextSources?.filter(
           (source) => source.kind !== "minutes",
         ),
         agent: previous?.agent ?? local?.agent ?? "codex",
-        model: previous ? previous.model : local?.model,
+        model: previous ? previous.model : (local?.model ?? mapping.model),
+        reasoningEffort: previous
+          ? previous.reasoningEffort
+          : local
+            ? local.reasoningEffort
+            : mapping.reasoningEffort,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
         discordShare: previous?.discordShare ?? local?.discordShare,
@@ -242,6 +258,7 @@ export class Executor {
           ? previous.accessMode
           : (local?.accessMode ?? mapping.accessMode),
         progressMode:
+          previous?.pendingProgressMode ??
           previous?.progressMode ??
           local?.progressMode ??
           mapping.progressMode ??

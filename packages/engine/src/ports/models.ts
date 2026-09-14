@@ -9,6 +9,7 @@ export interface Models {
     tasks: Task[],
     question: string,
   ): Promise<string>;
+  summarize?(meeting: Meeting, taskLinks: string[]): Promise<string>;
   update(
     meeting: Meeting,
     messageId: string,

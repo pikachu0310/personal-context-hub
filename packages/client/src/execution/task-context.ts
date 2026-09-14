@@ -31,7 +31,14 @@ export function taskContextSources(
       title: `${profile.name || "担当者"}のユーザー情報`,
       text: profile.context,
     });
-  return sources;
+  return [
+    ...new Map(
+      [...sources, ...(task.attachedSources ?? [])].map((source) => [
+        source.id,
+        source,
+      ]),
+    ).values(),
+  ];
 }
 
 export function contextPrompt(sources: TaskContextSource[]): string {

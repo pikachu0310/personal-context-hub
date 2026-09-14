@@ -79,7 +79,7 @@ export class Scheduler {
           runId: task.runId,
           task: {
             ...task,
-            participants: taskParticipants(this.repository, task),
+            participants: taskParticipants(this.repository, task, true),
           },
         });
       }

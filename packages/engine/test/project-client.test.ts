@@ -64,6 +64,38 @@ test("approved Client owns projects, invites participants, retries unknown resul
     context: "バックエンド開発担当",
     codexConnected: false,
   });
+  engine.store.put("meeting", "editable-minutes", {
+    id: "editable-minutes",
+    name: "Minutes",
+    projectId: "default",
+    summary: "Before",
+    messages: [],
+  });
+  const updateMinutes = (expectedRevision: number, markdown: string) =>
+    fetch(c.origin + "/api/project/minutes/update", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": c.csrf },
+      body: JSON.stringify({
+        projectId: "default",
+        meetingId: "editable-minutes",
+        expectedRevision,
+        markdown,
+      }),
+    });
+  const edited = await updateMinutes(0, "# Markdown\n\n- [x] 保存");
+  assert.equal(edited.status, 200);
+  assert.equal((await edited.json()).summaryRevision, 1);
+  const staleMinutes = await updateMinutes(0, "stale");
+  assert.equal((await staleMinutes.json()).error, "MINUTES_CONFLICT");
+  const minutesSnapshot = await clients[1].workspaceRequest<any>(
+    "project.snapshot",
+    { projectId: "default" },
+  );
+  assert.equal(
+    minutesSnapshot.minutes.find((m: any) => m.id === "editable-minutes")
+      .summary,
+    "# Markdown\n\n- [x] 保存",
+  );
   const defaultWorkspace = await c.workspaceRequest<any>("project.snapshot", {
     projectId: "default",
   });

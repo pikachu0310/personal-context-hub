@@ -1,0 +1,278 @@
+.minutes-document {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto 24px;
+  padding: 28px 36px;
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: 12px;
+  background: var(--mantine-color-body);
+  color: var(--mantine-color-text);
+}
+.minutes-document-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  margin-bottom: 24px;
+}
+.minutes-document-header h2 {
+  font-size: 23px;
+  margin: 4px 0 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.minutes-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: var(--mantine-color-dimmed);
+  margin: 0;
+}
+.minutes-markdown {
+  font-size: 15px;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+}
+.minutes-markdown > :first-child {
+  margin-top: 0;
+}
+.minutes-markdown > :last-child {
+  margin-bottom: 0;
+}
+.minutes-markdown h1 {
+  font-size: 1.65em;
+}
+.minutes-markdown h2 {
+  font-size: 1.4em;
+}
+.minutes-markdown h3 {
+  font-size: 1.15em;
+}
+.minutes-markdown h1,
+.minutes-markdown h2,
+.minutes-markdown h3 {
+  line-height: 1.5;
+  margin: 1.8em 0 0.65em;
+}
+.minutes-markdown p {
+  margin: 0.8em 0;
+  white-space: pre-wrap;
+}
+.minutes-markdown ul,
+.minutes-markdown ol {
+  padding-left: 1.6em;
+}
+.minutes-markdown li + li {
+  margin-top: 0.25em;
+}
+.minutes-markdown blockquote {
+  margin: 1em 0;
+  padding: 4px 18px;
+  border-left: 3px solid var(--mantine-color-blue-5);
+  color: var(--mantine-color-dimmed);
+}
+.minutes-markdown pre {
+  overflow-x: auto;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--mantine-color-default-hover);
+  line-height: 1.6;
+}
+.minutes-markdown code {
+  font-size: 0.9em;
+  font-family: ui-monospace, monospace;
+}
+.minutes-markdown :not(pre) > code {
+  background: var(--mantine-color-default-hover);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+.minutes-markdown a {
+  color: var(--mantine-color-blue-6);
+  text-underline-offset: 3px;
+}
+.minutes-markdown .minutes-task-link {
+  background: var(--mantine-color-blue-light);
+  padding: 2px 6px;
+  border-radius: 5px;
+  box-decoration-break: clone;
+}
+.minutes-markdown a:focus-visible,
+.minutes-table:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-6);
+  outline-offset: 3px;
+}
+.minutes-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--mantine-color-default-border);
+  margin: 24px 0;
+}
+.minutes-table {
+  overflow-x: auto;
+  margin: 16px 0;
+}
+.minutes-table table {
+  border-collapse: collapse;
+  min-width: 100%;
+}
+.minutes-table th,
+.minutes-table td {
+  border: 1px solid var(--mantine-color-default-border);
+  padding: 8px 12px;
+  text-align: left;
+}
+.minutes-table th {
+  background: var(--mantine-color-default-hover);
+}
+.minutes-toolbar {
+  margin-bottom: 16px;
+}
+@media (max-width: 760px) {
+  .project-document {
+    padding: 16px;
+  }
+  .minutes-document {
+    padding: 20px 16px;
+  }
+  .minutes-document-header h2 {
+    font-size: 20px;
+  }
+}
+
+.minutes-live-editor {
+  min-width: 0;
+}
+.minutes-live-editor .cm-editor {
+  background: transparent;
+  color: var(--workspace-text);
+}
+.minutes-live-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.minutes-live-editor .cm-scroller {
+  font: inherit;
+  line-height: 1.85;
+  overflow: visible;
+}
+.minutes-live-editor .cm-content {
+  padding: 12px 0;
+  min-height: 260px;
+  caret-color: var(--workspace-text);
+}
+.minutes-live-editor .cm-line {
+  padding: 2px 10px;
+  border-left: 2px solid transparent;
+}
+.minutes-live-editor .cm-line.cm-md-source {
+  font-family: ui-monospace, monospace;
+  font-size: 14px;
+  background: var(--workspace-soft);
+  border-left-color: var(--workspace-focus);
+}
+.minutes-live-editor .cm-cursor {
+  border-left-color: var(--workspace-text);
+}
+.minutes-live-editor .cm-selectionBackground {
+  background: var(--workspace-selected) !important;
+}
+.minutes-live-editor .cm-md-heading {
+  font-weight: 650;
+  padding-top: 0.6em;
+  padding-bottom: 0.25em;
+  line-height: 1.5;
+}
+.minutes-live-editor .cm-md-h1 {
+  font-size: 1.65em;
+}
+.minutes-live-editor .cm-md-h2 {
+  font-size: 1.4em;
+}
+.minutes-live-editor .cm-md-h3 {
+  font-size: 1.15em;
+}
+.minutes-live-editor .cm-md-strong {
+  font-weight: 700;
+}
+.minutes-live-editor .cm-md-emphasis {
+  font-style: italic;
+}
+.minutes-live-editor .cm-md-strike {
+  text-decoration: line-through;
+}
+.minutes-live-editor .cm-md-quote {
+  border-left: 3px solid var(--workspace-focus);
+  color: var(--workspace-muted);
+  padding-left: 18px;
+}
+.minutes-live-editor .cm-md-inline-code,
+.minutes-live-editor code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--workspace-code);
+  border-radius: 3px;
+}
+.minutes-live-editor .cm-md-code {
+  background: var(--workspace-code);
+  font-family: ui-monospace, monospace;
+  font-size: 14px;
+}
+.minutes-live-editor .cm-md-fence,
+.minutes-live-editor .cm-md-table-separator {
+  font-size: 4px;
+  line-height: 1;
+}
+.minutes-live-editor .cm-md-bullet {
+  display: inline-block;
+  min-width: 1em;
+  color: var(--workspace-muted);
+}
+.minutes-live-editor .cm-md-checkbox {
+  color: var(--workspace-muted);
+}
+.minutes-live-editor a {
+  color: var(--workspace-info);
+  text-underline-offset: 3px;
+}
+.minutes-live-editor .minutes-task-link {
+  background: var(--workspace-info-bg);
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+.minutes-live-editor .cm-md-rule {
+  display: inline-block;
+  width: 100%;
+  border-bottom: 1px solid var(--workspace-border);
+}
+.minutes-live-editor .cm-md-table-line {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.minutes-live-editor .cm-md-table-row {
+  display: inline-grid;
+  width: 100%;
+  vertical-align: top;
+}
+.minutes-live-editor .cm-md-table-cell {
+  padding: 8px 12px;
+  border: 1px solid var(--workspace-border);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.minutes-live-editor .cm-md-table-header {
+  font-weight: 600;
+  background: var(--workspace-soft);
+}
+.minutes-live-editor .cm-content[contenteditable="false"] {
+  opacity: 0.75;
+}
+
+.minutes-markdown .contains-task-list {
+  list-style: none;
+  padding-left: 0.2em;
+}
+.minutes-markdown .task-list-item input {
+  margin-right: 0.5em;
+}
