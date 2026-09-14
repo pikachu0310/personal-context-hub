@@ -28,7 +28,7 @@ import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
 import { taskSnapshot } from "./task-list.js";
 import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
-import { TaskBoard } from "../../processing/tasks/board.js";
+import { BoardInputError, TaskBoard } from "../../processing/tasks/board.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
@@ -376,9 +376,15 @@ export class ClientConnections {
                 this.notifyBoard(task);
             } else throw new Error("INVALID_BOARD_OPERATION");
             ws.send(JSON.stringify({ ...response, result }));
-          } catch {
+          } catch (error) {
             ws.send(
-              JSON.stringify({ ...response, error: "BOARD_REQUEST_REJECTED" }),
+              JSON.stringify({
+                ...response,
+                error:
+                  error instanceof BoardInputError
+                    ? error.message
+                    : "BOARD_REQUEST_REJECTED",
+              }),
             );
           }
           return;

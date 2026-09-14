@@ -18,14 +18,25 @@ export interface BoardThread {
 }
 const finished = (task: Task) =>
   ["completed", "failed", "cancelled"].includes(task.state);
+// Only caller-fixable validation messages may cross the Client boundary.
+export class BoardInputError extends Error {}
+
 function integer(
   value: unknown,
   fallback: number,
   max = Number.MAX_SAFE_INTEGER,
+  field = "offset",
+  min = 0,
 ) {
   if (value === undefined) return fallback;
-  if (!Number.isSafeInteger(value) || Number(value) < 0 || Number(value) > max)
-    throw new Error("INVALID_BOARD_OFFSET");
+  if (
+    !Number.isSafeInteger(value) ||
+    Number(value) < min ||
+    Number(value) > max
+  )
+    throw new BoardInputError(
+      `INVALID_BOARD_${field.toUpperCase()}: ${field} must be an integer from ${min} to ${max}`,
+    );
   return Number(value);
 }
 function body(value: unknown, max: number) {
@@ -71,17 +82,30 @@ export class TaskBoard {
     return task;
   }
   read(author: Task, input: Record<string, unknown> = {}) {
-    const limit = integer(input.limit, 10, 10);
-    if (!limit) throw new Error("INVALID_BOARD_LIMIT");
+    // Optional tool arguments may be explicitly null. Normalize before choosing
+    // listing, thread or post mode; null IDs must not select a different mode.
+    input = Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== null),
+    );
+    const limit = integer(input.limit, 10, 10, "limit", 1);
+    if (
+      input.query !== undefined &&
+      (typeof input.query !== "string" || input.query.length > 200)
+    )
+      throw new BoardInputError(
+        "INVALID_BOARD_QUERY: query must be a string of at most 200 characters; omit it for an unfiltered read",
+      );
     const query =
-      input.query === undefined
+      input.query === undefined || !(input.query as string).trim()
         ? undefined
-        : body(input.query, 200).toLowerCase();
+        : (input.query as string).toLowerCase();
     if (
       input.includeFinished !== undefined &&
       typeof input.includeFinished !== "boolean"
     )
-      throw new Error("INVALID_BOARD_FILTER");
+      throw new BoardInputError(
+        "INVALID_BOARD_FILTER: includeFinished must be a boolean",
+      );
     if (input.taskId === undefined && input.id === undefined) {
       const threads = this.store
         .list<Task>("task")
@@ -121,7 +145,8 @@ export class TaskBoard {
     const thread = this.thread(task);
     if (input.id !== undefined) {
       const post = thread.posts.find(
-        (post) => post.id === integer(input.id, 0),
+        (post) =>
+          post.id === integer(input.id, 0, Number.MAX_SAFE_INTEGER, "id", 1),
       );
       if (!post) throw new Error("BOARD_POST_NOT_FOUND");
       const start = integer(input.offset, 0, post.body.length);
@@ -136,9 +161,13 @@ export class TaskBoard {
       };
     }
     const after =
-      input.after === undefined ? undefined : integer(input.after, 0);
+      input.after === undefined
+        ? undefined
+        : integer(input.after, 0, Number.MAX_SAFE_INTEGER, "after");
     const replyTo =
-      input.replyTo === undefined ? undefined : integer(input.replyTo, 0);
+      input.replyTo === undefined
+        ? undefined
+        : integer(input.replyTo, 0, Number.MAX_SAFE_INTEGER, "replyTo", 1);
     const matches = thread.posts.filter(
       (post) =>
         (after === undefined || post.id > after) &&
