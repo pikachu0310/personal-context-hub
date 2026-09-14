@@ -1,3 +1,4 @@
+import { MeetingNotes } from "@ido/common-ui";
 import { MinutesEditor } from "./MinutesEditor.js";
 import type { TaskReference } from "@ido/common/contracts/api";
 import { SharedTaskInspector } from "./SharedTaskInspector.js";
@@ -117,6 +118,10 @@ export function ProjectView({
                   openSettings={openSettings}
                 />
               )}
+              <details style={{ marginTop: 20 }}>
+                <summary>会議の文脈・元の発言を確認</summary>
+                <MeetingNotes key={projectId} meetings={state.minutes} />
+              </details>
             </Paper>
           ) : (
             <>
@@ -155,6 +160,10 @@ export function ProjectView({
                   }
                 />
               ))}
+              <details>
+                <summary>議題・元の発言を確認</summary>
+                <MeetingNotes key={projectId} meetings={state.minutes} />
+              </details>
               <details>
                 <summary>詳細を見る</summary>
                 <Stack mt="md">

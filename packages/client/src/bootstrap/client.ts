@@ -178,6 +178,13 @@ export class Client {
   ) {
     this.credentials = new Credentials(directory, "ido-client");
     this.executor = new Executor(directory, (data) => this.emit(data));
+    this.executor.knowledge = (task, input) =>
+      this.workspaceRequest("task.knowledge", {
+        ...input,
+        taskId: task.id,
+        runId: task.runId,
+        revision: task.revision,
+      });
     this.executor.contextProfile = () => this.settings.profile;
     this.preview = new ClientPreview((data) => this.emit(data));
   }

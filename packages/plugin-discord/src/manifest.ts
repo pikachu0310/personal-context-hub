@@ -37,6 +37,18 @@ export const discordManifest: PluginManifest = {
     },
     { key: "guildId", label: "Guild ID", required: true },
     {
+      key: "voiceChannelId",
+      label: "起動時に参加する通話チャンネルID（任意）",
+    },
+    {
+      key: "messageContentIntent",
+      label: "通常のテキスト発言を受信する",
+      options: [
+        { value: "true", label: "有効（Discord側の許可が必要）" },
+        { value: "false", label: "無効（通話とコマンドは利用可能）" },
+      ],
+    },
+    {
       key: "issueForumChannelId",
       label: "issueフォーラムのID（任意・タスク概要を共有）",
     },

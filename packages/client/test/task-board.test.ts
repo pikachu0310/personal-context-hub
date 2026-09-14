@@ -194,3 +194,150 @@ test("board requests reject on disconnection and notices coalesce without peer t
   controller.abort();
   await assert.rejects(board.post({ body: "ended" }, "key"));
 });
+
+test("meeting search and board tools coexist through restart and retry while old threads keep their tool set", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ido-combined-tools-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const options: any[] = [];
+  const turns: any[] = [];
+  let catalogCalls = 0;
+  const factory = () =>
+    ({
+      request: async () => {
+        catalogCalls++;
+        return { data: [{ model: "gpt-5.6-sol" }] };
+      },
+      startThread: makeThread,
+      resumeThread: (_id: string, input: any) => makeThread(input),
+      close: async () => {},
+    }) as any;
+  function makeThread(input: any) {
+    options.push(input);
+    return {
+      id: "thread",
+      runStreamed: async (_prompt: string, turn: any) => {
+        turns.push(turn);
+        const params = { threadId: "thread", turnId: "turn", callId: "call" };
+        if (
+          input.dynamicTools?.some(
+            (tool: any) => tool.name === "meeting_context_search",
+          )
+        ) {
+          const page = await input.onToolCall({
+            ...params,
+            tool: "meeting_context_search",
+            arguments: {},
+          });
+          assert.equal(page.documents[0].markdown, "# 手動編集");
+        }
+        if (
+          input.dynamicTools?.some((tool: any) => tool.name === "board_post")
+        ) {
+          const post = await input.onToolCall({
+            ...params,
+            tool: "board_post",
+            arguments: { body: "確認しました" },
+          });
+          assert.equal(post.id, 1);
+        }
+        return {
+          events: (async function* () {
+            yield { type: "thread.started", thread_id: "thread" };
+            yield {
+              type: "item.completed",
+              item: { type: "agent_message", text: "完了" },
+            };
+            yield { type: "turn.completed" };
+          })(),
+        };
+      },
+    };
+  }
+  const makeExecutor = () => {
+    const executor = new Executor(
+      directory,
+      (frame: Command) => {
+        if (frame.type === "board.request")
+          executor.board.receive({
+            ...frame,
+            type: "board.result",
+            result: { id: 1 },
+          });
+      },
+      factory,
+    );
+    executor.knowledge = async () => ({
+      projectId: "project",
+      topics: [],
+      messages: [],
+      total: 0,
+      offset: 0,
+      documents: [
+        {
+          meetingId: "meeting",
+          meetingName: "会議",
+          markdown: "# 手動編集",
+          revision: 1,
+          offset: 0,
+        },
+      ],
+    });
+    executor.board.supported = true;
+    return executor;
+  };
+  const first = makeExecutor();
+  await first.load();
+  const value: Run = {
+    task: task(),
+    directory,
+    state: "assigned",
+    reasoningEffort: "high",
+  };
+  first.runs.run = value;
+  const mapping = { projectId: "project", directory, network: false, slots: 1 };
+  await first.execute(value, mapping, false);
+  assert.equal(catalogCalls, 1);
+  assert.equal(turns[0].reasoningEffort, "high");
+  assert.equal(value.model, "gpt-5.6-sol");
+  await first.close();
+  const restarted = makeExecutor();
+  await restarted.load();
+  await restarted.execute(restarted.runs.run, mapping, false);
+  await restarted.receive(
+    {
+      v: 1,
+      id: "retry",
+      type: "retry",
+      taskId: value.task.id,
+      runId: value.task.runId,
+      task: { ...value.task, revision: 2 },
+    },
+    [mapping],
+    true,
+    1,
+  );
+  await restarted.running.get(value.task.runId);
+  assert.equal(restarted.runs.run.state, "completed");
+  assert.equal(catalogCalls, 1);
+  assert.ok(
+    options.slice(0, 3).every((input) => input.dynamicTools.length === 4),
+  );
+  for (const extra of [
+    { threadId: "old" },
+    { origin: "local" as const },
+    { threadId: "board-only", boardToolsEnabled: true },
+  ]) {
+    await restarted.execute(
+      { task: task(), directory, state: "assigned", ...extra },
+      mapping,
+      false,
+    );
+  }
+  assert.equal(options[3].dynamicTools, undefined);
+  assert.equal(options[4].dynamicTools, undefined);
+  assert.deepEqual(
+    options[5].dynamicTools.map((tool: any) => tool.name),
+    ["board_read", "board_post"],
+  );
+  await restarted.close();
+});

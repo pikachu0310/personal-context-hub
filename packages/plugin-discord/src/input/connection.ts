@@ -33,7 +33,9 @@ export async function start(
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
+      ...(nextConfig.messageContentIntent === "false"
+        ? []
+        : [GatewayIntentBits.MessageContent]),
       GatewayIntentBits.GuildVoiceStates,
     ],
   });
@@ -68,127 +70,127 @@ export async function start(
       taskId: forumTask,
     });
   });
-  const handleCommand = voiceCommandHandler(
-    state.config.guildId,
-    async (channel: VoiceChannel) => {
+  const joinChannel = async (channel: VoiceChannel) => {
+    if (
+      state.voice?.joinConfig.channelId === channel.id &&
+      state.voice.state.status === VoiceConnectionStatus.Ready
+    )
+      return;
+    if (
+      state.voice &&
+      state.voice.state.status !== VoiceConnectionStatus.Destroyed
+    )
+      state.voice.destroy();
+    state.voice = undefined;
+    state.speechEpoch++;
+    state.audioSessionId = randomUUID();
+    audioOutput(state).invalidate();
+    emit({ type: "voice", channelId: null });
+    const connection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId: channel.guild.id,
+      adapterCreator: channel.guild.voiceAdapterCreator,
+      selfDeaf: false,
+      selfMute: false,
+    });
+    state.voice = connection;
+    connection.on("error", () => {
+      if (state.voice === connection) emit({ type: "voice", channelId: null });
+    });
+    connection.on("stateChange", (_old, connectionState) => {
+      if (state.voice === connection)
+        emit({
+          type: "voice",
+          channelId:
+            connectionState.status === VoiceConnectionStatus.Ready
+              ? channel.id
+              : null,
+        });
+    });
+    connection.subscribe(state.player);
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+    } catch (error) {
+      connection.destroy();
+      if (state.voice === connection) state.voice = undefined;
+      emit({ type: "voice", channelId: null });
+      throw error;
+    }
+    emit({ type: "voice", channelId: channel.id });
+    const active = new Set<string>();
+    const streams = new Set<{ destroy(): void }>();
+    connection.once(VoiceConnectionStatus.Destroyed, () => {
+      for (const stream of streams) stream.destroy();
+      streams.clear();
+    });
+    connection.receiver.speaking.on("start", (userId) => {
       if (
-        state.voice?.joinConfig.channelId === channel.id &&
-        state.voice.state.status === VoiceConnectionStatus.Ready
+        state.voice !== connection ||
+        connection.state.status !== VoiceConnectionStatus.Ready ||
+        !discordUserAllowed(state.config, userId) ||
+        userId === state.client?.user?.id ||
+        active.has(userId) ||
+        active.size >= 8
       )
         return;
-      if (
-        state.voice &&
-        state.voice.state.status !== VoiceConnectionStatus.Destroyed
-      )
-        state.voice.destroy();
-      state.voice = undefined;
-      state.speechEpoch++;
-      state.audioSessionId = randomUUID();
-      audioOutput(state).invalidate();
-      emit({ type: "voice", channelId: null });
-      const connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: channel.guild.id,
-        adapterCreator: channel.guild.voiceAdapterCreator,
-        selfDeaf: false,
-        selfMute: false,
+      active.add(userId);
+      const receivedEpoch = state.speechEpoch;
+      audioOutput(state).speakerStart(userId);
+      const capture = new VoiceCapture(
+        {
+          sessionId: state.audioSessionId,
+          userId,
+          guildId: channel.guild.id,
+          channelId: channel.id,
+          meetingId: state.config.meetingId,
+          projectId: state.config.projectId,
+          speechEpoch: receivedEpoch,
+        },
+        emit,
+      );
+      const stream = connection.receiver.subscribe(userId, {
+        end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
       });
-      state.voice = connection;
-      connection.on("error", () => {
-        if (state.voice === connection)
-          emit({ type: "voice", channelId: null });
+      const decoder = new prism.opus.Decoder({
+        rate: 48000,
+        channels: 2,
+        frameSize: 960,
       });
-      connection.on("stateChange", (_old, connectionState) => {
-        if (state.voice === connection)
-          emit({
-            type: "voice",
-            channelId:
-              connectionState.status === VoiceConnectionStatus.Ready
-                ? channel.id
-                : null,
-          });
-      });
-      connection.subscribe(state.player);
-      try {
-        await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-      } catch (error) {
-        connection.destroy();
-        if (state.voice === connection) state.voice = undefined;
-        emit({ type: "voice", channelId: null });
-        throw error;
-      }
-      emit({ type: "voice", channelId: channel.id });
-      const active = new Set<string>();
-      const streams = new Set<{ destroy(): void }>();
-      connection.once(VoiceConnectionStatus.Destroyed, () => {
-        for (const stream of streams) stream.destroy();
-        streams.clear();
-      });
-      connection.receiver.speaking.on("start", (userId) => {
-        if (
-          state.voice !== connection ||
-          connection.state.status !== VoiceConnectionStatus.Ready ||
-          !discordUserAllowed(state.config, userId) ||
-          userId === state.client?.user?.id ||
-          active.has(userId) ||
-          active.size >= 8
-        )
-          return;
-        active.add(userId);
-        const receivedEpoch = state.speechEpoch;
-        audioOutput(state).speakerStart(userId);
-        const capture = new VoiceCapture(
-          {
-            sessionId: state.audioSessionId,
-            userId,
-            guildId: channel.guild.id,
-            channelId: channel.id,
-            meetingId: state.config.meetingId,
-            projectId: state.config.projectId,
-            speechEpoch: receivedEpoch,
-          },
-          emit,
-        );
-        const stream = connection.receiver.subscribe(userId, {
-          end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
-        });
-        const decoder = new prism.opus.Decoder({
-          rate: 48000,
-          channels: 2,
-          frameSize: 960,
-        });
-        streams.add(stream);
-        streams.add(decoder);
-        decoder.once("close", () => streams.delete(decoder));
-        let finished = false;
-        const finish = (complete = true) => {
-          if (finished) return;
-          finished = true;
-          capture.finish(complete);
-          audioOutput(state).speakerEnd(userId);
-          active.delete(userId);
-        };
-        stream.pipe(decoder);
-        decoder.on("data", (chunk: Buffer) => {
-          try {
-            capture.push(chunk);
-          } catch {
-            stream.destroy();
-            decoder.destroy();
-          }
-        });
-        stream.on("error", () => {
-          finish(false);
+      streams.add(stream);
+      streams.add(decoder);
+      decoder.once("close", () => streams.delete(decoder));
+      let finished = false;
+      const finish = (complete = true) => {
+        if (finished) return;
+        finished = true;
+        capture.finish(complete);
+        audioOutput(state).speakerEnd(userId);
+        active.delete(userId);
+      };
+      stream.pipe(decoder);
+      decoder.on("data", (chunk: Buffer) => {
+        try {
+          capture.push(chunk);
+        } catch {
+          stream.destroy();
           decoder.destroy();
-        });
-        decoder.on("error", () => finish(false));
-        stream.once("close", () => {
-          streams.delete(stream);
-        });
-        decoder.once("end", () => finish(true));
-        decoder.once("close", () => finish(false));
+        }
       });
-    },
+      stream.on("error", () => {
+        finish(false);
+        decoder.destroy();
+      });
+      decoder.on("error", () => finish(false));
+      stream.once("close", () => {
+        streams.delete(stream);
+      });
+      decoder.once("end", () => finish(true));
+      decoder.once("close", () => finish(false));
+    });
+  };
+  const handleCommand = voiceCommandHandler(
+    state.config.guildId,
+    joinChannel,
     () => {
       const previous = state.voice;
       state.voice = undefined;
@@ -302,10 +304,14 @@ export async function start(
       state.config.appId = state.client!.application!.id;
       const guild = await state.client!.guilds.fetch(state.config.guildId);
       await registerVoiceCommands(guild);
+      if (state.config.voiceChannelId) {
+        const channel = await guild.channels.fetch(state.config.voiceChannelId);
+        if (!channel || !channel.isVoiceBased())
+          throw new Error("DISCORD_VOICE_CHANNEL_REQUIRED");
+        await joinChannel(channel as VoiceChannel);
+      }
       emit({ type: "status", status: "connected" });
-    })().catch(() =>
-      emit({ type: "status", status: "command-registration-failed" }),
-    );
+    })().catch(() => emit({ type: "status", status: "startup-failed" }));
   });
   await state.client.login(text(state.config.botToken, 4000));
 }

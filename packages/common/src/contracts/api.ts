@@ -32,6 +32,7 @@ export interface MessageView {
   steps?: Record<string, { state: string; errorId?: string }>;
 }
 export interface MeetingView extends MinutesMetadata {
+  knowledge?: import("./knowledge.js").MeetingKnowledge;
   startedAt?: number;
   closedAt?: number;
   id: string;

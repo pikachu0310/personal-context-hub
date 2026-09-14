@@ -98,6 +98,9 @@ export function createOpenAICoordinatorFactory(
               const response = await api.responses.create(
                 {
                   model: options.model ?? "gpt-4.1-mini",
+                  ...((options.model ?? "gpt-4.1-mini").startsWith("gpt-4.1")
+                    ? { temperature: 0 }
+                    : {}),
                   store: false,
                   input: coordinatorPrompt(value, { initial: true }),
                   tools: [],

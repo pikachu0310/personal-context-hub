@@ -10,6 +10,7 @@ export interface CoordinatorHandle {
 }
 
 export interface CoordinatorSource {
+  handled?: boolean;
   meetingId?: string;
   id: string;
   authorId: string;
@@ -62,6 +63,13 @@ export interface CoordinatorTask {
 }
 
 export interface CoordinatorObservation {
+  minutes?: Array<{
+    meetingId: string;
+    name: string;
+    markdown?: string;
+    summaryRevision?: number;
+    topics: import("./knowledge.js").MeetingTopic[];
+  }>;
   participants?: Array<{
     id: string;
     name: string;
@@ -78,6 +86,7 @@ export interface CoordinatorObservation {
 }
 
 export interface CoordinatorResponse {
+  minutes?: import("./knowledge.js").MinutesUpdate[];
   reply: null | {
     text: string;
     reason: "direct_answer" | "verified_correction" | "new_finding";

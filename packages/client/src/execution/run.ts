@@ -10,6 +10,12 @@ import { activityText, recordActivity, recordEvent } from "./activity.js";
 import { taskContextSources, contextPrompt } from "./task-context.js";
 import type { Executor, Run } from "../execution/executor.js";
 import {
+  contextToolHandler,
+  meetingContextInstructions,
+  meetingContextTools,
+} from "./knowledge.js";
+import { meetingModel } from "../agents/model-selection.js";
+import {
   taskBoardTools,
   taskBoardGuidelines,
   callTaskBoard,
@@ -28,6 +34,11 @@ export async function execute(
     value.origin !== "local" &&
     value.agent !== "claude" &&
     (!value.threadId || value.boardToolsEnabled);
+  const knowledgeAvailable =
+    value.origin !== "local" &&
+    value.agent !== "claude" &&
+    !!this.knowledge &&
+    (!value.threadId || value.knowledgeToolsEnabled);
   const createRuntime =
     value.agent === "claude" ? this.createClaude : this.createCodex;
   const codex = createRuntime({
@@ -65,6 +76,28 @@ export async function execute(
   let stopBoardWatch = () => {};
   this.active.set(value.task.runId, active);
   try {
+    if (
+      knowledgeAvailable &&
+      !value.model &&
+      !value.threadId &&
+      "request" in codex
+    ) {
+      const catalog = await codex.request("model/list", { limit: 100 });
+      const selection = meetingModel(
+        value.task.text,
+        value.task.kind,
+        (catalog.data ?? [])
+          .filter((item: any) => !item.hidden)
+          .map((item: any) => item.model),
+      );
+      value.model = selection.model;
+      value.reasoningEffort ??= selection.reasoningEffort;
+      recordActivity(value, {
+        kind: "status",
+        title: "会議タスクのモデルを選択",
+        text: `${value.model} / ${value.reasoningEffort}`,
+      });
+    }
     recordActivity(value, {
       kind: "status",
       title: value.progressMode === "manual" ? "相談を開始" : "作業を開始",
@@ -96,10 +129,19 @@ export async function execute(
         ? value.accessMode
         : undefined;
     const options = {
-      ...(board
+      ...(board || knowledgeAvailable
         ? {
-            dynamicTools: taskBoardTools,
-            onToolCall: (params: any) => callTaskBoard(board, params),
+            dynamicTools: [
+              ...(board ? taskBoardTools : []),
+              ...(knowledgeAvailable ? meetingContextTools : []),
+            ],
+            onToolCall: (params: any) =>
+              knowledgeAvailable &&
+              meetingContextTools.some((tool) => tool.name === params.tool)
+                ? contextToolHandler(this, value)(params)
+                : board
+                  ? callTaskBoard(board, params)
+                  : Promise.reject(new Error("Unknown task tool")),
           }
         : {}),
       model: value.model,
@@ -134,6 +176,7 @@ export async function execute(
     active.thread = value.threadId
       ? codex.resumeThread(value.threadId, options)
       : codex.startThread(options);
+    if (knowledgeAvailable) value.knowledgeToolsEnabled = true;
     if (board) {
       value.boardToolsEnabled = true;
       stopBoardWatch = watchTaskBoard(board, active.thread);
@@ -156,6 +199,7 @@ export async function execute(
       value.task.text,
       contextPrompt(value.contextSources),
       board ? taskBoardGuidelines : "",
+      knowledgeAvailable ? meetingContextInstructions : "",
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -224,8 +268,10 @@ export async function execute(
         ) {
           if (planning) value.plan = activityText(event.item.text);
           else value.result = event.item.text;
-        } else if (event.type === "turn.failed" || event.type === "error")
+        } else if (event.type === "turn.failed" || event.type === "error") {
+          abort.signal.throwIfAborted();
           throw new Error("CODEX_TURN_FAILED");
+        }
         value.progress = event.type;
         this.report(value);
       }

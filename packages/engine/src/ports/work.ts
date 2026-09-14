@@ -6,6 +6,7 @@ import type {
 } from "@ido/common/contracts/work";
 
 export interface WorkRequest {
+  trigger?: "requested" | "proactive";
   requestKey: string;
   meetingId: string;
   projectId: string;
@@ -24,6 +25,7 @@ export interface WorkControl {
   authorId: string;
   type: "stop" | "instruction" | "retry";
   instruction?: string;
+  continuation?: string;
   requestKey: string;
   expectedControlVersion?: number;
   instructionResolution?: "retry" | "discard";

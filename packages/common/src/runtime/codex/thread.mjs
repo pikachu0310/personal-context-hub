@@ -26,6 +26,9 @@ export class AppServerThread {
             ...(!this.resuming && options.dynamicTools?.length
               ? { dynamicTools: options.dynamicTools }
               : {}),
+            ...(options.developerInstructions
+              ? { developerInstructions: options.developerInstructions }
+              : {}),
             cwd: options.workingDirectory,
             model: options.model,
             sandbox: options.sandboxMode ?? "workspace-write",
@@ -103,7 +106,8 @@ export class AppServerThread {
       outputSchema,
       collaborationMode,
       model = this.options.model,
-      reasoningEffort = this.options.modelReasoningEffort,
+      reasoningEffort = this.options.reasoningEffort ??
+        this.options.modelReasoningEffort,
     } = {},
   ) {
     signal?.throwIfAborted();

@@ -19,9 +19,16 @@ import type { Repository } from "../../ports/repository.js";
 import type { WorkPort, WorkResult } from "../../ports/work.js";
 import { ConversationAudio } from "../../output/audio/session.js";
 import { parseBotInvocation } from "../immediate/invocation.mjs";
-import { explicitDelegation } from "./intent.mjs";
+import {
+  deferredDelegation,
+  explicitDelegation,
+  proactiveOpportunity,
+} from "./intent.mjs";
 import { taskControl } from "../routing/control.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import { CoordinatorInbox } from "./inbox.mjs";
+import { MeetingKnowledgeStore } from "../minutes/knowledge.js";
+import { duplicateWork } from "./duplicates.js";
 
 type Route = { event: ConversationInput; context: InputContext };
 type StoredState = {
@@ -125,7 +132,7 @@ class MeetingCoordinator {
     } as any);
     this.timer = setInterval(() => {
       void this.inbox.flush();
-    }, options.observationIntervalMs ?? 30_000);
+    }, options.observationIntervalMs ?? 12_000);
     this.timer.unref();
   }
 
@@ -190,6 +197,59 @@ class MeetingCoordinator {
   source(event: CoordinatorEvent): CoordinatorSource | undefined {
     return event.type === "message" ? event.source : undefined;
   }
+  async receipt(
+    source: CoordinatorSource,
+    key: string,
+    content: string,
+    taskIds: string[],
+  ) {
+    const route = this.routes.get(source.id);
+    if (!this.active(route)) return;
+    const id = `receipt:${stableId(key)}`;
+    if (this.store.get("conversation-output", id)) return;
+    const output = {
+      id,
+      meetingId: source.meetingId ?? this.meetingId,
+      provider: "engine",
+      role: "assistant",
+      text: content,
+      sourceIds: [source.id],
+      taskIds,
+      at: Date.now(),
+      delivered: false,
+      deliveryStatus: "unknown",
+    };
+    // Persist before sending: uncertain delivery is never retried as a second announcement.
+    this.store.put("conversation-output", id, output);
+    this.messages.response(source.id, content);
+    try {
+      await route!.context.deliver({
+        kind: "reply",
+        eventId: id,
+        content,
+        replyTo: route!.event.replyTo,
+      });
+      output.delivered = true;
+      output.deliveryStatus = "delivered";
+      this.store.put("conversation-output", id, output);
+      this.messages.step(source.id, "delivery", "completed");
+    } catch (error) {
+      this.failure(error, "conversation.receipt");
+    }
+    if (source.origin === "audio")
+      void this.audio
+        .reply(
+          {
+            text: content,
+            sourceIds: [source.id],
+            reason: this.audio.mode === "live" ? "backend" : "direct",
+            events: [{ id: source.id, type: "message", source }],
+          },
+          route!.context,
+        )
+        .catch((error) => this.failure(error, "audio.receipt"));
+    this.publish("transcript", source.meetingId);
+  }
   permitted(source: CoordinatorSource) {
     const route = this.routes.get(source.id);
     const actor = this.store.conversationAuthor(source.authorId);
@@ -199,6 +259,61 @@ class MeetingCoordinator {
       actor.role !== "viewer" &&
       route!.context.actor.id === source.authorId
     );
+  }
+  controlCandidates(
+    source: CoordinatorSource,
+    parsed: NonNullable<ReturnType<typeof taskControl>>,
+  ) {
+    return this.projectTasks().filter(
+      (task) =>
+        task.projectId === source.projectId &&
+        (parsed.action === "stop"
+          ? ["queued", "assigned", "running", "interrupted"]
+          : ["queued", "assigned", "running", "completed"]
+        ).includes(task.state) &&
+        (!parsed.taskId || task.id.startsWith(parsed.taskId)) &&
+        (!parsed.target || (task.title ?? task.text).includes(parsed.target)),
+    );
+  }
+  async applyControl(
+    source: CoordinatorSource,
+    target: Task,
+    parsed: NonNullable<ReturnType<typeof taskControl>>,
+    key: string,
+    version = target.controlVersion ?? 0,
+  ) {
+    try {
+      const continuation =
+        parsed.action === "steer" && target.state === "completed";
+      const result = this.options.work.control({
+        taskId: target.id,
+        authorId: source.authorId,
+        type:
+          parsed.action === "stop"
+            ? "stop"
+            : continuation
+              ? "retry"
+              : "instruction",
+        instruction: parsed.instruction,
+        ...(continuation ? { continuation: parsed.instruction } : {}),
+        requestKey: key,
+        expectedControlVersion: version,
+      });
+      await this.receipt(
+        source,
+        key,
+        `タスク「${target.title ?? target.text.slice(0, 80)}」${parsed.action === "stop" ? (result.delivery === "stopped" ? "を停止しました。" : "の停止を受け付けました。実行先の停止確認を待っています。") : continuation ? "の続きとして追加依頼を受け付けました。" : "に追加指示を受け付けました。"}`,
+        [target.id],
+      );
+    } catch (error) {
+      this.failure(error, "task.control");
+      await this.receipt(
+        source,
+        `${key}:failed`,
+        "タスクへの操作を適用できませんでした。最新の状態を確認し、同じタスクから操作してください。",
+        [target.id],
+      );
+    }
   }
 
   observation(events: CoordinatorEvent[]): CoordinatorObservation {
@@ -238,6 +353,7 @@ class MeetingCoordinator {
             })),
         })),
       context: this.history(events),
+      minutes: this.minutesContext(events),
       participants: new ProjectTeam(this.store)
         .participants(this.meeting()?.projectId ?? "")
         .slice(0, 30)
@@ -248,6 +364,40 @@ class MeetingCoordinator {
           codexConnected,
         })),
     };
+  }
+
+  minutesContext(events: CoordinatorEvent[]) {
+    const current = new Set(
+      events.flatMap((event) =>
+        event.type === "message"
+          ? [event.source.meetingId ?? this.meetingId]
+          : [],
+      ),
+    );
+    const minutes = this.projectMeetings()
+      .filter((meeting) => current.has(meeting.id))
+      .slice(-3)
+      .map((meeting) => ({
+        meetingId: meeting.id,
+        name: meeting.name,
+        markdown: meeting.summary.slice(0, 1500),
+        summaryRevision: meeting.summaryRevision ?? 0,
+        topics: (meeting.knowledge?.topics ?? []).slice(-12).map((topic) => ({
+          ...topic,
+          summary: topic.summary.slice(0, 900),
+          decisions: topic.decisions.map((text) => text.slice(0, 300)),
+          openQuestions: topic.openQuestions.map((text) => text.slice(0, 300)),
+          sourceIds: topic.sourceIds.slice(-12),
+        })),
+      }));
+    while (JSON.stringify(minutes).length > 12000) {
+      const largest = minutes.toSorted(
+        (a, b) => b.topics.length - a.topics.length,
+      )[0];
+      if (!largest?.topics.length) break;
+      largest.topics.shift();
+    }
+    return minutes;
   }
 
   history(events: CoordinatorEvent[]) {
@@ -267,6 +417,8 @@ class MeetingCoordinator {
         )
         .slice(-30)
         .map((message) => ({
+          id: message.id,
+          meetingId: (message as Message).meetingId,
           role: "user",
           authorId: message.authorId,
           at: message.at,
@@ -496,6 +648,8 @@ class MeetingCoordinator {
     this.store.put("coordinator-source-route", id, {
       pluginId: context.pluginId,
     });
+    // Raw statements are already durable. Topic minutes are updated by the
+    // coordinator response; MinutesDocument owns the editable Markdown.
     this.publish("transcript", event.meetingId);
     const addressed =
       event.interaction === true ||
@@ -522,14 +676,14 @@ class MeetingCoordinator {
       requestReply: addressed,
       direct: event.interaction === true,
       workAllowed: canWork && event.command !== "ask",
-      researchAllowed: canWork && addressed,
+      researchAllowed: canWork && (addressed || proactiveOpportunity(content)),
     };
     this.audio.observeMessage({ ...record, meetingId: event.meetingId });
     if (event.audio) await this.audio.handleMedia(event, context);
     // Explicit task commands retain their exact intent and retry key. Normal
     // speech is interpreted only by the main model through sourced proposals.
     if (event.command === "task" && canWork && this.active(route)) {
-      this.options.work.submit({
+      const task = this.options.work.submit({
         requestKey: inputId,
         meetingId: event.meetingId,
         projectId: event.projectId!,
@@ -537,9 +691,40 @@ class MeetingCoordinator {
         request: content,
         sourceIds: [id],
         kind: "implementation",
+        trigger: "requested",
       });
       source.workAllowed = false;
       source.researchAllowed = false;
+      source.handled = true;
+      await this.receipt(
+        source,
+        inputId,
+        `タスク「${task.title ?? task.text.slice(0, 100)}」を受け付けました。進捗・追加指示は同じタスクで確認できます。`,
+        [task.id],
+      );
+    }
+    const control = taskControl(content);
+    if (control && canWork && !source.handled && this.active(route)) {
+      const candidates = this.controlCandidates(source, control);
+      source.handled = true;
+      source.workAllowed = false;
+      source.researchAllowed = false;
+      if (candidates.length === 1)
+        await this.applyControl(
+          source,
+          candidates[0],
+          control,
+          `direct-control:${inputId}`,
+        );
+      else
+        await this.receipt(
+          source,
+          `control-target:${inputId}`,
+          candidates.length
+            ? "対象のタスクが複数あります。タスク画面から選ぶか、タスクIDを指定してください。"
+            : "操作できる対象のタスクが見つかりませんでした。タスク画面で対象と状態を確認してください。",
+          candidates.map((task) => task.id),
+        );
     }
     this.updateMinutes(event.meetingId);
     await this.inbox.submit(
@@ -660,44 +845,102 @@ class MeetingCoordinator {
       ids
         .map((id) => sources.find((source) => source.id === id))
         .filter((source): source is CoordinatorSource => !!source);
+    const knownSources = new Set(
+      this.projectMeetings().flatMap((meeting) =>
+        meeting.messages.map((message) => message.id),
+      ),
+    );
+    const minutes = new MeetingKnowledgeStore(this.store);
+    for (const update of response.minutes ?? []) {
+      if (
+        sources.some(
+          (source) =>
+            (source.meetingId ?? this.meetingId) === update.meetingId &&
+            this.active(this.routes.get(source.id)),
+        ) &&
+        minutes.apply(this.meeting()?.projectId ?? "", update, knownSources)
+      ) {
+        this.publish("minutes", update.meetingId);
+        // The Markdown writer owns the minutes processing status.
+      }
+    }
+    let automaticStarted = 0;
+    const receipts = new Set<string>();
     for (const [index, task] of response.tasks.entries()) {
       const selected = select(task.sourceIds);
       if (
         !selected.length ||
         selected.length !== task.sourceIds.length ||
         !selected.every(
-          (source) => this.permitted(source) && source.complete !== false,
+          (source) =>
+            this.active(this.routes.get(source.id)) &&
+            source.complete !== false &&
+            !source.handled,
         )
       )
         continue;
       const research = task.kind === "research";
-      if (
-        !selected.every((source) =>
-          research ? source.researchAllowed : source.workAllowed,
-        )
-      )
-        continue;
-      if (
-        !research &&
-        !selected.some((source) =>
+      const eligible = selected.filter(
+        (source) =>
+          this.permitted(source) &&
+          (research ? source.researchAllowed : source.workAllowed),
+      );
+      const requested = eligible.findLast(
+        (source) =>
+          (research && source.requestReply) ||
           explicitDelegation(source.text, {
             explicitlyAsked:
               source.command === "task" || source.direct === true,
           }),
-        )
-      )
+      );
+      const automatic = !requested;
+      const author =
+        requested ??
+        eligible.findLast((source) => proactiveOpportunity(source.text));
+      if (!author || selected.some((source) => deferredDelegation(source.text)))
         continue;
-      const author = selected.at(-1)!;
       if (
         !author.projectId ||
-        !selected.every(
-          (source) =>
-            source.projectId === author.projectId &&
-            source.authorId === author.authorId,
-        )
+        !selected.every((source) => source.projectId === author.projectId)
       )
         continue;
-      this.options.work.submit({
+      const existingTasks = this.projectTasks();
+      const duplicate = duplicateWork(
+        existingTasks,
+        task.title,
+        task.sourceIds,
+        automatic,
+      );
+      if (duplicate) {
+        if (author.requestReply) {
+          await this.receipt(
+            author,
+            `duplicate:${batch.id}:${duplicate.id}`,
+            `同じ目的のタスク「${duplicate.title ?? duplicate.text.slice(0, 100)}」が既にあります。進捗と追加指示はそのタスクで確認できます。`,
+            [duplicate.id],
+          );
+          receipts.add(author.id);
+        }
+        continue;
+      }
+      if (
+        automatic &&
+        (automaticStarted >= 1 ||
+          existingTasks.filter(
+            (existing) =>
+              existing.trigger === "proactive" &&
+              ["queued", "assigned", "running", "interrupted"].includes(
+                existing.state,
+              ),
+          ).length >= 2 ||
+          existingTasks.some(
+            (existing) =>
+              existing.trigger === "proactive" &&
+              Date.now() - existing.createdAt < 45_000,
+          ))
+      )
+        continue;
+      const created = this.options.work.submit({
         requestKey: `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`,
         meetingId: author.meetingId ?? this.meetingId,
         projectId: author.projectId,
@@ -712,6 +955,7 @@ class MeetingCoordinator {
           ...selected.map((source) => source.text),
         ].join("\n"),
         kind: task.kind,
+        trigger: automatic ? "proactive" : "requested",
         sourceStatements: selected.map((source) => ({
           id: source.id,
           meetingId: source.meetingId ?? this.meetingId,
@@ -723,6 +967,14 @@ class MeetingCoordinator {
         sourceIds: task.sourceIds,
         executionPolicy: research ? { sandboxMode: "read-only" } : undefined,
       });
+      if (automatic) automaticStarted++;
+      await this.receipt(
+        author,
+        `work:${batch.id}:${created.id}`,
+        `${automatic ? "会議の確認を進めるため、" : ""}タスク「${created.title ?? task.title}」を受け付けました。${created.state === "queued" ? "実行先の空き・許可を待っています。" : "進捗は同じタスクで確認できます。"}`,
+        [created.id],
+      );
+      receipts.add(author.id);
     }
     for (const meetingId of new Set(
       sources.map((source) => source.meetingId ?? this.meetingId),
@@ -746,33 +998,42 @@ class MeetingCoordinator {
         !selected.every((source) => source.projectId === target.projectId)
       )
         continue;
-      const authorized = selected.some((source) => {
+      const author = selected.findLast((source) => {
         const parsed = taskControl(source.text);
         if (
           !parsed ||
           (parsed.action === "stop" ? "stop" : "instruction") !== control.type
         )
           return false;
-        const candidates = this.projectTasks().filter(
-          (task) =>
-            task.projectId === source.projectId &&
-            (parsed.action === "stop"
-              ? ["queued", "assigned", "running", "interrupted"]
-              : ["queued", "assigned", "running"]
-            ).includes(task.state) &&
-            (!parsed.taskId || task.id.startsWith(parsed.taskId)),
-        );
+        const candidates = this.controlCandidates(source, parsed);
         return candidates.length === 1 && candidates[0].id === target.id;
       });
-      if (!authorized) continue;
-      this.options.work.control({
-        taskId: target.id,
-        authorId: selected.at(-1)!.authorId,
-        type: control.type,
-        instruction: selected.map((source) => source.text).join("\n"),
-        requestKey: `coordinator:${batch.id}:${control.type}:${target.id}`,
-        expectedControlVersion: value.controlVersions[target.id],
-      });
+      if (!author) continue;
+      await this.applyControl(
+        author,
+        target,
+        taskControl(author.text)!,
+        `coordinator:${batch.id}:${control.type}:${target.id}`,
+        value.controlVersions[target.id],
+      );
+      receipts.add(author.id);
+    }
+    for (const source of sources) {
+      if (
+        source.requestReply &&
+        !source.handled &&
+        !receipts.has(source.id) &&
+        (response.tasks.some((task) => task.sourceIds.includes(source.id)) ||
+          response.controls.some((control) =>
+            control.sourceIds.includes(source.id),
+          ))
+      )
+        await this.receipt(
+          source,
+          `not-applied:${batch.id}:${source.id}`,
+          "この発言からはタスクを開始・変更していません。対象と、今進める具体的な作業を教えてください。",
+          [],
+        );
     }
     const answer = response.reply;
     let replyApplied = false;
@@ -797,6 +1058,7 @@ class MeetingCoordinator {
       const allowed =
         !response.tasks.length &&
         !response.controls.length &&
+        !selected.some((source) => source.handled || receipts.has(source.id)) &&
         (!results.length || resultEvent) &&
         (resultEvent ||
           (selected.length === answer.sourceIds.length &&

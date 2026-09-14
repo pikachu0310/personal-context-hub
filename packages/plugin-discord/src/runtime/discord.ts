@@ -146,9 +146,14 @@ const runtime = pluginRuntime(
       normalizeDiscordPolicy(next);
       validateDownloads(next);
       state.forum = undefined;
-      const reconnect = ["guildId", "textChannelId", "botToken", "appId"].some(
-        (key) => next[key] !== state.config[key],
-      );
+      const reconnect = [
+        "guildId",
+        "textChannelId",
+        "botToken",
+        "appId",
+        "voiceChannelId",
+        "messageContentIntent",
+      ].some((key) => next[key] !== state.config[key]);
       Object.assign(state.config, next);
       discordManifest.web!.frameOrigins = [
         `https://${state.config.appId}.discordsays.com`,

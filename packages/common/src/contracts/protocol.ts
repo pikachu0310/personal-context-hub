@@ -61,6 +61,7 @@ export interface AttachedTaskSource {
   text: string;
 }
 export interface Task {
+  trigger?: "requested" | "proactive";
   initialText?: string;
   queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;
   attachedSources?: AttachedTaskSource[];
