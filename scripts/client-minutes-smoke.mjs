@@ -49,6 +49,28 @@ let meeting = {
   summaryRevision: 0,
   messages: [],
 };
+const older = {
+  ...meeting,
+  id: "older",
+  name: "前回の議事録",
+  startedAt: meeting.startedAt - 60000,
+  summary: "## 前回の決定",
+  closedAt: meeting.startedAt - 30000,
+};
+const newer = {
+  ...meeting,
+  id: "newer",
+  name: "最新の議事録",
+  startedAt: meeting.startedAt + 60000,
+  summary: "## 最新の決定",
+};
+const empty = { ...meeting, id: "empty", name: "空の議事録", summary: "" };
+const whitespace = {
+  ...meeting,
+  id: "whitespace",
+  name: "空白だけの議事録",
+  summary: " \n\t　",
+};
 let canEdit = true,
   failSave = false;
 client.workspaceRequest = async (operation, input) => {
@@ -58,7 +80,8 @@ client.workspaceRequest = async (operation, input) => {
     return structuredClone({
       project,
       canEditMinutes: canEdit,
-      minutes: project.id === "p" ? [meeting] : [],
+      minutes:
+        project.id === "p" ? [older, empty, meeting, whitespace, newer] : [],
       tasks: tasks.filter((t) => t.projectId === project.id),
       participants: [],
     });
@@ -97,7 +120,56 @@ try {
     page
       .locator('.project-group[data-project-id="p"]')
       .getByRole("button", { name: "議事録", exact: true });
+  const openMinutes = async () => {
+    await minutes().click();
+    await page
+      .locator(".minutes-list-row")
+      .filter({ hasText: meeting.name })
+      .click();
+  };
   await minutes().click();
+  const rows = page.locator(".minutes-list-row");
+  await rows.first().waitFor();
+  assert.deepEqual(
+    await page.locator(".minutes-list-title").allTextContents(),
+    [newer.name, meeting.name, older.name],
+  );
+  assert.equal(await page.locator(".minutes-document").count(), 0);
+  assert.ok((await rows.first().boundingBox()).height <= 44);
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/minutes-list.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "サイドバーを閉じる", exact: true })
+    .click();
+  await page.setViewportSize({ width: 600, height: 900 });
+  assert.ok((await rows.first().boundingBox()).height <= 64);
+  assert.equal(
+    await page.evaluate(
+      () =>
+        globalThis.document.documentElement.scrollWidth <=
+        globalThis.innerWidth,
+    ),
+    true,
+  );
+  await page.screenshot({
+    path: ".ido-build/screenshots/minutes-list-mobile.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page
+    .getByRole("button", { name: "サイドバーの表示を切り替える", exact: true })
+    .click();
+  await rows.filter({ hasText: newer.name }).focus();
+  await page.keyboard.press("Enter");
+  await page
+    .getByRole("heading", { name: "最新の決定", exact: true })
+    .waitFor();
+  assert.equal(await page.locator(".minutes-document").count(), 1);
+  await page.getByRole("button", { name: "← 議事録一覧に戻る" }).click();
+  await openMinutes();
   await page.getByRole("heading", { name: "決定事項", exact: true }).waitFor();
   assert.equal(await page.locator(".minutes-markdown table").count(), 1);
   assert.equal(
@@ -128,13 +200,13 @@ try {
       .count(),
     1,
   );
-  await minutes().click();
+  await openMinutes();
   await page.getByRole("link", { name: "検索画面を実装" }).focus();
   await page.keyboard.press("Enter");
   await page
     .getByRole("heading", { name: "検索画面を実装", exact: true })
     .waitFor();
-  await minutes().click();
+  await openMinutes();
   await page.getByRole("button", { name: "編集", exact: true }).click();
   const editor = page.getByRole("textbox", { name: "議事録のMarkdown" });
   const readSource = async () => {
@@ -199,6 +271,10 @@ try {
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   assert.match(await readSource(), /ido:\/\/projects\/other\/tasks\/task-two/);
   const draft = await readSource();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "← 議事録一覧に戻る" }).click();
+  assert.equal(await readSource(), draft);
+
   await editor.locator(".cm-line").filter({ hasText: "最初の決定" }).click();
   assert.equal(await page.locator(".cm-md-source").count(), 1);
   assert.equal(
@@ -267,7 +343,7 @@ try {
   await editor.waitFor({ state: "detached" });
   assert.equal(meeting.summary, draft);
   await page.reload();
-  await minutes().click();
+  await openMinutes();
   await page
     .getByRole("heading", { name: "手動で整理", exact: true })
     .waitFor();
@@ -276,9 +352,30 @@ try {
   await page
     .getByRole("button", { name: "編集", exact: true })
     .waitFor({ state: "detached" });
+  canEdit = true;
+  await page.getByRole("button", { name: "編集", exact: true }).waitFor();
+  await page.getByRole("button", { name: "編集", exact: true }).click();
+  await replaceSource(" \n　");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.locator(".minutes-list-row").first().waitFor();
+  assert.deepEqual(
+    await page.locator(".minutes-list-title").allTextContents(),
+    [newer.name, older.name],
+  );
+  await page
+    .locator('.project-group[data-project-id="other"]')
+    .getByRole("button", { name: "議事録", exact: true })
+    .click();
+  await page
+    .getByText("本文のある議事録はまだありません。", { exact: true })
+    .waitFor();
+  assert.equal(
+    await page.locator(".minutes-list-row, .minutes-document").count(),
+    0,
+  );
   assert.deepEqual(errors, []);
   console.log(
-    "Client minutes browser smoke passed: single-pane live preview, active source line, undo/redo, line breaks, Japanese input, links, mobile, conflicts, failures, persistence, readonly.",
+    "Client minutes browser smoke passed: compact newest-first list, empty filtering, detail navigation, draft protection, single-pane live preview, active source line, undo/redo, line breaks, Japanese input, links, mobile, conflicts, failures, persistence, readonly.",
   );
 } finally {
   await browser?.close();
