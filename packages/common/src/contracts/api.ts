@@ -124,6 +124,21 @@ export interface ClientAccount {
   type?: string;
   email?: string;
 }
+/** Context actually supplied to a local agent; never included in team summaries. */
+export interface TaskContextSource {
+  id: string;
+  title: string;
+  kind: "minutes" | "profile" | "context";
+  text: string;
+  detail?: string;
+}
+export interface TaskEnvironment {
+  directory: string;
+  branch?: string;
+  commit?: string;
+  deviceName: string;
+  ownerName?: string;
+}
 export interface ClientState {
   lifecycleSupported?: boolean;
   deletionSync?: { pendingTasks: number };
@@ -159,6 +174,7 @@ export interface ClientState {
   desktop?: { name: string; version: string; pid: number; platform: string };
   pairing?: { url: string; fingerprint: string };
   runs: Array<{
+    contextSources?: TaskContextSource[];
     agent?: "codex" | "claude";
     model?: string;
     origin?: "local";

@@ -173,6 +173,7 @@ export class Client {
   ) {
     this.credentials = new Credentials(directory, "ido-client");
     this.executor = new Executor(directory, (data) => this.emit(data));
+    this.executor.contextProfile = () => this.settings.profile;
     this.preview = new ClientPreview((data) => this.emit(data));
   }
   async start(port = 4320) {
