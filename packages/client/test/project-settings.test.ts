@@ -107,3 +107,47 @@ test("project execution grants and progress modes are isolated and new runs reta
   assert.equal((await post("allow", { allow: true })).status, 400);
   assert.equal(new Client(directory).allow, false);
 });
+
+test("project creation applies network, progress mode and execution opt-in before readiness", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ido-project-options-"));
+  const client = new Client(directory);
+  client.credentials.backend = "file";
+  t.mock.method(client, "checkAccount", async () => {});
+  await client.start(0);
+  t.after(async () => {
+    await client.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  client.connected = true;
+  client.projectCreationSupported = true;
+  t.mock.method(client, "createProject", async () => ({
+    id: "alpha",
+    name: "Alpha",
+    remote: "",
+  }));
+  const { mkdir } = await import("node:fs/promises");
+  const projectPath = join(directory, "project");
+  await mkdir(projectPath);
+  const response = await fetch(client.origin + "/api/projects", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-csrf-token": client.csrf,
+    },
+    body: JSON.stringify({
+      name: "Alpha",
+      directory: projectPath,
+      network: true,
+      progressMode: "manual",
+      allow: true,
+    }),
+  });
+  assert.equal(response.status, 200, await response.text());
+  assert.equal(client.settings.mappings[0].network, true);
+  assert.equal(client.settings.mappings[0].progressMode, "manual");
+  assert.deepEqual(client.grants(), [
+    { projectId: "alpha", network: true, slots: 1 },
+  ]);
+  const restored = new Client(directory);
+  assert.equal(restored.allow, false);
+});

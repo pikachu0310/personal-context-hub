@@ -355,11 +355,13 @@ export async function route(
           .concat({
             projectId: project.id,
             directory,
-            network: false,
+            network: input.network === true,
+            progressMode: input.progressMode === "manual" ? "manual" : "auto",
             slots: 1,
           });
         delete this.settings.pendingProject;
         await this.save();
+        if (input.allow === true) this.allowedProjects.add(project.id);
         this.ready();
       } finally {
         this.projectCreationBusy = false;
@@ -383,13 +385,30 @@ export async function route(
           accessMode: this.settings.mappings.find(
             (m) => m.projectId === projectId,
           )?.accessMode,
-          progressMode: this.settings.mappings.find(
-            (m) => m.projectId === projectId,
-          )?.progressMode,
+          progressMode:
+            input.progressMode === "manual" || input.progressMode === "auto"
+              ? input.progressMode
+              : this.settings.mappings.find((m) => m.projectId === projectId)
+                  ?.progressMode,
+
           network: input.network === true,
           slots: Math.max(1, Math.min(8, Number(input.slots) || 1)),
         });
       await this.save();
+      if (input.allow === true) this.allowedProjects.add(projectId);
+      else if (input.allow === false) this.allowedProjects.delete(projectId);
+      if (typeof input.allow === "boolean")
+        this.settings.slots = Math.min(
+          8,
+          Math.max(
+            1,
+            this.executionMappings().reduce(
+              (total, mapping) => total + mapping.slots,
+              0,
+            ),
+          ),
+        );
+      this.ready();
       break;
     }
     case "/api/allow": {
