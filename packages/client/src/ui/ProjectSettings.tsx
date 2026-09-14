@@ -3,11 +3,10 @@ import {
   Group,
   NumberInput,
   SegmentedControl,
-  Stack,
   Text,
 } from "@mantine/core";
 import { useState } from "react";
-import { Form, type Action, type ClientState } from "@ido/common-ui";
+import { type Action, type ClientState } from "@ido/common-ui";
 import {
   ProjectDirectory,
   ProjectField,
@@ -28,7 +27,6 @@ export function ProjectSettings({
     (m) => m.projectId === projectId,
   );
   const [directory, setDirectory] = useState(mapping?.directory ?? ""),
-    [network, setNetwork] = useState(mapping?.network ?? false),
     [slots, setSlots] = useState<number | string>(mapping?.slots ?? 1),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -45,30 +43,42 @@ export function ProjectSettings({
     }
   }
   return (
-    <Stack gap="md">
-      <Form
-        fields={[]}
-        label="保存先と通信設定を保存"
-        submit={() =>
-          action("mappings", {
-            projectId,
-            directory,
-            network,
-            slots: mapping?.slots ?? 1,
-          })
-        }
-      >
-        <ProjectField label="保存先" help={projectHelp.directory}>
-          <ProjectDirectory value={directory} onChange={setDirectory} />
-        </ProjectField>
-        <ProjectField label="インターネット通信" help={projectHelp.network}>
-          <ProjectToggle
-            label="インターネット通信"
-            checked={network}
-            onChange={setNetwork}
-          />
-        </ProjectField>
-      </Form>
+    <div className="project-settings-form">
+      <ProjectField label="保存先" help={projectHelp.directory}>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void update("mappings", {
+              directory,
+              network: mapping?.network ?? false,
+              slots: mapping?.slots ?? 1,
+            });
+          }}
+        >
+          <Group gap="md" wrap="nowrap">
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <ProjectDirectory value={directory} onChange={setDirectory} />
+            </div>
+            <Button type="submit" variant="default" loading={busy}>
+              保存
+            </Button>
+          </Group>
+        </form>
+      </ProjectField>
+      <ProjectField label="インターネット通信" help={projectHelp.network}>
+        <ProjectToggle
+          label="インターネット通信"
+          checked={mapping?.network ?? false}
+          disabled={!mapping || busy}
+          onChange={(network) =>
+            void update("mappings", {
+              directory: mapping!.directory,
+              network,
+              slots: mapping!.slots,
+            })
+          }
+        />
+      </ProjectField>
       <ProjectField
         label="同時実行枠"
         help="このプロジェクトで同時に実行するタスク数（1〜8）です。保存先を設定してから変更できます。"
@@ -121,47 +131,53 @@ export function ProjectSettings({
           }
         />
       </ProjectField>
-      <ProjectField
-        label="タスクの権限"
-        help="新しいタスクに適用します。フルアクセスはOSサンドボックスと承認なしでPCのファイル操作・通信が可能です。Manualの「許可を求める」では承認要求を表示します。受信タスクの明示的な制限は優先します。"
-      >
-        {(mapping?.progressMode ?? "auto") === "manual" ? (
-          <SegmentedControl
-            size="sm"
-            fullWidth
-            aria-label="新しいタスクの権限"
-            disabled={!mapping || busy}
-            value={mapping?.accessMode ?? "approval"}
-            data={[
-              { label: "許可を求める", value: "approval" },
-              { label: "フルアクセス", value: "full" },
-            ]}
-            onChange={(accessMode) =>
-              void update("progress-mode", { mode: "manual", accessMode })
-            }
-          />
-        ) : (
-          <Button
-            variant="default"
-            disabled={!mapping || busy}
-            onClick={() =>
-              void update("progress-mode", { mode: "auto", accessMode: "full" })
-            }
-          >
-            フルアクセスを適用
-          </Button>
+      <details className="project-advanced">
+        <summary>詳細設定</summary>
+        <ProjectField
+          label="タスクの権限"
+          help="新しいタスクに適用します。フルアクセスはOSサンドボックスと承認なしでPCのファイル操作・通信が可能です。Manualの「許可を求める」では承認要求を表示します。受信タスクの明示的な制限は優先します。"
+        >
+          {(mapping?.progressMode ?? "auto") === "manual" ? (
+            <SegmentedControl
+              size="sm"
+              fullWidth
+              aria-label="新しいタスクの権限"
+              disabled={!mapping || busy}
+              value={mapping?.accessMode ?? "approval"}
+              data={[
+                { label: "許可を求める", value: "approval" },
+                { label: "フルアクセス", value: "full" },
+              ]}
+              onChange={(accessMode) =>
+                void update("progress-mode", { mode: "manual", accessMode })
+              }
+            />
+          ) : (
+            <Button
+              variant="default"
+              disabled={!mapping || busy}
+              onClick={() =>
+                void update("progress-mode", {
+                  mode: "auto",
+                  accessMode: "full",
+                })
+              }
+            >
+              フルアクセスを適用
+            </Button>
+          )}
+        </ProjectField>
+        {!mapping?.accessMode && (
+          <Text size="sm" c="dimmed">
+            タスクの権限は未適用です。
+          </Text>
         )}
-      </ProjectField>
-      {!mapping?.accessMode && (
-        <Text size="sm" c="dimmed">
-          タスクの権限は未適用です。
-        </Text>
-      )}
+      </details>
       {error && (
         <Text size="sm" c="red" role="alert">
           {error}
         </Text>
       )}
-    </Stack>
+    </div>
   );
 }

@@ -1,8 +1,10 @@
 import { Collapsible } from "./Collapsible.js";
+import { SidebarTaskList } from "./SidebarTaskList.js";
+import { sidebarTasks, sidebarTaskTitle } from "./sidebar-tasks.js";
+import { useTaskReadState, TaskReadObserver } from "./useTaskReadState.js";
 import { NewLocalTask } from "./NewLocalTask.js";
 import { ProfileSettings } from "./ProfileSettings.js";
 import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
-import { previousRegistration } from "./participant-identity.js";
 import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { ProjectView } from "./ProjectView.js";
@@ -17,10 +19,11 @@ import { ClientRuns } from "./ClientRuns.js";
 import { TeamTaskDetail } from "./TeamTasks.js";
 import { useRemoteState } from "./useRemoteState.js";
 import { Icon } from "./Icons.js";
-import { activeState, stateLabel } from "./ActivityFeed.js";
+import { activeState } from "./ActivityFeed.js";
 import "./workspace.css";
 export function App() {
   const { state, error, refresh, action, invoke } = useRemoteState();
+  const { seen, markRead } = useTaskReadState();
   const [page, setPage] = useState<"overview" | "runs">();
   const [selected, select] = useState<string>();
   const [selectedShared, selectShared] = useState<string>();
@@ -128,11 +131,36 @@ export function App() {
   const currentPage = !workspaceConnected ? "overview" : (page ?? "runs");
   const sharedStale =
     !!state.teamTasks && Date.now() - state.teamTasks.updatedAt > 15000;
-  const filtered = runs.filter((run) =>
-    `${run.task.title ?? ""} ${run.task.text}`
+  const allTasks = sidebarTasks(state);
+  const filtered = allTasks.filter((item) =>
+    [
+      sidebarTaskTitle(item),
+      "text" in item.task ? item.task.text : item.task.ownerName,
+      "deviceName" in item.task ? item.task.deviceName : "",
+    ]
+      .join(" ")
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
+  const readScope = JSON.stringify([
+    state.settings.engineUrl ?? "local",
+    state.settings.identityId ?? state.settings.deviceId ?? "local",
+  ]);
+  const viewedTask =
+    currentPage !== "runs" ||
+    projectDialog !== undefined ||
+    profileDialog ||
+    localTaskProject ||
+    settingsProject ||
+    invite
+      ? undefined
+      : projectView
+        ? allTasks.find((item) => item.task.id === projectView.taskId)
+        : selectedShared
+          ? allTasks.find((item) => item.task.id === selectedShared)
+          : allTasks.find(
+              (item) => item.run?.task.runId === current?.task.runId,
+            );
   const projects = [
     ...new Set([
       ...state.settings.projects.map((p) => p.id),
@@ -143,6 +171,11 @@ export function App() {
   ];
   return (
     <div className={`agent-workspace ${sidebar ? "" : "sidebar-hidden"}`}>
+      <TaskReadObserver
+        scope={readScope}
+        item={viewedTask}
+        markRead={markRead}
+      />
       <aside className="workspace-sidebar" aria-label="プロジェクトとタスク">
         <div className="sidebar-brand">
           <span className="brand-symbol">i</span>
@@ -181,72 +214,21 @@ export function App() {
         </label>
         <div className="project-list">
           <div className="sidebar-caption">
-            プロジェクト<span>{runs.length} タスク</span>
+            <span>プロジェクト</span>
             <button
               className="icon-button"
               aria-label="プロジェクトを追加"
               disabled={!state.connected || !state.projectCreationSupported}
               onClick={() => setProjectDialog("")}
             >
-              ＋
+              <Icon name="plus" size={18} />
             </button>
           </div>
           {projects.map((id) => {
             const project = state.settings.projects.find((p) => p.id === id);
             const projectConnected = state.connected && !!project;
-            const candidates = [
-              ...shared,
-              ...(state.projectTasks ?? []).filter(
-                (task) => !shared.some((summary) => summary.id === task.id),
-              ),
-            ].filter(
-              (task) =>
-                task.projectId === id &&
-                !runs.some(
-                  (run) =>
-                    run.task.id === task.id ||
-                    run.discordShare?.taskId === task.id,
-                ) &&
-                [
-                  task.title,
-                  "text" in task ? task.text : task.ownerName,
-                  "deviceName" in task ? task.deviceName : "",
-                ]
-                  .join(" ")
-                  .toLowerCase()
-                  .includes(query.toLowerCase()),
-            );
-            const items = filtered.filter((r) => r.task.projectId === id);
-            const sharedGroups = [
-              {
-                name: "このPC · 受け取り待ち",
-                tasks: candidates.filter(
-                  (task) =>
-                    !!task.clientId &&
-                    task.clientId === state.settings.deviceId,
-                ),
-              },
-              {
-                name: "自分の以前の登録",
-                tasks: candidates.filter((task) =>
-                  previousRegistration(task, state.settings),
-                ),
-              },
-              {
-                name: "ほかのPC",
-                tasks: candidates.filter(
-                  (task) =>
-                    !!task.clientId &&
-                    task.clientId !== state.settings.deviceId &&
-                    !previousRegistration(task, state.settings),
-                ),
-              },
-              {
-                name: "未割当",
-                tasks: candidates.filter((task) => !task.clientId),
-              },
-            ];
-            if (query && !items.length && !candidates.length) return null;
+            const items = filtered.filter((item) => item.task.projectId === id);
+            if (query && !items.length) return null;
             return (
               <section
                 key={id}
@@ -292,7 +274,7 @@ export function App() {
                             selectShared(undefined);
                           }}
                         >
-                          <Icon name="compose" size={19} />
+                          <Icon name="plus" size={18} />
                         </button>
                       </div>
                     )
@@ -324,193 +306,57 @@ export function App() {
                       />
                     </button>
                   )}
-                  {[
-                    {
-                      name: "このPCで実装中",
-                      runs: items.filter((run) => activeState(run.state)),
-                    },
-                    {
-                      name: "このPCの履歴",
-                      runs: items.filter((run) => !activeState(run.state)),
-                    },
-                  ].map((group) => (
-                    <section key={group.name} aria-label={group.name}>
-                      <Collapsible
-                        storageKey={id + ":" + group.name}
-                        className="sidebar-subgroup"
-                        title={
-                          <>
-                            {group.name}
-                            <span>{group.runs.length} タスク</span>
-                          </>
-                        }
-                      >
-                        {group.runs.map((run) => (
-                          <div key={run.task.runId} className="task-row">
-                            <button
-                              disabled={
-                                !projectConnected && run.origin !== "local"
-                              }
-                              className={`task-link ${!selectedShared && currentPage === "runs" && run.task.runId === current?.task.runId ? "selected" : ""}`}
-                              aria-current={
-                                currentPage === "runs" &&
-                                !selectedShared &&
-                                run.task.runId === current?.task.runId
-                                  ? "page"
-                                  : undefined
-                              }
-                              title={run.task.title ?? run.task.text}
-                              onClick={() => {
-                                setProjectView(undefined);
-                                select(run.task.runId);
-                                selectShared(undefined);
-                                setPage("runs");
-                              }}
-                            >
-                              <span>
-                                {run.task.title ?? run.task.text}
-                                {run.origin === "local" && (
-                                  <small className="shared-task-owner">
-                                    {run.agent === "claude"
-                                      ? "Claude Code"
-                                      : "Codex"}{" "}
-                                    · ローカルで開始 ·{" "}
-                                    {run.discordShare
-                                      ? run.discordShare.status === "synced"
-                                        ? "共有登録済み"
-                                        : "共有待ち"
-                                      : "PC内のみ"}
-                                  </small>
-                                )}
-                              </span>
-                              <TaskAvatars
-                                state={state}
-                                task={run.task}
-                                local
-                              />
-                              <span
-                                role="img"
-                                aria-label={stateLabel(run.state)}
-                                className={`task-dot ${activeState(run.state) ? "active" : run.state}`}
-                              />
-                            </button>
-                            {state.projectTasks?.find(
-                              (t) => t.id === run.task.id,
-                            ) && (
-                              <TaskMenu
-                                task={state.projectTasks.find(
-                                  (t) => t.id === run.task.id,
-                                )!}
-                                actorId={state.settings.deviceId}
-                                action={action}
-                                disabled={
-                                  !projectConnected || !state.lifecycleSupported
-                                }
-                              />
-                            )}
-                          </div>
-                        ))}
-                      </Collapsible>
-                    </section>
-                  ))}
-                  {sharedGroups.map((group) => (
-                    <section key={group.name} aria-label={group.name}>
-                      <Collapsible
-                        storageKey={id + ":" + group.name}
-                        className="sidebar-subgroup"
-                        title={
-                          <>
-                            {group.name}
-                            <span>{group.tasks.length} タスク</span>
-                          </>
-                        }
-                      >
-                        {group.tasks.map((task) => (
-                          <div key={task.id} className="task-row">
-                            <button
-                              disabled={!state.connected}
-                              className={`task-link ${currentPage === "runs" && selectedShared === task.id ? "selected" : ""}`}
-                              aria-current={
-                                currentPage === "runs" &&
-                                selectedShared === task.id
-                                  ? "page"
-                                  : undefined
-                              }
-                              title={`${task.title} · ${("ownerName" in task ? task.ownerName : undefined) ?? "未割り当て"} · ${stateLabel(task.state)}`}
-                              onClick={() => {
-                                if ("text" in task) {
-                                  setProjectView({
-                                    projectId: id,
-                                    taskId: task.id,
-                                  });
-                                  selectShared(undefined);
-                                } else {
-                                  setProjectView(undefined);
-                                  selectShared(task.id);
-                                }
-                                setPage("runs");
-                              }}
-                            >
-                              <span>
-                                {task.title}
-                                <small className="shared-task-owner">
-                                  {("ownerName" in task
-                                    ? task.ownerName
-                                    : undefined) ||
-                                    (task.clientId
-                                      ? "担当不明"
-                                      : "実行待ち")}{" "}
-                                  · {stateLabel(task.state)}
-                                </small>
-                              </span>
-                              <TaskAvatars state={state} task={task} />
-                              <span
-                                className={`task-dot ${activeState(task.state) && !sharedStale && "deviceConnected" in task && task.deviceConnected ? "active" : task.state}`}
-                              />
-                            </button>
-                            {state.projectTasks?.find(
-                              (t) => t.id === task.id,
-                            ) && (
-                              <TaskMenu
-                                task={state.projectTasks.find(
-                                  (t) => t.id === task.id,
-                                )!}
-                                actorId={state.settings.deviceId}
-                                action={action}
-                                disabled={
-                                  !projectConnected || !state.lifecycleSupported
-                                }
-                              />
-                            )}
-                          </div>
-                        ))}
-                      </Collapsible>
-                    </section>
-                  ))}
+                  <SidebarTaskList
+                    projectId={id}
+                    items={items}
+                    state={state}
+                    connected={projectConnected}
+                    selected={viewedTask?.task.runId}
+                    action={action}
+                    seen={seen}
+                    scope={readScope}
+                    select={(item) => {
+                      if (item.run) {
+                        setProjectView(undefined);
+                        select(item.task.runId);
+                        selectShared(undefined);
+                      } else if ("text" in item.task) {
+                        setProjectView({ projectId: id, taskId: item.task.id });
+                        selectShared(undefined);
+                      } else {
+                        setProjectView(undefined);
+                        selectShared(item.task.id);
+                      }
+                      setPage("runs");
+                    }}
+                  />
                 </Collapsible>
               </section>
             );
           })}
-          {!filtered.length &&
-            !shared.length &&
-            !(state.projectTasks ?? []).length && (
-              <p className="sidebar-empty">
-                {query
-                  ? "一致するタスクはありません"
-                  : "Discordから依頼すると、ここにタスクが表示されます。"}
-              </p>
-            )}
-          <p className="sidebar-empty" role="status">
-            {!state.connected
-              ? "ほかのPCの状態を見るには接続してください。"
-              : !state.teamTasksSupported
-                ? "チーム一覧にはEngineの更新が必要です。"
-                : !state.teamTasks
-                  ? "チームのタスクを取得中…"
-                  : sharedStale
-                    ? "共有情報の更新が遅れています。"
-                    : `共有情報 ${new Date(state.teamTasks.updatedAt).toLocaleTimeString()}`}
-          </p>
+          {!filtered.length && (
+            <p className="sidebar-empty">
+              {query
+                ? "一致するタスクはありません"
+                : "Discordから依頼すると、ここにタスクが表示されます。"}
+            </p>
+          )}
+          {(!state.connected ||
+            !state.teamTasksSupported ||
+            !state.teamTasks ||
+            sharedStale) && (
+            <p className="sidebar-empty" role="status">
+              {!state.connected
+                ? "ほかのPCの状態を見るには接続してください。"
+                : !state.teamTasksSupported
+                  ? "チーム一覧にはEngineの更新が必要です。"
+                  : !state.teamTasks
+                    ? "チームのタスクを取得中…"
+                    : sharedStale
+                      ? "共有情報の更新が遅れています。"
+                      : ""}
+            </p>
+          )}
           {state.teamTasks &&
             state.teamTasks.total > state.teamTasks.tasks.length && (
               <p className="sidebar-empty">
@@ -560,7 +406,7 @@ export function App() {
         opened={!!settingsProject}
         onClose={() => setSettingsProject(undefined)}
         title={`${state.settings.projects.find((p) => p.id === settingsProject)?.name ?? "プロジェクト"} · 接続・設定`}
-        size="lg"
+        size={800}
         centered
         className="project-settings-modal"
       >
@@ -628,7 +474,7 @@ export function App() {
       </Modal>
       <Modal
         centered
-        size="lg"
+        size={800}
         className="project-settings-modal"
         opened={projectDialog !== undefined}
         onClose={() => setProjectDialog(undefined)}

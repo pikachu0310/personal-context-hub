@@ -44,6 +44,7 @@ try {
   await page.getByRole("tooltip").waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
+    animations: "disabled",
     path: ".ido-build/screenshots/client-project-add.png",
   });
   await dialog.getByRole("button", { name: "追加", exact: true }).click();
@@ -55,6 +56,22 @@ try {
     .getByRole("button", { name: "Exampleの設定", exact: true })
     .click();
   await page.getByRole("menuitem", { name: "接続・設定", exact: true }).click();
+  const networkResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/mappings"),
+  );
+  await dialog
+    .getByRole("switch", { name: "インターネット通信", exact: true })
+    .press("Space");
+  assert.equal((await networkResponse).status(), 200);
+  assert.equal(client.settings.mappings[0].network, false);
+  const controls = await dialog
+    .locator(".project-form-control")
+    .evaluateAll((elements) =>
+      elements.map((element) =>
+        Math.round(element.getBoundingClientRect().left),
+      ),
+    );
+  assert.equal(new Set(controls.slice(0, 5)).size, 1);
   const allowedResponse = page.waitForResponse((response) =>
     response.url().endsWith("/api/allow"),
   );
@@ -66,10 +83,12 @@ try {
   await dialog.getByRole("button", { name: "タスクの進め方のヘルプ" }).hover();
   await page.getByRole("tooltip").waitFor();
   await page.screenshot({
+    animations: "disabled",
     path: ".ido-build/screenshots/client-project-settings.png",
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({
+    animations: "disabled",
     path: ".ido-build/screenshots/client-project-settings-mobile.png",
   });
   assert.ok(

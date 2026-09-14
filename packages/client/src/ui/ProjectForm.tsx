@@ -49,6 +49,7 @@ export function ProjectField({
             variant="subtle"
             color="gray"
             size="xs"
+            className="project-help"
             aria-label={`${label}のヘルプ`}
           >
             ?
@@ -73,13 +74,17 @@ export function ProjectToggle({
   return (
     <Group gap="sm">
       <Switch
+        size="md"
         aria-label={label}
         checked={checked}
         disabled={disabled}
         onChange={(event) => onChange(event.currentTarget.checked)}
       />
-      <Text size="sm" c="dimmed">
-        {checked ? "On" : "Off"}
+      <Text size="sm" c={!checked ? undefined : "dimmed"}>
+        Off
+      </Text>
+      <Text size="sm" c={checked ? undefined : "dimmed"}>
+        On
       </Text>
     </Group>
   );
@@ -167,52 +172,54 @@ export function AddProjectForm({
     [network, setNetwork] = useState(false),
     [mode, setMode] = useState("auto");
   return (
-    <Form
-      fields={[]}
-      label={projectId ? "保存先を設定" : "追加"}
-      submit={async () => {
-        await action(projectId ? "mappings" : "projects", {
-          name,
-          directory,
-          ...(projectId ? { projectId } : {}),
-          allow,
-          network,
-          progressMode: mode,
-          slots: 1,
-        });
-        saved();
-      }}
-    >
-      {!projectId && (
-        <ProjectField label="名前" help="プロジェクトの表示名です。">
-          <TextInput
-            aria-label="名前"
-            required
-            value={name}
-            onChange={(e) => setName(e.currentTarget.value)}
+    <div className="project-add-form">
+      <Form
+        fields={[]}
+        label={projectId ? "保存先を設定" : "追加"}
+        submit={async () => {
+          await action(projectId ? "mappings" : "projects", {
+            name,
+            directory,
+            ...(projectId ? { projectId } : {}),
+            allow,
+            network,
+            progressMode: mode,
+            slots: 1,
+          });
+          saved();
+        }}
+      >
+        {!projectId && (
+          <ProjectField label="名前" help="プロジェクトの表示名です。">
+            <TextInput
+              aria-label="名前"
+              required
+              value={name}
+              onChange={(e) => setName(e.currentTarget.value)}
+            />
+          </ProjectField>
+        )}
+        <ProjectField label="保存先" help={projectHelp.directory}>
+          <ProjectDirectory value={directory} onChange={setDirectory} />
+        </ProjectField>
+        <ProjectField label="タスクの実行許可" help={projectHelp.allow}>
+          <ProjectToggle
+            label="タスクの実行許可"
+            checked={allow}
+            onChange={setAllow}
           />
         </ProjectField>
-      )}
-      <ProjectField label="保存先" help={projectHelp.directory}>
-        <ProjectDirectory value={directory} onChange={setDirectory} />
-      </ProjectField>
-      <ProjectField label="タスクの実行許可" help={projectHelp.allow}>
-        <ProjectToggle
-          label="タスクの実行許可"
-          checked={allow}
-          onChange={setAllow}
-        />
-      </ProjectField>
-      <ProjectField label="タスクの進め方" help={projectHelp.mode}>
-        <ProjectMode value={mode} onChange={setMode} />
-      </ProjectField>
-      <ProjectField label="インターネット通信" help={projectHelp.network}>
-        <ProjectToggle
-          label="インターネット通信"
-          checked={network}
-          onChange={setNetwork}
-        />
-      </ProjectField>
-    </Form>
+        <ProjectField label="タスクの進め方" help={projectHelp.mode}>
+          <ProjectMode value={mode} onChange={setMode} />
+        </ProjectField>
+        <ProjectField label="インターネット通信" help={projectHelp.network}>
+          <ProjectToggle
+            label="インターネット通信"
+            checked={network}
+            onChange={setNetwork}
+          />
+        </ProjectField>
+      </Form>
+    </div>
   );
 }
