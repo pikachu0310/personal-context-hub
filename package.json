@@ -29,8 +29,8 @@
   "scripts": {
     "coordination:read": "node scripts/read-github-coordination.mjs",
     "build:ido": "node scripts/build-ido.mjs",
-    "check:ido": "tsc -p tsconfig.ido.json --noEmit && tsc -p tsconfig.ui.json",
-    "test:ido": "node --import tsx --test packages/*/test/*.test.ts packages/*/test/*.test.mjs",
+    "check:ido": "npm run build:common-ui && tsc -p tsconfig.ido.json --noEmit && tsc -p tsconfig.ui.json",
+    "test:ido": "npm run build:common-ui && node --import tsx --test packages/*/test/*.test.ts packages/*/test/*.test.mjs",
     "verify:ido": "npm run check:ido && npm run build:ido && npm run test:ido",
     "pack:ido": "node scripts/pack-ido.mjs",
     "smoke:ido": "node scripts/ido-browser-smoke.mjs && node scripts/ido-preview-browser-smoke.mjs",
@@ -40,6 +40,8 @@
     "test": "npm run test:ido",
     "lint": "eslint .",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,mjs,css,html}\" \"packages/*/test/**/*.{ts,mjs}\" \"scripts/*.mjs\" \"docs/*.md\" \"*.{js,json,md}\" \".github/workflows/*.yml\"",
-    "verify": "npm run verify:ido && npm run lint && npm audit"
+    "verify": "npm run verify:ido && npm run lint && npm audit",
+    "build:common-ui": "npm run build --workspace @ido/common-ui",
+    "build:common": "npm run build --workspace @ido/common"
   }
 }

@@ -3,17 +3,13 @@ import { createInterface } from "node:readline/promises";
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { codexBinary } from "../../common/src/runtime/codex/binary.js";
-import {
-  control,
-  lifetime,
-  recover,
-} from "../../common/src/runtime/lifecycle.js";
+import { codexBinary } from "@ido/common/runtime/codex/binary";
+import { control, lifetime, recover } from "@ido/common/runtime/lifecycle";
 import {
   dataDirectory,
   openBrowser,
   workerEnvironment,
-} from "../../common/src/runtime/platform.js";
+} from "@ido/common/runtime/platform";
 import { Store } from "./adapters/sqlite/store.js";
 import { Engine } from "./bootstrap/engine.js";
 const args = process.argv.slice(2),

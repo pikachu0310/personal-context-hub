@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApiResult, ClientState } from "../../../ui/src/types.js";
+import type { ApiResult, ClientState } from "@ido/common-ui";
 import { api } from "./api.js";
 export function useRemoteState() {
   const [state, setState] = useState<ClientState>(),

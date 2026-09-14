@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Task, Command } from "../../common/src/contracts/protocol.js";
+import type { Task, Command } from "@ido/common/contracts/protocol";
 import { Executor, type Run } from "../src/execution/executor.js";
 
 const baseTask = (): Task => ({

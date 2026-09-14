@@ -3,7 +3,7 @@ import test, { type TestContext } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Task, Command } from "../../common/src/contracts/protocol.js";
+import type { Task, Command } from "@ido/common/contracts/protocol";
 import type { Device } from "../src/domain/models.js";
 import { Store } from "../src/adapters/sqlite/store.js";
 import { Tasks } from "../src/processing/tasks/service.js";

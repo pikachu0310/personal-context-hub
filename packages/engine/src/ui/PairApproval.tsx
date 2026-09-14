@@ -1,7 +1,7 @@
 import { Button, Code, Text } from "@mantine/core";
 import { useEffect, useState } from "react";
-import { Card } from "../../../ui/src/components/Card.js";
-import type { Action } from "../../../ui/src/types.js";
+import { Card } from "@ido/common-ui";
+import type { Action } from "@ido/common-ui";
 import { api } from "./api.js";
 export function PairApproval({ action }: { action: Action }) {
   const [pair, setPair] = useState<{ name: string; fingerprint: string }>(),

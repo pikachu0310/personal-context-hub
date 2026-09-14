@@ -1,14 +1,6 @@
 #!/usr/bin/env node
-import {
-  control,
-  lifetime,
-  recover,
-} from "../../common/src/runtime/lifecycle.js";
-import {
-  dataDirectory,
-  openBrowser,
-  run,
-} from "../../common/src/runtime/platform.js";
+import { control, lifetime, recover } from "@ido/common/runtime/lifecycle";
+import { dataDirectory, openBrowser, run } from "@ido/common/runtime/platform";
 import { Client } from "./bootstrap/client.js";
 import { codexBinary } from "./execution/executor.js";
 const args = process.argv.slice(2),

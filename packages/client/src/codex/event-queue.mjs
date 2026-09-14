@@ -1,1 +1,1 @@
-export * from "../../../common/src/runtime/codex/event-queue.mjs";
+export * from "@ido/common/runtime/codex/event-queue";

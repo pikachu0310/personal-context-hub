@@ -3,7 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { HttpError } from "../../../../common/src/runtime/http.js";
+import { HttpError } from "@ido/common/runtime/http";
 import type { PluginProcess } from "../plugins/process.js";
 export async function proxyPlugin(
   plugin: PluginProcess,

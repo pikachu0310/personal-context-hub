@@ -6,12 +6,12 @@ import type {
   CoordinatorResponse,
   CoordinatorSource,
   CoordinatorFactory,
-} from "../../../../common/src/contracts/coordinator.js";
+} from "@ido/common/contracts/coordinator";
 import type {
   ConversationInput,
   InputContext,
   PluginEvent,
-} from "../../../../common/src/contracts/plugins.js";
+} from "@ido/common/contracts/plugins";
 import type { Meeting, Message } from "../../domain/models.js";
 import { Messages } from "../../messages/store.js";
 import type { Repository } from "../../ports/repository.js";

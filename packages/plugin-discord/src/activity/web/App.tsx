@@ -1,6 +1,6 @@
 import { Alert, Anchor, Loader } from "@mantine/core";
-import "../../../../ui/src/style.css";
-import { Workspace } from "../../../../ui/src/workspace/Workspace.js";
+import "@ido/common-ui/style.css";
+import { Workspace } from "@ido/common-ui";
 import { useRemoteState } from "./useRemoteState.js";
 export function App() {
   const { state, error, refresh, action, invoke } = useRemoteState();

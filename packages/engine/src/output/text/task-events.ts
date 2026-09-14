@@ -1,5 +1,5 @@
-import type { PluginEvent } from "../../../../common/src/contracts/plugins.js";
-import type { Task } from "../../../../common/src/contracts/protocol.js";
+import type { PluginEvent } from "@ido/common/contracts/plugins";
+import type { Task } from "@ido/common/contracts/protocol";
 import type { Repository } from "../../ports/repository.js";
 export class TaskEvents {
   private snapshots = new Map<string, string>();

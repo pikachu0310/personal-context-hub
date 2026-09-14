@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { id } from "../../../../common/src/contracts/protocol.js";
-import { send } from "../../../../common/src/runtime/http.js";
+import { id } from "@ido/common/contracts/protocol";
+import { send } from "@ido/common/runtime/http";
 import type { Engine } from "../../bootstrap/engine.js";
 import type { Auth } from "./auth.js";
 export async function plugins(

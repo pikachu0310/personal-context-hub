@@ -30,10 +30,50 @@ test("build rejects adapter imports in use cases, plugin coupling and UI network
   );
   await assert.rejects(checkBoundaries(root), /plugin-third/);
   await writeFile(plugin, "");
-  await mkdir(join(root, "ui/src"), { recursive: true });
-  await writeFile(join(root, "ui/src/view.tsx"), 'fetch("/api/state");');
+  await mkdir(join(root, "common-ui/src"), { recursive: true });
+  await writeFile(join(root, "common-ui/src/view.tsx"), 'fetch("/api/state");');
   await assert.rejects(
     checkBoundaries(root),
     /UI must receive data and actions/,
   );
+});
+
+test("package imports preserve boundaries and shared packages require public entries", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ido-boundaries-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const name of ["engine", "common", "common-ui", "plugin-third"])
+    await mkdir(join(root, name, "src"), { recursive: true });
+  const consumer = join(root, "engine/src/view.tsx");
+  await writeFile(
+    consumer,
+    'import { Card } from "@ido/common-ui"; import { frame } from "@ido/common/contracts/protocol";',
+  );
+  await checkBoundaries(root);
+  for (const target of [
+    "common-ui/src/index.js",
+    "common-ui/dist/index.js",
+    "common/src/contracts/protocol.js",
+    "common/dist/contracts/protocol.js",
+  ]) {
+    await writeFile(consumer, `import * as shared from "../../${target}";`);
+    await assert.rejects(
+      checkBoundaries(root),
+      /through @ido\/common(?:-ui)? exports/,
+    );
+  }
+  await writeFile(consumer, "");
+  for (const [name, dependency] of [
+    ["common-ui", "@ido/client"],
+    ["common", "@ido/common-ui"],
+    ["plugin-third", "@ido/engine"],
+    ["engine", "@ido/plugin-discord"],
+  ]) {
+    const path = join(root, name, "src/index.ts");
+    await writeFile(path, `export * from "${dependency}";`);
+    await assert.rejects(
+      checkBoundaries(root),
+      /Architecture boundary violations/,
+    );
+    await writeFile(path, "");
+  }
 });

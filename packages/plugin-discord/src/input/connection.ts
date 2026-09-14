@@ -12,7 +12,7 @@ import {
 } from "discord.js";
 import prism from "prism-media";
 import { randomUUID } from "node:crypto";
-import { text } from "../../../common/src/contracts/protocol.js";
+import { text } from "@ido/common/contracts/protocol";
 import {
   registerVoiceCommands,
   voiceCommandHandler,

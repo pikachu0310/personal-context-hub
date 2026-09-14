@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { atomic } from "../../../common/src/runtime/platform.js";
+import { atomic } from "@ido/common/runtime/platform";
 
 import type { Executor } from "../execution/executor.js";
 export function save(this: Executor) {

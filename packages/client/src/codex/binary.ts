@@ -1,1 +1,1 @@
-export { codexBinary } from "../../../common/src/runtime/codex/binary.js";
+export { codexBinary } from "@ido/common/runtime/codex/binary";

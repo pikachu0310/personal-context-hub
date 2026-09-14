@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Rpc } from "../../common/src/runtime/rpc.js";
+import type { Rpc } from "@ido/common/runtime/rpc";
 import { DiscordAuth } from "../src/auth/sessions.js";
 import { normalizeDiscordPolicy } from "../src/input/policy.js";
 test("OAuth links use public or local origin, single-use state and the original Engine identity context", async () => {

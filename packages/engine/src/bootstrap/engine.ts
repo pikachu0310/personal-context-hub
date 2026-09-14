@@ -3,13 +3,9 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
-import { RELEASE } from "../../../common/src/contracts/protocol.js";
-import { Credentials } from "../../../common/src/runtime/credentials.js";
-import {
-  HttpError,
-  RateLimit,
-  send,
-} from "../../../common/src/runtime/http.js";
+import { RELEASE } from "@ido/common/contracts/protocol";
+import { Credentials } from "@ido/common/runtime/credentials";
+import { HttpError, RateLimit, send } from "@ido/common/runtime/http";
 import { ClientConnections } from "../adapters/client-ws/connections.js";
 import { route } from "../adapters/http/admin.js";
 import {
@@ -32,7 +28,7 @@ import { createWorkPort } from "../processing/tasks/work.js";
 import { createCodexCoordinatorFactory } from "../adapters/codex/coordinator.js";
 import { createLiveSession } from "../adapters/openai/live.mjs";
 import type { CoordinatorFactory } from "../ports/coordinator.js";
-import type { ConversationMode } from "../../../common/src/contracts/coordinator.js";
+import type { ConversationMode } from "@ido/common/contracts/coordinator";
 export interface EngineOptions {
   directory: string;
   port?: number;

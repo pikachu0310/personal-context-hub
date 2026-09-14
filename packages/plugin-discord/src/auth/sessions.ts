@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Rpc } from "../../../common/src/runtime/rpc.js";
+import type { Rpc } from "@ido/common/runtime/rpc";
 import { exchange } from "./exchange.js";
 export class DiscordAuth {
   states = new Map<

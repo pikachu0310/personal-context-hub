@@ -1,8 +1,8 @@
 import type {
   ConversationInput,
   InputContext,
-} from "../../../../common/src/contracts/plugins.js";
-import { text, type Task } from "../../../../common/src/contracts/protocol.js";
+} from "@ido/common/contracts/plugins";
+import { text, type Task } from "@ido/common/contracts/protocol";
 import type { Meeting } from "../../domain/models.js";
 import { normalizeText } from "../../input/text/normalize.js";
 import { publishMeeting } from "../../output/text/events.js";

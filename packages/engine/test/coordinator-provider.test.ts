@@ -8,8 +8,8 @@ import test, { type TestContext } from "node:test";
 import type {
   CoordinatorHandle,
   CoordinatorObservation,
-} from "../../common/src/contracts/coordinator.js";
-import { AppServerCodex } from "../../common/src/runtime/codex/app-server.mjs";
+} from "@ido/common/contracts/coordinator";
+import { AppServerCodex } from "@ido/common/runtime/codex/app-server";
 import {
   createCodexCoordinatorFactory,
   type CoordinatorDriver,

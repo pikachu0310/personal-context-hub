@@ -5,13 +5,9 @@ import {
   type ServerResponse,
 } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
-import type {
-  Command,
-  Preview,
-  Task,
-} from "../../../../common/src/contracts/protocol.js";
-import { send } from "../../../../common/src/runtime/http.js";
-import { secret } from "../../../../common/src/runtime/platform.js";
+import type { Command, Preview, Task } from "@ido/common/contracts/protocol";
+import { send } from "@ido/common/runtime/http";
+import { secret } from "@ido/common/runtime/platform";
 import type { Repository } from "../../ports/repository.js";
 
 export class PreviewRelay {

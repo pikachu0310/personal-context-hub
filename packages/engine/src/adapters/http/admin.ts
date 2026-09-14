@@ -1,19 +1,19 @@
 import { createPublicKey, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { id, text } from "../../../../common/src/contracts/protocol.js";
+import { id, text } from "@ido/common/contracts/protocol";
 import {
   asset,
   body,
   headers,
   HttpError,
   send,
-} from "../../../../common/src/runtime/http.js";
+} from "@ido/common/runtime/http";
 import {
   equal,
   hash,
   passwordMatches,
   secret,
-} from "../../../../common/src/runtime/platform.js";
+} from "@ido/common/runtime/platform";
 import type { Engine } from "../../bootstrap/engine.js";
 import type { Device } from "../../domain/models.js";
 import { lifecycle } from "./lifecycle.js";

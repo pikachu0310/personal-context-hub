@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { json } from "../../../common/src/runtime/platform.js";
+import { json } from "@ido/common/runtime/platform";
 
 import type { Executor, Run } from "../execution/executor.js";
 export async function load(this: Executor) {

@@ -7,14 +7,14 @@ import type {
   CoordinatorFactory,
   CoordinatorObservation,
   CoordinatorResponse,
-} from "../../common/src/contracts/coordinator.js";
+} from "@ido/common/contracts/coordinator";
 import type {
   ConversationInput,
   InputContext,
   PluginEvent,
   PluginOutput,
-} from "../../common/src/contracts/plugins.js";
-import type { Task } from "../../common/src/contracts/protocol.js";
+} from "@ido/common/contracts/plugins";
+import type { Task } from "@ido/common/contracts/protocol";
 import { Engine } from "../src/bootstrap/engine.js";
 import type { Message } from "../src/domain/models.js";
 import { wrapPcmAsWav } from "../src/input/audio/signal.mjs";
