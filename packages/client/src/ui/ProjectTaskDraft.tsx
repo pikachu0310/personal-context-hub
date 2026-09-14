@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Task } from "@ido/common/contracts/protocol";
 import { api } from "./api.js";
 import { ComposerAction } from "./ComposerAction.js";
+import newTaskMascot from "./assets/new-task-mascot.gif";
 export function ProjectTaskDraft({
   projectId,
   draft,
@@ -50,8 +51,15 @@ export function ProjectTaskDraft({
   }
   return (
     <section className="task-workspace" aria-label="新しいタスク">
-      <div className="conversation-scroll">
+      <div className="conversation-scroll new-task-welcome">
         <div className="empty-workspace">
+          <img
+            className="new-task-mascot"
+            src={newTaskMascot}
+            alt=""
+            width={336}
+            height={336}
+          />
           <h2>新しいタスク</h2>
           <p>依頼を書いて送信すると、このプロジェクトに追加されます。</p>
         </div>

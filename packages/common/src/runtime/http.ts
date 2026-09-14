@@ -59,6 +59,7 @@ export async function asset(
       ".css": "text/css",
       ".svg": "image/svg+xml",
       ".png": "image/png",
+      ".gif": "image/gif",
     };
     res.writeHead(200, {
       "Content-Type": mime[extname(path)] ?? "application/octet-stream",

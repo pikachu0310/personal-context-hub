@@ -836,6 +836,15 @@ button {
   text-align: center;
   padding: 35px;
 }
+.new-task-welcome {
+  display: flex;
+}
+.new-task-mascot {
+  display: block;
+  width: min(240px, 100%);
+  height: auto;
+  flex-shrink: 0;
+}
 .empty-mark {
   color: var(--workspace-muted);
   padding: 20px;
