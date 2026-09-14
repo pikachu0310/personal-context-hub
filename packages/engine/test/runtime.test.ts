@@ -55,6 +55,29 @@ async function post(
     body: JSON.stringify(data),
   });
 }
+test("only administrators can read Engine diagnostics", async (t) => {
+  const e = await fixture(t);
+  const entry = e.store.logError(new Error("OPENAI_KEY_REQUIRED"), {
+    source: "discord-voice",
+    operation: "audio.transcribe",
+    eventId: "private-event",
+  });
+  assert.equal((await fetch(e.origin + "/api/state")).status, 401);
+  for (const role of ["admin", "member", "viewer"] as const) {
+    if (role !== "admin") e.store.createUser(role, "test-password-long", role);
+    const session = await login(e, role);
+    const response = await fetch(e.origin + "/api/state", {
+      headers: { cookie: session.cookie },
+    });
+    const state = (await response.json()) as any;
+    assert.deepEqual(
+      state.diagnostics.map((d: any) => d.id),
+      role === "admin" ? [entry.id] : [],
+    );
+    if (role !== "admin")
+      assert.ok(!JSON.stringify(state).includes("private-event"));
+  }
+});
 test("local bootstrap required; password hashing, write-only secrets, CSRF, role changes and host checks", async (t) => {
   const e = await fixture(t),
     session = await login(e);

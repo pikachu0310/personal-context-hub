@@ -447,6 +447,7 @@ export class Engine {
         discord: admin ? this.store.get("config", "discord") : {},
         users: admin ? this.store.users() : [],
         audit: admin ? this.store.events() : [],
+        diagnostics: admin ? this.store.diagnostics() : [],
         secrets: admin
           ? {
               openai: !!(await this.credentials.get("openai")),

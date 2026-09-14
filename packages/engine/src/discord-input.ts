@@ -96,12 +96,35 @@ export class DiscordInput {
     if (!actor || !config) return;
     const eventId = String(event.eventId || randomUUID());
     if (this.store.get("input", eventId)) return;
+    const errorIds: string[] = [];
+    const source = voiceInput ? "discord-voice" : "discord-text";
+    let operation = event.audio ? "audio.transcribe" : "input.process";
+    const failure = (
+      error: unknown,
+      op: string,
+      model?: string,
+      level: "error" | "warning" = "error",
+    ) => {
+      const entry = this.store.logError(error, {
+        source,
+        operation: op,
+        eventId,
+        meetingId: config.meetingId,
+        model,
+        level,
+      });
+      errorIds.push(entry.id);
+      return entry.id;
+    };
+    const reference = (id: string) =>
+      `\nエラーID: ${id}（Engineの「エラーログ」で確認できます）`;
     const stage = (value: string) =>
       this.store.put("input", eventId, {
         id: eventId,
         stage: value,
         at: Date.now(),
         meetingId: config.meetingId,
+        errorIds,
       });
     stage(event.audio ? "transcribing" : "accepted");
     try {
@@ -120,6 +143,7 @@ export class DiscordInput {
           : "";
       if (typeof event.audio === "string")
         content = await this.ai.transcribe(Buffer.from(event.audio, "base64"));
+      operation = "input.process";
       if (!allowed()) {
         stage("discarded");
         return;
@@ -224,6 +248,7 @@ export class DiscordInput {
           publishTranscript(meeting);
         },
         () => Boolean(allowed()),
+        { source, eventId },
       );
       // Replies run independently of minutes; a simple call needs no answer API.
       const answering = call
@@ -240,7 +265,10 @@ export class DiscordInput {
                 reply || "回答を生成できませんでした。",
               );
             if (event.audio && reply) {
-              const audio = await this.ai.speak(reply).catch(() => undefined);
+              const audio = await this.ai.speak(reply).catch((error) => {
+                failure(error, "audio.speak", "gpt-4o-mini-tts", "warning");
+                return undefined;
+              });
               if (allowed() && audio)
                 this.plugin.deliver(
                   config.textChannelId,
@@ -249,15 +277,25 @@ export class DiscordInput {
                   event.speechEpoch,
                 );
             }
-          })().catch(() => {
+          })().catch((error) => {
+            const errorId = failure(error, "answer.generate", "gpt-4.1-mini");
             if (allowed())
-              respond(
-                "回答の生成に失敗しました。OpenAI接続を確認してください。",
-              );
+              respond("回答の生成に失敗しました。" + reference(errorId));
           })
         : Promise.resolve();
-      const meeting = await analysis;
+      // Settle both branches on failure without delaying successful minutes.
+      const meeting = await analysis.catch(async (error) => {
+        await Promise.allSettled([answering]);
+        throw error;
+      });
+      const accepted = meeting.messages.find((m) => m.id === acceptedId);
+      if (accepted?.errorId) errorIds.push(accepted.errorId);
       if (allowed()) {
+        if (accepted?.stage === "failed")
+          respond(
+            "議事録の生成に失敗しました。" +
+              (accepted.errorId ? reference(accepted.errorId) : ""),
+          );
         this.plugin.publish(
           "minutes",
           config.meetingId,
@@ -279,16 +317,20 @@ export class DiscordInput {
       }
       await answering;
       stage(
-        meeting.messages.find((m) => m.id === acceptedId)?.stage === "failed"
+        accepted?.stage === "failed"
           ? "failed"
-          : "completed",
+          : errorIds.length
+            ? "partial"
+            : "completed",
       );
-    } catch {
+    } catch (error) {
+      const errorId = failure(
+        error,
+        operation,
+        operation === "audio.transcribe" ? "gpt-4o-mini-transcribe" : undefined,
+      );
       stage("failed");
-      if (allowed())
-        respond(
-          "入力の処理に失敗しました。OpenAI接続と会議設定を確認してください。",
-        );
+      if (allowed()) respond("入力の処理に失敗しました。" + reference(errorId));
     }
   }
 }

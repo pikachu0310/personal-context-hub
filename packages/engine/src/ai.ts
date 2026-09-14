@@ -4,6 +4,7 @@ import { Credentials } from "../../common/src/credentials.js";
 import type { Task } from "../../common/src/protocol.js";
 import { Store, type Meeting } from "./store.js";
 import { qualifyTranscriptionAudio } from "./audio.mjs";
+import type { DiagnosticContext } from "./diagnostics.js";
 
 export class Conversation {
   private queues = new Map<string, Promise<unknown>>();
@@ -88,6 +89,7 @@ export class Conversation {
     projectId?: string | null,
     onAccepted?: (meeting: Meeting) => void,
     mayCreateTask: () => boolean = () => true,
+    diagnosticContext?: Pick<DiagnosticContext, "source" | "eventId">,
   ) {
     const { meeting, message } = this.record(meetingId, authorId, text);
     onAccepted?.(meeting);
@@ -95,7 +97,13 @@ export class Conversation {
     const next = previous
       .catch(() => {})
       .then(() =>
-        this.analyze(meetingId, message.id, projectId, mayCreateTask),
+        this.analyze(
+          meetingId,
+          message.id,
+          projectId,
+          mayCreateTask,
+          diagnosticContext,
+        ),
       );
     this.queues.set(meetingId, next);
     void next
@@ -110,6 +118,7 @@ export class Conversation {
     messageId: string,
     projectId: string | null | undefined,
     mayCreateTask: () => boolean,
+    diagnosticContext?: Pick<DiagnosticContext, "source" | "eventId">,
   ) {
     const meeting = this.store.get<Meeting>("meeting", meetingId);
     if (!meeting) throw new Error("MEETING_NOT_FOUND");
@@ -184,7 +193,16 @@ export class Conversation {
         });
       }
       message.stage = "completed";
-    } catch {
+    } catch (error) {
+      message.errorId = this.store.logError(error, {
+        source: "meeting",
+        ...diagnosticContext,
+        operation:
+          message.stage === "taskifying" ? "task.create" : "minutes.generate",
+        meetingId,
+        messageId,
+        model: message.stage === "taskifying" ? undefined : "gpt-4.1-mini",
+      }).id;
       message.stage = "failed";
     }
     return save();

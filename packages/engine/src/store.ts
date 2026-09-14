@@ -3,6 +3,11 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { passwordHash, hash, secret } from "../../common/src/platform.js";
+import {
+  describeError,
+  type Diagnostic,
+  type DiagnosticContext,
+} from "./diagnostics.js";
 import type {
   Task,
   User,
@@ -33,6 +38,7 @@ export interface Meeting {
     text: string;
     at: number;
     stage: string;
+    errorId?: string;
   }>;
 }
 export class Store {
@@ -46,6 +52,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL, role TEXT NOT NULL, password TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), csrf TEXT NOT NULL, expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS diagnostics (seq INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY, deviceId TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS requests (key TEXT PRIMARY KEY, taskId TEXT NOT NULL);`);
   }
@@ -122,6 +129,28 @@ export class Store {
         "SELECT at,actor,action,target FROM audit ORDER BY seq DESC LIMIT 200",
       )
       .all();
+  }
+  logError(error: unknown, context: DiagnosticContext): Diagnostic {
+    const entry: Diagnostic = {
+      id: randomUUID(),
+      at: Date.now(),
+      level: "error",
+      ...context,
+      error: describeError(error),
+    };
+    this.db
+      .prepare("INSERT INTO diagnostics(data) VALUES (?)")
+      .run(JSON.stringify(entry));
+    this.db.exec(
+      "DELETE FROM diagnostics WHERE seq NOT IN (SELECT seq FROM diagnostics ORDER BY seq DESC LIMIT 500)",
+    );
+    return entry;
+  }
+  diagnostics(): Diagnostic[] {
+    return this.db
+      .prepare("SELECT data FROM diagnostics ORDER BY seq DESC LIMIT 100")
+      .all()
+      .map((row) => JSON.parse(row.data as string));
   }
   createTask(
     input: Pick<

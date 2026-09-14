@@ -4,6 +4,14 @@ IDO is a self-hosted team engine. It records conversations and minutes, turns ex
 
 The `@ido/*` names are provisional. This branch builds installable npm tarballs; it does not publish packages to the registry. Until publication, use the tarball commands below. Existing hub integrations and their data remain separate; no legacy configuration is read or migrated.
 
+## Engine error diagnostics
+
+Administrators can open **エラーログ** in the Engine dashboard. Discord failures include an error ID that links the notification to the stored diagnostic. Logs distinguish transcription, minutes, answers, speech output and task creation, with timestamps, related input/meeting/message IDs, model, HTTP status, known error code, network cause and OpenAI request ID when available. Speech/answer failures preserve successful minutes and mark the input as partially failed.
+
+Diagnostics are stored in `engine.sqlite` in the same Engine data directory selected by `IDO_DATA_DIR`. They survive restarts; the latest 500 records are retained and the dashboard shows the newest 100. Only administrators receive these records. Raw provider messages, request/response bodies, headers, audio, transcripts and stacks are excluded because they can contain secrets or private content. Unknown error codes receive a generic explanation. Failures from before this feature cannot be reconstructed.
+
+The OpenAI connection check reads the model list; success verifies authentication/connectivity, not available usage quota. A transcription failure with HTTP 429 and `insufficient_quota` requires checking API billing, credits and usage limits. A `rate_limit_exceeded` failure indicates request throttling instead. After rebuilding the Engine, restart it with the same data directory to load the new code and dashboard.
+
 ## Install
 
 Use Node.js **24.x**, npm, and Git on macOS, Linux/WSL, or native Windows. Only Clients need Git and Codex authentication. The Client package supplies its own pinned Codex CLI binary through official platform packages.

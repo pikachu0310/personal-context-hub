@@ -9,6 +9,7 @@ import { DiscordInput, taskControl } from "../src/discord-input.js";
 import { Credentials } from "../../common/src/credentials.js";
 import { normalizeDiscordPolicy } from "../../common/src/discord-policy.js";
 import type { Task } from "../../common/src/protocol.js";
+import OpenAI from "openai";
 
 async function fixture(t: any) {
   const dir = await mkdtemp(join(tmpdir(), "ido-discord-input-"));
@@ -93,6 +94,88 @@ async function fixture(t: any) {
     counts: () => ({ transcriptions, answers, speech }),
   };
 }
+
+test("transcription quota failure is linked to a durable diagnostic, not leaked to Discord", async (t) => {
+  const f = await fixture(t);
+  f.ai.transcribe = async () => {
+    throw new OpenAI.RateLimitError(
+      429,
+      {
+        type: "insufficient_quota",
+        message: "private audio and secret",
+        code: null,
+      },
+      undefined,
+      new Headers({ "x-request-id": "req_audio123" }),
+    );
+  };
+  await f.input.handle(f.event);
+  const [entry] = f.store.diagnostics();
+  assert.equal(entry.operation, "audio.transcribe");
+  assert.equal(entry.model, "gpt-4o-mini-transcribe");
+  assert.equal(entry.error.code, "insufficient_quota");
+  assert.equal(entry.eventId, f.event.eventId);
+  assert.equal(entry.error.requestId, "req_audio123");
+  assert.equal(f.store.get<any>("input", f.event.eventId).stage, "failed");
+  assert.deepEqual(f.store.get<any>("input", f.event.eventId).errorIds, [
+    entry.id,
+  ]);
+  assert.ok(JSON.stringify(f.output).includes(entry.id));
+  assert.ok(!JSON.stringify(f.output).includes("secret"));
+  assert.ok(!JSON.stringify(f.output).includes("req_audio123"));
+});
+
+test("missing meeting produces configuration diagnostics", async (t) => {
+  const f = await fixture(t);
+  f.store.remove("meeting", "meeting");
+  await f.input.handle(f.event);
+  assert.equal(f.store.diagnostics()[0].error.code, "MEETING_NOT_FOUND");
+  assert.equal(f.store.diagnostics()[0].operation, "input.process");
+});
+
+test("minutes failures are no longer swallowed and later inputs can recover", async (t) => {
+  const f = await fixture(t);
+  const originalApi = f.ai.api;
+  f.ai.api = async () => {
+    throw new Error("OPENAI_KEY_REQUIRED");
+  };
+  await f.input.handle(f.event);
+  const [entry] = f.store.diagnostics();
+  const message = f.store.get<Meeting>("meeting", "meeting")!.messages[0];
+  assert.equal(entry.operation, "minutes.generate");
+  assert.equal(entry.eventId, f.event.eventId);
+  assert.equal(message.errorId, entry.id);
+  assert.equal(message.stage, "failed");
+  assert.ok(JSON.stringify(f.output).includes(entry.id));
+  f.ai.api = originalApi;
+  await f.input.handle({ ...f.event, eventId: "recovery" });
+  assert.equal(f.store.get<any>("input", "recovery").stage, "completed");
+});
+
+test("answer and speech failures leave minutes intact and mark partial input", async (t) => {
+  for (const operation of ["answer", "speak"] as const) {
+    const f = await fixture(t);
+    f.ai.transcribe = async () => "井戸Bot、質問に答えて";
+    f.ai[operation] = async () => {
+      throw new Error("OPENAI_KEY_REQUIRED");
+    };
+    await f.input.handle(f.event);
+    const [entry] = f.store.diagnostics();
+    assert.equal(
+      entry.operation,
+      operation === "answer" ? "answer.generate" : "audio.speak",
+    );
+    assert.equal(entry.level, operation === "answer" ? "error" : "warning");
+    assert.equal(
+      f.store.get<Meeting>("meeting", "meeting")!.messages[0].stage,
+      "completed",
+    );
+    assert.equal(f.store.get<any>("input", f.event.eventId).stage, "partial");
+    assert.deepEqual(f.store.get<any>("input", f.event.eventId).errorIds, [
+      entry.id,
+    ]);
+  }
+});
 
 test("joined channel accepts unlinked speakers by default without creating dashboard accounts", async (t) => {
   const f = await fixture(t);

@@ -173,7 +173,11 @@ export class Plugins {
             : undefined;
       } else if (event.type === "status") this.status = String(event.status);
       else if (event.type === "input")
-        void this.input(event).catch(() => {
+        void this.input(event).catch((error) => {
+          this.store.logError(error, {
+            source: "plugin",
+            operation: "input.dispatch",
+          });
           this.status = "input-error";
         });
     });

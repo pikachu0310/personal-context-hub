@@ -9,7 +9,7 @@ export function qualifyTranscriptionAudio(wav) {
     wav.toString("ascii", 0, 4) !== "RIFF" ||
     wav.toString("ascii", 36, 40) !== "data"
   )
-    throw new Error("Expected a PCM WAV produced by wrapPcmAsWav");
+    throw new Error("INVALID_PCM_WAV");
   const rate = wav.readUInt32LE(24);
   const channels = wav.readUInt16LE(22);
   if (
@@ -18,7 +18,7 @@ export function qualifyTranscriptionAudio(wav) {
     !rate ||
     !channels
   )
-    throw new Error("Expected signed 16-bit PCM WAV");
+    throw new Error("INVALID_PCM_WAV");
   const pcm = wav.subarray(44);
   const frameBytes = Math.max(
     channels * 2,

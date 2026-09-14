@@ -32,6 +32,32 @@ try {
   await page
     .getByRole("heading", { name: "チームの状況", exact: true })
     .waitFor();
+  await page.getByText("エラーログ", { exact: true }).click();
+  await page.getByText(/記録されたエラーはありません/).waitFor();
+  const diagnostic = engine.store.logError(
+    Object.assign(new Error("private-provider-message"), {
+      code: "insufficient_quota",
+      status: 429,
+      requestID: "req_browser123",
+    }),
+    {
+      source: "discord-voice",
+      operation: "audio.transcribe",
+      model: "gpt-4o-mini-transcribe",
+      eventId: "synthetic-input",
+    },
+  );
+  await page.getByText(/OpenAI APIの利用枠が不足しています/).waitFor();
+  const diagnosticText = await page.locator("main").innerText();
+  assert.ok(diagnosticText.includes(diagnostic.id));
+  assert.ok(diagnosticText.includes("HTTP: 429"));
+  assert.ok(diagnosticText.includes("req_browser123"));
+  assert.ok(!diagnosticText.includes("private-provider-message"));
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/engine-diagnostics.png",
+    fullPage: true,
+  });
   await page.getByText("プロジェクト", { exact: true }).click();
   await page.getByLabel("プロジェクト名").fill("Demo project");
   await page.getByRole("button", { name: "保存", exact: true }).click();
