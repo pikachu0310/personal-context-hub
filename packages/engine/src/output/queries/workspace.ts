@@ -147,6 +147,37 @@ export class Workspace {
         throw new Error("MEETING_NOT_FOUND");
       if (operation === "conversation/state")
         return this.router.ai.coordinated?.state(meetingId);
+      if (input.kind === "coordinator") {
+        if (user.role !== "admin") throw new Error("PERMISSION_DENIED");
+        const projectId = this.store.get<{ projectId?: string }>(
+          "meeting",
+          meetingId,
+        )?.projectId;
+        const before =
+          input.before === undefined ? undefined : id(input.before);
+        const records = this.store
+          .list<{ id: string; meetingId: string; projectId?: string }>(
+            "coordinator-trace",
+          )
+          .filter((entry) =>
+            projectId
+              ? entry.projectId === projectId
+              : entry.meetingId === meetingId,
+          )
+          .reverse();
+        const offset = before
+          ? records.findIndex((entry) => entry.id === before) + 1
+          : 0;
+        if (before && offset === 0) throw new Error("INVALID_CURSOR");
+        const entries = records.slice(offset, offset + 20);
+        return {
+          entries,
+          nextBefore:
+            offset + entries.length < records.length
+              ? entries.at(-1)?.id
+              : undefined,
+        };
+      }
       return this.store
         .list<{ meetingId: string }>("conversation-output")
         .filter((value) => value.meetingId === meetingId)

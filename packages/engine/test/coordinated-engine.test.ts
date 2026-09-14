@@ -19,6 +19,7 @@ import { Projects } from "../src/processing/projects/service.js";
 import { Engine } from "../src/bootstrap/engine.js";
 import type { Message } from "../src/domain/models.js";
 import { wrapPcmAsWav } from "../src/input/audio/signal.mjs";
+import type { TaskApplication } from "../src/processing/coordinator/traces.js";
 
 const silent = (): CoordinatorResponse => ({
   reply: null,
@@ -301,6 +302,331 @@ async function fixture(t: TestContext) {
     close,
   };
 }
+
+test("successive weather and access requests correct historical source IDs and retain every model decision after restart", async (t) => {
+  const f = await fixture(t);
+  let previous: string[] = [];
+  const titles = [
+    "明日の天気を調べる",
+    "今日の天気を調べる",
+    "駅から会場へのアクセスを調べる",
+  ];
+  for (const title of titles) {
+    f.respond((observation) => {
+      const response = taskResponse(observation);
+      response.tasks[0].title = title;
+      if (previous.length && !observation.taskValidation)
+        response.tasks[0].sourceIds = previous;
+      if (observation.taskValidation) {
+        assert.deepEqual(
+          observation.taskValidation.allowedSourceIds,
+          sourceIds(observation),
+        );
+        assert.equal(
+          observation.taskValidation.rejectedTasks[0].reason,
+          "source_outside_current_batch",
+        );
+        assert.deepEqual(
+          observation.taskValidation.rejectedTasks[0].task.sourceIds,
+          previous,
+        );
+      }
+      return response;
+    });
+    await f.input({
+      text: `${title}依頼です。調べてください`,
+      interaction: true,
+    });
+    await f.idle();
+    previous = sourceIds(f.calls.at(-1)!.observation);
+  }
+  assert.deepEqual(
+    f.tasks().map((task) => task.title),
+    titles,
+  );
+  assert.equal(f.calls.length, 5);
+  assert.equal(f.delivered.length, 3);
+  assert.ok(
+    f
+      .tasks()
+      .every((task) => task.executionPolicy?.sandboxMode === "read-only"),
+  );
+  assert.equal(new Set(f.tasks().flatMap((task) => task.sourceIds!)).size, 3);
+  const traces = f.engine.store.list<any>("coordinator-trace");
+  assert.equal(traces.filter((trace) => trace.kind === "run").length, 5);
+  const applications = traces.filter(
+    (trace): trace is TaskApplication => trace.kind === "application",
+  );
+  assert.equal(applications.length, 3);
+  assert.deepEqual(
+    applications.map((entry) => entry.decisions[0].reason),
+    ["accepted", "accepted", "accepted"],
+  );
+  assert.equal(
+    applications.filter((entry) => entry.repair?.status === "completed").length,
+    2,
+  );
+  await f.restart();
+  assert.deepEqual(f.engine.store.list("coordinator-trace"), traces);
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.calls.length, 5);
+  assert.equal(f.tasks().length, 3);
+});
+
+test("one failed source correction produces a current-request receipt and does not execute history", async (t) => {
+  for (const corrected of ["invalid", "empty", "error"] as const) {
+    await t.test(corrected, async (t) => {
+      const f = await fixture(t);
+      f.respond((observation) => {
+        if (observation.taskValidation) {
+          if (corrected === "empty") return silent();
+          if (corrected === "error") throw new Error("private-provider-secret");
+        }
+        const response = taskResponse(observation);
+        response.tasks[0].sourceIds = ["historical-source"];
+        response.reply = {
+          text: "作業を開始しました",
+          reason: "direct_answer",
+          sourceIds: sourceIds(observation),
+        };
+        return response;
+      });
+      await f.input({ text: "今日の天気を調べて", interaction: true });
+      await f.idle();
+      await f.core.flush("meeting");
+      await f.idle();
+      assert.equal(f.calls.length, 2);
+      assert.equal(f.tasks().length, 0);
+      assert.equal(f.delivered.length, 1);
+      assert.match(JSON.stringify(f.delivered), /開始・変更していません/);
+      assert.doesNotMatch(JSON.stringify(f.delivered), /作業を開始しました/);
+      assert.doesNotMatch(
+        JSON.stringify(f.engine.store.list("coordinator-trace")),
+        /private-provider-secret/,
+      );
+      const application = f.engine.store
+        .list<TaskApplication>("coordinator-trace")
+        .find((entry) => entry.kind === "application")!;
+      assert.equal(
+        application.rejections[0].reason,
+        "source_outside_current_batch",
+      );
+      assert.ok(application.completedAt);
+    });
+  }
+});
+
+test("correction preserves valid sibling proposals and rechecks permissions before submission", async (t) => {
+  const f = await fixture(t);
+  const ctx = f.context();
+  f.respond((observation) => {
+    if (observation.taskValidation) {
+      ctx.access.valid = false;
+      return taskResponse(observation);
+    }
+    const response = taskResponse(observation);
+    response.tasks.push({
+      ...response.tasks[0],
+      title: "別の調査",
+      sourceIds: ["past"],
+    });
+    return response;
+  });
+  await f.input(
+    { text: "天気とアクセスを調べて", interaction: true },
+    ctx.value,
+  );
+  await f.idle();
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.tasks().length, 0);
+  const application = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .find((entry) => entry.kind === "application")!;
+  assert.deepEqual(
+    application.decisions.map((entry) => entry.reason),
+    ["inactive_source", "inactive_source"],
+  );
+});
+
+test("valid sibling task survives an uncorrectable proposal and silent responses remain logged", async (t) => {
+  const f = await fixture(t);
+  await f.input({ text: "こんにちは", interaction: true });
+  await f.idle();
+  f.respond((observation) => {
+    if (observation.taskValidation) return silent();
+    const response = taskResponse(observation);
+    response.tasks.push({
+      ...response.tasks[0],
+      title: "過去の別の調査",
+      sourceIds: ["past"],
+    });
+    return response;
+  });
+  await f.input({ text: "今日の天気を調べて", interaction: true });
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.calls.length, 3);
+  const applications = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .filter((entry) => entry.kind === "application");
+  assert.deepEqual(applications[0].initialResponse.tasks, []);
+  assert.ok(applications[0].completedAt);
+  assert.equal(applications[1].decisions[0].reason, "accepted");
+});
+
+test("one current request can create distinct outcomes while an exact repeated task is rejected with a reason", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => {
+    const response = taskResponse(observation);
+    response.tasks[0].title = "今日の天気";
+    response.tasks.push({ ...response.tasks[0], title: "会場へのアクセス" });
+    return response;
+  });
+  await f.input({
+    text: "今日の天気と会場へのアクセスを調べて",
+    interaction: true,
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 2);
+  assert.deepEqual(f.tasks()[0].sourceIds, f.tasks()[1].sourceIds);
+  await f.input({
+    text: "今日の天気と会場へのアクセスを調べて",
+    interaction: true,
+  });
+  await f.idle();
+  assert.equal(f.tasks().length, 2);
+  const last = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .filter((entry) => entry.kind === "application")
+    .at(-1)!;
+  assert.deepEqual(
+    last.decisions.map((entry) => entry.reason),
+    ["duplicate_task", "duplicate_task"],
+  );
+});
+
+test("saved source corrections are reused after authentication and uncertain corrections are never resent", async (t) => {
+  for (const status of ["completed", "sending"] as const) {
+    await t.test(status, async (t) => {
+      const f = await fixture(t);
+      f.respond((observation) => {
+        const response = taskResponse(observation);
+        if (!observation.taskValidation) response.tasks[0].sourceIds = ["past"];
+        return response;
+      });
+      f.core.options.work.submit = () => {
+        throw new Error("UNAVAILABLE");
+      };
+      await f.input({ text: "ソースを調べて", interaction: true });
+      await f.idle();
+      assert.equal(f.calls.length, 2);
+      const application = f.engine.store
+        .list<TaskApplication>("coordinator-trace")
+        .find((entry) => entry.kind === "application")!;
+      assert.equal(application.repair?.status, "completed");
+      if (status === "sending") {
+        application.repair = { status: "sending" };
+        f.engine.store.put("coordinator-trace", application.id, application);
+      }
+      await f.restart();
+      await f.core.flush("meeting");
+      await f.idle();
+      assert.equal(f.tasks().length, 0);
+      await f.core.resume("meeting", f.context().value, application.sourceIds);
+      await f.idle();
+      assert.equal(f.calls.length, 2);
+      assert.equal(f.tasks().length, status === "completed" ? 1 : 0);
+      assert.equal(f.delivered.length, 1);
+    });
+  }
+});
+
+test("partially applied batches resume without duplicate tasks or announcements and keep accepted decisions", async (t) => {
+  const f = await fixture(t);
+  f.respond((observation) => {
+    const response = taskResponse(observation);
+    response.tasks.push({ ...response.tasks[0], title: "別のアクセス調査" });
+    return response;
+  });
+  const work = f.core.options.work;
+  const submit = work.submit.bind(work);
+  work.submit = (request) => {
+    if (request.title === "別のアクセス調査") throw new Error("UNAVAILABLE");
+    return submit(request);
+  };
+  await f.input({ text: "今日の天気とアクセスを調べて", interaction: true });
+  await f.idle();
+  assert.equal(f.tasks().length, 1);
+  assert.equal(f.delivered.length, 1);
+  await f.restart();
+  await f.core.resume(
+    "meeting",
+    f.context().value,
+    sourceIds(f.calls[0].observation),
+  );
+  await f.idle();
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.tasks().length, 2);
+  assert.equal(f.delivered.length, 2);
+  const application = f.engine.store
+    .list<TaskApplication>("coordinator-trace")
+    .find((entry) => entry.kind === "application")!;
+  assert.deepEqual(
+    application.decisions.map((entry) => entry.reason),
+    ["accepted", "accepted"],
+  );
+});
+
+test("coordinator trace pages are admin-only, project scoped and do not change ordinary output logs", async (t) => {
+  const f = await fixture(t);
+  const admin = f.engine.store.createUser(
+    "trace-admin",
+    "fixture-password",
+    "admin",
+  );
+  const viewer = f.engine.store.createUser(
+    "trace-viewer",
+    "fixture-password",
+    "viewer",
+  );
+  for (let i = 0; i < 25; i++)
+    f.engine.store.put("coordinator-trace", `trace-${i}`, {
+      id: `trace-${i}`,
+      projectId: "project",
+      meetingId: "meeting",
+      kind: "run",
+    });
+  f.engine.store.put("coordinator-trace", "foreign", {
+    id: "foreign",
+    projectId: "foreign",
+    meetingId: "foreign",
+  });
+  const query = (input: Record<string, unknown>, actor = admin) =>
+    f.engine.workspace.request(
+      "conversation/log",
+      { meetingId: "meeting", ...input },
+      { ...f.context().value, actor },
+    );
+  await assert.rejects(
+    query({ kind: "coordinator" }, viewer),
+    /PERMISSION_DENIED/,
+  );
+  const first = (await query({ kind: "coordinator" })) as any;
+  assert.equal(first.entries.length, 20);
+  assert.equal(first.entries[0].id, "trace-24");
+  const next = (await query({
+    kind: "coordinator",
+    before: first.nextBefore,
+  })) as any;
+  assert.equal(next.entries.length, 5);
+  assert.equal(next.nextBefore, undefined);
+  assert.deepEqual(await query({}), []);
+  await assert.rejects(
+    query({ kind: "coordinator", before: "foreign" }),
+    /INVALID_CURSOR/,
+  );
+});
 
 test("InputRouter keeps raw statements separate from minutes and one main thread receives only new messages", async (t) => {
   const f = await fixture(t);

@@ -100,6 +100,25 @@ test("coordinator uses only Responses API and the current Engine API key, with c
   }
 });
 
+test("each prompt distinguishes current source IDs from historical and event IDs, including correction feedback", () => {
+  const input = observation("event-id");
+  if (input.events[0].type === "message")
+    input.events[0].source.id = "message-id";
+  input.taskValidation = {
+    allowedSourceIds: ["message-id"],
+    rejectedTasks: [],
+  };
+  for (const initial of [false, true]) {
+    const prompt = coordinatorPrompt(input, { initial });
+    const data = JSON.parse(prompt.split("\n").at(-1)!);
+    assert.deepEqual(data.currentMessageSourceIds, ["message-id"]);
+    assert.deepEqual(data.referenceOnly, ["context", "minutes", "activeTasks"]);
+    assert.deepEqual(data.taskValidation, input.taskValidation);
+    assert.match(prompt, /IDだけを機械的に置換しない/);
+    assert.match(prompt, /今日の天気を調べて/);
+  }
+});
+
 test("missing API key rejects before sending and recovers when configured", async (t) => {
   const f = fixture();
   t.after(() => f.factory.close());

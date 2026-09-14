@@ -29,6 +29,13 @@ import type { Task } from "@ido/common/contracts/protocol";
 import { CoordinatorInbox } from "./inbox.mjs";
 import { MeetingKnowledgeStore } from "../minutes/knowledge.js";
 import { duplicateWork } from "./duplicates.js";
+import { describeError } from "../../domain/diagnostics.js";
+import {
+  CoordinatorTraces,
+  sourceRejection,
+  type ModelValue,
+  type TaskApplication,
+} from "./traces.js";
 
 type Route = { event: ConversationInput; context: InputContext };
 type StoredState = {
@@ -113,13 +120,23 @@ class MeetingCoordinator {
               ]),
             );
             return {
-              response: await runtime.run(observation, runOptions),
+              response: await new CoordinatorTraces(this.store).model(
+                this.inbox.snapshot().active!.id,
+                "run",
+                observation,
+                () => runtime.run(observation, runOptions),
+              ),
               modeRevision,
               controlVersions,
             };
           },
           steer: (observation: CoordinatorObservation) =>
-            runtime.steer(observation),
+            new CoordinatorTraces(this.store).model(
+              this.inbox.snapshot().active!.id,
+              "steer",
+              observation,
+              () => runtime.steer(observation),
+            ),
           interrupt: () => runtime.interrupt(),
           close: () => runtime.close(),
         };
@@ -822,14 +839,7 @@ class MeetingCoordinator {
           });
       });
   }
-  private async apply(
-    value: {
-      response: CoordinatorResponse;
-      modeRevision: number;
-      controlVersions: Record<string, number>;
-    },
-    batch: Batch,
-  ) {
+  private async apply(value: ModelValue, batch: Batch) {
     if (
       this.completed.has(batch.id) ||
       this.closed ||
@@ -837,10 +847,92 @@ class MeetingCoordinator {
     )
       return;
     this.requireRoutes(batch.events);
-    const response = value.response;
+    const response = { ...value.response };
     const sources = batch.events.flatMap((event) =>
       event.type === "message" ? [event.source] : [],
     );
+    const allowed = new Set(sources.map((source) => source.id));
+    const application: TaskApplication = this.store.get(
+      "coordinator-trace",
+      `application:${batch.id}`,
+    ) ?? {
+      id: `application:${batch.id}`,
+      kind: "application",
+      batchId: batch.id,
+      meetingId: this.meetingId,
+      projectId: this.meeting()?.projectId,
+      at: Date.now(),
+      sourceIds: [...allowed],
+      initialResponse: value.response,
+      rejections: response.tasks.flatMap((task, index) => {
+        const reason = sourceRejection(task, allowed);
+        return reason ? [{ index, task, reason }] : [];
+      }),
+      decisions: [],
+    };
+    const saveApplication = () =>
+      this.store.put("coordinator-trace", application.id, application);
+    saveApplication();
+    if (application.rejections.length) {
+      if (
+        !application.repair &&
+        sources.some(
+          (source) =>
+            this.permitted(source) &&
+            !source.handled &&
+            !source.contextOnly &&
+            source.complete !== false &&
+            (source.workAllowed || source.researchAllowed),
+        )
+      ) {
+        const runtime = await this.inbox.runtime();
+        if (
+          this.closed ||
+          this.store.get("project-lock", this.meeting()?.projectId ?? "")
+        )
+          return;
+        const observation = this.observation(batch.events);
+        observation.taskValidation = {
+          allowedSourceIds: [...allowed],
+          rejectedTasks: application.rejections,
+        };
+        // Persist before sending; a restart or unknown delivery must never
+        // turn a single correction into an unbounded sequence of model calls.
+        application.repair = { status: "sending" };
+        saveApplication();
+        try {
+          const corrected = await runtime.run(observation, {
+            signal: this.inbox.controller.signal,
+          });
+          application.repair = { status: "completed", value: corrected };
+        } catch (error) {
+          application.repair = {
+            status: "failed",
+            error: describeError(error),
+          };
+          this.store.logError(error, {
+            source: "conversation",
+            operation: "coordinator.task-correction",
+            meetingId: this.meetingId,
+            eventId: batch.id,
+            level: "warning",
+          });
+        }
+        saveApplication();
+      }
+      // Keep valid original proposals, and accept only tasks from correction.
+      // Reply, controls and minutes retain their original validation versions.
+      response.tasks = [
+        ...response.tasks.filter((task) => !sourceRejection(task, allowed)),
+        ...(application.repair?.value?.response.tasks ?? []),
+      ];
+    }
+    if (
+      this.closed ||
+      this.store.get("project-lock", this.meeting()?.projectId ?? "")
+    )
+      return;
+    this.requireRoutes(batch.events);
     const select = (ids: string[]) =>
       ids
         .map((id) => sources.find((source) => source.id === id))
@@ -867,18 +959,29 @@ class MeetingCoordinator {
     let automaticStarted = 0;
     const receipts = new Set<string>();
     for (const [index, task] of response.tasks.entries()) {
+      const decision = (reason: string, taskId?: string) => {
+        application.decisions = application.decisions.filter(
+          (item) => item.index !== index,
+        );
+        application.decisions.push({ index, task, reason, taskId });
+        saveApplication();
+      };
       const selected = select(task.sourceIds);
-      if (
-        !selected.length ||
-        selected.length !== task.sourceIds.length ||
-        !selected.every(
-          (source) =>
-            this.active(this.routes.get(source.id)) &&
-            source.complete !== false &&
-            !source.handled,
-        )
-      )
+      const rejection =
+        sourceRejection(task, allowed) ??
+        (selected.some((source) => !this.active(this.routes.get(source.id)))
+          ? "inactive_source"
+          : selected.some((source) => source.complete === false)
+            ? "incomplete_source"
+            : selected.some((source) => source.handled)
+              ? "already_handled"
+              : selected.some((source) => source.contextOnly)
+                ? "context_only_source"
+                : undefined);
+      if (rejection) {
+        decision(rejection);
         continue;
+      }
       const research = task.kind === "research";
       const eligible = selected.filter(
         (source) =>
@@ -897,21 +1000,38 @@ class MeetingCoordinator {
       const author =
         requested ??
         eligible.findLast((source) => proactiveOpportunity(source.text));
-      if (!author || selected.some((source) => deferredDelegation(source.text)))
+      if (
+        !author ||
+        selected.some((source) => deferredDelegation(source.text))
+      ) {
+        decision(
+          !eligible.length
+            ? "permission_denied"
+            : selected.some((source) => deferredDelegation(source.text))
+              ? "deferred"
+              : "no_current_intent",
+        );
         continue;
+      }
       if (
         !author.projectId ||
         !selected.every((source) => source.projectId === author.projectId)
-      )
+      ) {
+        decision("project_mismatch");
         continue;
+      }
       const existingTasks = this.projectTasks();
-      const duplicate = duplicateWork(
-        existingTasks,
-        task.title,
-        task.sourceIds,
-        automatic,
-      );
+      const requestKey = `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`;
+      const previous = this.options.work.getReceipt({
+        requestKey,
+        authorId: author.authorId,
+        projectId: author.projectId,
+      });
+      const duplicate = previous
+        ? undefined
+        : duplicateWork(existingTasks, task.title, automatic);
       if (duplicate) {
+        decision("duplicate_task", duplicate.id);
         if (author.requestReply) {
           await this.receipt(
             author,
@@ -924,6 +1044,7 @@ class MeetingCoordinator {
         continue;
       }
       if (
+        !previous &&
         automatic &&
         (automaticStarted >= 1 ||
           existingTasks.filter(
@@ -938,35 +1059,49 @@ class MeetingCoordinator {
               existing.trigger === "proactive" &&
               Date.now() - existing.createdAt < 45_000,
           ))
-      )
+      ) {
+        decision("proactive_limit");
         continue;
-      const created = this.options.work.submit({
-        requestKey: `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`,
-        meetingId: author.meetingId ?? this.meetingId,
-        projectId: author.projectId,
-        authorId: author.authorId,
-        title: task.title,
-        request: [
-          `担当範囲: ${task.title}`,
-          ...task.acceptanceCriteria.map(
-            (criterion) => `完了条件: ${criterion}`,
-          ),
-          "利用者の元発言:",
-          ...selected.map((source) => source.text),
-        ].join("\n"),
-        kind: task.kind,
-        trigger: automatic ? "proactive" : "requested",
-        sourceStatements: selected.map((source) => ({
-          id: source.id,
-          meetingId: source.meetingId ?? this.meetingId,
-          authorId: source.authorId,
-          speakerName: source.authorName,
-          startedAt: source.at,
-          text: source.text,
-        })),
-        sourceIds: task.sourceIds,
-        executionPolicy: research ? { sandboxMode: "read-only" } : undefined,
-      });
+      }
+      decision("submitting");
+      let created: Task;
+      try {
+        created =
+          previous ??
+          this.options.work.submit({
+            requestKey,
+            meetingId: author.meetingId ?? this.meetingId,
+            projectId: author.projectId,
+            authorId: author.authorId,
+            title: task.title,
+            request: [
+              `担当範囲: ${task.title}`,
+              ...task.acceptanceCriteria.map(
+                (criterion) => `完了条件: ${criterion}`,
+              ),
+              "利用者の元発言:",
+              ...selected.map((source) => source.text),
+            ].join("\n"),
+            kind: task.kind,
+            trigger: automatic ? "proactive" : "requested",
+            sourceStatements: selected.map((source) => ({
+              id: source.id,
+              meetingId: source.meetingId ?? this.meetingId,
+              authorId: source.authorId,
+              speakerName: source.authorName,
+              startedAt: source.at,
+              text: source.text,
+            })),
+            sourceIds: task.sourceIds,
+            executionPolicy: research
+              ? { sandboxMode: "read-only" }
+              : undefined,
+          });
+      } catch (error) {
+        decision("submission_failed");
+        throw error;
+      }
+      decision("accepted", created.id);
       if (automatic) automaticStarted++;
       await this.receipt(
         author,
@@ -974,7 +1109,7 @@ class MeetingCoordinator {
         `${automatic ? "会議の確認を進めるため、" : ""}タスク「${created.title ?? task.title}」を受け付けました。${created.state === "queued" ? "実行先の空き・許可を待っています。" : "進捗は同じタスクで確認できます。"}`,
         [created.id],
       );
-      receipts.add(author.id);
+      for (const source of selected) receipts.add(source.id);
     }
     for (const meetingId of new Set(
       sources.map((source) => source.meetingId ?? this.meetingId),
@@ -1018,22 +1153,33 @@ class MeetingCoordinator {
       );
       receipts.add(author.id);
     }
+    const unresolvedCorrection =
+      application.rejections.length > 0 &&
+      (!application.repair?.value?.response.tasks.length ||
+        application.decisions.some(
+          (item) => !["accepted", "duplicate_task"].includes(item.reason),
+        ));
     for (const source of sources) {
       if (
-        source.requestReply &&
+        (source.requestReply || explicitDelegation(source.text)) &&
         !source.handled &&
-        !receipts.has(source.id) &&
-        (response.tasks.some((task) => task.sourceIds.includes(source.id)) ||
+        (!receipts.has(source.id) || unresolvedCorrection) &&
+        (application.rejections.length > 0 ||
+          response.tasks.some((task) => task.sourceIds.includes(source.id)) ||
           response.controls.some((control) =>
             control.sourceIds.includes(source.id),
           ))
-      )
+      ) {
         await this.receipt(
           source,
           `not-applied:${batch.id}:${source.id}`,
-          "この発言からはタスクを開始・変更していません。対象と、今進める具体的な作業を教えてください。",
+          receipts.has(source.id)
+            ? "一部のタスク案を今回の依頼と対応づけられず、登録できませんでした。未登録の作業について、対象と今進める内容を教えてください。"
+            : "この発言からはタスクを開始・変更していません。対象と、今進める具体的な作業を教えてください。",
           [],
         );
+        receipts.add(source.id);
+      }
     }
     const answer = response.reply;
     let replyApplied = false;
@@ -1180,6 +1326,8 @@ class MeetingCoordinator {
       }
     }
     this.completed.add(batch.id);
+    application.completedAt = Date.now();
+    saveApplication();
     this.save();
     this.publish("transcript");
   }
