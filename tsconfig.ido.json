@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": [
+    "packages/common/src/**/*.ts",
+    "packages/engine/src/**/*.ts",
+    "packages/client/src/**/*.ts",
+    "packages/plugin-discord/src/**/*.ts",
+    "packages/*/test/**/*.ts"
+  ]
+}

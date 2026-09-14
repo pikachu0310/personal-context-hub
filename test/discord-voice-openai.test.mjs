@@ -293,7 +293,8 @@ test("OpenAI audio adapter uses bounded Japanese STT and PCM TTS contracts", asy
   assert.deepEqual(await adapter.synthesize("返答"), Buffer.from([1, 2, 3]));
   assert.equal(calls[0][1].language, undefined);
   assert.deepEqual(calls[0][1].languages, ["ja", "en"]);
-  assert.match(calls[0][1].prompt, /井戸Bot/u);
+  // Vocabulary hints can become hallucinated speech. The current adapter sends no prompt.
+  assert.equal(calls[0][1].prompt, undefined);
   assert.equal(calls[0][1].keywords, undefined);
   assert.equal(calls[0][2].body, undefined);
   assert.equal(calls[1][1].response_format, "pcm");

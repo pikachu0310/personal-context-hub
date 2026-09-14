@@ -39,3 +39,5 @@ temp/
 ui/dist/
 .desktop-build/
 dist/desktop/
+packages/*/dist/
+.ido-build/

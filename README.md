@@ -1,3 +1,17 @@
+# IDO Engine / Client
+
+The self-hosted IDO rewrite is distributed as `@ido/engine`, `@ido/client`, and optional `@ido/plugin-discord`. New code lives in `packages/`; Engine and Client ship prebuilt React + Mantine dashboards.
+
+See [installation, architecture, security boundaries and release validation](docs/ido-engine-client.md). The package names are provisional and not published by this change. Existing hub integrations and data remain below; legacy commands do not configure the new IDO runtime.
+
+```sh
+npm ci
+npm run verify:ido
+npm run pack:ido
+```
+
+---
+
 # 井戸Bot — 会話の中で、話す・作る・試す
 
 Discordの会話を共有コンテキストへ整理し、Codexの調査・実装・ベンチマークを会議と並行して進めるBotです。

@@ -34,8 +34,8 @@
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test/**/*.mjs\" \"docs/**/*.md\" \".github/**/*.yml\" \"*.{js,json,md}\" \"desktop/**/*.{mjs,cjs,js,html,json}\"",
     "format:check": "prettier --check \"src/**/*.mjs\" \"scripts/**/*.mjs\" \"test/**/*.mjs\" \"docs/**/*.md\" \".github/**/*.yml\" \"*.{js,json,md}\" \"desktop/**/*.{mjs,cjs,js,html,json}\"",
-    "test": "node --test",
-    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/**/*.mjs --test-coverage-lines=60 --test-coverage-branches=60 --test-coverage-functions=30",
+    "test": "node --test test/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include=src/**/*.mjs --test-coverage-lines=60 --test-coverage-branches=60 --test-coverage-functions=30 test/*.test.mjs",
     "verify": "npm run check && npm run lint && npm run format:check && npm run test:coverage && npm audit",
     "check": "node scripts/check-syntax.mjs",
     "smoke:discord:voice:idd": "node --env-file-if-exists=.env scripts/discord-voice-idd-smoke.mjs",
@@ -60,7 +60,14 @@
     "agent:desktop": "electron desktop/main.mjs",
     "agent:desktop:prepare": "node scripts/prepare-agent-desktop.mjs",
     "agent:desktop:package": "npm run agent:desktop:prepare && npm --prefix .desktop-build/app install --omit=dev --ignore-scripts && electron-builder --config desktop/builder.config.json --win --publish never",
-    "agent:desktop:smoke": "node scripts/agent-desktop-smoke.mjs"
+    "agent:desktop:smoke": "node scripts/agent-desktop-smoke.mjs",
+    "build:ido": "node scripts/build-ido.mjs",
+    "check:ido": "tsc -p tsconfig.ido.json --noEmit && tsc -p packages/dashboard/tsconfig.json",
+    "test:ido": "node --import tsx --test packages/*/test/*.test.ts",
+    "verify:ido": "npm run check:ido && npm run build:ido && npm run test:ido",
+    "pack:ido": "node scripts/pack-ido.mjs",
+    "smoke:ido": "node scripts/ido-browser-smoke.mjs",
+    "smoke:ido:pack": "node scripts/ido-pack-smoke.mjs"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",
@@ -81,9 +88,20 @@
     "electron-builder": "26.15.3",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
-    "prettier": "^3.6.2"
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.20.0"
   },
   "engines": {
     "node": ">=22"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "overrides": {
+    "esbuild": "^0.28.1"
   }
 }
