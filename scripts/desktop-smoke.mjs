@@ -37,6 +37,17 @@ try {
     updatedAt: Date.now(),
     history: [],
   };
+  // Restored remote runs belong to a saved joined project; exited projects
+  // are intentionally hidden by the membership lifecycle.
+  await writeFile(
+    join(directory, "client.json"),
+    JSON.stringify({
+      mappings: [],
+      slots: 1,
+      projects: [{ id: "project", name: "Synthetic project" }],
+      profile: { name: "Synthetic participant", context: "Smoke fixture" },
+    }),
+  );
   await writeFile(
     join(directory, "runs.json"),
     JSON.stringify({
