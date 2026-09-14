@@ -77,6 +77,12 @@ export function SourcePicker({
     const meeting = meetings.find((item) => item.id === meetingId);
     const sourceText = kind === "minutes" ? meeting?.summary : body;
     if (!sourceText?.trim()) return;
+    if (sourceText.length > 16000) {
+      setError(
+        "1件のソースは16,000文字までです。必要な部分を共有コンテキストとして追加してください。",
+      );
+      return;
+    }
     setBusy(true);
     setError("");
     try {

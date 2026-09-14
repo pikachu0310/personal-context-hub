@@ -1582,7 +1582,7 @@ button {
   position: sticky;
   top: 0;
   max-height: none;
-  overflow: visible;
+  overflow: clip;
   margin-bottom: 20px;
 }
 .inspector-header-toggle {
@@ -1665,4 +1665,8 @@ button {
 }
 .composer-toolbar {
   flex-wrap: wrap;
+}
+
+.with-inspector > .task-inspector .mantine-Tabs-list {
+  position: static;
 }

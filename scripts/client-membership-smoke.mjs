@@ -141,9 +141,7 @@ try {
     name: "議事録を追加",
     exact: true,
   });
-  await sourceDialog
-    .getByRole("textbox", { name: "議事録", exact: true })
-    .click();
+  await sourceDialog.getByLabel("議事録", { exact: true }).click();
   await page.getByRole("option", { name: "開発会議", exact: true }).click();
   await sourceDialog
     .getByRole("button", { name: "追加する", exact: true })
@@ -216,7 +214,7 @@ try {
   await dialog.getByRole("button", { name: "キャンセル", exact: true }).click();
   assert.ok(engine.store.get("task", task.id));
   await page
-    .locator(".project-name")
+    .locator(".project-collapse > .collapse-heading")
     .filter({ hasText: "Membership project" })
     .hover();
   await page
@@ -236,7 +234,7 @@ try {
   );
   await leave.getByRole("button", { name: "キャンセル", exact: true }).click();
   await page
-    .locator(".project-name")
+    .locator(".project-collapse > .collapse-heading")
     .filter({ hasText: "Membership project" })
     .hover();
   await page
@@ -258,7 +256,7 @@ try {
     () => engine.store.get("project", project.id).ownerDeviceId === "device-1",
   );
   await page
-    .locator(".project-name")
+    .locator(".project-collapse > .collapse-heading")
     .filter({ hasText: "Membership project" })
     .hover();
   await page
@@ -287,7 +285,7 @@ try {
     token: invitation.token,
   });
   await page
-    .locator(".project-name")
+    .locator(".project-collapse > .collapse-heading")
     .filter({ hasText: "Membership project" })
     .hover();
   await page
