@@ -1,4 +1,9 @@
-import type { ExecutionPolicy, WorkReceipt, WorkSource } from "./work.js";
+import type {
+  AccessMode,
+  ExecutionPolicy,
+  WorkReceipt,
+  WorkSource,
+} from "./work.js";
 
 export const VERSION = 1;
 export const RELEASE = "0.2.0";
@@ -39,9 +44,10 @@ export interface Grant {
   slots: number;
 }
 export interface Mapping extends Grant {
+  executionAllowed?: boolean;
   model?: string;
   reasoningEffort?: string;
-  accessMode?: "full" | "approval";
+  accessMode?: AccessMode;
   progressMode?: "auto" | "manual";
   directory: string;
   previewCommand?: string[];
