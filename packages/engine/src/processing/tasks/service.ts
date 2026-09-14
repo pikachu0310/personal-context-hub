@@ -1,6 +1,8 @@
 import {
   addParticipant,
   seedParticipants,
+  participantId,
+  taskParticipants,
 } from "../projects/task-participants.js";
 import { randomUUID } from "node:crypto";
 import type { Command, Project, Task } from "@ido/common/contracts/protocol";
@@ -239,6 +241,11 @@ export class Tasks {
       };
       task.controlReceipts ??= {};
       task.controlReceipts[receipt.id] = receipt;
+      addParticipant(this.repository, task, actor);
+      const sender = taskParticipants(this.repository, task, true).find(
+        (person) => person.id === participantId(actor),
+      );
+      const sentAt = Date.now();
       const persist = () => {
         addParticipant(this.repository, task, actor);
         task.updatedAt = Date.now();
@@ -253,6 +260,13 @@ export class Tasks {
         return persist();
       }
       if (type === "steer" && task.state === "queued") {
+        task.initialText ??= task.text;
+        (task.queuedInstructions ??= []).push({
+          id: receipt.id,
+          text: text!,
+          sender,
+          sentAt,
+        });
         task.text += `\n\n追加指示:\n${text}`;
         receipt.delivery = "queued";
         return persist();
@@ -311,11 +325,16 @@ export class Tasks {
         throw new Error("TASK_NOT_RUNNING");
       this.repository.enqueue(task.clientId, {
         type,
+        sender,
+        sentAt,
         taskId: task.id,
         runId: task.runId,
         revision: task.revision,
         text,
-        task,
+        task: {
+          ...task,
+          participants: taskParticipants(this.repository, task, true),
+        },
         receiptId: receipt.id,
         controlVersion: receipt.controlVersion,
         specRevision: receipt.specRevision,
