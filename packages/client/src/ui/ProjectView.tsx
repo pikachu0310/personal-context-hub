@@ -1,4 +1,5 @@
 import { MeetingNotes } from "@ido/common-ui";
+import { MinutesInspector } from "./MinutesInspector.js";
 import { MinutesList } from "./MinutesList.js";
 import type { TaskReference } from "@ido/common/contracts/api";
 import { SharedTaskInspector } from "./SharedTaskInspector.js";
@@ -8,6 +9,8 @@ import {
   Button,
   Group,
   Paper,
+  Modal,
+  Tabs,
   Stack,
   Text,
   Title,
@@ -36,6 +39,7 @@ export function ProjectView({
   openTask: (reference: TaskReference) => void;
   dirtyChanged: (id: string, dirty: boolean) => void;
 }) {
+  const [projectDetails, setProjectDetails] = useState(false);
   const [state, setState] = useState<ProjectWorkspace>(),
     [error, setError] = useState("");
   useEffect(() => {
@@ -101,7 +105,20 @@ export function ProjectView({
             <Title order={2}>
               {task ? (task.title ?? task.text) : "議事録"}
             </Title>
-            <Text c="dimmed">{state.project.name}</Text>
+            <Group gap="xs">
+              <Text c="dimmed" size="sm">
+                {state.project.name}
+              </Text>
+              {!task && (
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => setProjectDetails(true)}
+                >
+                  プロジェクト詳細
+                </Button>
+              )}
+            </Group>
           </Group>
           {task ? (
             <Paper p="lg" withBorder>
@@ -157,98 +174,90 @@ export function ProjectView({
                   )
                 }
               />
-              <details>
-                <summary>プロジェクト詳細・発言ログ</summary>
-                <Stack mt="md">
-                  <details>
-                    <summary>すべての議題・元の発言を検索</summary>
-                    <MeetingNotes key={projectId} meetings={state.minutes} />
-                  </details>
-                  <Title order={3}>参加しているユーザー</Title>
-                  {participantGroups(state.participants).map((devices) => {
-                    const p =
-                      devices.find((d) => d.id === deviceId) ?? devices[0];
-                    const self = isSelf(p, clientState.settings);
-                    return (
-                      <Paper key={p.identityId ?? p.id} p="md" withBorder>
-                        <Group justify="space-between">
-                          <Text fw={600}>
-                            {self
-                              ? (clientState.settings.profile?.name ?? p.name)
-                              : p.name}
-                            {self ? " · 自分" : ""}
-                            {devices.some(
-                              (d) => d.id === state.project.ownerDeviceId,
-                            )
-                              ? " · オーナー"
-                              : ""}
-                          </Text>
-                          <Badge color={p.codexConnected ? "teal" : "gray"}>
-                            {p.codexConnected ? "Codex連携済み" : "Codex未連携"}
-                          </Badge>
-                        </Group>
-                        <Text mt="sm" style={{ whiteSpace: "pre-wrap" }}>
-                          {p.context || "個人コンテキストは未設定です。"}
-                        </Text>
-                        {owner &&
-                          devices
-                            .filter((d) => d.id !== deviceId)
-                            .map((d) => (
-                              <Button
-                                key={d.id}
-                                mt="sm"
-                                color="red"
-                                variant="subtle"
-                                onClick={async () => {
-                                  try {
-                                    await api("project/remove-member", {
-                                      projectId,
-                                      deviceId: d.id,
-                                    });
-                                    setState(
-                                      await api("project/snapshot", {
-                                        projectId,
-                                      }),
-                                    );
-                                  } catch (e) {
-                                    setError((e as Error).message);
-                                  }
-                                }}
-                              >
-                                プロジェクトから削除
-                                {devices.length > 1 ? ` · ${d.id}` : ""}
-                              </Button>
-                            ))}
-                      </Paper>
-                    );
-                  })}
-                  <Title order={3}>生の会話データ</Title>
-                  {state.minutes
-                    .filter((m) => m.messages.length > 0)
-                    .map((m) => (
-                      <Paper key={m.id} p="md" withBorder>
-                        <Text fw={600}>{m.name}</Text>
-                        {m.messages.map((message) => (
-                          <Text
-                            key={message.id}
-                            mt="sm"
-                            style={{ whiteSpace: "pre-wrap" }}
-                          >
-                            {new Date(message.at).toLocaleString()} ·{" "}
-                            {message.authorIdentityId &&
-                            message.authorIdentityId ===
-                              clientState.settings.identityId
-                              ? `${clientState.settings.profile?.name ?? "自分"} · 自分`
-                              : (message.authorName ?? message.authorId)}
-                            {"\n"}
-                            {message.text}
-                            {message.replyText && `\nIDO: ${message.replyText}`}
-                          </Text>
-                        ))}
-                      </Paper>
-                    ))}
-                </Stack>
-              </details>
+              <Modal
+                opened={projectDetails}
+                onClose={() => setProjectDetails(false)}
+                title="プロジェクト詳細"
+                size="lg"
+              >
+                <Tabs defaultValue="notes">
+                  <Tabs.List grow>
+                    <Tabs.Tab value="notes">議題・発言</Tabs.Tab>
+                    <Tabs.Tab value="members">参加者</Tabs.Tab>
+                  </Tabs.List>
+                  <Tabs.Panel value="notes" className="project-notes-modal">
+                    <MinutesInspector
+                      key={projectId}
+                      meetings={state.minutes}
+                    />
+                  </Tabs.Panel>
+                  <Tabs.Panel value="members" pt="sm">
+                    <Stack gap="xs">
+                      <Title order={3}>参加しているユーザー</Title>
+                      {participantGroups(state.participants).map((devices) => {
+                        const p =
+                          devices.find((d) => d.id === deviceId) ?? devices[0];
+                        const self = isSelf(p, clientState.settings);
+                        return (
+                          <Paper key={p.identityId ?? p.id} p="md" withBorder>
+                            <Group justify="space-between">
+                              <Text fw={600}>
+                                {self
+                                  ? (clientState.settings.profile?.name ??
+                                    p.name)
+                                  : p.name}
+                                {self ? " · 自分" : ""}
+                                {devices.some(
+                                  (d) => d.id === state.project.ownerDeviceId,
+                                )
+                                  ? " · オーナー"
+                                  : ""}
+                              </Text>
+                              <Badge color={p.codexConnected ? "teal" : "gray"}>
+                                {p.codexConnected
+                                  ? "Codex連携済み"
+                                  : "Codex未連携"}
+                              </Badge>
+                            </Group>
+                            <Text mt="sm" style={{ whiteSpace: "pre-wrap" }}>
+                              {p.context || "個人コンテキストは未設定です。"}
+                            </Text>
+                            {owner &&
+                              devices
+                                .filter((d) => d.id !== deviceId)
+                                .map((d) => (
+                                  <Button
+                                    key={d.id}
+                                    mt="sm"
+                                    color="red"
+                                    variant="subtle"
+                                    onClick={async () => {
+                                      try {
+                                        await api("project/remove-member", {
+                                          projectId,
+                                          deviceId: d.id,
+                                        });
+                                        setState(
+                                          await api("project/snapshot", {
+                                            projectId,
+                                          }),
+                                        );
+                                      } catch (e) {
+                                        setError((e as Error).message);
+                                      }
+                                    }}
+                                  >
+                                    プロジェクトから削除
+                                    {devices.length > 1 ? ` · ${d.id}` : ""}
+                                  </Button>
+                                ))}
+                          </Paper>
+                        );
+                      })}
+                    </Stack>
+                  </Tabs.Panel>
+                </Tabs>
+              </Modal>
             </>
           )}
         </Stack>
