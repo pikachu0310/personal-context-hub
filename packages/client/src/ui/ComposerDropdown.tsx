@@ -11,7 +11,7 @@ export function ComposerDropdown({
 }: {
   label: string;
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean }[];
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
@@ -32,6 +32,7 @@ export function ComposerDropdown({
         {options.map((option) => (
           <Menu.Item
             key={option.value}
+            disabled={option.disabled}
             onClick={() => onChange(option.value)}
             rightSection={option.value === value ? "✓" : undefined}
           >

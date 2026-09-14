@@ -68,4 +68,5 @@ browser:
   - "scripts/ido-dashboard-smoke.mjs"
   - "scripts/client-workspace-smoke.mjs"
   - "scripts/client-shared-history-smoke.mjs"
+  - "scripts/client-access-smoke.mjs"
   - "examples/ido-preview/**"

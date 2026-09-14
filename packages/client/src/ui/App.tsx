@@ -653,6 +653,10 @@ export function App() {
           <ProjectTaskDraft
             key={projectView.projectId}
             projectId={projectView.projectId}
+            mapping={state.settings.mappings.find(
+              (mapping) => mapping.projectId === projectView.projectId,
+            )}
+            action={action}
             draft={taskDrafts[projectView.projectId]}
             sendingText={(sentText) =>
               dispatchDraft({

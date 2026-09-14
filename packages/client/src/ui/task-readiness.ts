@@ -1,4 +1,5 @@
 import type { ClientState } from "@ido/common/contracts/api";
+import { isUnrestrictedAccess } from "@ido/common/contracts/work";
 export function taskReadiness(
   state: ClientState,
   task: { projectId: string; network?: boolean },
@@ -26,7 +27,11 @@ export function taskReadiness(
       reason: "permission",
       text: "このClientでは、このプロジェクトの実行許可がOFFです。保存先を設定しただけではタスクは始まりません。「接続・設定」で実行を許可してください。",
     };
-  if (task.network && !mapping.network)
+  if (
+    task.network &&
+    !mapping.network &&
+    !isUnrestrictedAccess(mapping.accessMode)
+  )
     return {
       reason: "network",
       text: "このタスクには通信が必要ですが、このClientではプロジェクトの通信許可がOFFです。",

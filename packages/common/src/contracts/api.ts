@@ -1,4 +1,5 @@
 import type { MinutesMetadata } from "./minutes.js";
+import type { AccessMode } from "./work.js";
 export {
   detailTask,
   sanitizeDetail,
@@ -199,7 +200,7 @@ export interface ClientState {
   suggestedInvite?: { engineUrl: string; token: string };
   settings: {
     profile?: { name: string; context: string; avatar?: string };
-    accessMode?: "full" | "approval";
+    accessMode?: AccessMode;
     progressMode?: "auto" | "manual";
     pendingProgressMode?: "auto" | "manual";
     slots: number;
@@ -237,7 +238,7 @@ export interface ClientState {
     result?: string;
     progress?: string;
     activityVersion?: number;
-    accessMode?: "full" | "approval";
+    accessMode?: AccessMode;
     progressMode?: "auto" | "manual";
     pendingProgressMode?: "auto" | "manual";
     phase?: "planning" | "awaiting-plan" | "executing";

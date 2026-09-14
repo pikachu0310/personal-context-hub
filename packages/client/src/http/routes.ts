@@ -25,6 +25,7 @@ import {
 import { equal, run } from "@ido/common/runtime/platform";
 
 import type { Client } from "../bootstrap/client.js";
+import { isAccessMode } from "@ido/common/contracts/work";
 export async function route(
   this: Client,
   req: IncomingMessage,
@@ -480,8 +481,8 @@ export async function route(
             slots: 1,
           });
         delete this.settings.pendingProject;
-        await this.save();
         if (input.allow === true) this.allowedProjects.add(project.id);
+        await this.save();
         this.ready();
       } finally {
         this.projectCreationBusy = false;
@@ -519,7 +520,6 @@ export async function route(
           network: input.network === true,
           slots: Math.max(1, Math.min(8, Number(input.slots) || 1)),
         });
-      await this.save();
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
       if (typeof input.allow === "boolean")
@@ -533,22 +533,28 @@ export async function route(
             ),
           ),
         );
+      await this.save();
       this.ready();
       break;
     }
     case "/api/allow": {
+      if (input.allow !== undefined && typeof input.allow !== "boolean")
+        throw new HttpError(400, "INVALID_EXECUTION_ALLOW");
       const projectId = id(input.projectId);
       const mapping = this.settings.mappings.find(
         (m) => m.projectId === projectId,
       );
       if (!mapping || !this.settings.projects.some((p) => p.id === projectId))
         throw new HttpError(409, "PROJECT_DIRECTORY_REQUIRED");
+      const previousSlots = mapping.slots;
+      const previousTotal = this.settings.slots;
+      const previouslyAllowed = this.allowedProjects.has(projectId);
       mapping.slots = Math.max(
         1,
         Math.min(8, Number(input.slots) || mapping.slots),
       );
       if (input.allow === true) this.allowedProjects.add(projectId);
-      else this.allowedProjects.delete(projectId);
+      else if (input.allow === false) this.allowedProjects.delete(projectId);
       this.settings.slots = Math.min(
         8,
         Math.max(
@@ -556,7 +562,16 @@ export async function route(
           this.executionMappings().reduce((total, m) => total + m.slots, 0),
         ),
       );
-      await this.save();
+      try {
+        await this.save();
+      } catch (error) {
+        mapping.slots = previousSlots;
+        this.settings.slots = previousTotal;
+        if (previouslyAllowed) this.allowedProjects.add(projectId);
+        else this.allowedProjects.delete(projectId);
+        mapping.executionAllowed = previouslyAllowed;
+        throw error;
+      }
       this.ready();
       break;
     }
@@ -591,10 +606,19 @@ export async function route(
       );
       break;
     }
+    case "/api/access-mode":
     case "/api/progress-mode": {
-      if (!["auto", "manual"].includes(String(input.mode)))
+      const changeProgress = url.pathname === "/api/progress-mode";
+      if (changeProgress && !["auto", "manual"].includes(String(input.mode)))
         throw new HttpError(400, "INVALID_PROGRESS_MODE");
+      if (
+        (!changeProgress || input.accessMode !== undefined) &&
+        !isAccessMode(input.accessMode)
+      )
+        throw new HttpError(400, "INVALID_ACCESS_MODE");
       if (input.runId) {
+        if (!changeProgress || input.accessMode !== undefined)
+          throw new HttpError(400, "PROJECT_ACCESS_MODE_ONLY");
         const value = this.executor.runs[id(input.runId)];
         if (!value || this.executor.deletedTasks[value.task.id])
           throw new HttpError(404, "RUN_NOT_FOUND");
@@ -617,20 +641,20 @@ export async function route(
         (m) => m.projectId === projectId,
       );
       if (!mapping) throw new HttpError(409, "PROJECT_DIRECTORY_REQUIRED");
-      if (
-        input.accessMode !== undefined &&
-        !["full", "approval"].includes(String(input.accessMode))
-      )
-        throw new HttpError(400, "INVALID_ACCESS_MODE");
-      mapping.progressMode = input.mode as "auto" | "manual";
-      if (input.accessMode !== undefined) {
-        mapping.accessMode =
-          input.mode === "auto"
-            ? "full"
-            : (input.accessMode as "full" | "approval");
-        mapping.network = true;
+      const previous = {
+        progressMode: mapping.progressMode,
+        accessMode: mapping.accessMode,
+      };
+      if (changeProgress)
+        mapping.progressMode = input.mode as "auto" | "manual";
+      if (isAccessMode(input.accessMode)) mapping.accessMode = input.accessMode;
+      try {
+        await this.save();
+      } catch (error) {
+        Object.assign(mapping, previous);
+        throw error;
       }
-      await this.save();
+      if (this.connected) this.ready();
       break;
     }
     case "/api/execute-plan": {
@@ -643,7 +667,7 @@ export async function route(
         throw new HttpError(409, "EXECUTION_NOT_ALLOWED");
       if (
         !value ||
-        !this.settings.mappings.some(
+        !this.executionMappings().some(
           (mapping) =>
             mapping.projectId === value.task.projectId &&
             this.allowedProjects.has(mapping.projectId) &&

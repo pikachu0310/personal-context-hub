@@ -28,6 +28,7 @@ test("detail projection includes every display kind and excludes execution inter
     directory: "/tmp/work",
     state: "running",
     threadId: "private-thread-handle",
+    accessMode: "sandbox",
     plan: "plan",
     detailSync: {
       engineUrl: "https://private-engine.invalid",
@@ -65,6 +66,7 @@ test("detail projection includes every display kind and excludes execution inter
   assert.ok(!encoded.includes("private-engine.invalid"));
   assert.ok(!encoded.includes("fixture-secret"));
   assert.equal(snapshot.plan, "plan");
+  assert.equal(snapshot.run.accessMode, "sandbox");
   assert.equal(snapshot.environment?.deviceName, "executor");
   assert.deepEqual(parseTaskDetail(snapshot), snapshot);
   assert.equal(taskProgress("turn.completed", "completed"), "完了");
