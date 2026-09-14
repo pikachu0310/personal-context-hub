@@ -54,7 +54,7 @@ try {
   assert.equal(client.allow, false);
   await page
     .getByRole("button", { name: "Exampleの設定", exact: true })
-    .click();
+    .press("Enter");
   await page.getByRole("menuitem", { name: "接続・設定", exact: true }).click();
   const networkResponse = page.waitForResponse((response) =>
     response.url().endsWith("/api/mappings"),
