@@ -58,7 +58,7 @@
   --mantine-color-dimmed: var(--workspace-muted);
 }
 :root {
-  font-family: "Segoe UI", "Noto Sans JP", system-ui, sans-serif;
+  font-family: "Noto Sans JP Variable", "Noto Sans JP", sans-serif;
   color: var(--workspace-text);
   background: var(--workspace-surface);
   font-synthesis: none;
@@ -1552,6 +1552,61 @@ button {
   }
 }
 
+/* The conversation and inspector share a scrollbar at the workspace's right edge. */
+.with-inspector {
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-items: start;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--workspace-muted) transparent;
+}
+.with-inspector:not(:has(> .task-inspector)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.with-inspector > .task-conversation {
+  min-height: 100%;
+}
+.with-inspector .conversation-scroll,
+.with-inspector > .project-document {
+  overflow: visible;
+  flex: 1 0 auto;
+}
+.with-inspector .composer-dock {
+  position: sticky;
+  bottom: 0;
+  background: var(--workspace-canvas);
+  z-index: 2;
+}
+.with-inspector > .task-inspector {
+  position: sticky;
+  top: 0;
+  max-height: none;
+  overflow: clip;
+  margin-bottom: 20px;
+}
+.inspector-header-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+}
+.inspector-header-toggle:hover {
+  background: var(--workspace-soft);
+  color: var(--workspace-text);
+}
+#task-inspector-control:empty {
+  display: none;
+}
+.source-picker-preview {
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+@media (max-width: 1150px) {
+  .with-inspector {
+    padding: 0;
+  }
+}
 .collapse-heading {
   display: flex;
   align-items: center;
@@ -1610,4 +1665,8 @@ button {
 }
 .composer-toolbar {
   flex-wrap: wrap;
+}
+
+.with-inspector > .task-inspector .mantine-Tabs-list {
+  position: static;
 }

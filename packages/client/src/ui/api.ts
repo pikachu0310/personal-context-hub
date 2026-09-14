@@ -7,6 +7,7 @@ const errors: Record<string, string> = {
   INVALID_MINUTES: "議事録は100,000文字以内で入力してください。",
   MEETING_NOT_FOUND:
     "議事録は削除されたか、このプロジェクトから参照できません。",
+  SOURCE_LIMIT_EXCEEDED: "ソースは20件、合計64,000文字まで追加できます。",
   INVALID_AVATAR:
     "画像を読み込めません。別のPNG・JPEG・WebP画像を選択してください。",
   PAIRING_REQUIRED: "先にチームのEngineへの接続を設定してください。",

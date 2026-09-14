@@ -226,6 +226,14 @@ export class Executor {
       }
       const directory =
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
+      task.attachedSources = [
+        ...new Map(
+          [
+            ...(previous?.task.attachedSources ?? []),
+            ...(task.attachedSources ?? []),
+          ].map((source) => [source.id, source]),
+        ).values(),
+      ];
       const value: Run = {
         contextSources: previous?.contextSources?.filter(
           (source) => source.kind !== "minutes",

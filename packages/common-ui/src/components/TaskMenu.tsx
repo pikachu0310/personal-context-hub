@@ -1,3 +1,4 @@
+import { Icon } from "./Icon.js";
 import { Button, Group, Menu, Modal, Stack, Text } from "@mantine/core";
 import { useState } from "react";
 import type { Task } from "@ido/common/contracts/protocol";
@@ -83,7 +84,7 @@ export function TaskMenu({
             disabled={disabled || busy}
             aria-label={`${task.title ?? task.text}のタスクメニュー`}
           >
-            ⋯
+            <Icon name="dots" />
           </button>
         </Menu.Target>
         <Menu.Dropdown>

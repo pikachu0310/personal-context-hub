@@ -1,3 +1,4 @@
+import { Icon } from "./Icons.js";
 import { useState, type ReactNode } from "react";
 export function Collapsible({
   storageKey,
@@ -36,7 +37,15 @@ export function Collapsible({
             }
           }}
         >
-          <span aria-hidden="true">{closed ? "›" : "⌄"}</span>
+          <span
+            aria-hidden="true"
+            style={{
+              display: "flex",
+              transform: closed ? undefined : "rotate(90deg)",
+            }}
+          >
+            <Icon name="chevron" size={15} />
+          </span>
           {title}
         </button>
         {actions}
