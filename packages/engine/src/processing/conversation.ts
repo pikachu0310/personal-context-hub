@@ -5,7 +5,9 @@ import type { Models } from "../ports/models.js";
 import type { Repository } from "../ports/repository.js";
 import { answer } from "./immediate/answer.js";
 import { MinutesUpdater } from "./minutes/updater.js";
+import type { CoordinatedConversation } from "./coordinator/session.js";
 export class Conversation {
+  coordinated?: CoordinatedConversation;
   readonly minutes: MinutesUpdater;
   readonly messages: Messages;
   constructor(

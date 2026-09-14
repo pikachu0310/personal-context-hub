@@ -6,8 +6,8 @@ export function save(this: Executor) {
   const snapshot = JSON.parse(
     JSON.stringify({ runs: this.runs, commands: this.commands }),
   );
-  this.saving = this.saving.then(() =>
-    atomic(join(this.directory, "runs.json"), snapshot),
-  );
+  this.saving = this.saving
+    .catch(() => {})
+    .then(() => atomic(join(this.directory, "runs.json"), snapshot));
   return this.saving;
 }

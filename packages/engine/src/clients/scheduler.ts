@@ -1,6 +1,10 @@
 import type { Task } from "../../../common/src/contracts/protocol.js";
 import type { Device } from "../domain/models.js";
 import type { Repository } from "../ports/repository.js";
+import {
+  requiresPolicySupport,
+  restrictExecutionPolicy,
+} from "../../../common/src/contracts/work.js";
 export class Scheduler {
   constructor(readonly repository: Repository) {}
   schedule(online: Set<string>) {
@@ -25,6 +29,13 @@ export class Scheduler {
           ).length;
         const eligible = devices.filter(
           (d) =>
+            (!requiresPolicySupport(
+              restrictExecutionPolicy(
+                task.executionPolicy,
+                task.effectiveExecutionPolicy,
+              ),
+            ) ||
+              d.executionPolicyVersion === 1) &&
             d.slots > active(d) &&
             d.grants.some(
               (g) =>

@@ -8,6 +8,10 @@ import {
   type Task,
 } from "../../../../common/src/contracts/protocol.js";
 import { secret } from "../../../../common/src/runtime/platform.js";
+import {
+  requiresPolicySupport,
+  restrictExecutionPolicy,
+} from "../../../../common/src/contracts/work.js";
 import { Scheduler } from "../../clients/scheduler.js";
 import type { Device } from "../../domain/models.js";
 import type { Repository } from "../../ports/repository.js";
@@ -133,6 +137,8 @@ export class ClientConnections {
             }))
             .filter((g) => !!this.store.get("project", g.projectId));
           device.slots = Math.max(1, Math.min(8, Number(data.slots) || 1));
+          device.executionPolicyVersion =
+            data.executionPolicyVersion === 1 ? 1 : undefined;
           this.store.put("device", device.id, device);
           this.ready.add(device.id);
           this.flush();
@@ -161,10 +167,24 @@ export class ClientConnections {
       const socket = this.peers.get(deviceId);
       const device = this.store.get<Device>("device", deviceId);
       if (socket?.readyState === WebSocket.OPEN && device)
-        for (const command of this.store.pending(deviceId))
+        for (const command of this.store.pending(deviceId)) {
+          const task = command.task as Task | undefined;
+          if (
+            ["execute", "retry", "steer"].includes(command.type) &&
+            task &&
+            requiresPolicySupport(
+              restrictExecutionPolicy(
+                task.executionPolicy,
+                task.effectiveExecutionPolicy,
+              ),
+            ) &&
+            device.executionPolicyVersion !== 1
+          )
+            continue;
           socket.send(
             JSON.stringify({ ...command, generation: device.generation }),
           );
+        }
     }
   }
 

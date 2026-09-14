@@ -33,6 +33,23 @@ export async function registerVoiceCommands(guild: Guild) {
         type: Option.Subcommand as const,
       })),
       {
+        name: "mode",
+        description: "会話方式を切り替える",
+        type: Option.Subcommand,
+        options: [
+          {
+            name: "value",
+            description: "会話方式",
+            type: Option.String,
+            required: true,
+            choices: [
+              { name: "テキストとSTT/TTS", value: "text-speech" },
+              { name: "GPT-Liveと話者別STT", value: "live" },
+            ],
+          },
+        ],
+      },
+      {
         name: "ask",
         description: "IDOに質問する",
         type: Option.Subcommand,
@@ -85,7 +102,7 @@ export async function registerVoiceCommands(guild: Guild) {
 export interface MeetingControls {
   allowed(userId: string): boolean;
   textChannelId: string;
-  quiet(): void;
+  quiet(userId: string): void;
   request(
     event: Record<string, unknown>,
   ): Promise<{ content: string; file?: string }>;
@@ -104,9 +121,16 @@ export function voiceCommandHandler(
         ? interaction.options.getSubcommand()
         : interaction.commandName;
     if (
-      !["join", "leave", "quiet", "context", "ask", "stop", "steer"].includes(
-        command,
-      )
+      ![
+        "join",
+        "leave",
+        "quiet",
+        "context",
+        "ask",
+        "stop",
+        "steer",
+        "mode",
+      ].includes(command)
     )
       return;
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -135,7 +159,7 @@ export function voiceCommandHandler(
         return;
       }
       if (command === "quiet") {
-        controls.quiet();
+        controls.quiet(interaction.user.id);
         await reply("読み上げを停止しました。文字起こしとタスクは継続します。");
         return;
       }
@@ -150,6 +174,10 @@ export function voiceCommandHandler(
           source: inVoice ? "voice-command" : "text",
           text: interaction.options.getString("text") ?? "",
           taskId: interaction.options.getString("task") ?? undefined,
+          conversationMode:
+            command === "mode"
+              ? interaction.options.getString("value")
+              : undefined,
         });
         await interaction.editReply({
           content: result.content.slice(0, 1900),

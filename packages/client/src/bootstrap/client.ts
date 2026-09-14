@@ -107,6 +107,7 @@ export class Client {
     this.emit({
       v: 1,
       type: "ready",
+      executionPolicyVersion: 1,
       grants: this.grants(),
       slots: this.settings.slots,
     });

@@ -1,10 +1,5 @@
-import {
-  createAudioResource,
-  StreamType,
-  VoiceConnectionStatus,
-} from "@discordjs/voice";
-import { Readable } from "node:stream";
 import type { DiscordState } from "../runtime/state.js";
+import { audioOutput } from "./audio.js";
 export async function deliver(
   state: DiscordState,
   message: Record<string, unknown>,
@@ -32,17 +27,8 @@ export async function deliver(
           });
         }
     }
-    if (
-      message.audio &&
-      message.speechEpoch === state.speechEpoch &&
-      state.voice?.state.status === VoiceConnectionStatus.Ready
-    )
-      state.player.play(
-        createAudioResource(
-          Readable.from(Buffer.from(String(message.audio), "base64")),
-          { inputType: StreamType.OggOpus },
-        ),
-      );
+    if (message.audio || message.kind === "audio-stop")
+      await audioOutput(state).deliver(message);
     return;
   }
 }

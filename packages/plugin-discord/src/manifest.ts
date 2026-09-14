@@ -65,5 +65,11 @@ export const discordManifest: PluginManifest = {
       "/api/activity/preview",
     ],
   },
-  capabilities: ["text", "audio", "activity"],
+  capabilities: [
+    "text",
+    "audio",
+    "activity",
+    "audio-stream",
+    "playback-control",
+  ],
 };

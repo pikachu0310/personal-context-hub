@@ -1,6 +1,6 @@
 # Package architecture
 
-Engine owns business state and decisions. Plugins own input/output integrations and communicate over versioned IPC; they do not import Engine implementation. Dashboard is a standard bundled plugin, not the administration server. Codex runs only on Client.
+Engine owns business state, the persistent main Codex model, and task supervision. Clients run delegated repository work in their own Codex environments. Plugins own input/output integrations and communicate over versioned IPC; they do not import Engine implementation. Dashboard is a standard bundled plugin, not the administration server. Engine and Client Codex authentication and homes are independent.
 
 | Package            | Responsibilities and entry                                                                                                                                                             |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -11,7 +11,18 @@ Engine owns business state and decisions. Plugins own input/output integrations 
 | `ui`               | Shared presentation components and meeting/project/task/artifact views; data and actions are injected, no authentication or HTTP                                                       |
 | `common`           | `contracts` for Client/Plugin messages and `runtime` for low-level utilities; no provider manifests or policy                                                                          |
 
-Concrete adapters depend on use cases and domain/ports. `bootstrap/engine.ts` wires instances without a DI framework. SQLite persists records and transactions; task state transitions and allocation are implemented by `processing/tasks` and `clients`. `index` exports the runtime; `main.tsx` only mounts a UI.
+Concrete adapters depend on use cases and domain/ports. `bootstrap/engine.ts` wires instances without a DI framework. SQLite persists records and transactions; task state transitions and allocation are implemented by `processing/tasks` and `clients`. `processing/coordinator/session.ts` owns a durable inbox and model handle per meeting. `ports/coordinator.ts` separates model execution from conversation decisions; `ports/work.ts` separates those decisions from Client work. `index` exports the runtime; `main.tsx` only mounts a UI.
+
+```mermaid
+flowchart LR
+    P["Input/output plugins"] --> R["Engine input router"]
+    R --> C["Meeting coordinator"]
+    C <--> M["Engine main Codex"]
+    C <--> W["WorkPort and task state"]
+    W <--> X["Approved Clients"]
+    C --> O["Text and audio output"]
+    O --> P
+```
 
 ## Plugin contract
 
@@ -25,18 +36,22 @@ The Engine catalog supplies package identity and the launch path. To add an inpu
 
 Generations change on start/stop; revisions change on configuration and voice invalidation. Pending input, replies and context credentials are fenced against those values and current roles. Discord additionally fences queued playback against its speech epoch. Business events go to running plugins subscribed through their meeting binding; an unbound Dashboard observes all meetings. Dashboard polls fresh snapshots, including after restart, so notifications are not its state authority. Discord card IDs reside under `plugin:discord`, separate from meetings.
 
+Protocol 2 has optional `audio-stream` and `playback-control` capabilities. Discord sends attributed PCM frames, activity events and bounded WAV segments with capture/session IDs. Frames are validated and routed separately from durable text/STT input. `audio-frame` and `audio-stop` outputs carry candidate IDs; encoded `audio` output waits for playback completion or interruption. The plugin owns the human-speech gate, codec conversion and player. Legacy text plugins need neither capability. Details are in [conversation modes](conversation-modes.md).
+
 ## Message processing and migration
 
-Text and audio use the same input router. The input ID is namespaced by plugin and durably accepted before asynchronous work. Audio is validated/transcribed, text is normalized, and explicit commands, immediate replies, or minutes processing are selected. Immediate replies/TTS and minutes run independently. Minutes updates serialize per meeting and merge changes into the latest record; task extraction uses Engine identities and permissions. Explicit task creation suppresses task extraction for that input. Ambiguous inputs are not retried automatically.
+Text and audio use the same input router. The input ID is namespaced by plugin and durably accepted before asynchronous work. WAV segments are transcribed and recorded with their speaker and capture metadata; the coordinator receives an assembled utterance rather than treating each audio segment as an independent request. Mechanical transcript projections replace repeated model-generated minutes in the coordinated modes. Normal inputs queue while the main model is busy; urgent inputs steer its active turn. Results and Live transcript observations use the same inbox. Model output supplies source references and proposals; Engine rechecks current identities, permissions, task versions and source completeness before accepting work.
+
+`text-speech` makes the persistent coordinator responsible for answers and uses the speech controller for TTS delivery. `live` keeps the same backend/task state while Live owns direct spoken conversation; independent STT still supplies attributed records. `start --conversation-mode legacy` retains the previous packages-based Responses reply/minutes path for comparison. It does not start or import `v0`.
 
 Messages live in separate SQLite records with transcription, reply, minutes and delivery states, including skipped, pending, running, failed and interrupted. Meeting responses include a projected message list for consumers, but the stored meeting contains no message array. Error IDs reference redacted Engine diagnostics. Raw audio is not retained.
 
 Opening a version-0 Engine database creates `engine.before-v1.sqlite` using SQLite `VACUUM INTO` (including committed WAL contents) before a transactional version-1 migration. It separates existing messages, namespaces input/external identity IDs, moves provider publication IDs, and preserves current configuration records. Backups use owner-only permissions on POSIX. Existing migrated backups are not overwritten. Unsupported future versions fail closed. On startup, uncertain pending processing becomes interrupted and is never automatically replayed. Do not run old and new Engine versions concurrently against one data directory. To roll back, stop Engine, retain the migrated database separately, and restore the backup with SQLite WAL/SHM files removed while no process has it open.
 
-Client journals, worktrees, credentials and dedicated Codex home retain their existing paths and recovery guarantees. No legacy `v0` application migration, PR #28 persistent/Live model, or Electron migration is part of this change.
+Client journals, worktrees, credentials and dedicated Codex home retain their existing paths and recovery guarantees. The persistent coordinator stores its handle and inbox in Engine SQLite and uses a separate Engine Codex home. A saved response can be applied without another model run; unknown model input requires explicit reconciliation and is not automatically replayed. No `v0` data or Electron migration is included. See [the integration mapping](main2-conversation-integration.md).
 
 ## Validation and distribution
 
-`check:ido` checks backend and UI types. `build:ido` checks import boundaries, bundles each runtime, builds four React/Mantine entries, and embeds Dashboard runtime/assets in the Engine tarball. `pack:ido` produces Engine, Client, Dashboard and Discord packages. Engine requires neither Discord nor Codex dependencies to start.
+`check:ido` checks backend and UI types. `build:ido` checks import boundaries, bundles each runtime, builds four React/Mantine entries, and embeds Dashboard runtime/assets in the Engine tarball. `pack:ido` produces Engine, Client, Dashboard and Discord packages. Engine includes the official Codex runtime for its main model; Discord SDK dependencies remain in the optional plugin. Main model processes start lazily when a meeting requires them.
 
-`test:ido` covers independent reply/minutes failure, duplicate input, ordered concurrency, role/generation fences, plugin shutdown, backup migration, Client reconnect/approval/control and previews. `smoke:ido` exercises browser setup, business views, Client pairing, Dashboard stop/restart and sandboxed preview operations. `smoke:ido:pack` installs fresh local tarballs and verifies their runtime/UI. These tests use synthetic users, mocked providers and local services; live provider credentials and publication are separate deployment work.
+`test:ido` covers the legacy reply/minutes path, coordinator persistence and steering, duplicate input, ordered concurrency, audio framing and interruption, role/generation fences, plugin shutdown, backup migration, Client policy negotiation/control and previews. `smoke:ido` exercises browser setup, business views, Client pairing, Dashboard stop/restart and sandboxed preview operations. `smoke:ido:pack` installs fresh local tarballs and verifies their runtime/UI. These tests use synthetic users, mocked providers and local services; real Live audio, provider credentials and publication are separate checks.

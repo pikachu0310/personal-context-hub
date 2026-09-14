@@ -27,6 +27,12 @@ import { Workspace } from "../output/queries/workspace.js";
 import { TaskEvents } from "../output/text/task-events.js";
 import { Conversation } from "../processing/conversation.js";
 import { InputRouter } from "../processing/routing/input.js";
+import { CoordinatedConversation } from "../processing/coordinator/session.js";
+import { createWorkPort } from "../processing/tasks/work.js";
+import { createCodexCoordinatorFactory } from "../adapters/codex/coordinator.js";
+import { createLiveSession } from "../adapters/openai/live.mjs";
+import type { CoordinatorFactory } from "../ports/coordinator.js";
+import type { ConversationMode } from "../../../common/src/contracts/coordinator.js";
 export interface EngineOptions {
   directory: string;
   port?: number;
@@ -35,6 +41,17 @@ export interface EngineOptions {
   uiDirectory?: string;
   dashboardEntry?: string;
   pluginCatalog?: CatalogEntry[];
+  conversation?:
+    | false
+    | {
+        mode?: ConversationMode;
+        coordinator?: CoordinatorFactory;
+        observationIntervalMs?: number;
+        createLiveSession?: any;
+        codexHome?: string;
+        codexExecutable?: string;
+        model?: string;
+      };
 }
 export class Engine {
   readonly store: Store;
@@ -46,6 +63,9 @@ export class Engine {
   readonly connections: ClientConnections;
   readonly workspace: Workspace;
   readonly taskEvents: TaskEvents;
+  readonly coordinatorFactory?: CoordinatorFactory & {
+    close?(): Promise<void>;
+  };
   readonly tunnels: Tunnels;
   readonly loginLimit = new RateLimit(10, 60000);
   readonly pairLimit = new RateLimit(20, 60000);
@@ -145,9 +165,48 @@ export class Engine {
       (id, op, input, context) => this.broker.request(id, op, input, context),
       () => {},
     );
-    this.taskEvents = new TaskEvents(this.store, (event) =>
-      this.plugins.publish(event),
-    );
+    this.taskEvents = new TaskEvents(this.store, (event) => {
+      this.plugins.publish(event);
+      if (event.type === "tasks")
+        void this.conversation.coordinated
+          ?.taskEvents(event.data as any)
+          .catch((error) =>
+            this.store.logError(error, {
+              source: "conversation",
+              operation: "task.result",
+            }),
+          );
+    });
+    if (options.conversation !== false) {
+      const conversation = options.conversation ?? {};
+      this.coordinatorFactory =
+        conversation.coordinator ??
+        createCodexCoordinatorFactory({
+          directory: options.directory,
+          codexHome: conversation.codexHome,
+          codexExecutable: conversation.codexExecutable,
+          model: conversation.model,
+        });
+      this.conversation.coordinated = new CoordinatedConversation(this.store, {
+        coordinator: this.coordinatorFactory,
+        work: createWorkPort({
+          repository: this.store,
+          tasks: this.tasks,
+          onChange: () => this.flush(),
+        }),
+        synthesize: (text) => this.conversation.speak(text),
+        createLiveSession:
+          conversation.createLiveSession ??
+          (async (settings: Record<string, unknown>) => {
+            const apiKey = await this.credentials.get("openai");
+            if (!apiKey) throw new Error("OPENAI_KEY_REQUIRED");
+            return createLiveSession({ ...settings, apiKey });
+          }),
+        mode: conversation.mode,
+        observationIntervalMs: conversation.observationIntervalMs,
+        publish: (event) => this.plugins.publish(event),
+      });
+    }
     this.tunnels = new Tunnels(options.directory, this.store, this.credentials);
     this.server.on("upgrade", (req, socket, head) => {
       if (req.url?.startsWith("/preview/") && this.trustedHost(req)) {
@@ -244,6 +303,10 @@ export class Engine {
   }
   async close() {
     clearInterval(this.timer);
+    const inputs = this.input.close();
+    await this.conversation.coordinated?.close();
+    await inputs;
+    await this.coordinatorFactory?.close?.();
     await this.plugins.close();
     this.tunnels.stop();
     this.connections.close();

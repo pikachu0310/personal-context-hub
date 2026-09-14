@@ -30,6 +30,9 @@ export async function route(
         "task/control",
         "artifact",
         "preview",
+        "conversation/state",
+        "conversation/log",
+        "conversation/control",
       ].includes(operation)
     )
   )

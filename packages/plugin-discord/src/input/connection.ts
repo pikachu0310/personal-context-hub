@@ -11,13 +11,15 @@ import {
   type VoiceChannel,
 } from "discord.js";
 import prism from "prism-media";
+import { randomUUID } from "node:crypto";
 import { text } from "../../../common/src/contracts/protocol.js";
 import {
   registerVoiceCommands,
   voiceCommandHandler,
 } from "../commands/voice.js";
 import { discordUserAllowed } from "../input/policy.js";
-import { wav } from "../input/wav.js";
+import { VoiceCapture } from "./capture.js";
+import { audioOutput } from "../output/audio.js";
 import type { DiscordState } from "../runtime/state.js";
 export async function start(
   state: DiscordState,
@@ -72,7 +74,8 @@ export async function start(
         state.voice.destroy();
       state.voice = undefined;
       state.speechEpoch++;
-      state.player.stop();
+      state.audioSessionId = randomUUID();
+      audioOutput(state).invalidate();
       emit({ type: "voice", channelId: null });
       const connection = joinVoiceChannel({
         channelId: channel.id,
@@ -124,6 +127,19 @@ export async function start(
           return;
         active.add(userId);
         const receivedEpoch = state.speechEpoch;
+        audioOutput(state).speakerStart(userId);
+        const capture = new VoiceCapture(
+          {
+            sessionId: state.audioSessionId,
+            userId,
+            guildId: channel.guild.id,
+            channelId: channel.id,
+            meetingId: state.config.meetingId,
+            projectId: state.config.projectId,
+            speechEpoch: receivedEpoch,
+          },
+          emit,
+        );
         const stream = connection.receiver.subscribe(userId, {
           end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
         });
@@ -135,49 +151,41 @@ export async function start(
         streams.add(stream);
         streams.add(decoder);
         decoder.once("close", () => streams.delete(decoder));
-        const chunks: Buffer[] = [];
-        let size = 0;
-        const timer = setTimeout(() => stream.destroy(), 30000);
+        let finished = false;
+        const finish = (complete = true) => {
+          if (finished) return;
+          finished = true;
+          capture.finish(complete);
+          audioOutput(state).speakerEnd(userId);
+          active.delete(userId);
+        };
         stream.pipe(decoder);
         decoder.on("data", (chunk: Buffer) => {
-          size += chunk.length;
-          if (size > 6 * 1024 * 1024) {
+          try {
+            capture.push(chunk);
+          } catch {
             stream.destroy();
             decoder.destroy();
-            return;
           }
-          chunks.push(chunk);
         });
-        stream.on("error", () => decoder.destroy());
-        decoder.on("error", () => {});
+        stream.on("error", () => {
+          finish(false);
+          decoder.destroy();
+        });
+        decoder.on("error", () => finish(false));
         stream.once("close", () => {
-          clearTimeout(timer);
-          active.delete(userId);
           streams.delete(stream);
         });
-        decoder.once("end", () => {
-          if (
-            size &&
-            state.voice === connection &&
-            connection.state.status === VoiceConnectionStatus.Ready
-          )
-            emit({
-              type: "input",
-              guildId: channel.guild.id,
-              channelId: channel.id,
-              userId,
-              eventId: `voice-${Date.now()}-${userId}`,
-              speechEpoch: receivedEpoch,
-              audio: wav(Buffer.concat(chunks)).toString("base64"),
-            });
-        });
+        decoder.once("end", () => finish(true));
+        decoder.once("close", () => finish(false));
       });
     },
     () => {
       const previous = state.voice;
       state.voice = undefined;
       state.speechEpoch++;
-      state.player.stop();
+      state.audioSessionId = randomUUID();
+      audioOutput(state).invalidate();
       if (previous && previous.state.status !== VoiceConnectionStatus.Destroyed)
         previous.destroy();
       emit({ type: "voice", channelId: null });
@@ -189,9 +197,24 @@ export async function start(
     {
       textChannelId: state.config.textChannelId,
       allowed: (userId) => discordUserAllowed(state.config, userId),
-      quiet: () => {
+      quiet: (userId) => {
         state.speechEpoch++;
-        state.player.stop(true);
+        audioOutput(state).invalidate();
+        emit({
+          type: "input",
+          activity: "quiet",
+          userId,
+          eventId: randomUUID(),
+          guildId: state.config.guildId,
+          channelId: state.voice?.joinConfig.channelId,
+          speechEpoch: state.speechEpoch,
+          capture: {
+            sessionId: state.audioSessionId,
+            utteranceId: randomUUID(),
+            segmentIndex: 0,
+            startedAt: Date.now(),
+          },
+        });
       },
       request: (event) =>
         new Promise((resolve, reject) => {

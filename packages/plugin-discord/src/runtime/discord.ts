@@ -1,4 +1,5 @@
 import { VoiceConnectionStatus } from "@discordjs/voice";
+import { randomUUID } from "node:crypto";
 import type {
   PluginEvent,
   PluginOutput,
@@ -12,6 +13,7 @@ import { discordManifest } from "../manifest.js";
 import { Publications } from "../output/publications.js";
 import { renderPublication } from "../output/render.js";
 import { deliver } from "../output/transport.js";
+import { audioOutput } from "../output/audio.js";
 import { createDiscordState } from "./state.js";
 const state = createDiscordState();
 const publications = new Publications(
@@ -21,6 +23,7 @@ const publications = new Publications(
   },
 );
 state.player.on("error", () => emit({ type: "status", status: "audio-error" }));
+let pendingFrames = 0;
 const emit = (data: Record<string, unknown>) => {
   if (data.type === "input") {
     const input = normalizeInput(
@@ -29,11 +32,18 @@ const emit = (data: Record<string, unknown>) => {
       state.voice?.state.status === VoiceConnectionStatus.Ready
         ? (state.voice.joinConfig.channelId ?? undefined)
         : undefined,
+      state.audioSessionId,
     );
-    if (input)
+    if (input) {
+      if (input.audioFrame && pendingFrames >= 32) return;
+      if (input.audioFrame) pendingFrames++;
       void runtime.rpc
         .request("input", input as unknown as Record<string, unknown>)
-        .catch(() => runtime.emit("status", { status: "input-error" }));
+        .catch(() => runtime.emit("status", { status: "input-error" }))
+        .finally(() => {
+          if (input.audioFrame) pendingFrames--;
+        });
+    }
   } else if (data.type === "voice") runtime.emit("invalidate");
   else runtime.emit(String(data.type), data);
 };
@@ -67,7 +77,8 @@ const runtime = pluginRuntime(
         `https://${state.config.appId}.discordsays.com`,
       ];
       state.speechEpoch++;
-      state.player.stop(true);
+      state.audioSessionId = randomUUID();
+      audioOutput(state).invalidate();
       runtime.emit("invalidate");
       if (reconnect) {
         for (const request of state.pending.values()) {
@@ -109,10 +120,16 @@ const runtime = pluginRuntime(
         return { ok: true };
       }
       await deliver(state, {
+        kind: output.kind,
+        eventId: output.eventId,
         channelId: output.replyTo?.channelId,
         content: output.content,
         audio: output.audio,
         speechEpoch: output.replyTo?.speechEpoch,
+        audioSessionId: output.replyTo?.audioSessionId,
+        audioFormat: output.audioFormat,
+        candidateId: output.candidateId,
+        audioSequence: output.audioSequence,
       });
       return { ok: true };
     }
@@ -160,7 +177,7 @@ const runtime = pluginRuntime(
       state.voice.state.status !== VoiceConnectionStatus.Destroyed
     )
       state.voice.destroy();
-    state.player.stop();
+    audioOutput(state).invalidate();
     state.client?.destroy();
     await web.close();
   },

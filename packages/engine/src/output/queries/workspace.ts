@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { WorkspaceState } from "../../../../common/src/contracts/api.js";
+import type {
+  WorkspaceState,
+  MessageView,
+} from "../../../../common/src/contracts/api.js";
 import type {
   ConversationInput,
   InputContext,
@@ -17,6 +20,60 @@ export class Workspace {
     readonly artifact: (taskId: string) => Promise<unknown>,
     readonly preview: (taskId: string, userId: string) => string,
   ) {}
+  private meetings(): WorkspaceState["meetings"] {
+    const outputs = this.store.list<{
+      id: string;
+      meetingId: string;
+      provider?: string;
+      text?: string;
+      sourceIds?: string[];
+      at?: number;
+      startedAt?: number;
+    }>("conversation-output");
+    return this.store
+      .list<WorkspaceState["meetings"][number]>("meeting")
+      .map((meeting) => {
+        const messages: MessageView[] = meeting.messages.map((message) => ({
+          ...message,
+          authorName:
+            message.authorName ??
+            this.store.conversationAuthor(message.authorId)?.name,
+          role: message.role ?? "user",
+        }));
+        for (const output of outputs
+          .filter((output) => output.meetingId === meeting.id)
+          .slice(-100)) {
+          if (
+            typeof output.text !== "string" ||
+            !output.text.length ||
+            messages.some((message) => message.id === output.id)
+          )
+            continue;
+          // Direct answers already appear beneath their source message. Results
+          // without a current source and Live transcripts need their own view row.
+          if (
+            (output.sourceIds ?? []).some((id) =>
+              messages.some(
+                (message) =>
+                  message.id === id && message.replyText === output.text,
+              ),
+            )
+          )
+            continue;
+          messages.push({
+            id: output.id,
+            authorId: `assistant:${output.provider ?? "coordinator"}`,
+            authorName: output.provider === "live" ? "IDO (Live)" : "IDO",
+            role: "assistant",
+            text: output.text,
+            at: output.at ?? output.startedAt ?? 0,
+            stage: output.provider === "live" ? "transcript" : "generated",
+          });
+        }
+        messages.sort((left, right) => left.at - right.at);
+        return { ...meeting, messages };
+      });
+  }
   async request(
     operation: string,
     input: Record<string, unknown>,
@@ -35,15 +92,68 @@ export class Workspace {
         user,
         projects:
           this.store.list<WorkspaceState["projects"][number]>("project"),
-        meetings:
-          this.store.list<WorkspaceState["meetings"][number]>("meeting"),
+        meetings: this.meetings(),
         tasks: this.store.list<WorkspaceState["tasks"][number]>("task"),
       } satisfies WorkspaceState;
     if (operation === "artifact") return this.artifact(id(input.taskId));
+    if (
+      operation === "conversation/state" ||
+      operation === "conversation/log"
+    ) {
+      const meetingId = id(input.meetingId);
+      if (!this.store.get("meeting", meetingId))
+        throw new Error("MEETING_NOT_FOUND");
+      if (operation === "conversation/state")
+        return this.router.ai.coordinated?.state(meetingId);
+      return this.store
+        .list<{ meetingId: string }>("conversation-output")
+        .filter((value) => value.meetingId === meetingId)
+        .slice(-100);
+    }
     if (operation === "preview")
       return { url: this.preview(id(input.taskId), user.id) };
     if (user.role === "viewer") throw new Error("PERMISSION_DENIED");
     switch (operation) {
+      case "conversation/control": {
+        if (!this.router.ai.coordinated)
+          throw new Error("COORDINATOR_UNAVAILABLE");
+        const meetingId = id(input.meetingId);
+        const run = (operation: Promise<unknown>) => {
+          void operation.catch((error) =>
+            this.store.logError(error, {
+              source: "conversation",
+              operation: "conversation.control",
+              meetingId,
+            }),
+          );
+          return { ok: true };
+        };
+        if (input.action === "flush")
+          return run(this.router.ai.coordinated.flush(meetingId));
+        if (
+          input.batchId !== this.router.ai.coordinated.state(meetingId).batchId
+        )
+          throw new Error("COORDINATOR_VERSION_MISMATCH");
+        if (
+          input.action === "resume" &&
+          Array.isArray(input.sourceIds) &&
+          input.sourceIds.length <= 100
+        ) {
+          return run(
+            this.router.ai.coordinated.resume(
+              meetingId,
+              context,
+              input.sourceIds.map((value) => id(value)),
+            ),
+          );
+        }
+        if (input.action === "resolve" && typeof input.retry === "boolean") {
+          return run(
+            this.router.ai.coordinated.resolve(meetingId, input.retry),
+          );
+        }
+        throw new Error("INVALID_ACTION");
+      }
       case "projects": {
         if (user.role !== "admin") throw new Error("PERMISSION_DENIED");
         const project = {
@@ -70,10 +180,17 @@ export class Workspace {
         return meeting;
       }
       case "messages": {
+        if (
+          input.priority !== undefined &&
+          !["normal", "immediate"].includes(String(input.priority))
+        )
+          throw new Error("INVALID_INPUT_PRIORITY");
         const event: ConversationInput = {
           eventId: id(input.requestId ?? randomUUID()),
           meetingId: id(input.meetingId),
           text: text(input.text),
+          interaction: true,
+          priority: input.priority === "normal" ? "normal" : "immediate",
         };
         const meeting = this.store.get<{ projectId?: string }>(
           "meeting",

@@ -1,12 +1,12 @@
 # IDO Engine / Client
 
-IDO is a self-hosted team engine. It records conversations and minutes, turns explicit implementation requests into tasks, and assigns tasks to members' locally approved Codex clients. The Engine never runs Codex. Dashboard and Discord are independent child-process plugins. Dashboard is bundled and starts by default; Discord is optional. Engine administration remains available if either stops.
+IDO is a self-hosted team engine. It records conversations, keeps a persistent main Codex model per meeting, and supervises work delegated to members' locally approved Codex Clients. The main model runs on Engine with its own Codex authentication and home; Clients run actual repository work in their independent environments. Dashboard and Discord are independent child-process plugins. Dashboard is bundled and starts by default; Discord is optional. Engine administration remains available if either stops.
 
 The `@ido/*` names are provisional. This branch builds installable npm tarballs; it does not publish packages to the registry. Until publication, use the tarball commands below. Existing hub integrations and their data remain separate; no legacy configuration is read or migrated.
 
 ## Engine error diagnostics
 
-Administrators can open **エラーログ** in the Engine dashboard. Discord failures include an error ID that links the notification to the stored diagnostic. Logs distinguish transcription, minutes, answers, speech output and task creation, with timestamps, related input/meeting/message IDs, model, HTTP status, known error code, network cause and OpenAI request ID when available. Speech/answer failures preserve successful minutes and mark the input as partially failed.
+Administrators can open **エラーログ** in the Engine dashboard. Discord failures include an error ID that links the notification to the stored diagnostic. Logs distinguish transcription, coordinator input, answers, speech output and task creation, with timestamps, related input/meeting/message IDs, model, HTTP status, known error code, network cause and OpenAI request ID when available. Speech/answer failures preserve recorded statements. The legacy mode also retains independent reply/minutes failure states.
 
 Diagnostics are stored in `engine.sqlite` in the same Engine data directory selected by `IDO_DATA_DIR`. They survive restarts; the latest 500 records are retained and the dashboard shows the newest 100. Only administrators receive these records. Raw provider messages, request/response bodies, headers, audio, transcripts and stacks are excluded because they can contain secrets or private content. Unknown error codes receive a generic explanation. Failures from before this feature cannot be reconstructed.
 
@@ -14,16 +14,20 @@ The OpenAI connection check reads the model list; success verifies authenticatio
 
 ## Install
 
-Use Node.js **24.x**, npm, and Git on macOS, Linux/WSL, or native Windows. Only Clients need Git and Codex authentication. The Client package supplies its own pinned Codex CLI binary through official platform packages.
+Use Node.js **24.x**, npm, and Git on macOS, Linux/WSL, or native Windows. Clients need Git for their repository worktrees. Both Engine and Clients supply the official pinned Codex runtime and need their own Codex authentication when using it; existing personal authentication is not copied.
 
 After package publication:
 
 ```sh
 npm install -g @ido/engine
+ido-engine codex-login
+ido-engine codex-status
 ido-engine start
 ```
 
 The first start prompts for the administrator name and a password of at least 12 characters in the terminal. No unauthenticated web registration endpoint exists. For a headless host, use `ido-engine init --name admin --password-stdin` and pipe a password from your secret manager; do not put passwords in command arguments. Then run `ido-engine start --no-open`.
+
+The default conversation mode is `text-speech`. Use `start --conversation-mode live` to make Live the default for new meeting sessions, or `--conversation-mode legacy` for the previous packages-based Responses reply/minutes path. Existing meetings resume their saved mode. The persistent main model defaults to `gpt-5.6-sol` with low reasoning effort; `--main-model` selects another model. `--codex-home` overrides the Engine main model's home; use the same value for login, status and start. Its default is `<engine-data>/codex`, separate from every Client's home. Main model tools for repository work are disabled; investigation and implementation are delegated through WorkPort. See [conversation modes](conversation-modes.md).
 
 Engine administration opens at `http://127.0.0.1:4310/admin`. Business views run at `/dashboard/`. Public previews use `/preview/` on the same Engine host. Port 4311 remains an internal relay listener and does not need a public tunnel. `--port` and `--preview-port` change these. Processes remain in the foreground; use a second terminal for `stop`, `status`, or `doctor`. OS service registration is intentionally not included. After a crash, `doctor --recover` removes a stale process lock only if the recorded process has stopped.
 
@@ -36,7 +40,7 @@ In Engine administration and Dashboard:
 5. Save Application ID and OAuth Client Secret. Start the plugin; it registers `/join`, `/leave` and `/ido` in the configured guild. Join a voice channel yourself and invoke `/join` to bring the Bot there. `/leave` from the same channel disconnects it and stops audio reception/playback. Startup no longer auto-joins a configured voice channel; old voice-channel settings are ignored. Link each IDO member to their own Discord account using the account-link action in Engine setup. By default, everyone in the joined voice channel or configured text channel can contribute and request/control tasks without linking. Activity access still requires linking. In Bot settings, select an explicit Discord user-ID allowlist to restrict reception and commands; an empty allowlist permits nobody. These settings apply immediately. Unlinked speakers receive conversation-only identities, never dashboard accounts or device grants.
 6. Set one HTTPS origin, or use the ngrok button to acquire it automatically. Complete the independent connection checks.
 
-Guidance can be hidden and redisplayed; hiding it does not mark credentials or connectivity as verified. `!ido task <instruction>` explicitly creates a task. Other text and voice messages contribute to minutes; direct implementation requests are extracted into tasks for the configured project. Model output supplies task content, never identities, roles, device grants or administration commands. The dashboard remains usable when the Discord plugin is stopped or fails.
+Guidance can be hidden and redisplayed; hiding it does not mark credentials or connectivity as verified. `!ido task <instruction>` explicitly creates a task. Other text and voice messages enter the meeting's mechanical log and persistent main-model inbox; sourced implementation proposals are checked before becoming tasks for the configured project. Read-only investigations are separate restricted Client tasks. Model output never supplies identities, roles, device grants or administration authority. The dashboard remains usable when the Discord plugin is stopped or fails.
 
 Each member installs and starts a Client:
 
@@ -57,7 +61,7 @@ See [package architecture and migration](packages-architecture.md) for the plugi
 
 Default application data lives under the current account's application data location: macOS Application Support, Windows LocalAppData, or Linux XDG data home. `IDO_DATA_DIR` explicitly chooses another directory for one process. The Engine and Client use separate directories by default.
 
-- Engine: SQLite users, password hashes (salted scrypt), sessions, projects, meetings, tasks, delivery outbox, device registration, service identity links and operation audit.
+- Engine: SQLite users, password hashes (salted scrypt), sessions, projects, meetings/messages, coordinator inbox and thread handles, Bot output records, tasks, delivery outbox, device registration, service identity links and operation audit. Engine also has its own Codex home and restricted coordinator workspace.
 - Client: repo mappings and a durable command/run journal, worktrees, and a dedicated Codex home.
 - Secrets: Engine and Client default to `<data-directory>/secrets.json` on every OS, without accessing Keychain, DPAPI or Secret Service. The file contains plaintext values, is written atomically with mode `0600`, and its directory is created with mode `0700` on POSIX. No environment variable is needed. Existing OS-store values are left untouched and are not automatically migrated; re-save those values in the dashboard after restarting. Codex's own authentication remains managed by Codex in its dedicated home. Protect the containing account and backups; this is not OS sandbox isolation.
 - Settings APIs expose only presence flags for secrets. Audit entries contain actor/action/target IDs, not configuration values or conversation bodies.
@@ -68,7 +72,7 @@ The HTTP server binds to loopback. A reverse proxy must preserve the public Host
 
 The task allocator chooses connected, non-revoked devices with the project mapping, required network grant and free capacity. It prioritizes more free slots, then the least recently assigned device. Assignment and its delivery command commit in one SQLite transaction before sending. Every command has an ID; every task has a run ID and revision. Connections have monotonically increasing generations. A new connection replaces the old one. Stale results cannot overwrite a newer revision.
 
-Disconnected work remains assigned. A Client restart marks uncertain running work interrupted and preserves its worktree. It never silently starts that work on another machine. Retry is explicit and remains on the same device/worktree; it increments the revision. Additional instructions use Codex App Server `turn/steer`. An ambiguous delivery is not automatically repeated. An instruction arriving after a turn has ended is reported so the member can submit it in a new execution. Repositories must have a committed HEAD for worktree creation. The Client does not silently commit the user's working tree.
+Disconnected work remains assigned. A Client restart marks uncertain running work interrupted and preserves its worktree. It never silently starts that work on another machine. Retry is explicit and remains on the same device/worktree; it increments the run revision. Additional instructions use Codex App Server `turn/steer`, with durable control receipts distinguishing queued, applied, stopped and uncertain delivery. Unaccepted instructions can remain queued for continuation; unknown delivery requires reconciliation rather than automatic repetition. Read-only/network restrictions are retained on retry and require a compatible Client. Repositories must have a committed HEAD for worktree creation. The Client does not silently commit the user's working tree. See [WorkPort](work-port-contract.md).
 
 ## Discord Activity and previews
 
@@ -107,12 +111,15 @@ The Bot accepts speech only from the currently joined voice channel and messages
 
 - `/ido join` and `/ido leave` are aliases for `/join` and `/leave`.
 - `/ido quiet` stops current playback and discards speech replies already in flight. Recording, minutes and tasks continue; later questions can speak again.
-- `/ido context` returns current minutes with the complete text in `minutes.txt`.
-- `/ido ask text:<question>` asks a question without creating a task. Voice/text calls such as “井戸Bot、聞こえていますか？” or “井戸Bot、この会議の目的は？” use the same independent reply path. Ordinary conversation updates minutes without being read aloud. Answers use meeting/task context; they do not run tools or inspect repository files.
+- `/ido mode value:text-speech` and `/ido mode value:live` switch the meeting's audio conversation mode while preserving its main-model inbox and work state.
+- `/ido context` returns the current minutes projection in `minutes.txt`. In coordinated modes this is a bounded mechanical transcript projection, not an export of every stored message.
+- `/ido ask text:<question>` requests an answer without authorizing implementation. If source inspection is needed, the main model can delegate a read-only research task to a compatible Client. Ordinary conversation is observed without requiring a spoken reply. Voice/text calls such as “井戸Bot、この会議の目的は？” use the persistent main-model queue; Live owns direct voice replies in Live mode. The legacy mode retains its previous independent reply API.
 - `/ido stop task:<ID>` and `/ido steer text:<instruction> task:<ID>` control an existing task in the configured meeting/project. The ID can be omitted only when exactly one eligible task exists, or shortened to a unique prefix. Queued task instructions update that task; running task instructions use the existing Client execution. Linked viewers cannot control tasks.
 - Voice/text examples: “井戸Bot、今のタスクを止めて” and “井戸Bot、今のタスクに追加で、テストも実行して”. Ambiguous targets receive a list of IDs instead of selecting arbitrarily. Quoted and hypothetical stop phrases are not commands.
 
-Recognized statements appear immediately in one edited live transcript card, before slower minutes analysis. A separate minutes card is edited rather than reposted. Message IDs are retained across plugin restarts; only deleted cards are recreated. The live card shows recent statements within Discord's message limit; the Engine meeting retains the accepted transcript. `/ido context` exports minutes, not raw audio. Full-context commands work from the configured text channel or for a member in the Bot's current voice channel and reply ephemerally.
+Recognized statements and their speaker/capture metadata are recorded independently of response generation. The live transcript and minutes cards are edited rather than reposted; publication IDs survive plugin restarts and only deleted cards are recreated. In coordinated modes the minutes projection is mechanical and bounded to 12,000 characters, while separate message records retain accepted text. Live uses continuous PCM alongside the independent attributed STT path. Neither raw PCM nor WAV is stored permanently. Context commands work from the configured text channel or for a member in the Bot's current voice channel and reply ephemerally.
+
+Workspace operations `conversation/state`, `conversation/log` and `conversation/control` expose coordinator status, Bot output and explicit recovery. Recovery validates the current batch ID; restored source authority can only be re-established by the same actor through the same plugin. Unknown model input and unknown text delivery are not automatically replayed. A dedicated recovery UI is not included; see [the operation details](conversation-modes.md#通常入力即時入力復旧).
 
 These changes do not include Forum task threads or peer review. To update an existing local installation, rebuild and package, install the updated Discord tarball with `ido-engine plugin-install --tarball ...`, and restart the Engine/plugin at an appropriate work boundary. Building alone does not replace a running process or the installed plugin copy. The Bot registers its commands on startup; rejoin with `/join` after restart.
 
@@ -126,13 +133,13 @@ npm run pack:ido
 npm run smoke:ido:pack
 ```
 
-The last command installs the tarballs into new temporary directories, checks that the Engine has no Codex/Discord dependency, starts/stops both distributions and installs the plugin from its local tarball. Local release testing can use:
+The last command installs the tarballs into new temporary directories, checks package boundaries, starts/stops both distributions and installs the plugin from its local tarball. Engine now includes its main-model Codex runtime; Discord SDK code remains in the plugin. Local release testing can use:
 
 ```sh
 npm install -g ./ido-engine-0.2.0.tgz
-ido-engine plugin-install --tarball /absolute/path/ido-plugin-discord-0.2.0.tgz
+ido-engine plugin-install --tarball ./ido-plugin-discord-0.2.0.tgz
 ```
 
 `plugin-install --tarball` is a local CLI development/release operation, not a browser endpoint. The browser installer accepts only the catalog's package and version. Installation validates package identity, JavaScript syntax and the plugin protocol handshake before replacing the active installation. Failed installs leave the previous installation selected. Plugin processes are crash-contained but run with the host user's OS permissions. Official catalog membership is a trust decision, not an OS sandbox.
 
-CI adds macOS/Linux/Windows Node 24 checks, npm artifact installation, and a Chromium workflow. Legacy integration regressions remain in the existing suite. Automated tests use synthetic accounts, mocked Codex execution and loopback connections; they do not prove live Discord Activity approval, real multi-PC networking, provider accounts, Codex login or execution on operating systems not actually run. Those deployment checks need configured test accounts and devices. npm publication, pushing this branch, releases, and public Discord application publication remain separate external actions.
+CI adds macOS/Linux/Windows Node 24 checks, npm artifact installation, and a Chromium workflow. Packages tests cover both coordinated conversation and the retained legacy packages path; archived `v0` tests are separate. Automated tests use synthetic accounts, mocked Codex/Live execution and loopback connections; they do not prove real Live conversation, Discord Activity approval, multi-PC networking, provider accounts, Codex login or execution on operating systems not actually run. Those deployment checks need configured test accounts and devices. The [integration mapping](main2-conversation-integration.md) distinguishes migrated features from legacy features outside scope. npm publication, pushing this branch, releases, and public Discord application publication remain separate external actions.

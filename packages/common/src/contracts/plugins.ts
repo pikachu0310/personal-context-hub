@@ -20,9 +20,28 @@ export interface PluginManifest {
     frameOrigins?: string[];
     frameAncestors?: string[];
   };
-  capabilities: Array<"text" | "audio" | "activity" | "web">;
+  capabilities: Array<
+    "text" | "audio" | "activity" | "web" | "audio-stream" | "playback-control"
+  >;
 }
 
+export type ConversationModeKind = "text-speech" | "live";
+export interface AudioCapture {
+  sessionId: string;
+  utteranceId: string;
+  segmentIndex: number;
+  startedAt: number;
+  endedAt?: number;
+  final?: boolean;
+  complete?: boolean;
+}
+export interface AudioFrame {
+  pcm: string;
+  sampleRate: 48000;
+  channels: 2;
+  format: "pcm16";
+  sequence: number;
+}
 export interface ConversationInput {
   eventId: string;
   meetingId: string;
@@ -30,17 +49,25 @@ export interface ConversationInput {
   subject?: string;
   text?: string;
   audio?: string;
-  command?: "ask" | "task" | "stop" | "steer" | "context";
+  audioFrame?: AudioFrame;
+  activity?: "start" | "end" | "quiet";
+  capture?: AudioCapture;
+  conversationMode?: ConversationModeKind;
+  priority?: "normal" | "immediate";
+  command?: "ask" | "task" | "stop" | "steer" | "context" | "mode";
   taskId?: string;
   interaction?: boolean;
   replyTo?: Record<string, unknown>;
 }
 export interface PluginOutput {
-  kind: "reply" | "audio";
+  kind: "reply" | "audio" | "audio-frame" | "audio-stop";
   eventId: string;
   content?: string;
   file?: string;
   audio?: string;
+  audioFormat?: "ogg-opus" | "pcm16-24000-mono";
+  candidateId?: string;
+  audioSequence?: number;
   replyTo?: Record<string, unknown>;
 }
 export interface PluginEvent {

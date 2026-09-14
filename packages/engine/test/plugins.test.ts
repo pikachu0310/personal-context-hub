@@ -8,7 +8,14 @@ import { PluginProcess } from "../src/adapters/plugins/process.js";
 import { Engine } from "../src/bootstrap/engine.js";
 async function setup(t: { after(fn: () => Promise<void>): void }) {
   const directory = await mkdtemp(join(tmpdir(), "ido-plugins-"));
-  const engine = new Engine({ directory, port: 0, previewPort: 0 });
+  // These fixtures exercise the compatibility minutes pipeline and plugin
+  // isolation. The default persistent coordinator has its own integration suite.
+  const engine = new Engine({
+    directory,
+    port: 0,
+    previewPort: 0,
+    conversation: false,
+  });
   const user = engine.store.createUser("admin", "test-password-long", "admin");
   engine.store.put("project", "project", { id: "project", name: "Project" });
   engine.store.put("meeting", "meeting", {

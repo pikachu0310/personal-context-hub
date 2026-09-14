@@ -9,6 +9,7 @@ export interface Device {
   grants: Grant[];
   slots: number;
   lastAssigned: number;
+  executionPolicyVersion?: number;
 }
 export interface Meeting {
   id: string;
@@ -33,6 +34,19 @@ export interface Message {
   meetingId: string;
   authorId: string;
   authorName?: string;
+  role?: "user" | "assistant";
+  origin?: "audio" | "text";
+  inputId?: string;
+  complete?: boolean;
+  command?: string;
+  capture?: {
+    sessionId: string;
+    utteranceId: string;
+    segmentIndex: number;
+    startedAt: number;
+    endedAt?: number;
+    final?: boolean;
+  };
   text: string;
   replyText?: string;
   at: number;

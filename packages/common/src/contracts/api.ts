@@ -3,6 +3,8 @@ import type { Grant, Mapping, Project, Task, User } from "./protocol.js";
 export interface MessageView {
   id: string;
   authorId: string;
+  authorName?: string;
+  role?: "user" | "assistant";
   text: string;
   replyText?: string;
   at: number;

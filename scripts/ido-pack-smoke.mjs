@@ -122,7 +122,13 @@ try {
           shell: process.platform === "win32",
         }),
       );
-      assert.ok(!JSON.stringify(dependencies).includes("@openai/codex"));
+      // Engine owns the persistent main model; task Clients keep their own
+      // Codex installation and authentication. Discord remains a plugin.
+      assert.ok(
+        dependencies.dependencies?.["@ido/engine"]?.dependencies?.[
+          "@openai/codex"
+        ],
+      );
       assert.ok(!JSON.stringify(dependencies).includes("discord.js"));
       cli(
         path,

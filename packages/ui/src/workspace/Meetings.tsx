@@ -51,6 +51,14 @@ export function Meetings({
               <ScrollArea h={meeting.messages.length ? 180 : 0}>
                 {meeting.messages.slice(-30).map((m) => (
                   <Paper key={m.id} p="sm" mb="xs" bg="gray.0">
+                    <Text
+                      size="xs"
+                      fw={600}
+                      c={m.role === "assistant" ? "blue" : "dimmed"}
+                    >
+                      {m.authorName ??
+                        (m.role === "assistant" ? "IDO" : m.authorId)}
+                    </Text>
                     <Group justify="space-between">
                       <Text size="sm">{m.text}</Text>
                       <Status value={m.stage} />

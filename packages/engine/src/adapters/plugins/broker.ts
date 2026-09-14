@@ -104,6 +104,12 @@ export class PluginBroker {
     }
     if (operation === "input") {
       const event = input as unknown as ConversationInput;
+      validateMediaInput(event);
+      if (
+        (event.audioFrame || event.activity) &&
+        !plugin.manifest?.capabilities.includes("audio-stream")
+      )
+        throw new Error("PERMISSION_DENIED");
       text(event.eventId, 200);
       text(event.meetingId, 100);
       if (
@@ -115,7 +121,9 @@ export class PluginBroker {
       if (event.text) text(event.text);
       if (
         event.command &&
-        !["ask", "task", "stop", "steer", "context"].includes(event.command)
+        !["ask", "task", "stop", "steer", "context", "mode"].includes(
+          event.command,
+        )
       )
         throw new Error("INVALID_COMMAND");
       let context: InputContext;
@@ -133,7 +141,11 @@ export class PluginBroker {
           throw new Error("INPUT_BINDING_MISMATCH");
         if (
           !plugin.manifest?.capabilities.includes(
-            event.audio ? "audio" : "text",
+            event.audioFrame || event.activity
+              ? "audio-stream"
+              : event.audio
+                ? "audio"
+                : "text",
           )
         )
           throw new Error("PERMISSION_DENIED");
@@ -170,5 +182,71 @@ export class PluginBroker {
       context,
       scope === "activity",
     );
+  }
+}
+
+export function validateMediaInput(event: ConversationInput) {
+  if (
+    event.priority !== undefined &&
+    !["normal", "immediate"].includes(event.priority)
+  )
+    throw new Error("INVALID_INPUT_PRIORITY");
+  if (
+    event.conversationMode !== undefined &&
+    !["text-speech", "live"].includes(event.conversationMode)
+  )
+    throw new Error("INVALID_CONVERSATION_MODE");
+  if (event.command === "mode" && !event.conversationMode)
+    throw new Error("INVALID_CONVERSATION_MODE");
+  if (event.capture) {
+    const capture = event.capture;
+    text(capture.sessionId, 200);
+    text(capture.utteranceId, 200);
+    if (
+      !Number.isSafeInteger(capture.segmentIndex) ||
+      capture.segmentIndex < 0 ||
+      !Number.isFinite(capture.startedAt) ||
+      capture.startedAt < 0 ||
+      (capture.endedAt !== undefined &&
+        (!Number.isFinite(capture.endedAt) ||
+          capture.endedAt < capture.startedAt)) ||
+      (capture.final !== undefined && typeof capture.final !== "boolean") ||
+      (capture.complete !== undefined && typeof capture.complete !== "boolean")
+    )
+      throw new Error("INVALID_AUDIO_CAPTURE");
+  }
+  if (event.audioFrame || event.activity) {
+    if (
+      !event.capture ||
+      event.audio ||
+      event.text ||
+      event.command ||
+      (event.audioFrame && event.activity)
+    )
+      throw new Error("INVALID_MEDIA_INPUT");
+  }
+  if (event.activity && !["start", "end", "quiet"].includes(event.activity))
+    throw new Error("INVALID_AUDIO_ACTIVITY");
+  if (event.audioFrame) {
+    const frame = event.audioFrame;
+    if (
+      frame.format !== "pcm16" ||
+      frame.sampleRate !== 48000 ||
+      frame.channels !== 2 ||
+      !Number.isSafeInteger(frame.sequence) ||
+      frame.sequence < 0 ||
+      typeof frame.pcm !== "string" ||
+      frame.pcm.length > 32768 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(frame.pcm)
+    )
+      throw new Error("INVALID_AUDIO_FRAME");
+    const pcm = Buffer.from(frame.pcm, "base64");
+    if (
+      !pcm.length ||
+      pcm.length > 24576 ||
+      pcm.length % 4 ||
+      pcm.toString("base64") !== frame.pcm
+    )
+      throw new Error("INVALID_AUDIO_FRAME");
   }
 }

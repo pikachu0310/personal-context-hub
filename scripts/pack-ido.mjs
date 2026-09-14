@@ -44,9 +44,10 @@ for (const name of ["engine", "client", "plugin-discord", "plugin-dashboard"]) {
     throw new Error(`Bundled UI missing for ${name}`);
   if (
     name === "engine" &&
-    Object.keys(manifest.dependencies).some((d) =>
-      /discord|codex|electron/.test(d),
-    )
+    (!manifest.dependencies["@openai/codex"] ||
+      Object.keys(manifest.dependencies).some((d) =>
+        /discord|electron/.test(d),
+      ))
   )
     throw new Error("Engine dependency boundary failed");
   packages.push({

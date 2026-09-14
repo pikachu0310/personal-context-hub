@@ -21,12 +21,52 @@ export class InputRouter {
     this.tasks = new Tasks(store);
   }
   readonly tasks: Tasks;
+  private closed = false;
+  private readonly pending = new Set<Promise<void>>();
 
-  async handle(event: ConversationInput, context: InputContext) {
+  handle(event: ConversationInput, context: InputContext) {
+    if (this.closed) return Promise.resolve();
+    const operation = this.process(event, context);
+    this.pending.add(operation);
+    void operation.then(
+      () => this.pending.delete(operation),
+      () => this.pending.delete(operation),
+    );
+    return operation;
+  }
+  async close() {
+    this.closed = true;
+    await Promise.allSettled([...this.pending]);
+  }
+  private async process(event: ConversationInput, context: InputContext) {
     const config = { meetingId: event.meetingId, projectId: event.projectId };
     const actor = context.actor;
     const allowed = () =>
-      context.valid() && !!this.store.conversationAuthor(actor.id);
+      !this.closed &&
+      context.valid() &&
+      !!this.store.conversationAuthor(actor.id);
+    if (event.audioFrame || event.activity) {
+      if (allowed()) await this.ai.coordinated?.handleMedia(event, context);
+      return;
+    }
+    if (event.command === "mode") {
+      if (!allowed() || actor.role === "viewer" || !this.ai.coordinated)
+        throw new Error("PERMISSION_DENIED");
+      if (!["text-speech", "live"].includes(String(event.conversationMode)))
+        throw new Error("INVALID_CONVERSATION_MODE");
+      await this.ai.coordinated.setMode(
+        event.meetingId,
+        event.conversationMode!,
+      );
+      if (allowed())
+        await context.deliver({
+          kind: "reply",
+          eventId: event.eventId,
+          content: `会話方式: ${event.conversationMode}`,
+          replyTo: event.replyTo,
+        });
+      return;
+    }
     let replyMessageId: string | undefined;
     let acceptedId = "";
     const respond = (content: string, file?: string) => {
@@ -90,9 +130,11 @@ export class InputRouter {
       }
       let content = normalizeText(event.text);
       if (typeof event.audio === "string") {
+        this.ai.coordinated?.transcription(event, context, true);
         if (this.store.get("meeting", config.meetingId)) {
           const recorded = this.ai.record(config.meetingId, actor.id, "");
           acceptedId = recorded.message.id;
+          recorded.message.inputId = eventId;
           recorded.message.stage = "transcribing";
           this.store.put("message", acceptedId, recorded.message);
           this.ai.messages.step(acceptedId, "transcription", "running");
@@ -110,13 +152,38 @@ export class InputRouter {
         stage("discarded");
         return;
       }
-      if (!content && event.command !== "stop") {
+      if (
+        !content &&
+        event.command !== "stop" &&
+        !(event.audio && event.capture && this.ai.coordinated)
+      ) {
         if (acceptedId) {
           this.ai.messages.stage(acceptedId, "ignored");
           this.ai.messages.step(acceptedId, "transcription", "skipped");
           this.ai.messages.step(acceptedId, "minutes", "skipped");
         }
         stage("ignored");
+        return;
+      }
+      if (
+        this.ai.coordinated &&
+        !["stop", "steer"].includes(event.command ?? "")
+      ) {
+        await this.ai.coordinated.accept(
+          event,
+          context,
+          content,
+          acceptedId || undefined,
+        );
+        const currentStage = this.store.get<{ stage: string }>(
+          "input",
+          eventId,
+        )?.stage;
+        stage(
+          currentStage === "completed" || currentStage === "ignored"
+            ? currentStage
+            : "queued",
+        );
         return;
       }
       const control =
@@ -293,6 +360,8 @@ export class InputRouter {
       if (allowed())
         await respond("入力の処理に失敗しました。" + reference(errorId));
     } finally {
+      if (event.audio && !this.closed)
+        this.ai.coordinated?.transcription(event, context, false);
       reservation.release();
     }
   }

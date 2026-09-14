@@ -1,3 +1,5 @@
+import type { ExecutionPolicy, WorkReceipt, WorkSource } from "./work.js";
+
 export const VERSION = 1;
 export const RELEASE = "0.2.0";
 export type Role = "admin" | "member" | "viewer";
@@ -44,8 +46,25 @@ export interface Task {
   updatedAt: number;
   result?: string;
   progress?: string;
+  title?: string;
+  kind?: string;
+  sourceIds?: string[];
+  sourceSequences?: number[];
+  sourceStatements?: WorkSource[];
+  executionPolicy?: ExecutionPolicy;
+  effectiveExecutionPolicy?: ExecutionPolicy;
+  specRevision?: number;
+  resultSpecRevision?: number;
+  controlVersion?: number;
+  controlReceipts?: Record<string, WorkReceipt>;
   preview?: Preview;
-  history: Array<{ revision: number; text: string; result?: string }>;
+  history: Array<{
+    revision: number;
+    text: string;
+    result?: string;
+    specRevision?: number;
+    resultSpecRevision?: number;
+  }>;
 }
 export interface Preview {
   id: string;
@@ -61,6 +80,10 @@ export interface Command {
   generation?: number;
   taskId?: string;
   runId?: string;
+  receiptId?: string;
+  controlVersion?: number;
+  specRevision?: number;
+  instructionResolution?: "retry" | "discard";
   [key: string]: unknown;
 }
 export function frame(data: unknown): Command {

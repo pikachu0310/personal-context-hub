@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline/promises";
+import { spawn } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import { codexBinary } from "../../common/src/runtime/codex/binary.js";
 import {
   control,
   lifetime,
@@ -8,6 +12,7 @@ import {
 import {
   dataDirectory,
   openBrowser,
+  workerEnvironment,
 } from "../../common/src/runtime/platform.js";
 import { Store } from "./adapters/sqlite/store.js";
 import { Engine } from "./bootstrap/engine.js";
@@ -70,7 +75,27 @@ try {
   if (Number(process.versions.node.split(".")[0]) !== 24)
     throw new Error("IDO requires Node.js 24.x");
   if (command === "init") await init();
-  else if (command === "status" || command === "stop")
+  else if (command === "codex-login" || command === "codex-status") {
+    const codexHome = args.includes("--codex-home")
+      ? option("--codex-home")
+      : join(directory, "codex");
+    await mkdir(codexHome, { recursive: true, mode: 0o700 });
+    const child = spawn(
+      codexBinary(),
+      command === "codex-login"
+        ? ["login", "--device-auth"]
+        : ["login", "status"],
+      {
+        env: workerEnvironment(codexHome),
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    process.exitCode = await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code ?? 1));
+    });
+  } else if (command === "status" || command === "stop")
     console.log(JSON.stringify(await control(directory, command)));
   else if (command === "doctor") {
     if (args.includes("--recover")) await recover(directory);
@@ -83,8 +108,25 @@ try {
     );
   } else if (command === "start") {
     await init();
+    const mode = args.includes("--conversation-mode")
+      ? option("--conversation-mode")
+      : "text-speech";
+    if (!["legacy", "text-speech", "live"].includes(mode))
+      throw new Error("INVALID_CONVERSATION_MODE");
     const engine = new Engine({
       directory,
+      conversation:
+        mode === "legacy"
+          ? false
+          : {
+              mode: mode as "text-speech" | "live",
+              codexHome: args.includes("--codex-home")
+                ? option("--codex-home")
+                : undefined,
+              model: args.includes("--main-model")
+                ? option("--main-model")
+                : undefined,
+            },
       port: args.includes("--port") ? Number(option("--port")) : 4310,
       previewPort: args.includes("--preview-port")
         ? Number(option("--preview-port"))
@@ -110,7 +152,7 @@ try {
     console.log("Discord plugin installed");
   } else
     throw new Error(
-      "Commands: init, start, stop, status, doctor, plugin-install",
+      "Commands: init, start, stop, status, doctor, plugin-install, codex-login, codex-status",
     );
 } catch (e) {
   console.error((e as Error).message);
