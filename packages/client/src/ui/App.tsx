@@ -536,6 +536,13 @@ export function App() {
             projectId={projectView.projectId}
             taskId={projectView.taskId}
             deviceId={state.settings.deviceId}
+            clientState={state}
+            openSettings={() =>
+              setProjectView({
+                projectId: projectView.projectId,
+                settings: true,
+              })
+            }
           />
         ) : currentPage === "new-local" ? (
           <NewLocalTask
@@ -575,6 +582,13 @@ export function App() {
         ) : selectedShared ? (
           sharedCurrent ? (
             <TeamTaskDetail
+              state={state}
+              openSettings={() =>
+                setProjectView({
+                  projectId: sharedCurrent!.projectId,
+                  settings: true,
+                })
+              }
               task={sharedCurrent}
               local={sharedCurrent.clientId === state.settings.deviceId}
               stale={sharedStale}
