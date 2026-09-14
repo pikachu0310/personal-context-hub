@@ -1,3 +1,4 @@
+import { Icon } from "./Icons.js";
 import { Button, Group, Menu, Modal, Select, Stack, Text } from "@mantine/core";
 import { useState } from "react";
 import { Form, lifecycleError } from "@ido/common-ui";
@@ -82,7 +83,7 @@ export function ProjectMenu({
             className="icon-button project-menu"
             aria-label={`${project.name}の設定`}
           >
-            ⋯
+            {<Icon name="dots" />}
           </button>
         </Menu.Target>
         <Menu.Dropdown>

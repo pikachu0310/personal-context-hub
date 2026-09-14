@@ -1,3 +1,4 @@
+import { attachTaskSource } from "@ido/common/contracts/protocol";
 import { projectDirectory } from "../execution/project-directory.js";
 import { startLogin } from "../auth/login.js";
 import { startClaudeLogin, checkClaudeLogin } from "../auth/claude.js";
@@ -144,6 +145,33 @@ export async function route(
     throw new HttpError(403, "CSRF_REQUIRED");
   const input = await body(req);
   switch (url.pathname) {
+    case "/api/task/sources": {
+      const runId = input.runId ? id(input.runId) : undefined;
+      const value = runId ? this.executor.runs[runId] : undefined;
+      if (runId) {
+        if (
+          !value ||
+          value.task.id !== id(input.taskId) ||
+          this.executor.deletedTasks[value.task.id] ||
+          (value.origin !== "local" &&
+            !this.settings.projects.some(
+              (project) => project.id === value.task.projectId,
+            ))
+        )
+          throw new HttpError(404, "RUN_NOT_FOUND");
+        if (input.sourceId) {
+          value.task.attachedSources = attachTaskSource(
+            value.task.attachedSources,
+            input,
+          );
+          await this.executor.save();
+        }
+        send(res, 200, { sources: value.task.attachedSources ?? [] });
+      } else {
+        send(res, 200, await this.workspaceRequest("task.sources", input));
+      }
+      return;
+    }
     case "/api/model-settings": {
       const value = input.runId
         ? this.executor.runs[id(input.runId)]

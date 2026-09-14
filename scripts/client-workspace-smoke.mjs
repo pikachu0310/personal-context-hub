@@ -325,18 +325,42 @@ try {
   await page.reload();
   assert.equal(await projectToggle.getAttribute("aria-expanded"), "false");
   await projectToggle.click();
-  const groupToggle = page
-    .getByRole("region", { name: "このPCで実装中", exact: true })
-    .first()
-    .locator(".collapse-toggle");
-  await groupToggle.click();
-  assert.equal(await groupToggle.getAttribute("aria-expanded"), "false");
-  await groupToggle.click();
   assert.equal(
     await page.locator("html").getAttribute("data-mantine-color-scheme"),
     "light",
   );
   const inspector = page.getByRole("complementary", { name: "タスクの詳細" });
+  await page.evaluate(() => globalThis.document.fonts.ready);
+  assert.ok(
+    await page.evaluate(() =>
+      globalThis.document.fonts.check('15px "Noto Sans JP Variable"', "議事録"),
+    ),
+  );
+  assert.ok((await page.locator(".tabler-icon").count()) > 10);
+  const panelToggle = page.getByRole("button", {
+    name: "タスクの詳細",
+    exact: true,
+  });
+  await panelToggle.click();
+  await inspector.waitFor({ state: "hidden" });
+  assert.equal(await panelToggle.getAttribute("aria-expanded"), "false");
+  await panelToggle.click();
+  await inspector.waitFor();
+  const scrollLayout = await page
+    .locator(".with-inspector")
+    .evaluate((element) => ({
+      outer: globalThis.getComputedStyle(element).overflowY,
+      inner: globalThis.getComputedStyle(
+        element.querySelector(".conversation-scroll"),
+      ).overflowY,
+      right: element.getBoundingClientRect().right,
+      inspectorRight: element
+        .querySelector(".task-inspector")
+        .getBoundingClientRect().right,
+    }));
+  assert.equal(scrollLayout.outer, "auto");
+  assert.equal(scrollLayout.inner, "visible");
+  assert.ok(scrollLayout.right > scrollLayout.inspectorRight);
   const conversation = await page.locator(".task-conversation").boundingBox();
   const inspectorBox = await inspector.boundingBox();
   assert.ok(inspectorBox.x >= conversation.x + conversation.width);
@@ -395,6 +419,33 @@ try {
     .click();
   await inspector
     .getByText("フォームのエラーは日本語で説明してください。", { exact: true })
+    .waitFor();
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  await inspector
+    .getByRole("button", { name: "ソースを追加", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "共有コンテキスト", exact: true })
+    .click();
+  const sourceDialog = page.getByRole("dialog", {
+    name: "共有コンテキストを追加",
+    exact: true,
+  });
+  await sourceDialog.getByLabel(/^タイトル/).fill("UI追加資料");
+  await sourceDialog.getByLabel(/^内容/).fill("追加した資料の保存を確認");
+  await sourceDialog
+    .getByRole("button", { name: "追加する", exact: true })
+    .click();
+  await sourceDialog.waitFor({ state: "hidden" });
+  await inspector
+    .getByRole("button", { name: "UI追加資料", exact: true })
+    .click();
+  await inspector
+    .getByText("追加した資料の保存を確認", { exact: true })
+    .waitFor();
+  await page.reload();
+  await inspector
+    .getByRole("button", { name: "UI追加資料", exact: true })
     .waitFor();
   await inspector.getByRole("tab", { name: "環境", exact: true }).click();
   const schemeIs = (scheme) =>
@@ -519,7 +570,7 @@ try {
   const voiceGroup = page.locator('.project-group[data-project-id="project"]');
   const toolsGroup = page.locator('.project-group[data-project-id="tools"]');
   for (const project of [voiceGroup, toolsGroup]) {
-    assert.equal(await project.locator(".project-tasks").count(), 6);
+    assert.equal(await project.locator(".project-tasks").count(), 1);
     assert.equal(
       await project.locator(".sidebar-caption, .shared-task-owner").count(),
       0,
@@ -600,7 +651,7 @@ try {
     .click();
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
-  await page.locator(".conversation-scroll").evaluate((element) => {
+  await page.locator(".with-inspector").evaluate((element) => {
     element.scrollTop = 0;
   });
   await page.screenshot({
@@ -726,9 +777,7 @@ try {
       body: JSON.stringify({ runId: "run" }),
     });
   });
-  await localDialog
-    .getByLabel("タイトル", { exact: true })
-    .fill("Local shared fixture");
+  await localDialog.getByLabel(/^タイトル/).fill("Local shared fixture");
   await localDialog
     .getByLabel("依頼内容", { exact: true })
     .fill("Test local sharing");

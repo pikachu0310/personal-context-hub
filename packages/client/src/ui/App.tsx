@@ -307,7 +307,6 @@ export function App() {
                     </button>
                   )}
                   <SidebarTaskList
-                    projectId={id}
                     items={items}
                     state={state}
                     connected={projectConnected}
@@ -570,6 +569,7 @@ export function App() {
           >
             <Icon name="refresh" size={17} />
           </button>
+          <div id="task-inspector-control" />
         </header>
         {!!state.deletionSync?.pendingTasks && (
           <div role="status" className="workspace-error">

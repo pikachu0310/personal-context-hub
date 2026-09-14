@@ -20,6 +20,11 @@ export function SharedTaskInspector({
   const current = summary ?? task;
   return (
     <TaskInspector
+      sourceTarget={
+        current
+          ? { taskId: current.id, projectId: current.projectId }
+          : undefined
+      }
       tab={tab}
       onTabChange={setTab}
       sources={task?.sourceStatements?.map((source, index) => ({
