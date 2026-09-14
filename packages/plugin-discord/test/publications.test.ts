@@ -128,7 +128,12 @@ test("current transcript shows project names before speech, reuses the card on s
   };
   let snapshot: any = {
     project: { id: "default", name: "デフォルト" },
-    meeting: { id: "one", projectId: "default", summary: "", messages: [] },
+    meeting: {
+      id: "one",
+      projectId: "default",
+      summary: "",
+      messages: [{ text: " \t\n　", authorId: "blank-speaker", at: 0 }],
+    },
   };
   let pending: Promise<any> | undefined;
   const rpc: any = {
@@ -150,15 +155,26 @@ test("current transcript shows project names before speech, reuses the card on s
   );
   await conversation.refresh();
   assert.match(sent[0].content, /現在のプロジェクト: デフォルト/);
+  assert.doesNotMatch(sent[0].content, /blank-speaker/);
   state.config.projectId = "next";
   state.speechEpoch++;
   snapshot = {
     project: { id: "next", name: "開発" },
-    meeting: { id: "two", projectId: "next", summary: "", messages: [] },
+    meeting: {
+      id: "two",
+      projectId: "next",
+      summary: "",
+      messages: [
+        { text: "はい", authorId: "speaker", at: 0 },
+        { text: "", authorId: "blank-speaker", at: 0 },
+      ],
+    },
   };
   await conversation.refresh();
   assert.equal(sent.length, 1);
   assert.match(edits[0].content, /現在のプロジェクト: 開発/);
+  assert.match(edits[0].content, /speaker: はい/);
+  assert.doesNotMatch(edits[0].content, /blank-speaker/);
   await conversation.publish({
     type: "transcript",
     meetingId: "one",
@@ -180,6 +196,39 @@ test("current transcript shows project names before speech, reuses the card on s
   await stale;
   assert.equal(edits.length, 1);
   assert.deepEqual(sent[0].allowedMentions, { parse: [] });
+});
+
+test("transcripts select the latest twelve nonblank statements before formatting speaker rows", async () => {
+  const { renderPublication } = await import("../src/output/render.js");
+  const messages = [
+    ...Array.from({ length: 14 }, (_, index) => ({
+      authorId: `speaker-${index}`,
+      at: 0,
+      text: `発言${index}`,
+    })),
+    ...Array.from({ length: 14 }, (_, index) => ({
+      authorId: `blank-${index}`,
+      at: 0,
+      text: ["", " ", "　", "\t", "\r\n", " \t　\n"][index % 6],
+      stage: ["transcribing", "ignored", "failed"][index % 3],
+    })),
+  ];
+  const content = renderPublication({
+    type: "transcript",
+    meetingId: "m",
+    data: { projectId: "p", messages },
+  });
+  const rows = content.split("\n\n")[1].split("\n");
+  assert.equal(rows.length, 12);
+  assert.doesNotMatch(content, /blank-|speaker-[01]:/);
+  for (let index = 2; index < 14; index++)
+    assert.ok(rows[index - 2].endsWith(`speaker-${index}: 発言${index}`));
+  const short = renderPublication({
+    type: "transcript",
+    meetingId: "m",
+    data: { messages: [{ authorId: "speaker", at: 0, text: " はい　" }] },
+  });
+  assert.ok(short.endsWith("speaker:  はい　"));
 });
 
 test("transcript headers remain visible with long logs and line breaks in project names", async () => {

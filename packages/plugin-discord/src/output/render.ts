@@ -48,6 +48,7 @@ export function renderPublication(event: PluginEvent) {
     "🎙 ライブ文字起こし（直近の発言）\n" +
     `現在のプロジェクト: ${(meeting.projectName ?? meeting.projectId ?? "未設定").replace(/[\r\n]/g, " ").slice(0, 100)}\n\n` +
     meeting.messages
+      .filter((message) => message.text.trim())
       .slice(-12)
       .map(
         (m) =>

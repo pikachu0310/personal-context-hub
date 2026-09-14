@@ -155,8 +155,30 @@ export class InputRouter {
           stage("transcribing");
         }
         content = await this.ai.transcribe(Buffer.from(event.audio, "base64"));
+        if (!content.trim()) content = "";
       }
       operation = "input.process";
+      if (event.audio && !content) {
+        this.store.transaction(() => {
+          if (acceptedId) this.store.remove("message", acceptedId);
+          acceptedId = "";
+          stage("ignored");
+        });
+        if (!allowed()) return;
+        if (
+          event.capture &&
+          this.ai.coordinated &&
+          !["stop", "steer"].includes(event.command ?? "")
+        ) {
+          // Empty segments still carry the final marker needed to finish an
+          // earlier recognized part of the same utterance.
+          await this.ai.coordinated.accept(event, context, content);
+        } else {
+          const meeting = this.store.get<Meeting>("meeting", config.meetingId);
+          if (meeting) publishMeeting(context, "transcript", meeting);
+        }
+        return;
+      }
       if (!allowed()) {
         if (acceptedId) {
           this.ai.messages.stage(acceptedId, "discarded");
@@ -166,16 +188,7 @@ export class InputRouter {
         stage("discarded");
         return;
       }
-      if (
-        !content &&
-        event.command !== "stop" &&
-        !(event.audio && event.capture && this.ai.coordinated)
-      ) {
-        if (acceptedId) {
-          this.ai.messages.stage(acceptedId, "ignored");
-          this.ai.messages.step(acceptedId, "transcription", "skipped");
-          this.ai.messages.step(acceptedId, "minutes", "skipped");
-        }
+      if (!content && event.command !== "stop") {
         stage("ignored");
         return;
       }

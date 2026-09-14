@@ -1877,6 +1877,128 @@ test("Dashboard can explicitly queue an otherwise direct chat input as normal pr
   assert.equal(f.calls.length, 1);
 });
 
+test("uncaptured blank STT results leave no messages or model work", async (t) => {
+  const f = await fixture(t);
+  const results = ["", " ", "　", "\t", "\r\n", " \t　\n"];
+  let count = 0;
+  f.transcribe(async () => results[count++]);
+  for (let index = 0; index < results.length; index++) {
+    const event = { eventId: `blank-${index}`, audio: audio() };
+    await f.input(event);
+    await f.input(event);
+    assert.equal(count, index + 1);
+    const input = f.engine.store.get<any>("input", `fixture:${event.eventId}`);
+    assert.equal(input.stage, "ignored");
+    assert.equal(input.messageId, undefined);
+    assert.deepEqual(f.messages(), []);
+  }
+  await f.core.flush("meeting");
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(f.tasks(), []);
+  assert.deepEqual(f.delivered, []);
+  assert.deepEqual(f.engine.store.diagnostics(), []);
+  assert.ok(
+    f.publications.every((event) => (event.data as any).messages.length === 0),
+  );
+  await f.restart();
+  for (let index = 0; index < results.length; index++)
+    await f.input({ eventId: `blank-${index}`, audio: audio() });
+  assert.equal(count, results.length);
+  assert.deepEqual(f.messages(), []);
+});
+
+for (const order of [
+  [0, 1, 2, 3, 4],
+  [4, 2, 3, 0, 1],
+])
+  test(`blank leading, middle and final segments preserve speech when STT finishes in order ${order}`, async (t) => {
+    const f = await fixture(t);
+    const results = ["　", " はい ", "\n\t", "二つ目の発言", ""];
+    const gates = results.map(() => deferred<string>());
+    let count = 0;
+    f.transcribe(() => gates[count++].promise);
+    const events: Partial<ConversationInput>[] = results.map((_, index) => ({
+      eventId: `piece-${index}`,
+      audio: audio(),
+      command: "ask",
+      capture: {
+        sessionId: "voice",
+        utteranceId: "with-gaps",
+        segmentIndex: index,
+        startedAt: 100 + index * 100,
+        endedAt: 200 + index * 100,
+        final: index === results.length - 1,
+        complete: index === results.length - 1,
+      },
+    }));
+    const pending = events.map((event) => f.input(event));
+    await until(() => count === results.length);
+    const ignoredIds = [0, 2, 4].map(
+      (index) =>
+        f.engine.store.get<any>("input", `fixture:piece-${index}`).messageId,
+    );
+    for (const [position, index] of order.entries()) {
+      gates[index].resolve(results[index]);
+      await pending[index];
+      if (position < order.length - 1) assert.equal(f.calls.length, 0);
+    }
+    await until(() => f.calls.length === 1);
+    await f.idle();
+    const messages = f.messages();
+    assert.deepEqual(
+      messages.map((message) => message.text),
+      [results[1], results[3]],
+    );
+    assert.deepEqual(
+      messages.map((message) => message.at),
+      [200, 400],
+    );
+    assert.deepEqual(
+      messages.map((message) => message.capture?.segmentIndex),
+      [1, 3],
+    );
+    assert.ok(
+      messages.every(
+        (message) =>
+          message.authorId === "speaker-a" && message.stage === "completed",
+      ),
+    );
+    const source = f.calls[0].observation.events[0];
+    assert.equal(source.type, "message");
+    if (source.type === "message") {
+      assert.equal(source.source.text, `${results[1]}\n${results[3]}`);
+      assert.equal(source.source.complete, true);
+      assert.equal(source.source.at, 200);
+      assert.equal(source.source.authorId, "speaker-a");
+      assert.deepEqual(
+        f.engine.store.get<any>("speech-sources", source.source.id).partIds,
+        messages.map((message) => message.id),
+      );
+    }
+    for (const index of [0, 2, 4]) {
+      const input = f.engine.store.get<any>("input", `fixture:piece-${index}`);
+      assert.equal(input.stage, "ignored");
+      assert.equal(input.messageId, undefined);
+    }
+    for (const id of ignoredIds)
+      assert.equal(f.engine.store.get("message", id), undefined);
+    assert.deepEqual(f.engine.store.list("speech-assembly"), []);
+    const lastTranscript = f.publications
+      .filter((event) => event.type === "transcript")
+      .at(-1)!;
+    assert.deepEqual(
+      (lastTranscript.data as any).messages.map(
+        (message: Message) => message.text,
+      ),
+      [results[1], results[3]],
+    );
+    for (const event of events) await f.input(event);
+    await f.core.flush("meeting");
+    assert.equal(count, results.length);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.messages().length, 2);
+  });
+
 test("an empty final STT piece completes the earlier recognized utterance exactly once", async (t) => {
   const f = await fixture(t);
   let count = 0;
@@ -1922,6 +2044,15 @@ test("an empty final STT piece completes the earlier recognized utterance exactl
     assert.equal(event.source.complete, true);
   }
   assert.equal(f.engine.store.list("speech-assembly").length, 0);
+  assert.equal(f.messages().length, 1);
+  assert.equal(
+    f.engine.store.get<any>("input", "fixture:empty-final").stage,
+    "ignored",
+  );
+  assert.equal(
+    f.engine.store.get<any>("input", "fixture:empty-final").messageId,
+    undefined,
+  );
   await f.core.flush("meeting");
   assert.equal(f.calls.length, 1);
 });
@@ -1949,10 +2080,13 @@ test("an all-silent captured utterance clears assembly without invoking the main
   assert.equal(f.calls.length, 0);
   assert.equal(f.tasks().length, 0);
   assert.equal(f.engine.store.list("speech-assembly").length, 0);
+  assert.deepEqual(f.messages(), []);
+  for (const input of f.engine.store.list<any>("input")) {
+    assert.equal(input.stage, "ignored");
+    assert.equal(input.messageId, undefined);
+  }
   assert.ok(
-    f
-      .messages()
-      .every((message) => message.text === "" && message.stage === "ignored"),
+    f.publications.every((event) => (event.data as any).messages.length === 0),
   );
 });
 

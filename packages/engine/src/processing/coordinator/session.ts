@@ -592,20 +592,22 @@ class MeetingCoordinator {
     if (saved.parts[capture.segmentIndex]) return false;
     if (capture.segmentIndex < 0 || capture.segmentIndex > 200)
       throw new Error("UTTERANCE_TOO_LONG");
-    const message = this.messages.record(
-      event.meetingId,
-      context.actor.id,
-      content,
-      messageId,
-    ).message;
-    message.capture = capture;
-    message.origin = "audio";
-    message.at = capture.startedAt;
-    message.stage = "assembling";
-    this.store.put("message", message.id, message);
+    let message: Message | undefined;
+    if (content.trim()) {
+      message = this.messages.record(
+        event.meetingId,
+        context.actor.id,
+        content,
+        messageId,
+      ).message;
+      message.capture = capture;
+      message.origin = "audio";
+      message.at = capture.startedAt;
+      message.stage = "assembling";
+      this.store.put("message", message.id, message);
+    }
     saved.parts[capture.segmentIndex] = {
-      id: message.id,
-      text: content,
+      ...(message ? { id: message.id, text: content } : {}),
       complete: capture.complete !== false,
       at: capture.startedAt,
     };
@@ -618,23 +620,10 @@ class MeetingCoordinator {
       (_, index) => saved.parts[index],
     );
     if (parts.some((part) => !part)) return true;
-    const text = parts.map((part) => part.text).join("\n");
-    if (!text.trim()) {
-      for (const part of parts) {
-        this.messages.stage(part.id, "ignored");
-        this.messages.step(part.id, "transcription", "skipped");
-        const message = this.store.get<Message>("message", part.id);
-        const input =
-          message?.inputId &&
-          this.store.get<Record<string, unknown>>("input", message.inputId);
-        if (input && message?.inputId)
-          this.store.put("input", message.inputId, {
-            ...input,
-            stage: "ignored",
-          });
-      }
+    const recognized = parts.filter((part) => part.id && part.text?.trim());
+    const text = recognized.map((part) => part.text).join("\n");
+    if (!recognized.length) {
       this.store.remove("speech-assembly", key);
-      this.publish("transcript", event.meetingId);
       return false;
     }
     // Intermediate pieces are not complete utterances. Only the final marker
@@ -645,20 +634,20 @@ class MeetingCoordinator {
       eventId: `utterance-${stableId(key)}`,
       capture: {
         ...capture,
-        startedAt: parts[0].at,
+        startedAt: recognized[0].at,
         segmentIndex: 0,
         complete,
       },
     };
-    for (const part of parts) this.messages.stage(part.id, "queued");
+    for (const part of recognized) this.messages.stage(part.id, "queued");
     const accepted = await this.accept(
       merged,
       context,
       complete
         ? text
         : `【不完全な発話。実行指示には使用しない】\n${text.slice(-12_000)}`,
-      parts[0].id,
-      parts.map((part) => part.id),
+      recognized[0].id,
+      recognized.map((part) => part.id),
     );
     this.store.remove("speech-assembly", key);
     return accepted;
@@ -692,9 +681,9 @@ class MeetingCoordinator {
     record.origin = event.audio ? "audio" : "text";
     record.inputId ??= inputId;
     record.command = event.command;
-    record.capture = event.capture;
+    if (!partIds) record.capture = event.capture;
     record.complete = event.capture?.complete !== false;
-    record.at = event.capture?.startedAt ?? record.at;
+    record.at = record.capture?.startedAt ?? record.at;
     record.stage = "queued";
     record.steps = {
       ...record.steps,
