@@ -13,6 +13,7 @@ import { Tasks } from "../src/processing/tasks/service.js";
 import type { Task } from "@ido/common/contracts/protocol";
 import {
   ForumSync,
+  forumKey,
   type ForumRecord,
 } from "../../plugin-discord/src/forum/sync.js";
 import { normalizeInput } from "../../plugin-discord/src/input/normalize.js";
@@ -62,7 +63,7 @@ test("Engine tasks synchronize to a forum, controls return to the same task and 
   const plugin = {
     generation: 1,
     revision: 1,
-    manifest: { capabilities: ["text", "task-forum"] },
+    manifest: { capabilities: ["text", "task-forum", "project-conversation"] },
     request: async (_op: string, data: any) => outputs.push(data.output),
   };
   const broker = new PluginBroker(
@@ -93,7 +94,9 @@ test("Engine tasks synchronize to a forum, controls return to the same task and 
       find: async () => "thread",
       create: async (_title, content) => {
         cards.push(content);
-        return "thread";
+        return content.startsWith(`IDO task ${task.id}\n`)
+          ? "thread"
+          : "discussion-thread";
       },
       update: async (_id, content) => {
         cards.push(content);
@@ -102,15 +105,16 @@ test("Engine tasks synchronize to a forum, controls return to the same task and 
     async () => records,
     async (value) => {
       records = structuredClone(value);
+      store.put("plugin:discord", forumKey(config), records);
     },
   );
   const snapshot = async () =>
     (await broker.request("discord", "tasks.snapshot", {})) as Task[];
-  assert.equal((await snapshot()).length, 1);
+  assert.equal((await snapshot()).length, 2);
   await forum.sync(await snapshot());
   const send = async (
     userId: string,
-    command: "stop" | "steer",
+    command: "stop" | "steer" | "context",
     eventId: string,
     text: string,
   ) => {
@@ -135,7 +139,16 @@ test("Engine tasks synchronize to a forum, controls return to the same task and 
       input as unknown as Record<string, unknown>,
     );
   };
-  await send("100", "steer", "instruction", "Add tests");
+  await send("100", "context", "conversation", "What should we test?");
+  assert.equal(
+    store.get<Task>("task", task.id)?.specRevision,
+    task.specRevision,
+  );
+  assert.equal(store.list<Task>("task").length, 2);
+  // Switching the default project must not detach this persisted issue thread.
+  store.put("project", "new-project", { id: "new-project", name: "New" });
+  store.put("config", "discord", { ...config, projectId: "new-project" });
+  await send("100", "steer", "instruction", "指示: Add tests");
   assert.equal(store.list<Task>("task").length, 2);
   assert.ok(
     (store.get<Task>("task", task.id)?.specRevision ?? 0) >
@@ -151,7 +164,7 @@ test("Engine tasks synchronize to a forum, controls return to the same task and 
   await send("100", "stop", "stop", "stop");
   assert.equal(store.get<Task>("task", task.id)?.state, "cancelled");
   await forum.sync(await snapshot());
-  assert.match(cards.at(-1)!, /cancelled/);
+  assert.ok(cards.some((card) => card.includes("cancelled")));
   plugin.manifest.capabilities = ["text"];
   await assert.rejects(
     broker.request("discord", "tasks.snapshot", {}),

@@ -20,6 +20,7 @@ await build({
     "ws",
     "@openai/codex",
     "@anthropic-ai/claude-agent-sdk",
+    "zod",
   ],
 });
 await cp("packages/client/dist/ui", `${stage}/ui`, { recursive: true });

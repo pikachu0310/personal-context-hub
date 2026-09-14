@@ -4,6 +4,7 @@ import type { Command, Task } from "@ido/common/contracts/protocol";
 // Bound to the current Engine connection; no independent account or credentials.
 export class TaskBoardConnection {
   supported = false;
+  projectSupported = false;
   pending = new Map<
     string,
     {
@@ -38,6 +39,7 @@ export class TaskBoardConnection {
   }
   close() {
     this.supported = false;
+    this.projectSupported = false;
     for (const pending of this.pending.values())
       pending.finish(new Error("BOARD_CONNECTION_CLOSED"));
   }
@@ -50,6 +52,8 @@ export class TaskBoardConnection {
       new Promise<unknown>((resolve, reject) => {
         signal.throwIfAborted();
         if (!this.supported) throw new Error("BOARD_UNAVAILABLE");
+        if (input.scope === "project" && !this.projectSupported)
+          throw new Error("BOARD_PROJECT_REQUIRES_ENGINE_UPDATE");
         const requestId = randomUUID();
         const finish = (error?: Error, value?: unknown) => {
           clearTimeout(timer);
@@ -81,6 +85,7 @@ export class TaskBoardConnection {
         }
       });
     return {
+      taskId: task.id,
       read: (input: Record<string, unknown>) => call("read", input),
       post: (input: Record<string, unknown>, postKey: string) =>
         call("post", input, postKey),

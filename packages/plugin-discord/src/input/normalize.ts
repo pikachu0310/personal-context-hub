@@ -19,7 +19,7 @@ export function normalizeInput(
     (forumTask &&
       (voice ||
         event.taskId !== forumTask ||
-        !["stop", "steer"].includes(String(event.command)))) ||
+        !["stop", "steer", "context"].includes(String(event.command)))) ||
     (voice && !voiceChannel) ||
     (capture && audioSessionId && capture.sessionId !== audioSessionId) ||
     (event.meetingId && event.meetingId !== config.meetingId) ||

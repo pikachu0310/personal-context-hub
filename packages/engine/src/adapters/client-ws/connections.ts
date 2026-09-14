@@ -1,4 +1,6 @@
 import { TaskDetails } from "../../processing/tasks/details.js";
+import { supportsTask } from "../../clients/scheduler.js";
+import { projectDiscussion } from "../../processing/tasks/board.js";
 import { attachTaskSource } from "@ido/common/contracts/protocol";
 import { shareLocalTask } from "../../processing/tasks/local-sharing.js";
 import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
@@ -306,6 +308,8 @@ export class ClientConnections {
               projectVersion: 1,
               projects: new ProjectTeam(this.store).projects(device.id),
               workspaceVersion: 1,
+              taskOptionsVersion: 1,
+              conversationVersion: 1,
               localSharingVersion: 1,
               taskListVersion: 1,
               taskDetailVersion: 1,
@@ -356,6 +360,7 @@ export class ClientConnections {
               throw new Error("TASK_NOT_RUNNING");
             new ProjectTeam(this.store).require(device.id, task.projectId);
             if (
+              !task.localMirror &&
               !device.grants.some((grant) => grant.projectId === task.projectId)
             )
               throw new Error("PERMISSION_DENIED");
@@ -375,7 +380,9 @@ export class ClientConnections {
                 input,
                 `${task.runId}:${text(data.postKey, 600)}`,
               );
-              const target = this.store.get<Task>("task", result.taskId)!;
+              const target =
+                this.store.get<Task>("task", result.taskId) ??
+                projectDiscussion(task.projectId);
               if (
                 result.created &&
                 !["completed", "failed", "cancelled"].includes(target.state)
@@ -601,6 +608,81 @@ export class ClientConnections {
                 result = { sources: task.attachedSources ?? [] };
                 break;
               }
+              case "task.conversation":
+              case "project.conversation": {
+                const task =
+                  data.operation === "project.conversation"
+                    ? projectDiscussion(id(input.projectId))
+                    : this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                const board = new TaskBoard(this.store);
+                if (input.text !== undefined) {
+                  board.post(
+                    task,
+                    { body: text(input.text, 16000) },
+                    `app:${device.id}:${id(input.requestId)}`,
+                    device.profile?.name ?? device.name,
+                    "app",
+                  );
+                  this.notifyBoard(task, true);
+                }
+                const page = board.read(task, {
+                  taskId: task.id,
+                  limit: 10,
+                  ...(input.postId !== undefined
+                    ? { id: input.postId, offset: input.offset }
+                    : {}),
+                  ...(input.before !== undefined
+                    ? { before: input.before }
+                    : {}),
+                });
+                result = page;
+                break;
+              }
+              case "task.access-reset": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (
+                  task.clientId !== device.id ||
+                  task.revision !== input.revision ||
+                  !["completed", "failed", "cancelled"].includes(task.state)
+                )
+                  throw new Error("STOP_BEFORE_ACCESS_CHANGE");
+                task.effectiveExecutionPolicy = task.executionPolicy;
+                this.store.put("task", task.id, task);
+                this.store.audit(device.id, "task.access-reset", task.id);
+                result = { ok: true };
+                break;
+              }
+              case "task.control": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (input.operation !== "stop" && input.operation !== "steer")
+                  throw new Error("INVALID_CONTROL");
+                if (
+                  !Number.isSafeInteger(input.revision) ||
+                  Number(input.revision) < 1
+                )
+                  throw new Error("INVALID_REVISION");
+                result = this.tasks.control(
+                  task.id,
+                  `client-${device.id}`,
+                  input.operation,
+                  input.operation === "steer"
+                    ? text(input.text, 8000)
+                    : undefined,
+                  {
+                    requestKey: `client:${device.id}:control:${id(input.requestId)}`,
+                    expectedRevision: Number(input.revision),
+                  },
+                );
+                this.flush();
+                this.changed();
+                break;
+              }
               case "task.continue": {
                 const task = this.store.get<Task>("task", id(input.taskId));
                 if (!task) throw new Error("TASK_NOT_FOUND");
@@ -639,6 +721,28 @@ export class ClientConnections {
                 break;
               }
               case "task.create": {
+                const agent = input.agent;
+                if (
+                  agent !== undefined &&
+                  agent !== "codex" &&
+                  agent !== "claude"
+                )
+                  throw new Error("INVALID_AGENT");
+                if (
+                  input.progressMode !== undefined &&
+                  input.progressMode !== "auto" &&
+                  input.progressMode !== "manual"
+                )
+                  throw new Error("INVALID_PROGRESS_MODE");
+                const selected = (value: unknown) => {
+                  if (value === undefined || value === "") return undefined;
+                  if (
+                    typeof value !== "string" ||
+                    !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,159}$/.test(value)
+                  )
+                    throw new Error("INVALID_MODEL");
+                  return value;
+                };
                 const projectId = id(input.projectId);
                 team.require(device.id, projectId);
                 const routed = new Projects(this.store).accept(
@@ -656,6 +760,11 @@ export class ClientConnections {
                   text: text(input.text),
                   requestId: id(input.requestId),
                   network: false,
+                  agent,
+                  model: selected(input.model),
+                  reasoningEffort: selected(input.reasoningEffort),
+                  progressMode: input.progressMode as
+                    "auto" | "manual" | undefined,
                 });
                 this.flush();
                 this.changed();
@@ -682,6 +791,8 @@ export class ClientConnections {
                 "project.snapshot",
                 "project.knowledge",
                 "task.knowledge",
+                "task.conversation",
+                "project.conversation",
                 "project.inspect-invite",
               ].includes(String(data.operation))
             )
@@ -809,6 +920,14 @@ export class ClientConnections {
             .map((g: Grant) => ({
               projectId: id(g.projectId),
               network: g.network === true,
+              ...(Array.isArray(g.agents)
+                ? {
+                    agents: g.agents.filter(
+                      (agent: string) =>
+                        agent === "codex" || agent === "claude",
+                    ),
+                  }
+                : {}),
               slots: Math.max(1, Math.min(8, Number(g.slots) || 1)),
             }))
             .filter(
@@ -846,10 +965,10 @@ export class ClientConnections {
       }
     });
   }
-  private notifyBoard(author: Task) {
+  private notifyBoard(author: Task, includeAuthor = false) {
     for (const task of this.store.list<Task>("task")) {
       if (
-        task.id === author.id ||
+        (!includeAuthor && task.id === author.id) ||
         task.projectId !== author.projectId ||
         !task.clientId ||
         !["assigned", "running"].includes(task.state)
@@ -863,7 +982,8 @@ export class ClientConnections {
         device.taskBoardVersion !== 1 ||
         !this.ready.has(device.id) ||
         socket?.readyState !== WebSocket.OPEN ||
-        !device.grants.some((grant) => grant.projectId === task.projectId)
+        (!task.localMirror &&
+          !device.grants.some((grant) => grant.projectId === task.projectId))
       )
         continue;
       try {
@@ -896,7 +1016,7 @@ export class ClientConnections {
           if (
             ["execute", "retry"].includes(command.type) &&
             task &&
-            (!device.codexConnected ||
+            (!supportsTask(device, task) ||
               !this.store.get(
                 "project-member",
                 `${task.projectId}:${device.id}`,

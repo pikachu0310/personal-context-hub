@@ -204,6 +204,7 @@ export class WorkspaceLifecycle {
               "speech-assembly",
               "speech-sources",
               "project-context",
+              "task-board",
             ].includes(entry.kind)
           )
             this.store.remove(entry.kind, entry.id);

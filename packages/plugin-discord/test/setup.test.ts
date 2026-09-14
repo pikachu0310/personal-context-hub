@@ -64,3 +64,40 @@ test("minimal Bot setup derives Application ID and lists channels by effective p
     /DISCORD_GUILD_ACCESS_REQUIRED/,
   );
 });
+
+test("forum setup checks forum type and effective send-in-thread permission", async () => {
+  let deny = true;
+  const fetchForum: typeof fetch = async (url) => {
+    const path = String(url).replace("https://discord.com/api/v10", "");
+    if (path === "/guilds/1/channels")
+      return Response.json([
+        { id: "forum", name: "issues", type: 15, permission_overwrites: [] },
+      ]);
+    if (path === "/guilds/1")
+      return Response.json({
+        id: "1",
+        roles: [
+          {
+            id: "1",
+            permissions: String(deny ? all : all | P.SendMessagesInThreads),
+          },
+        ],
+      });
+    return request(url);
+  };
+  const config = {
+    botToken: "placeholder",
+    guildId: "1",
+    issueForumChannelId: "forum",
+  };
+  await assert.rejects(
+    inspectSetup(config, fetchForum),
+    /DISCORD_FORUM_PERMISSION_REQUIRED/,
+  );
+  deny = false;
+  await inspectSetup(config, fetchForum);
+  await assert.rejects(
+    inspectSetup({ ...config, issueForumChannelId: "allowed" }, request),
+    /DISCORD_FORUM_PERMISSION_REQUIRED/,
+  );
+});

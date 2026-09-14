@@ -56,7 +56,9 @@ export async function start(
     const forumTask =
       message.channel.isThread() &&
       message.channel.parentId === state.config.issueForumChannelId
-        ? state.forum?.taskForThread(message.channelId)
+        ? [...(state.forums?.values() ?? [state.forum])]
+            .find((forum) => forum?.taskForThread(message.channelId))
+            ?.taskForThread(message.channelId)
         : undefined;
     if (!forumTask && message.channelId !== state.config.textChannelId) return;
     const task = !forumTask && message.content.startsWith("!ido task ");

@@ -411,7 +411,9 @@ try {
   assert.match(await readSource(), /追記/);
   await editor.press("ControlOrMeta+z");
   assert.equal(await readSource(), original);
-  await editor.press("ControlOrMeta+Shift+z");
+  await editor.press(
+    process.platform === "win32" ? "Control+y" : "ControlOrMeta+Shift+z",
+  );
   assert.match(await readSource(), /追記/);
   await editor.press("ControlOrMeta+z");
   assert.equal(await readSource(), original);

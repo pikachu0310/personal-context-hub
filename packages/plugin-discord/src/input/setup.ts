@@ -49,41 +49,55 @@ export async function inspectSetup(
   const base = roles
     .filter((r) => r.id === guild.id || member.roles.includes(r.id))
     .reduce((value, r) => value | BigInt(r.permissions), 0n);
-  const available = channels
-    .filter((channel) => {
-      if (
-        ![ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(
-          channel.type,
-        )
-      )
-        return false;
-      let permissions = base;
-      if (me.id !== guild.owner_id && !(base & P.Administrator)) {
-        const apply = (items: typeof channel.permission_overwrites) => {
-          const deny = items.reduce((v, o) => v | BigInt(o.deny), 0n);
-          const allow = items.reduce((v, o) => v | BigInt(o.allow), 0n);
-          permissions = (permissions & ~deny) | allow;
-        };
-        apply(channel.permission_overwrites.filter((o) => o.id === guild.id));
-        apply(
-          channel.permission_overwrites.filter(
-            (o) => o.type === 0 && member.roles.includes(o.id),
-          ),
-        );
-        apply(
-          channel.permission_overwrites.filter(
-            (o) => o.type === 1 && o.id === me.id,
-          ),
-        );
-      } else return true;
-      return new PermissionsBitField(permissions).has([
-        P.ViewChannel,
-        P.SendMessages,
-        P.ReadMessageHistory,
-        P.AttachFiles,
-      ]);
-    })
+  const eligible = channels.filter((channel) => {
+    if (
+      ![
+        ChannelType.GuildText,
+        ChannelType.GuildAnnouncement,
+        ChannelType.GuildForum,
+      ].includes(channel.type)
+    )
+      return false;
+    let permissions = base;
+    if (me.id !== guild.owner_id && !(base & P.Administrator)) {
+      const apply = (items: typeof channel.permission_overwrites) => {
+        const deny = items.reduce((v, o) => v | BigInt(o.deny), 0n);
+        const allow = items.reduce((v, o) => v | BigInt(o.allow), 0n);
+        permissions = (permissions & ~deny) | allow;
+      };
+      apply(channel.permission_overwrites.filter((o) => o.id === guild.id));
+      apply(
+        channel.permission_overwrites.filter(
+          (o) => o.type === 0 && member.roles.includes(o.id),
+        ),
+      );
+      apply(
+        channel.permission_overwrites.filter(
+          (o) => o.type === 1 && o.id === me.id,
+        ),
+      );
+    } else return true;
+    return new PermissionsBitField(permissions).has([
+      P.ViewChannel,
+      P.SendMessages,
+      P.ReadMessageHistory,
+      P.AttachFiles,
+      ...(channel.type === ChannelType.GuildForum
+        ? [P.SendMessagesInThreads]
+        : []),
+    ]);
+  });
+  const available = eligible
+    .filter((channel) => channel.type !== ChannelType.GuildForum)
     .map(({ id, name }) => ({ id, name }));
+  const forums = eligible
+    .filter((channel) => channel.type === ChannelType.GuildForum)
+    .map(({ id, name }) => ({ id, name }));
+  if (
+    config.issueForumChannelId &&
+    !forums.some((channel) => channel.id === config.issueForumChannelId)
+  )
+    throw new Error("DISCORD_FORUM_PERMISSION_REQUIRED");
   if (
     config.textChannelId &&
     !available.some((c) => c.id === config.textChannelId)

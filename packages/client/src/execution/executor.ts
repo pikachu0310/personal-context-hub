@@ -105,6 +105,7 @@ export class Executor {
   ) => Promise<import("@ido/common/contracts/knowledge").KnowledgePage>;
   contextProfile: () => { name: string; context: string } | undefined = () =>
     undefined;
+  sharedTask?: (value: Run) => Promise<Task | undefined>;
   readonly board: TaskBoardConnection;
   createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
     new ClaudeRuntime(options);
@@ -273,13 +274,21 @@ export class Executor {
         contextSources: previous?.contextSources?.filter(
           (source) => source.kind !== "minutes",
         ),
-        agent: previous?.agent ?? local?.agent ?? "codex",
-        model: previous ? previous.model : (local?.model ?? mapping.model),
+        agent: previous?.agent ?? local?.agent ?? task.agent ?? "codex",
+        model: previous
+          ? previous.model
+          : (local?.model ??
+            task.model ??
+            (task.agent && task.agent !== (mapping.agent ?? "codex")
+              ? undefined
+              : mapping.model)),
         reasoningEffort: previous
           ? previous.reasoningEffort
           : local
             ? local.reasoningEffort
-            : mapping.reasoningEffort,
+            : task.agent || task.model
+              ? task.reasoningEffort
+              : mapping.reasoningEffort,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
         discordShare: previous?.discordShare ?? local?.discordShare,
@@ -290,6 +299,7 @@ export class Executor {
           previous?.pendingProgressMode ??
           previous?.progressMode ??
           local?.progressMode ??
+          task.progressMode ??
           mapping.progressMode ??
           "auto",
         activity: structuredClone(previous?.activity ?? []),

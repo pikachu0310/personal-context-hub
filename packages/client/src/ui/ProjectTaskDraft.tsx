@@ -30,7 +30,8 @@ export function ProjectTaskDraft({
   created: (task: Task) => Promise<void>;
 }) {
   const [savingAccess, setSavingAccess] = useState(false);
-  const busy = !!draft.busy || savingAccess;
+  const [savingModel, setSavingModel] = useState(false);
+  const busy = !!draft.busy || savingAccess || savingModel;
   const [error, setError] = useState("");
   const text = draft.text;
   async function send() {
@@ -105,7 +106,11 @@ export function ProjectTaskDraft({
             }}
           />
           <div className="composer-toolbar">
-            <ModelControls key={projectId} projectId={projectId} />
+            <ModelControls
+              key={projectId}
+              projectId={projectId}
+              onBusyChange={setSavingModel}
+            />
             <ComposerDropdown
               label="新しいタスクの権限"
               value={mapping?.accessMode ?? "sandbox"}

@@ -90,6 +90,10 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   assert.equal(executions, 1);
   const value = client.executor.runs[runId];
   assert.equal(value.origin, "local");
+  const stateResponse = await (
+    await fetch(`${client.origin}/api/state`)
+  ).json();
+  assert.ok(stateResponse.runs.some((run: Run) => run.task.runId === runId));
   const sourceInput = {
     runId,
     taskId: value.task.id,

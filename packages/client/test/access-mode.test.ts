@@ -149,7 +149,7 @@ test("project access is independent of progress, durable, and only adopted by ne
   assert.equal(
     (await post("access-mode", { runId: "original", accessMode: "full" }))
       .status,
-    400,
+    409,
   );
   const noMapping = client.settings.mappings.pop()!;
   assert.equal(

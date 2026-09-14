@@ -8,6 +8,12 @@ export const taskBoardTools = [
     inputSchema: {
       type: "object",
       properties: {
+        scope: {
+          type: "string",
+          enum: ["task", "project"],
+          description:
+            "Use project to read the project's discussion, without an issue.",
+        },
         taskId: {
           type: ["string", "null"],
           minLength: 1,
@@ -69,6 +75,12 @@ export const taskBoardTools = [
     inputSchema: {
       type: "object",
       properties: {
+        scope: {
+          type: "string",
+          enum: ["task", "project"],
+          description:
+            "Use project for questions and findings not tied to an issue. Posting never starts work.",
+        },
         taskId: { type: "string", maxLength: 200 },
         body: { type: "string", minLength: 1, maxLength: 16000 },
         replyTo: { type: "integer", minimum: 1 },
@@ -110,7 +122,7 @@ export async function callTaskBoard(
 export function watchTaskBoard(board, thread, { delayMs = 15000 } = {}) {
   let timer;
   let closed = false;
-  const unsubscribe = board.subscribe(() => {
+  const notify = () => {
     if (closed || timer) return;
     timer = setTimeout(() => {
       timer = undefined;
@@ -124,15 +136,50 @@ export function watchTaskBoard(board, thread, { delayMs = 15000 } = {}) {
           .catch(() => {});
     }, delayMs);
     timer.unref?.();
-  });
+  };
+  const unsubscribe = board.subscribe(notify);
+  let cursor;
+  let reading = false;
+  const poll = async () => {
+    if (closed || reading || !board.taskId) return;
+    reading = true;
+    try {
+      const pages = await Promise.all([
+        board.read({ taskId: board.taskId }),
+        board.read({ scope: "project" }),
+      ]);
+      const next = JSON.stringify(
+        pages.map((page) =>
+          (page.posts ?? [])
+            .filter(
+              (post) =>
+                post.authorTaskId !== board.taskId ||
+                post.authorKind === "human",
+            )
+            .map((post) => post.id),
+        ),
+      );
+      if (cursor !== undefined && next !== cursor) notify();
+      cursor = next;
+    } catch {
+      /* Connection recovery retries the read, without inventing a message. */
+    } finally {
+      reading = false;
+    }
+  };
+  void poll();
+  const polling = setInterval(() => void poll(), Math.max(15000, delayMs));
+  polling.unref?.();
   return () => {
     closed = true;
     clearTimeout(timer);
+    clearInterval(polling);
     unsubscribe();
   };
 }
 
 export const taskBoardGuidelines = [
+  "会話の保存先はEngineで、Discordのissueスレッドとアプリには同じ会話が表示されます。scope:projectでIssueに属さないプロジェクトの相談・共有を読み書きできます。会話の投稿だけで新しいタスクを開始しないでください。",
   "この作業には、同じプロジェクトのタスク同士で使える自由な掲示板があります。タスクごとにスレッドがあります。",
   "board_readで未終了タスクのスレッドを確認し、taskIdで議論を読めます。検索、返信の参照、本文の続きも取得できます。終了した議論は通常の一覧・検索から外れますが、taskIdやincludeFinishedで参照できます。",
   "最初の一覧取得はboard_readに{}を渡してください。使わない引数は省略し、limitは1〜10です。threads[].idをtaskIdに使い、一覧のnextOffsetがnullでなければ同じ検索条件のoffsetへ渡します。スレッド内の差分はtaskIdとafter（nextAfter）で読みます。",

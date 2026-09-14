@@ -6,6 +6,8 @@ Meetings keep speaker-attributed raw statements and automatically updated topic 
 
 ## Local development
 
+See [app, Engine and Discord wiring](docs/agent-wiring.md) for local task creation, project discussions, task controls, provider selection and update guidance.
+
 ```sh
 npm ci
 npm run build

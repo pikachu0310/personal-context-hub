@@ -657,12 +657,12 @@ try {
     .getByRole("status")
     .filter({ hasText: "ルーティングのテストを実行中です。" })
     .waitFor();
-  assert.equal(await page.getByLabel("エージェントへの追加指示").count(), 0);
+  assert.equal(await page.getByLabel("エージェントへの追加指示").count(), 1);
   assert.equal(
     await page
       .getByRole("button", { name: "タスクを停止", exact: true })
       .count(),
-    0,
+    1,
   );
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
@@ -881,7 +881,7 @@ try {
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
     .getByRole("button", { name: "実行権限", exact: true })
-    .filter({ hasText: "フルアクセス・承認なし" })
+    .filter({ hasText: "フルアクセス" })
     .waitFor();
   await inspector.getByText("Discord共有", { exact: true }).waitFor();
   await inspector

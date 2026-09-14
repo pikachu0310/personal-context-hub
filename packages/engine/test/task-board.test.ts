@@ -4,7 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/adapters/sqlite/store.js";
-import { TaskBoard, type BoardThread } from "../src/processing/tasks/board.js";
+import {
+  TaskBoard,
+  projectDiscussion,
+  type BoardThread,
+} from "../src/processing/tasks/board.js";
 import { Tasks } from "../src/processing/tasks/service.js";
 import { WorkspaceLifecycle } from "../src/processing/projects/lifecycle.js";
 import type { Task } from "@ido/common/contracts/protocol";
@@ -37,6 +41,77 @@ async function fixture(t: TestContext) {
     b = create("UI");
   return { directory, store, board, a, b, create, user };
 }
+
+test("project discussion is durable, isolated and never creates an execution task", async (t) => {
+  const { board, store, a } = await fixture(t);
+  const count = store.list("task").length;
+  const discussion = projectDiscussion(a.projectId);
+  const first = board.post(
+    discussion,
+    { body: "Project question" },
+    "app:first",
+    "Member",
+    "app",
+  );
+  assert.equal(
+    board.post(
+      discussion,
+      { body: "Project question" },
+      "app:first",
+      "Member",
+      "app",
+    ).created,
+    false,
+  );
+  board.post(
+    a,
+    { scope: "project", body: "Agent finding", replyTo: first.id },
+    "agent:reply",
+  );
+  const page = new TaskBoard(store).read(a, { scope: "project" }) as any;
+  assert.deepEqual(
+    page.posts.map((p: any) => p.body),
+    ["Project question", "Agent finding"],
+  );
+  assert.equal(page.posts[0].external, false);
+  assert.equal(page.posts[0].authorKind, "human");
+  assert.equal(store.list("task").length, count);
+  assert.equal(store.get("task", discussion.id), undefined);
+  assert.throws(
+    () => board.read({ ...a, projectId: "foreign" }, { taskId: discussion.id }),
+    /NOT_FOUND/,
+  );
+  for (let i = 0; i < 12; i++)
+    board.post(a, { scope: "project", body: `Note ${i}` }, `note:${i}`);
+  const recent = board.read(a, { scope: "project" }) as any;
+  assert.equal(recent.posts.length, 10);
+  const older = board.read(a, {
+    scope: "project",
+    before: recent.posts[0].id,
+  }) as any;
+  assert.deepEqual(
+    older.posts.map((p: any) => p.id),
+    [1, 2, 3, 4],
+  );
+});
+
+test("project deletion also purges its issue-free discussion", async (t) => {
+  const { board, store, a, user } = await fixture(t);
+  board.post(
+    a,
+    { scope: "project", body: "Project-only content" },
+    "project-post",
+  );
+  await new WorkspaceLifecycle(store).deleteProject(
+    { user, valid: () => true },
+    a.projectId,
+    { name: "Example", confirm: true, force: true, membershipVersion: 0 },
+  );
+  assert.equal(
+    store.get("task-board", projectDiscussion(a.projectId).id),
+    undefined,
+  );
+});
 
 test("free discussions use task threads, preserve authors and do not change task state", async (t) => {
   const { board, store, a, b } = await fixture(t);

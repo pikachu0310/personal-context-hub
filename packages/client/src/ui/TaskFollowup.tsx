@@ -19,7 +19,7 @@ export function TaskFollowup({
   const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(
     task.state,
   );
-  if (!terminal) return null;
+  const stopRequest = useRef(crypto.randomUUID());
   const canSend = state.connected && state.continuationSupported === true;
   async function send() {
     if (busy || !canSend || !text.trim()) return;
@@ -37,10 +37,18 @@ export function TaskFollowup({
     setBusy(true);
     setNotice("");
     try {
-      await api("project/continue", { taskId: task.id, ...pending.current });
+      await api(terminal ? "project/continue" : "project/control", {
+        taskId: task.id,
+        ...pending.current,
+        operation: "steer",
+      });
       setText("");
       pending.current = undefined;
-      setNotice("元のタスクの続きとして受け付けました。");
+      setNotice(
+        terminal
+          ? "元のタスクの続きとして受け付けました。"
+          : "追加指示を受け付けました。行動ログで反映を確認できます。",
+      );
     } catch (e) {
       setNotice((e as Error).message);
     } finally {
@@ -58,7 +66,9 @@ export function TaskFollowup({
       >
         <textarea
           aria-label="エージェントへの追加指示"
-          placeholder="このタスクの続きを依頼する"
+          placeholder={
+            terminal ? "このタスクの続きを依頼する" : "実行担当への追加指示"
+          }
           value={text}
           maxLength={8000}
           disabled={busy}
@@ -77,17 +87,35 @@ export function TaskFollowup({
         <div className="composer-toolbar">
           <span className="composer-spacer" />
           <ComposerAction
-            running={false}
+            running={!terminal}
             text={text}
             busy={busy}
             canSend={canSend}
             sendLabel="追加指示を送信"
+            stop={() => {
+              setBusy(true);
+              void api("project/control", {
+                taskId: task.id,
+                revision: task.revision,
+                operation: "stop",
+                requestId: `${stopRequest.current}-${task.id}-${task.revision}`,
+              })
+                .then(() =>
+                  setNotice(
+                    "停止を要求しました。実行PCからの停止確認をお待ちください。",
+                  ),
+                )
+                .catch((e) => setNotice((e as Error).message))
+                .finally(() => setBusy(false));
+            }}
           />
         </div>
       </form>
       <p className="composer-footnote">
         {canSend
-          ? "元の会話と作業フォルダーを引き継いで続行します。"
+          ? terminal
+            ? "元の会話と作業フォルダーを引き継いで続行します。"
+            : "実行PCへ指示・停止を送ります。権限の承認は実行PCで行います。"
           : "続行に対応したEngineへ接続すると送信できます。"}
       </p>
       {notice && <p role="status">{notice}</p>}

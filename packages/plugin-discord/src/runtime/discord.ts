@@ -25,13 +25,54 @@ import { connectionLink, validateDownloads } from "../onboarding/guide.js";
 const state = createDiscordState();
 let forumTimer: NodeJS.Timeout | undefined;
 let forumBusy = false;
+function makeForum(projectId: string) {
+  const binding = { ...state.config, projectId } as unknown as ForumBinding;
+  const key = forumKey(binding);
+  const valid = () =>
+    state.forums?.get(projectId) === forum &&
+    state.config.guildId === binding.guildId &&
+    state.config.issueForumChannelId === binding.issueForumChannelId;
+  const forum: ForumSync = new ForumSync(
+    binding,
+    forumTransport(state.client!, binding, valid),
+    () =>
+      runtime.rpc.request<ForumRecord[] | undefined>("storage.get", { key }),
+    (records) =>
+      runtime.rpc
+        .request("storage.put", { key, value: records })
+        .then(() => {}),
+    valid,
+  );
+  state.forums!.set(projectId, forum);
+  return forum;
+}
 async function refreshForum() {
-  const forum = state.forum;
-  if (!forum || forumBusy || !state.client?.isReady()) return;
+  if (!state.forums || forumBusy || !state.client?.isReady()) return;
+  const forums = state.forums;
   forumBusy = true;
   try {
-    const tasks = await runtime.rpc.request<Task[]>("tasks.snapshot", {});
-    if (state.forum === forum) await forum.sync(tasks);
+    const boardAfter = Object.assign(
+      {},
+      ...[...forums.values()].map((forum) => forum.postCursors()),
+    );
+    const tasks = await runtime.rpc.request<
+      import("../forum/sync.js").ForumTask[]
+    >("tasks.snapshot", { boardAfter });
+    if (state.forums !== forums) return;
+    let failed = false;
+    for (const projectId of new Set([
+      state.config.projectId,
+      ...tasks.map((task) => task.projectId),
+    ])) {
+      if (!projectId || state.forums !== forums) continue;
+      const forum = forums.get(projectId) ?? makeForum(projectId);
+      try {
+        await forum.sync(tasks);
+      } catch {
+        failed = true;
+      }
+    }
+    if (failed) throw new Error("FORUM_SYNC_INCOMPLETE");
   } catch {
     runtime.emit("status", { status: "forum-sync-error" });
   } finally {
@@ -40,6 +81,12 @@ async function refreshForum() {
 }
 function configureForum() {
   clearInterval(forumTimer);
+  const compatible =
+    state.forum &&
+    state.forum.binding.guildId === state.config.guildId &&
+    state.forum.binding.issueForumChannelId ===
+      state.config.issueForumChannelId;
+  if (!compatible) state.forums = new Map();
   state.forum = undefined;
   if (
     !state.config.issueForumChannelId ||
@@ -47,19 +94,9 @@ function configureForum() {
     !state.config.projectId
   )
     return;
-  const binding = { ...state.config } as unknown as ForumBinding;
-  const key = forumKey(binding);
-  const forum: ForumSync = new ForumSync(
-    binding,
-    forumTransport(state.client, binding, () => state.forum === forum),
-    () =>
-      runtime.rpc.request<ForumRecord[] | undefined>("storage.get", { key }),
-    async (records) => {
-      await runtime.rpc.request("storage.put", { key, value: records });
-    },
-    () => state.forum === forum,
-  );
-  state.forum = forum;
+  state.forum =
+    state.forums!.get(state.config.projectId) ??
+    makeForum(state.config.projectId);
   forumTimer = setInterval(() => void refreshForum(), 10000);
   void refreshForum();
 }
@@ -124,12 +161,25 @@ const emit = (data: Record<string, unknown>) => {
   if (data.type === "input") {
     const input = normalizeInput(
       data,
-      state.config,
+      (() => {
+        const forum = [...(state.forums?.values() ?? [])].find((f) =>
+          f.taskForThread(String(data.channelId)),
+        );
+        return forum
+          ? {
+              ...state.config,
+              projectId: forum.binding.projectId,
+              meetingId: "",
+            }
+          : state.config;
+      })(),
       state.voice?.state.status === VoiceConnectionStatus.Ready
         ? (state.voice.joinConfig.channelId ?? undefined)
         : undefined,
       state.audioSessionId,
-      state.forum?.taskForThread(String(data.channelId)),
+      [...(state.forums?.values() ?? [])]
+        .find((f) => f.taskForThread(String(data.channelId)))
+        ?.taskForThread(String(data.channelId)),
     );
     if (input) {
       if (input.audioFrame && pendingFrames >= 32) return;
@@ -163,6 +213,30 @@ const runtime = pluginRuntime(
         },
       };
     }
+    if (operation === "forum.status") {
+      await refreshForum();
+      const errors = [];
+      for (const forum of state.forums?.values() ?? []) {
+        errors.push(
+          ...(await forum.inspect()).map((record) => ({
+            ...record,
+            projectId: forum.binding.projectId,
+          })),
+        );
+      }
+      return { errors };
+    }
+    if (operation === "forum.recover") {
+      const forum = state.forums?.get(String(input.projectId));
+      if (!forum) throw new Error("FORUM_PROJECT_NOT_FOUND");
+      await forum.recover(
+        String(input.taskId),
+        input.threadId ? String(input.threadId) : undefined,
+        input.recreate === true,
+      );
+      await refreshForum();
+      return { ok: true };
+    }
     if (operation === "configure") {
       const next = {
         ...state.config,
@@ -170,7 +244,7 @@ const runtime = pluginRuntime(
       };
       normalizeDiscordPolicy(next);
       validateDownloads(next);
-      state.forum = undefined;
+      if (next.issueForumChannelId && next.botToken) await inspectSetup(next);
       const reconnect = [
         "guildId",
         "textChannelId",
@@ -267,6 +341,7 @@ const runtime = pluginRuntime(
   },
   async () => {
     clearInterval(forumTimer);
+    state.forums = undefined;
     state.forum = undefined;
     for (const request of state.pending.values()) {
       clearTimeout(request.timer);
