@@ -11,7 +11,13 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useMediaQuery } from "@mantine/hooks";
-import { useEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { TaskContextSource } from "@ido/common/contracts/api";
 import { Icon } from "./Icons.js";
 
@@ -55,7 +61,32 @@ export function TaskInspector({
   sourceId?: string;
   onSourceChange?: (id: string) => void;
 }) {
+  const aside = useRef<HTMLElement>(null);
+  const wide = tab === "changes" && Boolean(changes);
   const compact = useMediaQuery("(max-width: 1150px)");
+  useLayoutEffect(() => {
+    const workspace = aside.current?.closest<HTMLElement>(".with-inspector");
+    if (!workspace || compact) return;
+    const measure = () => {
+      const style = getComputedStyle(workspace);
+      const available =
+        workspace.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight);
+      // Use the normal open gap even while the panel is sliding closed.
+      const width = wide ? Math.max(0, (available - 16) / 2) : 340;
+      const value = `${width}px`;
+      if (workspace.style.getPropertyValue("--inspector-panel-width") !== value)
+        workspace.style.setProperty("--inspector-panel-width", value);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(workspace);
+    return () => {
+      observer.disconnect();
+      workspace.style.removeProperty("--inspector-panel-width");
+    };
+  }, [wide, compact]);
   const [opened, setOpened] = useState(false);
   const [desktopOpened, setDesktopOpened] = useState(true);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
@@ -225,7 +256,14 @@ export function TaskInspector({
             transitionProps={{ duration: reducedMotion ? 0 : 280 }}
             position="right"
             title="タスクの詳細"
-            size="min(380px, 100vw)"
+            size={wide ? "100%" : "min(380px, 100vw)"}
+            styles={{
+              content: {
+                transition: reducedMotion
+                  ? "none"
+                  : "transform 280ms cubic-bezier(0.22, 1, 0.36, 1), flex-basis 280ms cubic-bezier(0.22, 1, 0.36, 1)",
+              },
+            }}
           >
             {content}
           </Drawer>
@@ -233,6 +271,8 @@ export function TaskInspector({
       ) : (
         <Paper
           component="aside"
+          ref={aside}
+          data-wide={wide || undefined}
           withBorder
           radius="lg"
           className="task-inspector"

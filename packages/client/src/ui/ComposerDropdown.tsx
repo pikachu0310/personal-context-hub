@@ -1,3 +1,4 @@
+import { Icon } from "./Icons.js";
 import { Menu, Popover, Slider } from "@mantine/core";
 import { useState } from "react";
 import type { AgentCatalogEntry } from "@ido/common/contracts/api";
@@ -24,7 +25,7 @@ export function ComposerDropdown({
           disabled={disabled}
         >
           {options.find((option) => option.value === value)?.label ?? value}
-          <span aria-hidden="true">⌄</span>
+          <Icon name="chevronDown" size={14} />
         </button>
       </Menu.Target>
       <Menu.Dropdown>
@@ -90,7 +91,7 @@ export function ComposerModelPicker({
           <span className="composer-effort-label">
             {selected ? (effortNames[selected] ?? selected) : "既定"}
           </span>
-          <span aria-hidden="true">⌄</span>
+          <Icon name="chevronDown" size={14} />
         </button>
       </Popover.Target>
       <Popover.Dropdown className="composer-model-menu">

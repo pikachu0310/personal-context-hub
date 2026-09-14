@@ -11,13 +11,15 @@ export function ProjectMenu({
   deviceId,
   action,
   mapping,
-  startLocal,
+  newTask,
+  canCreate,
 }: {
   project: Project;
   deviceId?: string;
   action: Action;
   mapping: () => void;
-  startLocal: () => void;
+  newTask: () => void;
+  canCreate: boolean;
 }) {
   const [rename, setRename] = useState(false),
     [url, setUrl] = useState(""),
@@ -87,7 +89,9 @@ export function ProjectMenu({
           </button>
         </Menu.Target>
         <Menu.Dropdown>
-          <Menu.Item onClick={startLocal}>このPCでタスクを開始</Menu.Item>
+          <Menu.Item disabled={!canCreate} onClick={newTask}>
+            新しいタスク
+          </Menu.Item>
           <Menu.Item onClick={mapping}>接続・設定</Menu.Item>
           {owner && (
             <>

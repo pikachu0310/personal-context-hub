@@ -1,3 +1,4 @@
+import { TaskOwner } from "./TaskOwner.js";
 import {
   initialSender,
   displaySender,
@@ -6,7 +7,7 @@ import {
 import { ComposerDropdown } from "./ComposerDropdown.js";
 import { ModelControls } from "./ModelControls.js";
 import { ComposerAction } from "./ComposerAction.js";
-import { Button, Group, Stack, Text } from "@mantine/core";
+import { Button, Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import { EnvironmentRow, TaskInspector } from "./TaskInspector.js";
 import { useEffect, useRef, useState } from "react";
 import type { Action, ClientState, Invoke } from "@ido/common-ui";
@@ -586,15 +587,15 @@ export function ClientRuns({
               <Icon name="refresh" size={14} />
             </Button>
           </Group>
-          <Button
+          <UnstyledButton
             className="inspector-action"
-            variant="subtle"
-            color="dark"
-            leftSection={<Icon name="changes" size={17} />}
             onClick={() => void openDiff()}
           >
-            変更を確認{files.length ? ` · ${files.length} ファイル` : ""}
-          </Button>
+            <Icon name="changes" size={17} />
+            <span>
+              変更を確認{files.length ? ` · ${files.length} ファイル` : ""}
+            </span>
+          </UnstyledButton>
           <EnvironmentRow label="実行PC">
             <Icon name="computer" size={17} />
             {environment?.deviceName ?? "このPC"}
@@ -649,11 +650,12 @@ export function ClientRuns({
             タスク
           </Text>
           <EnvironmentRow label="担当者">
-            <Icon name="person" size={17} />
-            {environment?.ownerName ||
-              state.teamTasks?.tasks.find((task) => task.runId === runId)
-                ?.ownerName ||
-              "未設定"}
+            <TaskOwner
+              state={state}
+              task={current.task}
+              local
+              ownerName={environment?.ownerName}
+            />
           </EnvironmentRow>
           <EnvironmentRow label="開始">
             {current.task.createdByBot
@@ -668,11 +670,13 @@ export function ClientRuns({
             <span
               className={`task-dot ${running && !waitingPlan ? "active" : current.state}`}
             />
-            {waitingPlan
-              ? "計画の確認待ち"
-              : current.phase === "planning" && running
-                ? "相談・計画中"
-                : stateLabel(current.state)}
+            <span>
+              {waitingPlan
+                ? "計画の確認待ち"
+                : current.phase === "planning" && running
+                  ? "相談・計画中"
+                  : stateLabel(current.state)}
+            </span>
           </EnvironmentRow>
           <EnvironmentRow label="エージェント">
             {agentName} · {current.model ?? "既定モデル"}
