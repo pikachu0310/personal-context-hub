@@ -46,6 +46,47 @@ try {
     .waitFor();
   await page.getByRole("button", { name: "説明をスキップ" }).click();
   await page.getByRole("button", { name: "説明を再表示" }).waitFor();
+  await page.getByRole("button", { name: "3. Bot設定" }).click();
+  assert.equal(
+    await page
+      .getByRole("combobox", { name: "発言・タスク操作を受け付けるユーザー" })
+      .inputValue(),
+    "全員を許可（既定）",
+  );
+  await page.getByRole("textbox", { name: /^Guild ID/ }).fill("123456789");
+  await page
+    .getByRole("textbox", { name: /^テキストチャンネル/ })
+    .fill("234567890");
+  await page.getByRole("combobox", { name: "タスクのプロジェクト" }).click();
+  await page.getByRole("option", { name: "Demo project", exact: true }).click();
+  await page.getByRole("combobox", { name: "会話を保存する会議" }).click();
+  await page.getByRole("option", { name: "Planning", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "発言・タスク操作を受け付けるユーザー" })
+    .click();
+  await page
+    .getByRole("option", { name: "指定したユーザーIDだけ許可", exact: true })
+    .click();
+  await page
+    .getByLabel("許可するDiscordユーザーID（改行またはカンマ区切り）")
+    .fill("345678901, 456789012");
+  await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/api/settings") && response.status() === 200,
+    ),
+    page.getByRole("button", { name: "保存", exact: true }).click(),
+  ]);
+  assert.equal(engine.store.get("config", "discord").userPolicy, "allowlist");
+  assert.equal(
+    engine.store.get("config", "discord").allowedUserIds,
+    "345678901\n456789012",
+  );
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/discord-settings.png",
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "5. 公開URL" }).click();
   assert.equal(
     await page.getByLabel("Preview公開URL", { exact: true }).count(),

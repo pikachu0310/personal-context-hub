@@ -90,6 +90,10 @@ export class Store {
   user(id: string) {
     return this.users().find((u) => u.id === id);
   }
+  // Conversation participants are not dashboard accounts and cannot log in or pair devices.
+  conversationAuthor(id: string): User | undefined {
+    return this.user(id) ?? this.get<User>("discord-participant", id);
+  }
   createUser(name: string, password: string, role: User["role"]): User {
     const user = { id: randomUUID(), name, role };
     this.db
@@ -270,7 +274,17 @@ export class Store {
       if (!task) throw new Error("TASK_NOT_FOUND");
       if (type === "stop" && task.state === "queued") {
         task.state = "cancelled";
+        task.updatedAt = Date.now();
         this.put("task", task.id, task);
+        this.audit(actor, "task.stop", taskId);
+        return;
+      }
+      if (type === "steer" && task.state === "queued") {
+        if (!text?.trim()) throw new Error("INSTRUCTION_REQUIRED");
+        task.text += `\n\n追加指示:\n${text}`;
+        task.updatedAt = Date.now();
+        this.put("task", task.id, task);
+        this.audit(actor, "task.steer", taskId);
         return;
       }
       if (!task.clientId) throw new Error("TASK_NOT_ASSIGNED");

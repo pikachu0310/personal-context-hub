@@ -47,6 +47,8 @@ async function api(path: string, input?: Data) {
   return data;
 }
 const errorMessages: Record<string, string> = {
+  DISCORD_USER_POLICY_INVALID:
+    "許可方法を選び、DiscordユーザーIDを数字で入力してください。改行・カンマ区切りで最大100件指定できます。",
   DISCORD_PLUGIN_NOT_RUNNING:
     "Discordプラグインが停止しています。セットアップの「2. Discord追加」で起動してから、連携をやり直してください。",
   DISCORD_TOKEN_EXCHANGE_FAILED:
@@ -1119,7 +1121,10 @@ function Setup({
             </>
           )}
           <Form
-            initial={state.discord}
+            initial={{
+              ...state.discord,
+              userPolicy: state.discord?.userPolicy ?? "all",
+            }}
             fields={[
               {
                 key: "botToken",
@@ -1128,6 +1133,20 @@ function Setup({
                 optional: true,
               },
               { key: "guildId", label: "Guild ID" },
+              {
+                key: "userPolicy",
+                label: "発言・タスク操作を受け付けるユーザー",
+                options: [
+                  { value: "all", label: "全員を許可（既定）" },
+                  { value: "allowlist", label: "指定したユーザーIDだけ許可" },
+                ],
+              },
+              {
+                key: "allowedUserIds",
+                label: "許可するDiscordユーザーID（改行またはカンマ区切り）",
+                multiline: true,
+                optional: true,
+              },
               {
                 key: "textChannelId",
                 label: "テキストチャンネル",
@@ -1163,6 +1182,17 @@ function Setup({
               })
             }
           />
+          <Text size="sm">
+            既定では /join
+            で参加した通話と設定したテキストチャンネルの全員が、未連携でも発言・タスク依頼・停止・追加指示を行えます。
+            ユーザーIDで絞り込む場合は「指定したユーザーIDだけ許可」を選びます。空欄なら誰も許可しません。保存すると受付対象の変更はすぐに反映されます。
+            Activity・管理画面へのログインは引き続き本人確認が必要です。
+          </Text>
+          <Text size="sm">
+            /ido quiet で読み上げ停止、/ido context で議事録全文、/ido ask
+            で質問できます。 /ido stop・/ido steer
+            で既存タスクを操作できます。「井戸Bot、今のタスクを止めて」「井戸Bot、今のタスクに追加で、テストも実行して」のような呼びかけも使えます。
+          </Text>
           <Button
             variant="light"
             onClick={() =>

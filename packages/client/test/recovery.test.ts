@@ -59,12 +59,17 @@ test("a restarted Client does not re-execute a persisted delivery", async (t) =>
   assert.equal(events.at(-1)?.state, "interrupted");
   assert.equal(restarted.runs.run.directory, join(directory, "preserved"));
 });
-test("headless credentials preserve multiline values and owner-only permissions", async (t) => {
+test("default credentials use secrets.json and preserve multiline values and owner-only permissions", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-secrets-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const credentials = new Credentials(directory, "test", "file");
+  const credentials = new Credentials(directory, "test");
+  assert.equal(credentials.backend, "file");
   await credentials.set("key", "line1\nline2\n");
   assert.equal(await credentials.get("key"), "line1\nline2\n");
+  assert.equal(
+    await new Credentials(directory, "test").get("key"),
+    "line1\nline2\n",
+  );
   if (process.platform !== "win32")
     assert.equal(
       (await stat(join(directory, "secrets.json"))).mode & 0o777,

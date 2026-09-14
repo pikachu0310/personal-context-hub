@@ -363,7 +363,7 @@ test("voice inputs follow the active plugin channel and reject obsolete configur
     meetingId: "meeting",
     projectId: "project",
   });
-  engine.store.put("discord-user", "speaker", { userId: user.id });
+  engine.store.put("discord-user", "123456789", { userId: user.id });
   let processed = 0;
   engine.conversation.transcribe = async () => "synthetic transcript";
   engine.conversation.process = async () => {
@@ -373,7 +373,7 @@ test("voice inputs follow the active plugin channel and reject obsolete configur
   engine.conversation.speak = async () => "";
   const event = {
     guildId: "guild",
-    userId: "speaker",
+    userId: "123456789",
     audio: Buffer.from("synthetic").toString("base64"),
   };
   await engine.pluginInput({ ...event, channelId: "old", eventId: "old" });
@@ -388,4 +388,56 @@ test("voice inputs follow the active plugin channel and reject obsolete configur
   engine.plugins.stop();
   await engine.pluginInput({ ...event, channelId: "active", eventId: "left" });
   assert.equal(processed, 1);
+});
+
+test("Discord user policy defaults to all, validates IDs, persists changes and is admin-only", async (t) => {
+  const e = await fixture(t),
+    session = await login(e);
+  const discord = {
+    guildId: "123",
+    textChannelId: "456",
+    projectId: "project",
+    meetingId: "meeting",
+  };
+  assert.equal((await post(e, "settings", { discord }, session)).status, 200);
+  assert.equal(e.store.get<any>("config", "discord").userPolicy, "all");
+  let updated: any;
+  e.plugins.updatePolicy = (config) => {
+    updated = config;
+  };
+  assert.equal(
+    (
+      await post(
+        e,
+        "settings",
+        {
+          discord: {
+            ...discord,
+            userPolicy: "allowlist",
+            allowedUserIds: "100, 200\n100",
+          },
+        },
+        session,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(updated.allowedUserIds, "100\n200");
+  assert.equal(
+    (
+      await post(
+        e,
+        "settings",
+        { discord: { ...discord, allowedUserIds: "not-an-id" } },
+        session,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(e.store.get<any>("config", "discord").userPolicy, "allowlist");
+  e.store.createUser("member", "test-password-long", "member");
+  assert.equal(
+    (await post(e, "settings", { discord }, await login(e, "member"))).status,
+    403,
+  );
 });

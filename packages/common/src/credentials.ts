@@ -10,15 +10,9 @@ export class Credentials {
     readonly service: string,
     backend?: Credentials["backend"],
   ) {
-    this.backend =
-      backend ??
-      (process.env.IDO_CREDENTIAL_BACKEND === "file"
-        ? "file"
-        : process.platform === "darwin"
-          ? "keychain"
-          : process.platform === "win32"
-            ? "dpapi"
-            : "secret-service");
+    // Normal Engine/Client startup uses the application-owned file on every OS.
+    // Explicit backends remain available for legacy credential tooling.
+    this.backend = backend ?? "file";
   }
   private key(name: string) {
     return hash(this.directory + ":" + name);

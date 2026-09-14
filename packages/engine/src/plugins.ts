@@ -13,6 +13,7 @@ export class Plugins {
   child?: ChildProcess;
   status = "stopped";
   voiceChannelId?: string;
+  voiceGeneration = 0;
   busy = false;
   pending = new Map<
     string,
@@ -135,9 +136,21 @@ export class Plugins {
     );
     this.child = child;
     child.on("message", (message: unknown) => {
+      if (this.child !== child) return;
       if (this.child !== child || !message || typeof message !== "object")
         return;
       const event = message as Record<string, unknown>;
+      if (event.type === "published") {
+        if (
+          typeof event.key === "string" &&
+          typeof event.messageId === "string" &&
+          /^\d{1,24}$/.test(event.messageId)
+        )
+          this.store.put("discord-publication", event.key, {
+            messageId: event.messageId,
+          });
+        return;
+      }
       if (event.type === "reply") {
         const pending = this.pending.get(String(event.id));
         if (pending) {
@@ -152,6 +165,7 @@ export class Plugins {
         return;
       }
       if (event.type === "voice") {
+        this.voiceGeneration++;
         this.voiceChannelId =
           typeof event.channelId === "string" &&
           /^\d{1,24}$/.test(event.channelId)
@@ -175,8 +189,48 @@ export class Plugins {
     });
     child.send({ type: "start", v: 1, config: { ...config, botToken } });
   }
-  deliver(channelId: string, content: string, audio?: string) {
-    this.child?.send({ type: "output", channelId, content, audio });
+  deliver(
+    channelId: string,
+    content: string,
+    audio?: string,
+    speechEpoch?: unknown,
+  ) {
+    this.child?.send({
+      type: "output",
+      channelId,
+      content,
+      audio,
+      speechEpoch,
+    });
+  }
+  publish(
+    kind: "transcript" | "minutes",
+    meetingId: string,
+    channelId: string,
+    content: string,
+  ) {
+    const key = `${kind}-${meetingId}-${channelId}`;
+    const saved = this.store.get<{ messageId: string }>(
+      "discord-publication",
+      key,
+    );
+    this.child?.send({
+      type: "publish",
+      key,
+      channelId,
+      content,
+      messageId: saved?.messageId,
+    });
+  }
+  commandResult(eventId: string, content: string, file?: string) {
+    this.child?.send({ type: "command-result", eventId, content, file });
+  }
+  updatePolicy(config: Record<string, string>) {
+    this.child?.send({
+      type: "policy",
+      userPolicy: config.userPolicy,
+      allowedUserIds: config.allowedUserIds,
+    });
   }
   request(operation: string, input: Record<string, unknown>): Promise<any> {
     if (!this.child?.connected)
@@ -192,6 +246,7 @@ export class Plugins {
     });
   }
   stop() {
+    this.voiceGeneration++;
     this.voiceChannelId = undefined;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);

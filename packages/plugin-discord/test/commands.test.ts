@@ -51,7 +51,7 @@ test("register join and leave individually without replacing unrelated commands"
   await registerVoiceCommands({
     commands: { create: async (data: any) => names.push(data.name) },
   } as unknown as Guild);
-  assert.deepEqual(names, ["join", "leave"]);
+  assert.deepEqual(names, ["join", "leave", "ido"]);
 });
 test("join acknowledges first and uses the invoking member's voice channel", async () => {
   const i = interaction();
@@ -140,4 +140,76 @@ test("overlapping commands acknowledge and report busy without opening duplicate
   assert.match(second.replies[0], /処理中/);
   resolve();
   await first;
+});
+
+test("ido quiet stops only playback; context routes to Engine and attaches full minutes", async () => {
+  let stopped = 0;
+  const events: any[] = [],
+    results: any[] = [];
+  const handler = voiceCommandHandler(
+    "guild",
+    async () => {},
+    () => {
+      throw new Error("must stay joined");
+    },
+    () => "voice",
+    {
+      textChannelId: "text",
+      allowed: () => true,
+      quiet: () => {
+        stopped++;
+      },
+      request: async (event) => {
+        events.push(event);
+        return { content: "Summary", file: "Full minutes" };
+      },
+    },
+  );
+  const i = interaction("ido");
+  Object.assign(i.value, {
+    id: "interaction",
+    channelId: "text",
+    options: { getSubcommand: () => "quiet", getString: () => null },
+  });
+  await handler(i.value);
+  assert.equal(stopped, 1);
+  assert.equal(events.length, 0);
+  Object.assign(i.value, {
+    options: { getSubcommand: () => "context", getString: () => null },
+    editReply: async (data: any) => results.push(data),
+  });
+  await handler(i.value);
+  assert.equal(events[0].command, "context");
+  assert.equal(results[0].files[0].attachment.toString(), "Full minutes");
+  assert.deepEqual(results[0].allowedMentions, { parse: [] });
+});
+
+test("allowlist applies to slash controls and join, including users in the same voice channel", async () => {
+  let called = false;
+  const handler = voiceCommandHandler(
+    "guild",
+    async () => {
+      called = true;
+    },
+    () => {},
+    () => "voice",
+    {
+      textChannelId: "text",
+      allowed: () => false,
+      quiet: () => {
+        called = true;
+      },
+      request: async () => {
+        called = true;
+        return { content: "" };
+      },
+    },
+  );
+  for (const command of ["join", "quiet", "context", "stop", "steer"]) {
+    const i = interaction("ido");
+    Object.assign(i.value, { options: { getSubcommand: () => command } });
+    await handler(i.value);
+    assert.match(i.replies[0], /受付対象ではありません/);
+  }
+  assert.equal(called, false);
 });

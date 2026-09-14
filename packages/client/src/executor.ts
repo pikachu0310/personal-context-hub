@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { AppServerCodex } from "../../../src/execution/codex/app-server.mjs";
+import { AppServerCodex } from "./app-server.mjs";
 import {
   atomic,
   json,

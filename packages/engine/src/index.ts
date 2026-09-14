@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 import { Store, type Device, type Meeting } from "./store.js";
 import { Plugins } from "./plugins.js";
 import { Conversation } from "./ai.js";
+import { DiscordInput } from "./discord-input.js";
+import { normalizeDiscordPolicy } from "../../common/src/discord-policy.js";
 import { PreviewRelay } from "./preview.js";
 import { DiscordAuth } from "./discord-auth.js";
 import { Tunnels } from "./tunnels.js";
@@ -62,6 +64,7 @@ export class Engine {
   credentials: Credentials;
   plugins: Plugins;
   conversation: Conversation;
+  discordInput: DiscordInput;
   preview: PreviewRelay;
   discordAuth: DiscordAuth;
   tunnels: Tunnels;
@@ -117,6 +120,12 @@ export class Engine {
       this.store,
       this.credentials,
       (event) => this.pluginInput(event),
+    );
+    this.discordInput = new DiscordInput(
+      this.store,
+      this.conversation,
+      this.plugins,
+      () => this.flush(),
     );
     this.preview = new PreviewRelay(this.store, (id) =>
       this.ready.has(id) ? this.peers.get(id) : undefined,
@@ -659,7 +668,13 @@ export class Engine {
             "meetingId",
           ])
             if (input.discord[key]) config[key] = id(input.discord[key]);
+          try {
+            Object.assign(config, normalizeDiscordPolicy(input.discord));
+          } catch {
+            throw new HttpError(400, "DISCORD_USER_POLICY_INVALID");
+          }
           this.store.put("config", "discord", config);
+          this.plugins.updatePolicy(config);
         }
         this.store.audit(auth.user.id, "settings.update", "configuration");
         break;
@@ -872,71 +887,7 @@ export class Engine {
     }
   }
   async pluginInput(event: Record<string, unknown>) {
-    const config = this.store.get<Record<string, string>>("config", "discord");
-    if (
-      !config ||
-      event.guildId !== config.guildId ||
-      (event.audio
-        ? !this.plugins.voiceChannelId ||
-          event.channelId !== this.plugins.voiceChannelId
-        : event.channelId !== config.textChannelId)
-    )
-      return;
-    const identity = this.store.get<{ userId: string }>(
-      "discord-user",
-      String(event.userId),
-    );
-    if (!identity || !this.store.user(identity.userId)) return;
-    if (this.store.get("input", String(event.eventId))) return;
-    this.store.put("input", String(event.eventId), {
-      id: String(event.eventId),
-      stage: event.audio ? "transcribing" : "accepted",
-      at: Date.now(),
-      meetingId: config.meetingId,
-    });
-    let content = typeof event.text === "string" ? text(event.text) : "";
-    if (event.audio && typeof event.audio === "string")
-      content = await this.conversation.transcribe(
-        Buffer.from(event.audio, "base64"),
-      );
-    if (!content) return;
-    const meeting = await this.conversation.process(
-      config.meetingId,
-      identity.userId,
-      content,
-      event.command === "task" ? null : config.projectId,
-    );
-    if (
-      event.command === "task" &&
-      this.store.user(identity.userId)?.role !== "viewer"
-    ) {
-      this.store.createTask({
-        projectId: config.projectId,
-        meetingId: config.meetingId,
-        authorId: identity.userId,
-        requestId: id(event.eventId),
-        text: content,
-        network: false,
-      });
-      this.flush();
-    }
-    this.flush();
-    this.store.put("input", String(event.eventId), {
-      id: String(event.eventId),
-      stage: "completed",
-      at: Date.now(),
-      meetingId: config.meetingId,
-    });
-    const audio = event.audio
-      ? await this.conversation
-          .speak(meeting.summary || "受付しました。")
-          .catch(() => undefined)
-      : undefined;
-    this.plugins.deliver(
-      config.textChannelId,
-      meeting.summary || "受付しました。",
-      audio,
-    );
+    return this.discordInput.handle(event);
   }
   async close() {
     clearInterval(this.timer);

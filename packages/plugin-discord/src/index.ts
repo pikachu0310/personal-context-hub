@@ -19,9 +19,22 @@ import prism from "prism-media";
 import { text, discordManifest } from "../../common/src/protocol.js";
 import { registerVoiceCommands, voiceCommandHandler } from "./commands.js";
 import { exchange } from "./auth.js";
+import { discordUserAllowed } from "../../common/src/discord-policy.js";
+import { Publications } from "./publications.js";
+let config: Record<string, string> = {};
+let speechEpoch = 0;
+const pending = new Map<
+  string,
+  { resolve: (value: any) => void; reject: () => void; timer: NodeJS.Timeout }
+>();
+const publications = new Publications(
+  async (id) => client?.channels.fetch(id),
+  (key, messageId) => emit({ type: "published", key, messageId }),
+);
 let client: Client | undefined;
 let voice: VoiceConnection | undefined;
 const player = createAudioPlayer();
+player.on("error", () => emit({ type: "status", status: "audio-error" }));
 const emit = (data: unknown) => process.send?.(data as object);
 function wav(pcm: Buffer) {
   const header = Buffer.alloc(44);
@@ -45,6 +58,30 @@ process.on("message", (message: any) => {
       emit({ type: "manifest", manifest: discordManifest });
       return;
     }
+    if (message.type === "policy") {
+      config.userPolicy = message.userPolicy;
+      config.allowedUserIds = message.allowedUserIds;
+      return;
+    }
+    if (message.type === "command-result") {
+      const request = pending.get(message.eventId);
+      if (request) {
+        clearTimeout(request.timer);
+        pending.delete(message.eventId);
+        request.resolve(message);
+      }
+      return;
+    }
+    if (message.type === "publish" && client) {
+      if (message.channelId !== config.textChannelId) return;
+      await publications.update(
+        message.key,
+        message.channelId,
+        message.content,
+        message.messageId,
+      );
+      return;
+    }
     if (message.type === "request") {
       try {
         if (message.operation !== "oauth.exchange")
@@ -60,13 +97,25 @@ process.on("message", (message: any) => {
       return;
     }
     if (message.type === "output" && client) {
-      const channel = await client.channels.fetch(String(message.channelId));
-      if (channel?.isTextBased() && "send" in channel)
-        await channel.send({
-          content: String(message.content).slice(0, 1900),
-          allowedMentions: { parse: [] },
-        });
-      if (message.audio && voice?.state.status === VoiceConnectionStatus.Ready)
+      if (message.channelId !== config.textChannelId) return;
+      if (message.content) {
+        const channel = await client.channels.fetch(String(message.channelId));
+        if (channel?.isTextBased() && "send" in channel)
+          for (
+            let offset = 0;
+            offset < String(message.content).length;
+            offset += 1900
+          )
+            await channel.send({
+              content: String(message.content).slice(offset, offset + 1900),
+              allowedMentions: { parse: [] },
+            });
+      }
+      if (
+        message.audio &&
+        message.speechEpoch === speechEpoch &&
+        voice?.state.status === VoiceConnectionStatus.Ready
+      )
         player.play(
           createAudioResource(
             Readable.from(Buffer.from(message.audio, "base64")),
@@ -76,7 +125,7 @@ process.on("message", (message: any) => {
       return;
     }
     if (message.type !== "start" || message.v !== 1 || client) return;
-    const config = message.config;
+    config = message.config;
     client = new Client({
       intents: [
         GatewayIntentBits.Guilds,
@@ -89,6 +138,7 @@ process.on("message", (message: any) => {
     client.on(Events.MessageCreate, (message) => {
       if (
         message.author.bot ||
+        !discordUserAllowed(config, message.author.id) ||
         message.guildId !== config.guildId ||
         message.channelId !== config.textChannelId
       )
@@ -117,6 +167,7 @@ process.on("message", (message: any) => {
         if (voice && voice.state.status !== VoiceConnectionStatus.Destroyed)
           voice.destroy();
         voice = undefined;
+        speechEpoch++;
         player.stop();
         emit({ type: "voice", channelId: null });
         const connection = joinVoiceChannel({
@@ -160,11 +211,14 @@ process.on("message", (message: any) => {
           if (
             voice !== connection ||
             connection.state.status !== VoiceConnectionStatus.Ready ||
+            !discordUserAllowed(config, userId) ||
+            userId === client?.user?.id ||
             active.has(userId) ||
             active.size >= 8
           )
             return;
           active.add(userId);
+          const receivedEpoch = speechEpoch;
           const stream = connection.receiver.subscribe(userId, {
             end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
           });
@@ -208,6 +262,7 @@ process.on("message", (message: any) => {
                 channelId: channel.id,
                 userId,
                 eventId: `voice-${Date.now()}-${userId}`,
+                speechEpoch: receivedEpoch,
                 audio: wav(Buffer.concat(chunks)).toString("base64"),
               });
           });
@@ -216,6 +271,7 @@ process.on("message", (message: any) => {
       () => {
         const previous = voice;
         voice = undefined;
+        speechEpoch++;
         player.stop();
         if (
           previous &&
@@ -228,6 +284,28 @@ process.on("message", (message: any) => {
         voice?.state.status !== VoiceConnectionStatus.Destroyed
           ? (voice?.joinConfig.channelId ?? undefined)
           : undefined,
+      {
+        textChannelId: config.textChannelId,
+        allowed: (userId) => discordUserAllowed(config, userId),
+        quiet: () => {
+          speechEpoch++;
+          player.stop(true);
+        },
+        request: (event) =>
+          new Promise((resolve, reject) => {
+            const eventId = String(event.eventId);
+            const timer = setTimeout(() => {
+              pending.delete(eventId);
+              reject(new Error("COMMAND_TIMEOUT"));
+            }, 65000);
+            pending.set(eventId, {
+              resolve,
+              reject: () => reject(new Error("DISCONNECTED")),
+              timer,
+            });
+            emit({ type: "input", ...event });
+          }),
+      },
     );
     client.on(Events.InteractionCreate, (interaction) => {
       if (interaction.isChatInputCommand())
@@ -248,6 +326,11 @@ process.on("message", (message: any) => {
   })().catch(() => emit({ type: "status", status: "failed" }));
 });
 process.on("disconnect", () => {
+  for (const request of pending.values()) {
+    clearTimeout(request.timer);
+    request.reject();
+  }
+  pending.clear();
   if (voice && voice.state.status !== VoiceConnectionStatus.Destroyed)
     voice.destroy();
   client?.destroy();
