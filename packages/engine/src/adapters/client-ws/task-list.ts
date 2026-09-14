@@ -1,4 +1,5 @@
 import { taskParticipants } from "../../processing/projects/task-participants.js";
+import { deviceIdentity } from "../../clients/identity.js";
 import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
 import { clean, type Task } from "@ido/common/contracts/protocol";
 import type { Device } from "../../domain/models.js";
@@ -31,6 +32,7 @@ export function taskSnapshot(
           ? [
               {
                 id,
+                identityId: deviceIdentity(store, device),
                 name: clean(device.profile.name).slice(0, 100),
                 avatar: device.profile.avatar,
               },
@@ -52,6 +54,7 @@ export function taskSnapshot(
         title: clean(task.title ?? task.text).slice(0, 300),
         state: task.state,
         clientId: task.clientId,
+        clientIdentityId: device ? deviceIdentity(store, device) : undefined,
         updatedAt: task.updatedAt,
         ownerName: device
           ? clean(device.profile?.name ?? device.name).slice(0, 100)

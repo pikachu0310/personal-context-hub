@@ -1,5 +1,9 @@
 import { ProjectTeam } from "../../processing/projects/team.js";
-import { createPublicKey, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import {
+  matchingDevices,
+  normalizedDeviceKey,
+} from "../../clients/identity.js";
 import { resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { id, text } from "@ido/common/contracts/protocol";
@@ -33,6 +37,7 @@ type Pair = {
   name: string;
   expires: number;
   userId?: string;
+  deviceId?: string;
 };
 export async function route(
   this: Engine,
@@ -190,9 +195,12 @@ export async function route(
     )
       throw new HttpError(429, "PAIR_RATE_LIMIT");
     const input = await body(req);
-    const publicKey = text(input.publicKey, 2000);
-    if (createPublicKey(publicKey).asymmetricKeyType !== "ed25519")
+    let publicKey: string;
+    try {
+      publicKey = normalizedDeviceKey(text(input.publicKey, 2000));
+    } catch {
       throw new HttpError(400, "INVALID_KEY");
+    }
     const proof = secret(),
       pair: Pair = {
         id: randomUUID(),
@@ -226,21 +234,17 @@ export async function route(
       send(res, 200, { pending: true });
       return;
     }
-    const device: Device = {
-      id: randomUUID(),
-      userId: pair.userId,
-      name: pair.name,
-      publicKey: pair.publicKey,
-      revoked: false,
-      generation: 0,
-      grants: [],
-      slots: 1,
-      lastAssigned: 0,
-    };
-    this.store.transaction(() => {
-      this.store.put("device", device.id, device);
-      this.store.remove("pair", pair.id);
-    });
+    // Approval persists the result in the same transaction as registration.
+    // A lost response can be fetched again until this pair expires.
+    const device =
+      pair.deviceId && this.store.get<Device>("device", pair.deviceId);
+    if (
+      !device ||
+      device.revoked ||
+      device.userId !== pair.userId ||
+      normalizedDeviceKey(device.publicKey) !== pair.publicKey
+    )
+      throw new HttpError(410, "PAIR_EXPIRED");
     send(res, 200, {
       deviceId: device.id,
       projects: new ProjectTeam(this.store).projects(device.id),
@@ -339,6 +343,12 @@ export async function route(
       name: pair.name,
       fingerprint: hash(pair.publicKey),
       expires: pair.expires,
+      candidates: matchingDevices(this.store, auth.user.id, pair.publicKey).map(
+        (device) => ({
+          id: device.id,
+          name: device.profile?.name ?? device.name,
+        }),
+      ),
     });
     return;
   }
@@ -364,8 +374,35 @@ export async function route(
       const pair = this.store.get<Pair>("pair", id(input.id));
       if (!pair || pair.userId || pair.expires < Date.now())
         throw new HttpError(410, "PAIR_EXPIRED");
+      const candidates = matchingDevices(
+        this.store,
+        auth.user.id,
+        pair.publicKey,
+      );
+      const selected = input.deviceId
+        ? candidates.find((d) => d.id === input.deviceId)
+        : candidates.length === 1
+          ? candidates[0]
+          : undefined;
+      if ((input.deviceId && !selected) || (candidates.length > 1 && !selected))
+        throw new HttpError(409, "DEVICE_SELECTION_REQUIRED");
+      const device: Device = selected ?? {
+        id: randomUUID(),
+        userId: auth.user.id,
+        name: pair.name,
+        publicKey: pair.publicKey,
+        revoked: false,
+        generation: 0,
+        grants: [],
+        slots: 1,
+        lastAssigned: 0,
+      };
       pair.userId = auth.user.id;
-      this.store.put("pair", pair.id, pair);
+      pair.deviceId = device.id;
+      this.store.transaction(() => {
+        this.store.put("device", device.id, device);
+        this.store.put("pair", pair.id, pair);
+      });
       this.store.audit(auth.user.id, "device.approve", pair.id);
       break;
     }

@@ -4,6 +4,8 @@ import {
 } from "../../processing/projects/lifecycle.js";
 import { ProjectTeam } from "../../processing/projects/team.js";
 import { randomUUID } from "node:crypto";
+import { deviceIdentity } from "../../clients/identity.js";
+import type { Device } from "../../domain/models.js";
 import type { WorkspaceState, MessageView } from "@ido/common/contracts/api";
 import type {
   ConversationInput,
@@ -40,13 +42,23 @@ export class Workspace {
     return this.store
       .list<WorkspaceState["meetings"][number]>("meeting")
       .map((meeting) => {
-        const messages: MessageView[] = meeting.messages.map((message) => ({
-          ...message,
-          authorName:
-            message.authorName ??
-            this.store.conversationAuthor(message.authorId)?.name,
-          role: message.role ?? "user",
-        }));
+        const messages: MessageView[] = meeting.messages.map((message) => {
+          const device = message.authorId.startsWith("client-")
+            ? this.store.get<Device>("device", message.authorId.slice(7))
+            : undefined;
+          return {
+            ...message,
+            authorIdentityId: device
+              ? deviceIdentity(this.store, device)
+              : undefined,
+            authorName:
+              device?.profile?.name ??
+              device?.name ??
+              message.authorName ??
+              this.store.conversationAuthor(message.authorId)?.name,
+            role: message.role ?? "user",
+          };
+        });
         for (const output of outputs
           .filter((output) => output.meetingId === meeting.id)
           .slice(-100)) {

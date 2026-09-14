@@ -34,6 +34,24 @@ export function ClientView({
       )}
       {page === "overview" ? (
         <>
+          <Card title="この端末の本人情報">
+            <Text size="sm">端末ID: {state.settings.deviceId ?? "未登録"}</Text>
+            <Text size="sm">
+              {state.identity?.status === "created"
+                ? "この端末で初めて作成しました。"
+                : state.identity?.status === "public key recovered"
+                  ? "保存済みの鍵から本人情報を復元しました。"
+                  : state.identity?.status === "restored"
+                    ? "保存済みの本人情報を復元しました。"
+                    : "確認中です。"}
+            </Text>
+            <Text size="xs" c="dimmed">
+              保存先: {state.identity?.directory ?? "確認中"}
+            </Text>
+            <Text size="xs" c="dimmed">
+              ブラウザー・アプリを閉じても、この端末の本人情報は保持されます。
+            </Text>
+          </Card>
           <Card title="チームのEngineへ接続">
             <Status value={state.status} />
             {!state.settings.deviceId && (
@@ -111,6 +129,16 @@ export function ClientView({
                 ログイン状態を確認
               </Button>
             </Group>
+            <Text size="sm">
+              {state.account?.status === "available"
+                ? `ログイン先: ${state.account.type}${state.account.email ? ` · ${state.account.email}` : ""}`
+                : state.account?.status === "signed-out"
+                  ? "Codexにログインしていません。"
+                  : "Codexアカウント情報を確認できていません。"}
+            </Text>
+            <Text size="xs" c="dimmed">
+              アカウント情報はこの端末だけに表示します。Clientの本人IDはログイン先を変更しても維持します。
+            </Text>
             {state.loginUrl && (
               <Anchor href={state.loginUrl} target="_blank" rel="noreferrer">
                 ログイン画面をブラウザーで開く

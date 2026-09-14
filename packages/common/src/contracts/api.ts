@@ -4,6 +4,7 @@ export interface MessageView {
   id: string;
   authorId: string;
   authorName?: string;
+  authorIdentityId?: string;
   role?: "user" | "assistant";
   text: string;
   replyText?: string;
@@ -38,6 +39,7 @@ export interface ProjectWorkspace {
   tasks: Task[];
   participants: Array<{
     id: string;
+    identityId?: string;
     name: string;
     context: string;
     avatar?: string;
@@ -117,9 +119,16 @@ export interface ClientActivityState {
   dropped: number;
   version: number;
 }
+export interface ClientAccount {
+  status: "available" | "signed-out" | "unavailable";
+  type?: string;
+  email?: string;
+}
 export interface ClientState {
   lifecycleSupported?: boolean;
   deletionSync?: { pendingTasks: number };
+  account?: ClientAccount;
+  identity?: { status: string; directory: string };
   allowedProjectIds?: string[];
   projectTasks?: Task[];
   projectCreationSupported?: boolean;
@@ -134,6 +143,7 @@ export interface ClientState {
     progressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
+    identityId?: string;
     engineUrl?: string;
     projects: Project[];
     mappings: Mapping[];
@@ -188,6 +198,7 @@ export interface TeamTaskSnapshot {
     > & {
       participants?: import("./protocol.js").TaskParticipant[];
       ownerName?: string;
+      clientIdentityId?: string;
       deviceName?: string;
       deviceConnected?: boolean;
       progress?: string;

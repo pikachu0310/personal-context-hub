@@ -227,7 +227,7 @@ test("local bootstrap required; password hashing, write-only secrets, CSRF, role
     ).includes("test-password-long"),
   );
 });
-test("device pairing is single-use, key-authenticated, fenced across reconnects and revoked remotely", async (t) => {
+test("device pairing is replayable, key-authenticated, fenced across reconnects and revoked remotely", async (t) => {
   const e = await fixture(t),
     session = await login(e);
   const keys = generateKeyPairSync("ed25519");
@@ -250,7 +250,7 @@ test("device pairing is single-use, key-authenticated, fenced across reconnects 
     });
   const registration = (await (await poll()).json()) as any;
   assert.ok(registration.deviceId);
-  assert.equal((await poll()).status, 410);
+  assert.deepEqual(await (await poll()).json(), registration);
   const connect = async () => {
     const ws = new WebSocket(e.origin.replace("http:", "ws:") + "/connect");
     const challenge = JSON.parse(String((await once(ws, "message"))[0]));

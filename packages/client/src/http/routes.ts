@@ -20,8 +20,7 @@ import {
   localGuard,
   send,
 } from "@ido/common/runtime/http";
-import { equal, run, workerEnvironment } from "@ido/common/runtime/platform";
-import { codexBinary } from "../execution/executor.js";
+import { equal } from "@ido/common/runtime/platform";
 
 import type { Client } from "../bootstrap/client.js";
 export async function route(
@@ -69,6 +68,8 @@ export async function route(
       allow: this.allow,
       allowedProjectIds: [...this.allowedProjects],
       loginStatus: this.loginStatus,
+      account: this.account,
+      identity: { status: this.identityStatus, directory: this.directory },
       claudeLoginStatus: this.claudeLoginStatus,
       claudeLoginUrl: this.claudeLoginUrl,
       loginUrl: this.loginUrl,
@@ -150,6 +151,7 @@ export async function route(
         throw new HttpError(409, "STOP_TASKS_FIRST");
       this.allowedProjects.clear();
       this.settings.deviceId = undefined;
+      delete this.settings.identityId;
       this.settings.engineUrl = undefined;
       this.settings.projects = [];
       this.settings.mappings = [];
@@ -415,15 +417,7 @@ export async function route(
       this.executor.approve(id(input.id), input.allow === true);
       break;
     case "/api/codex/doctor":
-      try {
-        await run(codexBinary(), ["login", "status"], {
-          env: workerEnvironment(this.executor.home),
-        });
-        this.loginStatus = "authenticated";
-      } catch {
-        this.loginStatus = "login required";
-      }
-      this.ready();
+      await this.checkAccount();
       break;
     case "/api/codex/login": {
       startLogin(this);

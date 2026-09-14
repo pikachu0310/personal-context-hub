@@ -3,6 +3,7 @@ import { TaskDispatchNotice } from "./TaskDispatchNotice.js";
 import type { ClientState } from "@ido/common/contracts/api";
 import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
 import { MessageText, stateLabel } from "./ActivityFeed.js";
+import { previousRegistration } from "./participant-identity.js";
 type Summary = TeamTaskSnapshot["tasks"][number];
 
 export function TeamTaskDetail({
@@ -22,7 +23,13 @@ export function TeamTaskDetail({
     <section className="task-workspace" aria-label="共有タスクの概要">
       <div className="task-topline">
         <span>
-          {local ? "このPC" : task.clientId ? "ほかのPC" : "未割り当て"}
+          {local
+            ? "このPC"
+            : previousRegistration(task, state.settings)
+              ? "自分の以前の登録"
+              : task.clientId
+                ? "ほかのPC"
+                : "未割り当て"}
         </span>
         <span>{stateLabel(task.state)}</span>
       </div>

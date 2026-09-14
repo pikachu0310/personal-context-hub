@@ -3,8 +3,9 @@ import { type Project } from "@ido/common/contracts/protocol";
 import type { Client } from "../bootstrap/client.js";
 export function pollPair(this: Client) {
   clearTimeout(this.pairTimer);
+  if (this.stopping) return;
   this.pairTimer = setTimeout(() => {
-    void (async () => {
+    this.pairRequest = (async () => {
       const pair = this.pairing;
       if (!pair || !this.settings.engineUrl) return;
       const response = await fetch(
@@ -16,11 +17,16 @@ export function pollPair(this: Client) {
           signal: AbortSignal.timeout(10000),
         },
       );
-      if (!response.ok) {
+      if (this.stopping || this.pairing !== pair) return;
+      if ([403, 410].includes(response.status)) {
         this.pairing = undefined;
         this.status = "pairing expired";
+        delete this.settings.pendingPair;
+        await this.save();
+        await this.credentials.set(`pair.${pair.id}`, "");
         return;
       }
+      if (!response.ok) throw new Error("PAIR_POLL_FAILED");
       const result = (await response.json()) as {
         pending?: boolean;
         deviceId: string;
@@ -32,12 +38,18 @@ export function pollPair(this: Client) {
       }
       this.settings.deviceId = result.deviceId;
       this.settings.projects = result.projects;
+      delete this.settings.pendingPair;
       await this.save();
       this.pairing = undefined;
+      await this.credentials.set(`pair.${pair.id}`, "");
       await this.connect();
-    })().catch(() => {
-      this.status = "pairing network error";
-      this.pollPair();
-    });
+    })()
+      .catch(() => {
+        this.status = "pairing network error";
+        this.pollPair();
+      })
+      .finally(() => {
+        this.pairRequest = undefined;
+      });
   }, 2000);
 }

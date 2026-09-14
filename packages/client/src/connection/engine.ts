@@ -71,6 +71,11 @@ export async function connect(this: Client) {
       return;
     }
     if (data.type === "authenticated") {
+      this.settings.identityId =
+        typeof data.identityId === "string" &&
+        /^client:[a-f0-9]{64}$/.test(data.identityId)
+          ? data.identityId
+          : undefined;
       this.generation = Number(data.generation);
       this.connected = true;
       this.controlSupported = data.controlVersion === 1;
