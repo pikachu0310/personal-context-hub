@@ -139,13 +139,55 @@ export function ProjectSettings({
             ]}
             onChange={(mode) => {
               setError("");
-              void action("progress-mode", { projectId, mode }).catch((e) =>
-                setError(e.message),
-              );
+              void action("progress-mode", {
+                projectId,
+                mode,
+                accessMode: mode === "auto" ? "full" : "approval",
+              }).catch((e) => setError(e.message));
             }}
           />
           <Text mt="sm" size="sm" c="dimmed">
             Autoは依頼に沿って進めます。Manualはまず相談・計画し、「実行する」を押したら作業に入ります。
+          </Text>
+          {(mapping?.progressMode ?? "auto") === "manual" ? (
+            <SegmentedControl
+              aria-label="新しいタスクの権限"
+              disabled={!mapping}
+              value={mapping?.accessMode ?? "approval"}
+              data={[
+                { label: "許可を求める", value: "approval" },
+                { label: "フルアクセス・承認なし", value: "full" },
+              ]}
+              onChange={(accessMode) => {
+                void action("progress-mode", {
+                  projectId,
+                  mode: "manual",
+                  accessMode,
+                }).catch((e) => setError(e.message));
+              }}
+            />
+          ) : (
+            <Button
+              disabled={!mapping}
+              variant="light"
+              onClick={() => {
+                void action("progress-mode", {
+                  projectId,
+                  mode: "auto",
+                  accessMode: "full",
+                }).catch((e) => setError(e.message));
+              }}
+            >
+              Auto · フルアクセス固定を適用
+            </Button>
+          )}
+          <Text size="sm">
+            OSサンドボックスを使わず、PCのファイル操作・通信が可能になります。Manualの「許可を求める」では承認要求を表示します。安全な読み取りなどは確認が出ない場合があります。受信タスクに明示された制限は優先します。
+          </Text>
+          <Text size="sm">
+            {mapping?.accessMode
+              ? "新しいタスクへの権限設定は保存済みです。"
+              : "権限設定は未適用です。上で選択して保存してください。"}
           </Text>
           {!mapping && <Text mt="sm">先に保存先を設定してください。</Text>}
           {error && (

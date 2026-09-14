@@ -1,3 +1,4 @@
+import { receiveSharedLocalControl } from "./local-sharing.js";
 import { randomUUID, sign } from "node:crypto";
 import { WebSocket } from "ws";
 import { HttpError } from "@ido/common/runtime/http";
@@ -82,6 +83,8 @@ export async function connect(this: Client) {
       this.continuationSupported = data.continuationVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
       this.workspaceSupported = data.workspaceVersion === 1;
+      this.localSharingSupported = data.localSharingVersion === 1;
+      void this.syncLocalShares();
       this.teamTasksSupported = data.taskListVersion === 1;
       this.lifecycleSupported = data.lifecycleVersion === 1;
       this.status = "connected";
@@ -195,14 +198,15 @@ export async function connect(this: Client) {
       this.preview.removeTask(data.taskId);
     this.processing = this.processing
       .catch(() => {})
-      .then(() =>
-        this.executor.receive(
+      .then(async () => {
+        if (await receiveSharedLocalControl(this, data)) return;
+        return this.executor.receive(
           data,
           this.executionMappings(),
           this.allow,
           this.settings.slots,
-        ),
-      )
+        );
+      })
       .catch(() => {
         this.status = "command failed; check local execution";
       });
@@ -232,6 +236,7 @@ export async function connect(this: Client) {
     }
     this.workspaceRequests.clear();
     this.workspaceSupported = false;
+    this.localSharingSupported = false;
     this.status =
       code === 4004
         ? "管理者が接続を切断しました。再接続できます。"

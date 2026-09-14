@@ -20,6 +20,7 @@ export class Scheduler {
         (t) =>
           t.state === "queued" &&
           !t.clientId &&
+          !t.localMirror &&
           !this.repository.get("project-lock", t.projectId),
       )) {
         const active = (device: Device) =>

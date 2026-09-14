@@ -402,6 +402,9 @@ export async function route(
         .concat({
           projectId,
           directory,
+          accessMode: this.settings.mappings.find(
+            (m) => m.projectId === projectId,
+          )?.accessMode,
           progressMode: this.settings.mappings.find(
             (m) => m.projectId === projectId,
           )?.progressMode,
@@ -476,7 +479,19 @@ export async function route(
         (m) => m.projectId === projectId,
       );
       if (!mapping) throw new HttpError(409, "PROJECT_DIRECTORY_REQUIRED");
+      if (
+        input.accessMode !== undefined &&
+        !["full", "approval"].includes(String(input.accessMode))
+      )
+        throw new HttpError(400, "INVALID_ACCESS_MODE");
       mapping.progressMode = input.mode as "auto" | "manual";
+      if (input.accessMode !== undefined) {
+        mapping.accessMode =
+          input.mode === "auto"
+            ? "full"
+            : (input.accessMode as "full" | "approval");
+        mapping.network = true;
+      }
       await this.save();
       break;
     }

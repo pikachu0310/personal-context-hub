@@ -447,11 +447,19 @@ export function ClientRuns({
               </span>
               <button type="button" className="policy-button" onClick={setup}>
                 <Icon name="shield" size={16} />
-                {current.agent === "claude"
-                  ? "Claude · 操作ごとに承認"
-                  : policy?.sandboxMode === "read-only"
-                    ? "読み取り専用"
-                    : "作業フォルダー内で実行"}
+                {!policy?.sandboxMode &&
+                policy?.networkAccessEnabled !== false &&
+                current.accessMode === "full"
+                  ? "フルアクセス・承認なし"
+                  : !policy?.sandboxMode &&
+                      policy?.networkAccessEnabled !== false &&
+                      current.accessMode === "approval"
+                    ? "許可を求める"
+                    : current.agent === "claude"
+                      ? "Claude · 操作ごとに承認"
+                      : policy?.sandboxMode === "read-only"
+                        ? "読み取り専用"
+                        : "作業フォルダー内で実行"}
               </button>
               <span className="composer-spacer" />
               <span className="model-label">
@@ -624,8 +632,24 @@ export function ClientRuns({
           </EnvironmentRow>
           <EnvironmentRow label="実行">
             {current.task.revision}
-            {local ? " · ローカルで開始 · Bot未共有" : ""}
+            {local ? " · ローカルで開始" : ""}
           </EnvironmentRow>
+          {local && (
+            <EnvironmentRow label="共有">
+              {current.discordShare ? "Discord共有" : "PC内のみ"}
+            </EnvironmentRow>
+          )}
+          {current.discordShare && (
+            <p role="status" className="composer-notice">
+              {current.discordShare.status === "synced"
+                ? "Discord共有用タスクをEngineに登録済みです。スレッド反映はBotの同期後に行われます。"
+                : current.discordShare.error === "DISCORD_FORUM_REQUIRED"
+                  ? "共有待ち：このプロジェクトのissueフォーラムをBot側で設定してください。"
+                  : current.discordShare.error === "ENGINE_UPDATE_REQUIRED"
+                    ? "共有待ち：Engineを対応版に更新してください。"
+                    : "Discordへの共有待ちです。同じチームへの接続後に再試行します。"}
+            </p>
+          )}
         </Stack>
       </TaskInspector>
     </section>

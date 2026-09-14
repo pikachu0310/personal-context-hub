@@ -1,3 +1,4 @@
+import { shareLocalTask } from "../../processing/tasks/local-sharing.js";
 import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
 import { taskParticipants } from "../../processing/projects/task-participants.js";
 import { deviceIdentity } from "../../clients/identity.js";
@@ -294,6 +295,7 @@ export class ClientConnections {
               projectVersion: 1,
               projects: new ProjectTeam(this.store).projects(device.id),
               workspaceVersion: 1,
+              localSharingVersion: 1,
               taskListVersion: 1,
               lifecycleVersion: 1,
               deletions:
@@ -457,6 +459,17 @@ export class ClientConnections {
                     continuation: text(input.text, 8000),
                     expectedRevision: Number(input.revision),
                   },
+                );
+                this.flush();
+                this.changed();
+                break;
+              }
+              case "task.share-local": {
+                result = shareLocalTask(
+                  this.store,
+                  device.id,
+                  generation,
+                  input,
                 );
                 this.flush();
                 this.changed();

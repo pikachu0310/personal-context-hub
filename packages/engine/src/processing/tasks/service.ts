@@ -89,7 +89,8 @@ export class Tasks {
       this.applyResult(deviceId, generation, data),
     );
   }
-  private applyResult(deviceId: string, generation: number, data: Command) {
+  /** Internal mutation; caller holds the repository transaction. */
+  applyResult(deviceId: string, generation: number, data: Command) {
     const device = this.repository.get<Device>("device", deviceId),
       task = this.repository.get<Task>("task", String(data.taskId));
     if (
@@ -185,6 +186,8 @@ export class Tasks {
     return this.repository.transaction(() => {
       const task = this.repository.get<Task>("task", taskId);
       if (!task) throw new Error("TASK_NOT_FOUND");
+      if (task.localMirror && type === "retry")
+        throw new Error("LOCAL_RETRY_REQUIRED");
       if (this.repository.get("project-lock", task.projectId))
         throw new Error("WORKSPACE_CONFLICT");
       const requestKey = options.requestKey ?? randomUUID();

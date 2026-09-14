@@ -38,6 +38,17 @@ export interface Run {
   agent?: AgentKind;
   origin?: "local";
   localMapping?: Mapping;
+  discordShare?: {
+    engineUrl: string;
+    deviceId: string;
+    projectId: string;
+    sequence: number;
+    taskId?: string;
+    fingerprint?: string;
+    status?: "pending" | "synced" | "error";
+    error?: string;
+  };
+  accessMode?: "full" | "approval";
   progressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
   planApproved?: boolean;
@@ -123,6 +134,8 @@ export class Executor {
     allow: boolean,
     slots: number,
     local?: {
+      discordShare?: Run["discordShare"];
+      accessMode?: "full" | "approval";
       progressMode: "auto" | "manual";
       agent?: AgentKind;
       model?: string;
@@ -218,6 +231,10 @@ export class Executor {
         model: previous ? previous.model : local?.model,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
+        discordShare: previous?.discordShare ?? local?.discordShare,
+        accessMode: previous
+          ? previous.accessMode
+          : (local?.accessMode ?? mapping.accessMode),
         progressMode:
           previous?.progressMode ??
           local?.progressMode ??
