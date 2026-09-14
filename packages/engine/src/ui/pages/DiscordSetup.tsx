@@ -1,14 +1,11 @@
-import {
-  Alert,
-  Button,
-  PasswordInput,
-  Select,
-  Stack,
-  Text,
-  TextInput,
-} from "@mantine/core";
+import { Alert, Button, Select, Stack, Text, TextInput } from "@mantine/core";
 import { useState } from "react";
-import { Form, type Action, type PluginState } from "@ido/common-ui";
+import {
+  Form,
+  SecretInput,
+  type Action,
+  type PluginState,
+} from "@ido/common-ui";
 const errors: Record<string, string> = {
   DISCORD_TOKEN_REQUIRED: "Botトークンを入力してください。",
   DISCORD_TOKEN_INVALID: "Botトークンを確認してください。",
@@ -26,6 +23,8 @@ export function DiscordSetup({
   action: Action;
 }) {
   const [token, setToken] = useState("");
+  const [editingToken, setEditingToken] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [guild, setGuild] = useState(plugin.config.guildId ?? "");
   const [channel, setChannel] = useState(plugin.config.textChannelId ?? "");
   const [channels, setChannels] = useState<Array<{ id: string; name: string }>>(
@@ -35,6 +34,14 @@ export function DiscordSetup({
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const basic = { guildId: guild, ...(token ? { botToken: token } : {}) };
+  const channelOptions = channels.map((c) => ({
+    value: c.id,
+    label: `#${c.name}`,
+  }));
+  // The channel list is fetched on demand; keep the persisted selection visible
+  // even before fetching options again after navigating back to this page.
+  if (channel && !channelOptions.some((option) => option.value === channel))
+    channelOptions.push({ value: channel, label: `${channel}（保存済み）` });
   const inspect = async (selected = "") => {
     const result = (await action("plugins/setup", {
       pluginId: plugin.id,
@@ -49,18 +56,22 @@ export function DiscordSetup({
   };
   return (
     <Stack>
-      <PasswordInput
+      <SecretInput
         label="Botトークン"
-        autoComplete="off"
-        placeholder={
-          plugin.secrets?.botToken
-            ? "保存済み（変更する場合のみ入力）"
-            : "Botトークンを入力"
-        }
+        configured={plugin.secrets?.botToken}
+        editing={editingToken}
         value={token}
-        onChange={(e) => {
-          setToken(e.currentTarget.value);
+        busy={busy}
+        onChange={(value) => {
+          setToken(value);
           setChecked(false);
+          setSaved(false);
+        }}
+        onToggleEdit={() => {
+          setToken("");
+          setEditingToken(!editingToken);
+          setChecked(false);
+          setSaved(false);
         }}
       />
       <TextInput
@@ -68,7 +79,10 @@ export function DiscordSetup({
         value={guild}
         onChange={(e) => {
           setGuild(e.currentTarget.value);
+          setChannel("");
+          setChannels([]);
           setChecked(false);
+          setSaved(false);
         }}
       />
       <Button
@@ -91,10 +105,13 @@ export function DiscordSetup({
       <Select
         label="デフォルトチャンネル"
         searchable
-        disabled={!checked}
+        readOnly={!checked}
         value={channel}
-        data={channels.map((c) => ({ value: c.id, label: `#${c.name}` }))}
-        onChange={(v) => setChannel(v ?? "")}
+        data={channelOptions}
+        onChange={(v) => {
+          setChannel(v ?? "");
+          setSaved(false);
+        }}
       />
       <Text size="sm" c="dimmed">
         Application
@@ -113,9 +130,11 @@ export function DiscordSetup({
               pluginId: plugin.id,
               config: { ...basic, textChannelId: channel, appId: setup.appId },
             });
+            setToken("");
+            setEditingToken(false);
+            setSaved(true);
             if (plugin.status !== "running")
               await action("plugins/start", { pluginId: plugin.id });
-            setToken("");
           } catch (e) {
             setError(errors[(e as Error).message] ?? (e as Error).message);
           } finally {
@@ -125,6 +144,11 @@ export function DiscordSetup({
       >
         保存して起動
       </Button>
+      {saved && (
+        <Text size="sm" c="teal" role="status">
+          設定を保存しました。
+        </Text>
+      )}
       {error && <Alert color="red">{error}</Alert>}
       <details>
         <summary>詳細設定（任意）</summary>

@@ -1,15 +1,18 @@
 import {
   Alert,
+  ActionIcon,
   Anchor,
   AppShell,
   Button,
   Group,
+  Menu,
   NavLink,
   Stack,
   Text,
   Title,
 } from "@mantine/core";
 import type { ReactNode } from "react";
+import { Icon } from "./Icon.js";
 export function Shell({
   title,
   pages,
@@ -19,6 +22,7 @@ export function Shell({
   error,
   children,
   workspaceLinks = title !== "CLIENT",
+  account,
 }: {
   title: string;
   pages: string[][];
@@ -28,6 +32,7 @@ export function Shell({
   error?: string;
   children: ReactNode;
   workspaceLinks?: boolean;
+  account?: { name: string; logout: () => void };
 }) {
   return (
     <AppShell
@@ -49,7 +54,7 @@ export function Shell({
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="md">
-        <Stack>
+        <Stack className="shell-navigation" gap="xs">
           {pages.map(([id, label]) => (
             <NavLink
               key={id}
@@ -59,12 +64,45 @@ export function Shell({
             />
           ))}
         </Stack>
+        {account && (
+          <footer className="shell-account">
+            <Menu position="top-start" withArrow>
+              <Menu.Target>
+                <ActionIcon
+                  size="lg"
+                  radius="xl"
+                  variant="light"
+                  aria-label="アカウントメニューを開く"
+                >
+                  <Icon name="user" />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>{account.name}</Menu.Label>
+                <Menu.Item
+                  color="red"
+                  leftSection={<Icon name="logout" />}
+                  onClick={account.logout}
+                >
+                  ログアウト
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+            <Text size="sm" fw={500} truncate>
+              {account.name}
+            </Text>
+          </footer>
+        )}
       </AppShell.Navbar>
       <AppShell.Main>
         <div className="content">
           <Group justify="space-between" mb="xl">
             <Title>{pages.find(([id]) => id === page)?.[1]}</Title>
-            <Button variant="default" onClick={refresh}>
+            <Button
+              variant="default"
+              leftSection={<Icon name="refresh" />}
+              onClick={refresh}
+            >
               更新
             </Button>
           </Group>

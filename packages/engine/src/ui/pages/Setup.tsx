@@ -1,6 +1,5 @@
 import {
   Alert,
-  Anchor,
   Badge,
   Button,
   Code,
@@ -26,7 +25,6 @@ export function Setup({
   action: Action;
   invoke: Invoke;
 }) {
-  const [guide, setGuide] = useState(true);
   const [step, setStep] = useState(0);
   const [complete, setComplete] = useState(false);
   const [provider, setProvider] = useState(state.config.provider || "manual");
@@ -71,18 +69,6 @@ export function Setup({
   };
   return (
     <Stack>
-      <Group justify="space-between">
-        <Text c="dimmed">基本設定を済ませて、必要な機能を追加しましょう。</Text>
-        <Button variant="subtle" onClick={() => setGuide(!guide)}>
-          {guide ? "説明をスキップ" : "説明を再表示"}
-        </Button>
-      </Group>
-      {guide && (
-        <Alert>
-          会議・議事録・タスクは <Anchor href="/dashboard/">Dashboard</Anchor>{" "}
-          で操作します。 プラグイン停止中も、この管理画面で設定・復旧できます。
-        </Alert>
-      )}
       {admin && (
         <>
           <SimpleGrid
@@ -497,23 +483,6 @@ export function Setup({
             </>
           )}
         </>
-      )}
-      {admin && (
-        <details>
-          <summary>Engineの詳細設定</summary>
-          <Form
-            initial={{
-              minutesIdleMinutes: state.config.minutesIdleMinutes ?? "10",
-            }}
-            fields={[
-              {
-                key: "minutesIdleMinutes",
-                label: "議事録を分割する無会話時間（分・1〜1440）",
-              },
-            ]}
-            submit={(data) => action("settings", data)}
-          />
-        </details>
       )}
       {!admin && (
         <>

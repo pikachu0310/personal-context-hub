@@ -51,11 +51,52 @@ try {
   await page.getByLabel("ユーザー名").fill("demo");
   await page.getByLabel("パスワード").fill("demo-password-only");
   await page.getByRole("button", { name: "ログイン", exact: true }).click();
-  await page
-    .getByRole("heading", { name: "セットアップ", exact: true })
-    .waitFor();
-  await page.getByRole("button", { name: "説明をスキップ" }).click();
-  await page.getByRole("button", { name: "説明を再表示" }).waitFor();
+  await page.getByRole("heading", { name: "コネクト", exact: true }).waitFor();
+  assert.equal(
+    await page
+      .getByRole("button", { name: /説明をスキップ|説明を再表示/ })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await page
+      .getByRole("button", { name: "更新", exact: true })
+      .locator("svg")
+      .count(),
+    1,
+  );
+  assert.equal(
+    await page.getByRole("menuitem", { name: "ログアウト" }).count(),
+    0,
+  );
+  await page.getByRole("button", { name: "アカウントメニューを開く" }).click();
+  await page.getByRole("menuitem", { name: "ログアウト" }).waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page.getByRole("heading", { name: "Engineの詳細設定" }).count(),
+    0,
+  );
+  await page.getByText("設定", { exact: true }).click();
+  await page.getByRole("heading", { name: "Engineの詳細設定" }).waitFor();
+  await page.getByLabel("議事録を分割する無会話時間（分・1〜1440）").fill("15");
+  const settingsSaved = page.waitForResponse((r) =>
+    r.url().endsWith("/api/admin/settings"),
+  );
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  assert.equal((await settingsSaved).status(), 200);
+  await page.getByText("コネクト", { exact: true }).click();
+  await page.getByText("設定", { exact: true }).click();
+  assert.equal(
+    await page
+      .getByLabel("議事録を分割する無会話時間（分・1〜1440）")
+      .inputValue(),
+    "15",
+  );
+  await page.screenshot({
+    path: ".ido-build/screenshots/engine-settings.png",
+    fullPage: true,
+  });
+  await page.getByText("コネクト", { exact: true }).click();
   // Setup uses text credentials, reports server storage, and never requires a plugin.
   const keyInput = page.getByRole("textbox", { name: /^OpenAI APIキー/ });
   assert.equal(await keyInput.getAttribute("type"), "text");
@@ -249,7 +290,16 @@ try {
     .click();
   await page.getByRole("button", { name: "設定する", exact: true }).click();
   const botToken = page.getByLabel("Botトークン", { exact: true });
-  assert.equal(await botToken.inputValue(), "");
+  assert.equal(await botToken.inputValue(), "********");
+  assert.equal(await botToken.getAttribute("readonly"), "");
+  await page
+    .getByRole("button", { name: "Botトークンを変更", exact: true })
+    .click();
+  await botToken.fill("discarded-bot-token");
+  await page
+    .getByRole("button", { name: "Botトークンを変更せずに戻る", exact: true })
+    .click();
+  assert.equal(await botToken.inputValue(), "********");
   assert.equal(await page.getByLabel("会議ID").count(), 0);
   assert.equal(
     await page.getByLabel("Application ID", { exact: true }).count(),
@@ -302,6 +352,41 @@ try {
   assert.equal(engine.store.get("config", "discord").textChannelId, "general");
   assert.equal(engine.store.get("config", "discord").userPolicy, "allowlist");
   await page.getByText("詳細設定（任意）", { exact: true }).click();
+  await page.getByText("クライアント", { exact: true }).click();
+  await page.getByText("コネクト", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "3 プラグイン接続", exact: true })
+    .click();
+  await page.getByRole("button", { name: "設定する", exact: true }).click();
+  assert.equal(await botToken.inputValue(), "********");
+  assert.equal(
+    await page.getByLabel("Guild ID", { exact: true }).inputValue(),
+    "12345",
+  );
+  assert.equal(
+    await page
+      .getByRole("combobox", { name: "デフォルトチャンネル", exact: true })
+      .inputValue(),
+    "general（保存済み）",
+  );
+  await page.reload();
+  await page
+    .getByRole("button", { name: "3 プラグイン接続", exact: true })
+    .click();
+  await page.getByRole("button", { name: "設定する", exact: true }).click();
+  assert.equal(await botToken.inputValue(), "********");
+  assert.equal(
+    await page
+      .getByRole("combobox", { name: "デフォルトチャンネル", exact: true })
+      .inputValue(),
+    "general（保存済み）",
+  );
+  await page.getByText("詳細設定（任意）", { exact: true }).click();
+  assert.equal(
+    await page.getByLabel("許可するDiscordユーザーID").inputValue(),
+    "123\n456",
+  );
+  await page.getByText("詳細設定（任意）", { exact: true }).click();
   await page.screenshot({
     path: ".ido-build/screenshots/discord-minimal-setup.png",
     fullPage: true,
@@ -325,11 +410,95 @@ try {
   const diagnosticText = await page.locator("main").innerText();
   assert.ok(diagnosticText.includes(diagnostic.id));
   assert.ok(!diagnosticText.includes("private-provider-message"));
+  for (let i = 0; i < 45; i++)
+    engine.store.logError(new Error("OPENAI_KEY_REQUIRED"), {
+      source: "browser-fixture",
+      operation: "answer.generate",
+      eventId: `fixture-${i}`,
+    });
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await page.getByText(/100行 · エラーID/).waitFor();
+  assert.equal(
+    (
+      await page.getByLabel("エラーログ出力", { exact: true }).innerText()
+    ).split("\n").length,
+    100,
+  );
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
     path: ".ido-build/screenshots/engine-diagnostics.png",
     fullPage: true,
   });
+  await page.getByText("操作履歴", { exact: true }).click();
+  await page.getByRole("columnheader", { name: "日時", exact: true }).waitFor();
+  await page.screenshot({
+    path: ".ido-build/screenshots/engine-audit.png",
+    fullPage: true,
+  });
+  const fixtureDevices = ["active-fixture", "revoked-fixture"];
+  for (const id of fixtureDevices)
+    engine.store.put("device", id, {
+      id,
+      name: id,
+      userId: "fixture",
+      publicKey: "fixture-public-key",
+      revoked: id.startsWith("revoked"),
+      generation: 1,
+      grants: [],
+      slots: 2,
+      lastAssigned: 0,
+      codexConnected: true,
+    });
+  engine.store.put("pair", "pending-fixture", {
+    id: "pending-fixture",
+    name: "pending-fixture",
+    proof: "fixture-proof",
+    publicKey: "fixture-key",
+    expires: Date.now() + 60000,
+  });
+  engine.store.put("pair", "expired-fixture", {
+    id: "expired-fixture",
+    name: "expired-fixture",
+    expires: Date.now() - 1000,
+  });
+  await page.getByText("クライアント", { exact: true }).click();
+  await page.getByRole("button", { name: "更新", exact: true }).click();
+  await page
+    .getByRole("cell", { name: "active-fixture", exact: true })
+    .waitFor();
+  await page
+    .getByRole("cell", { name: "pending-fixture", exact: true })
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole("cell", { name: "revoked-fixture", exact: true })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await page
+      .getByRole("cell", { name: "expired-fixture", exact: true })
+      .count(),
+    0,
+  );
+  await page.screenshot({
+    path: ".ido-build/screenshots/engine-clients.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "接続を失効", exact: true }).click();
+  await page
+    .getByRole("cell", { name: "active-fixture", exact: true })
+    .waitFor({ state: "hidden" });
+  for (const id of fixtureDevices) engine.store.remove("device", id);
+  for (const id of ["pending-fixture", "expired-fixture"])
+    engine.store.remove("pair", id);
+  await page.getByRole("button", { name: "アカウントメニューを開く" }).click();
+  await page.getByRole("menuitem", { name: "ログアウト" }).click();
+  await page.getByRole("button", { name: "ログイン", exact: true }).waitFor();
+  await page.getByLabel("ユーザー名").fill("demo");
+  await page.getByLabel("パスワード").fill("demo-password-only");
+  await page.getByRole("button", { name: "ログイン", exact: true }).click();
+  await page.getByRole("heading", { name: "コネクト", exact: true }).waitFor();
   await page.goto(engine.origin + "/dashboard/");
   await page.getByText("プロジェクト", { exact: true }).first().click();
   await page.getByLabel("プロジェクト名").fill("Demo project");
@@ -366,7 +535,10 @@ try {
   const current = engine.store.get("project-conversation", meeting.projectId);
   engine.store.put("project-conversation", meeting.projectId, {
     ...current,
-    lastHumanAt: Date.now() - 600001,
+    lastHumanAt:
+      Date.now() -
+      Number(engine.store.get("config", "engine").minutesIdleMinutes) * 60000 -
+      1,
   });
   await page.getByLabel("会話に追加").fill("分割後の会話");
   await page.getByRole("button", { name: "会話を送信", exact: true }).click();
@@ -394,9 +566,7 @@ try {
     503,
   );
   await page.goto(engine.origin + "/admin");
-  await page
-    .getByRole("heading", { name: "セットアップ", exact: true })
-    .waitFor();
+  await page.getByRole("heading", { name: "コネクト", exact: true }).waitFor();
   const dashboardCard = page
     .getByRole("heading", { name: "Dashboard", exact: true })
     .locator("..")
@@ -443,6 +613,7 @@ try {
   );
   assert.equal(client.allow, false);
   await clientPage
+    .getByRole("navigation", { name: "メインメニュー" })
     .getByRole("button", { name: "接続とセットアップ", exact: true })
     .click();
   assert.equal(
@@ -469,16 +640,22 @@ try {
     const state = await (await fetch("/api/state")).json();
     return state.settings.mappings.some((m) => m.progressMode === "manual");
   });
+  // This switch is controlled by a server refresh, so wait for that update.
   await clientPage
     .getByLabel("このプロジェクトのタスクを受け取って実行する")
-    .check();
+    .click();
+  await clientPage.locator('input[role="switch"]:checked').waitFor();
   await clientPage.waitForFunction(async () => {
     const state = await (await fetch("/api/state")).json();
     return state.allowedProjectIds.length === 1;
   });
   await clientPage
     .getByLabel("このプロジェクトのタスクを受け取って実行する")
-    .uncheck();
+    .click();
+  await clientPage.waitForFunction(async () => {
+    const state = await (await fetch("/api/state")).json();
+    return state.allowedProjectIds.length === 0;
+  });
   await clientPage.screenshot({
     path: ".ido-build/screenshots/client-project-settings.png",
     fullPage: true,

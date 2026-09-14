@@ -85,9 +85,7 @@ try {
   await page.getByLabel("ユーザー名").fill("admin");
   await page.getByLabel("パスワード").fill("test-password-long");
   await page.getByRole("button", { name: "ログイン", exact: true }).click();
-  await page
-    .getByRole("heading", { name: "セットアップ", exact: true })
-    .waitFor();
+  await page.getByRole("heading", { name: "コネクト", exact: true }).waitFor();
   await page.evaluate((path) => {
     const iframe = globalThis.document.createElement("iframe");
     iframe.style.cssText =

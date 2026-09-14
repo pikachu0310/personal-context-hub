@@ -1,16 +1,19 @@
-import { Alert, Button, Code, Group, Text } from "@mantine/core";
+import { Alert, Text } from "@mantine/core";
 import { useState } from "react";
 import { Card, Form, Shell } from "@ido/common-ui";
 import "@ido/common-ui/style.css";
 import { api } from "./api.js";
 import { Clients } from "./pages/Clients.js";
 import { Diagnostics } from "./pages/Diagnostics.js";
+import { Audit } from "./pages/Audit.js";
 import { Setup } from "./pages/Setup.js";
+import { Settings } from "./pages/Settings.js";
 import { PairApproval } from "./PairApproval.js";
 import { useRemoteState } from "./useRemoteState.js";
 export function App() {
   const remote = useRemoteState();
-  const [page, setPage] = useState("setup");
+  const [page, setPage] = useState("connect");
+  const [logoutError, setLogoutError] = useState("");
   const { state, error, refresh, action, invoke } = remote;
   if (!state)
     return (
@@ -42,10 +45,11 @@ export function App() {
       </main>
     );
   const pages = [
-    ["setup", "セットアップ"],
+    ["connect", "コネクト"],
     ["clients", "クライアント"],
     ...(state.user.role === "admin"
       ? [
+          ["settings", "設定"],
           ["diagnostics", "エラーログ"],
           ["audit", "操作履歴"],
         ]
@@ -59,34 +63,24 @@ export function App() {
       page={page}
       select={setPage}
       refresh={() => void refresh()}
-      error={error}
+      error={logoutError || error}
+      account={{
+        name: state.user.name,
+        logout: () => {
+          setLogoutError("");
+          void action("logout", {})
+            .then(() => location.assign("/admin"))
+            .catch((error: Error) => setLogoutError(error.message));
+        },
+      }}
     >
-      <Group mb="md">
-        <Text>{state.user.name}</Text>
-        <Button
-          variant="subtle"
-          onClick={() =>
-            void action("logout", {}).then(() => location.reload())
-          }
-        >
-          ログアウト
-        </Button>
-      </Group>
-      {page === "setup" && <Setup {...props} />}
+      {page === "connect" && <Setup {...props} />}
+      {page === "settings" && state.user.role === "admin" && (
+        <Settings state={state} action={action} />
+      )}
       <Clients {...props} />
       <Diagnostics {...props} />
-      {page === "audit" && (
-        <Card title="操作履歴">
-          {state.audit.map((event, index) => (
-            <Group key={index}>
-              <Text>
-                {new Date(event.at).toLocaleString()} · {event.action}
-              </Text>
-              <Code>{event.target}</Code>
-            </Group>
-          ))}
-        </Card>
-      )}
+      {page === "audit" && <Audit state={state} />}
       {page !== "clients" && <PairApproval action={action} />}
     </Shell>
   );

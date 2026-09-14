@@ -84,7 +84,7 @@ body {
   .content {
     margin-top: 0;
   }
-  .mantine-AppShell-navbar > div {
+  .mantine-AppShell-navbar > .shell-navigation {
     flex-direction: row;
     overflow: auto;
   }
@@ -93,5 +93,76 @@ body {
   }
   .mantine-AppShell-navbar > p {
     display: none;
+  }
+}
+
+.shell-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding: 16px 4px 0;
+  border-top: 1px solid #e1e7ee;
+}
+.admin-log {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: calc(100vh - 245px);
+  min-height: 160px;
+  overflow: auto;
+  border: 1px solid #dce4ec;
+  border-radius: 8px;
+  background: #111c2b;
+  color: #e0e7ef;
+  font:
+    12px/1.55 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Consolas,
+    monospace;
+  white-space: pre;
+  tab-size: 2;
+}
+.admin-log:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-5);
+  outline-offset: 2px;
+}
+.admin-table-scroll {
+  overflow-x: auto;
+  border: 1px solid #dce4ec;
+  border-radius: 8px;
+  background: white;
+}
+.admin-table {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.admin-table thead {
+  color: #627387;
+  background: #f0f4f8;
+}
+.admin-table th {
+  white-space: nowrap;
+}
+.admin-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.admin-table code {
+  font-size: 12px;
+}
+.admin-timestamp {
+  width: 170px;
+  white-space: nowrap;
+  color: #627387;
+  font-variant-numeric: tabular-nums;
+}
+.admin-target {
+  min-width: 140px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 768px) {
+  .shell-account {
+    margin-top: 12px;
+    padding-top: 12px;
   }
 }

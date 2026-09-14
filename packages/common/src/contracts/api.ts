@@ -55,6 +55,7 @@ export interface PluginState {
 export interface AdminState {
   user: User;
   csrf: string;
+  pendingClients?: Array<{ id: string; name: string; expires: number }>;
   clients: Array<{
     codexConnected?: boolean;
     id: string;
