@@ -1,3 +1,4 @@
+import { ClientTaskDetails } from "../connection/task-details.js";
 import { type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
@@ -48,6 +49,7 @@ interface Settings {
   projects: Project[];
 }
 export class Client {
+  readonly details = new ClientTaskDetails(this);
   agentCatalog = async () => {
     const catalog = await agentCatalog(this.executor.home, this.directory);
     this.loginStatus = catalog.find((value) => value.agent === "codex")
@@ -185,6 +187,7 @@ export class Client {
         runId: task.runId,
         revision: task.revision,
       });
+    this.executor.onSaved = () => this.details.changed();
     this.executor.contextProfile = () => this.settings.profile;
     this.preview = new ClientPreview((data) => this.emit(data));
   }
@@ -227,6 +230,7 @@ export class Client {
     });
     const address = this.server.address();
     this.origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}`;
+    this.details.start();
     this.localSharingTimer = setInterval(
       () => void this.syncLocalShares(),
       5000,
@@ -290,6 +294,7 @@ export class Client {
   readonly route = route.bind(this);
   async close() {
     this.stopping = true;
+    this.details.close();
     clearInterval(this.localSharingTimer);
     clearTimeout(this.reconnect);
     clearTimeout(this.pairTimer);

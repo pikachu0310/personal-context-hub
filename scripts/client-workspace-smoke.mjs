@@ -141,6 +141,24 @@ try {
       },
     ],
   };
+  client.details.read = async (taskId) => {
+    const summary = client.teamTasks.tasks.find((task) => task.id === taskId);
+    return {
+      task: {
+        ...summary,
+        text: summary.title,
+        requestId: taskId,
+        authorId: "remote",
+        meetingId: "meeting",
+        createdAt: 1,
+        network: false,
+        history: [],
+        progress: summary.progress,
+      },
+      supported: false,
+      ownerConnected: true,
+    };
+  };
   const thread = {
     activeTurnId: null,
     async steer(text) {
@@ -636,7 +654,8 @@ try {
     .locator('.task-row[data-task-id="remote-task"] .task-link')
     .click();
   await page
-    .getByText("ルーティングのテストを実行中です。", { exact: true })
+    .getByRole("status")
+    .filter({ hasText: "ルーティングのテストを実行中です。" })
     .waitFor();
   assert.equal(await page.getByLabel("エージェントへの追加指示").count(), 0);
   assert.equal(
@@ -653,8 +672,9 @@ try {
     .locator('.task-row[data-task-id="queued-task"] .task-link')
     .click();
   await page
-    .getByText("実行先が決まると、このPCまたはほかのPCの一覧へ移動します。", {
-      exact: true,
+    .getByRole("status")
+    .filter({
+      hasText: "実行先が決まると、このPCまたはほかのPCの一覧へ移動します。",
     })
     .waitFor();
   await page.reload();

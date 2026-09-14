@@ -64,6 +64,7 @@ export async function route(
       controlSupported: this.controlSupported,
       continuationSupported: this.continuationSupported,
       projectCreationSupported: this.projectCreationSupported,
+      taskDetailSupported: this.details.supported,
       teamTasksSupported: this.teamTasksSupported,
       teamTasks: this.connected ? this.teamTasks : undefined,
       status: this.status,
@@ -93,6 +94,8 @@ export async function route(
             instructions,
             pendingInstructions,
             controlReceipts,
+            detailSync,
+            detailResources,
             ...value
           }) => value,
         ),
@@ -145,6 +148,24 @@ export async function route(
     throw new HttpError(403, "CSRF_REQUIRED");
   const input = await body(req);
   switch (url.pathname) {
+    case "/api/task/detail": {
+      send(
+        res,
+        200,
+        await this.details.read(id(input.taskId), id(input.projectId)),
+      );
+      return;
+    }
+    case "/api/task/detail-refresh": {
+      send(
+        res,
+        200,
+        await this.workspaceRequest("task.detail.refresh", {
+          taskId: id(input.taskId),
+        }),
+      );
+      return;
+    }
     case "/api/task/sources": {
       const runId = input.runId ? id(input.runId) : undefined;
       const value = runId ? this.executor.runs[runId] : undefined;

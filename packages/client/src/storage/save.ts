@@ -14,5 +14,6 @@ export function save(this: Executor) {
   this.saving = this.saving
     .catch(() => {})
     .then(() => atomic(join(this.directory, "runs.json"), snapshot));
+  void this.saving.then(() => this.onSaved()).catch(() => {});
   return this.saving;
 }

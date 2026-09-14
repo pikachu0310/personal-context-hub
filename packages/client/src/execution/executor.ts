@@ -39,6 +39,21 @@ export interface WorkInstruction extends RequestMessage {
 }
 
 export interface Run {
+  detailSync?: {
+    engineUrl: string;
+    deviceId: string;
+    sequence: number;
+    resourceKey?: string;
+  };
+  detailResources?: Pick<
+    import("@ido/common/contracts/api").TaskDetailSnapshot,
+    | "environment"
+    | "environmentAt"
+    | "environmentError"
+    | "patch"
+    | "patchAt"
+    | "patchError"
+  >;
   requestAt?: number;
   contextSources?: TaskContextSource[];
   boardToolsEnabled?: boolean;
@@ -82,6 +97,7 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
+  onSaved: () => void = () => {};
   knowledge?: (
     task: Task,
     input: import("@ido/common/contracts/knowledge").KnowledgeQuery,
@@ -251,6 +267,8 @@ export class Executor {
         ).values(),
       ];
       const value: Run = {
+        detailSync: previous?.detailSync,
+        detailResources: previous?.detailResources,
         contextSources: previous?.contextSources?.filter(
           (source) => source.kind !== "minutes",
         ),
