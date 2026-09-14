@@ -24,7 +24,7 @@ export function Members({
                 {
                   key: "password",
                   label: "初期パスワード（12文字以上）",
-                  secret: true,
+                  password: "new-password",
                 },
                 {
                   key: "role",

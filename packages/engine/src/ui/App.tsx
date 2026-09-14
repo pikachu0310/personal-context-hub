@@ -24,7 +24,11 @@ export function App() {
           <Form
             fields={[
               { key: "name", label: "ユーザー名" },
-              { key: "password", label: "パスワード", secret: true },
+              {
+                key: "password",
+                label: "パスワード",
+                password: "current-password",
+              },
             ]}
             submit={async (data) => {
               await api("login", data);

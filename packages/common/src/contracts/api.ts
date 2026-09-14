@@ -27,7 +27,9 @@ export interface WorkspaceState {
 export interface PluginState {
   id: string;
   manifest?: PluginManifest;
-  installed?: { version: string };
+  installed?: { version: string; builtin?: boolean };
+  version?: string;
+  secrets?: Record<string, boolean>;
   status: string;
   busy: boolean;
   config: Record<string, string>;
@@ -68,7 +70,8 @@ export interface AdminState {
       requestId?: string;
     };
   }>;
-  secrets: { openai?: boolean };
+  secrets: { openai?: boolean; tunnels?: Record<string, boolean> };
+  credentialStorage?: { backend: string; path: string };
   config: Record<string, string>;
   tunnels: { status: string; busy: boolean; error?: string };
 }

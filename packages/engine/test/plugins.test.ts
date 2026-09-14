@@ -305,6 +305,11 @@ test("provider configuration is validated by its plugin and secrets remain write
     await fetch(engine.origin + "/api/admin/state", { headers })
   ).text();
   assert.ok(!state.includes("synthetic-test-token"));
+  const discordState = JSON.parse(state).plugins.find(
+    (plugin: { id: string }) => plugin.id === "discord",
+  );
+  assert.equal(discordState.secrets.botToken, true);
+  assert.equal(discordState.secrets.clientSecret, false);
   assert.equal(engine.plugins.get("discord").running, false);
   const launch = await fetch(
     engine.origin + "/?frame_id=synthetic&instance_id=test",
