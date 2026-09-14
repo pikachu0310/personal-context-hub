@@ -1,3 +1,4 @@
+import { taskProgress } from "@ido/common/contracts/api";
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -279,7 +280,7 @@ export async function execute(
           abort.signal.throwIfAborted();
           throw new Error("CODEX_TURN_FAILED");
         }
-        value.progress = event.type;
+        value.progress = taskProgress(undefined, value.state);
         this.report(value);
       }
       await this.steering.get(value.task.runId);
@@ -313,6 +314,7 @@ export async function execute(
             )
           ? "interrupted"
           : "completed";
+      value.progress = taskProgress(undefined, value.state);
       recordActivity(value, {
         id: "terminal",
         kind: "status",

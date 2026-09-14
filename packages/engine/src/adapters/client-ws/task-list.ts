@@ -1,3 +1,4 @@
+import { taskProgress } from "@ido/common/contracts/api";
 import { taskParticipants } from "../../processing/projects/task-participants.js";
 import { deviceIdentity } from "../../clients/identity.js";
 import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
@@ -64,7 +65,7 @@ export function taskSnapshot(
           ? !device.revoked && connected.has(device.id)
           : false,
         progress: task.progress
-          ? clean(task.progress).slice(0, 1000)
+          ? clean(taskProgress(task.progress, task.state)).slice(0, 1000)
           : undefined,
       };
     }),

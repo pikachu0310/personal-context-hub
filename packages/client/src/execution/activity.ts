@@ -5,30 +5,11 @@ import type { Run } from "./executor.js";
 const MAX_ENTRIES = 300;
 const MAX_CHARS = 256_000;
 const FIELD_LIMIT = 16_000;
+import { activityText } from "@ido/common/contracts/api";
+export { activityText } from "@ido/common/contracts/api";
 
-// Local activity is deliberately bounded and never included in report().
-// Mask familiar credential forms before persistence; this is not a public log.
-export function activityText(value: unknown, limit = FIELD_LIMIT): string {
-  if (typeof value !== "string") return "";
-  return value
-    .slice(0, Math.max(limit * 2, 65536))
-    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
-    .replace(
-      /-----BEGIN [\w ]*PRIVATE KEY-----[\s\S]*?(?:-----END [\w ]*PRIVATE KEY-----|$)/g,
-      "[credential hidden]",
-    )
-    .replace(
-      /\b(?:sk-(?:proj-|svcacct-)?[\w-]{20,}|gh[pousr]_[\w]{20,}|github_pat_[\w]{20,})/g,
-      "[credential hidden]",
-    )
-    .replace(/\b[MN][\w-]{23,}\.[\w-]{6}\.[\w-]{27,}/g, "[credential hidden]")
-    .replace(/\bBearer\s+[\w.+/=-]+/gi, "Bearer [hidden]")
-    .replace(
-      /\b((?:[\w-]{0,80}(?:token|secret|password|api[_-]?key))["']?\s*[:=]\s*)["']?[^\s,"'}]+["']?/gi,
-      "$1[hidden]",
-    )
-    .slice(0, limit);
-}
+// Activity is bounded and excluded from report(); shared tasks use the detail channel.
+// Mask familiar credential forms before local persistence and team synchronization.
 
 export function recordActivity(
   run: Run,

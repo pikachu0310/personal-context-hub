@@ -17,6 +17,7 @@ export async function connect(this: Client) {
   clearTimeout(this.reconnect);
   this.ws?.close();
   this.connected = false;
+  this.details.reset();
   this.executor.board.close();
   this.controlSupported = false;
   this.lifecycleSupported = false;
@@ -86,6 +87,7 @@ export async function connect(this: Client) {
       this.continuationSupported = data.continuationVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
       this.workspaceSupported = data.workspaceVersion === 1;
+      this.details.supported = data.taskDetailVersion === 1;
       this.localSharingSupported = data.localSharingVersion === 1;
       void this.syncLocalShares();
       this.teamTasksSupported = data.taskListVersion === 1;
@@ -107,10 +109,12 @@ export async function connect(this: Client) {
           for (const value of Object.values(this.executor.runs))
             this.executor.report(value);
           this.ready();
+          void this.details.sync();
         })
         .catch(() => {
           this.status = "削除履歴の同期を再試行しています";
           this.ready();
+          void this.details.sync();
         });
       return;
     }
@@ -119,6 +123,10 @@ export async function connect(this: Client) {
       return;
     }
     if (data.generation !== this.generation) return;
+    if (data.type === "task.detail.refresh") {
+      this.details.refresh(String(data.taskId));
+      return;
+    }
     if (this.executor.board.receive(data)) return;
     if (data.type === "projects.updated") {
       this.syncProjects(
@@ -218,6 +226,7 @@ export async function connect(this: Client) {
   ws.once("close", (code) => {
     if (this.ws !== ws) return;
     this.connected = false;
+    this.details.reset();
     this.executor.board.close();
     this.controlSupported = false;
     this.lifecycleSupported = false;

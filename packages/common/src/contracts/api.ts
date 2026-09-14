@@ -1,6 +1,18 @@
 import type { MinutesMetadata } from "./minutes.js";
 import type { AccessMode } from "./work.js";
 export {
+  detailTask,
+  sanitizeDetail,
+  parseTaskDetail,
+  activityText,
+  taskProgress,
+} from "./task-detail.js";
+export type {
+  TaskDetailSnapshot,
+  TaskDetailPage,
+  TaskDetailRead,
+} from "./task-detail.js";
+export {
   taskUrl,
   parseTaskUrl,
   taskMarkdown,
@@ -129,7 +141,7 @@ export interface AdminState {
   config: Record<string, string>;
   tunnels: { status: string; busy: boolean; error?: string };
 }
-/** Local Client activity. Never part of Engine result frames or forum updates. */
+/** Activity shared through the authenticated detail channel, never result/forum frames. */
 export interface ClientActivity extends RequestMessage {
   event?: "started";
   requestAt?: number;
@@ -156,7 +168,7 @@ export interface ClientAccount {
   type?: string;
   email?: string;
 }
-/** Context actually supplied to a local agent; never included in team summaries. */
+/** Context supplied to the agent; shared in task details, never in team summaries. */
 export interface TaskContextSource {
   id: string;
   title: string;
@@ -172,6 +184,7 @@ export interface TaskEnvironment {
   ownerName?: string;
 }
 export interface ClientState {
+  taskDetailSupported?: boolean;
   lifecycleSupported?: boolean;
   deletionSync?: { pendingTasks: number };
   account?: ClientAccount;

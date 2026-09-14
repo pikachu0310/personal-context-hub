@@ -1,3 +1,4 @@
+import { TaskDetails } from "../../processing/tasks/details.js";
 import { attachTaskSource } from "@ido/common/contracts/protocol";
 import { shareLocalTask } from "../../processing/tasks/local-sharing.js";
 import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
@@ -30,6 +31,10 @@ import { taskSnapshot } from "./task-list.js";
 import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
 import { BoardInputError, TaskBoard } from "../../processing/tasks/board.js";
 export class ClientConnections {
+  private detailService?: TaskDetails;
+  get details() {
+    return (this.detailService ??= new TaskDetails(this.store));
+  }
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
   readonly sessions = new Map<
@@ -183,6 +188,7 @@ export class ClientConnections {
   readonly tasks: Tasks;
   lifecycle: WorkspaceLifecycle;
   invalidateTask(task: Task) {
+    this.detailService?.invalidate(task.id);
     this.preview.removeTask(task.id);
     for (const [id, request] of this.artifactRequests)
       if (request.runId === task.runId) {
@@ -302,6 +308,7 @@ export class ClientConnections {
               workspaceVersion: 1,
               localSharingVersion: 1,
               taskListVersion: 1,
+              taskDetailVersion: 1,
               lifecycleVersion: 1,
               deletions:
                 device.lifecycleVersion === 1
@@ -444,6 +451,51 @@ export class ClientConnections {
                   generation,
             };
             switch (data.operation) {
+              case "task.detail.target": {
+                const task = this.details.task(device.id, String(input.taskId));
+                if (
+                  task.clientId !== device.id ||
+                  task.runId !== input.runId ||
+                  task.revision !== input.revision
+                )
+                  throw new Error("TASK_ASSIGNMENT_CHANGED");
+                const saved = this.store.get<{
+                  snapshot: { sequence: number; revision: number };
+                }>("task-detail", task.id);
+                result = {
+                  sequence:
+                    saved?.snapshot.revision === task.revision
+                      ? saved.snapshot.sequence
+                      : 0,
+                };
+                break;
+              }
+              case "task.detail.sync":
+                result = this.details.sync(device.id, generation, input);
+                break;
+              case "task.detail.read":
+                result = this.details.read(device.id, input, this.peers);
+                break;
+              case "task.detail.refresh": {
+                const task = this.details.task(device.id, String(input.taskId));
+                const owner = task.clientId && this.peers.get(task.clientId);
+                if (owner)
+                  owner.send(
+                    JSON.stringify({
+                      v: 1,
+                      type: "task.detail.refresh",
+                      generation: this.store.get<Device>(
+                        "device",
+                        task.clientId!,
+                      )?.generation,
+                      taskId: task.id,
+                      runId: task.runId,
+                      revision: task.revision,
+                    }),
+                  );
+                result = { requested: !!owner };
+                break;
+              }
               case "project.leave":
                 result = team.leave(
                   device.id,
@@ -623,6 +675,10 @@ export class ClientConnections {
             );
             if (
               ![
+                "task.detail.target",
+                "task.detail.sync",
+                "task.detail.read",
+                "task.detail.refresh",
                 "project.snapshot",
                 "project.knowledge",
                 "task.knowledge",
