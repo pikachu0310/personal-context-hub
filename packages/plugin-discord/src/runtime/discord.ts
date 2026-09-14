@@ -15,7 +15,64 @@ import { renderPublication } from "../output/render.js";
 import { deliver } from "../output/transport.js";
 import { audioOutput } from "../output/audio.js";
 import { createDiscordState } from "./state.js";
+import type { Task } from "../../../common/src/contracts/protocol.js";
+import {
+  ForumSync,
+  forumKey,
+  type ForumBinding,
+  type ForumRecord,
+} from "../forum/sync.js";
+import { forumTransport } from "../forum/transport.js";
+import { connectionLink, validateDownloads } from "../onboarding/guide.js";
 const state = createDiscordState();
+let forumTimer: NodeJS.Timeout | undefined;
+let forumBusy = false;
+async function refreshForum() {
+  const forum = state.forum;
+  if (!forum || forumBusy || !state.client?.isReady()) return;
+  forumBusy = true;
+  try {
+    const tasks = await runtime.rpc.request<Task[]>("tasks.snapshot", {});
+    if (state.forum === forum) await forum.sync(tasks);
+  } catch {
+    runtime.emit("status", { status: "forum-sync-error" });
+  } finally {
+    forumBusy = false;
+  }
+}
+function configureForum() {
+  clearInterval(forumTimer);
+  state.forum = undefined;
+  if (
+    !state.config.issueForumChannelId ||
+    !state.client ||
+    !state.config.projectId ||
+    !state.config.meetingId
+  )
+    return;
+  const binding = { ...state.config } as unknown as ForumBinding;
+  const key = forumKey(binding);
+  const forum: ForumSync = new ForumSync(
+    binding,
+    forumTransport(state.client, binding, () => state.forum === forum),
+    () =>
+      runtime.rpc.request<ForumRecord[] | undefined>("storage.get", { key }),
+    async (records) => {
+      await runtime.rpc.request("storage.put", { key, value: records });
+    },
+    () => state.forum === forum,
+  );
+  state.forum = forum;
+  forumTimer = setInterval(() => void refreshForum(), 10000);
+  void refreshForum();
+}
+state.connectionGuide = async () => {
+  const { origin } = await runtime.rpc.request<{ origin: string }>(
+    "connection.info",
+    {},
+  );
+  return `PCにIDO Agentをインストールして接続します。\n${connectionLink(origin)}\nWindows / Mac のダウンロードと起動手順を開けます。接続先の確認・ログイン・作業許可は各自のPCで行ってください。`;
+};
 const publications = new Publications(
   async (id) => state.client?.channels.fetch(id),
   async (key, messageId) => {
@@ -33,6 +90,7 @@ const emit = (data: Record<string, unknown>) => {
         ? (state.voice.joinConfig.channelId ?? undefined)
         : undefined,
       state.audioSessionId,
+      state.forum?.taskForThread(String(data.channelId)),
     );
     if (input) {
       if (input.audioFrame && pendingFrames >= 32) return;
@@ -56,6 +114,7 @@ const runtime = pluginRuntime(
   discordManifest,
   async (operation, input) => {
     if (operation === "validate") {
+      validateDownloads(input.config as Record<string, string>);
       return {
         config: {
           ...(input.config as Record<string, string>),
@@ -69,6 +128,8 @@ const runtime = pluginRuntime(
         ...(input.config as Record<string, string>),
       };
       normalizeDiscordPolicy(next);
+      validateDownloads(next);
+      state.forum = undefined;
       const reconnect = ["guildId", "textChannelId", "botToken", "appId"].some(
         (key) => next[key] !== state.config[key],
       );
@@ -95,6 +156,7 @@ const runtime = pluginRuntime(
         state.client?.destroy();
         await start(state, emit, next);
       }
+      configureForum();
       return { ok: true };
     }
     if (operation === "start") {
@@ -103,6 +165,7 @@ const runtime = pluginRuntime(
       if (!next.botToken || !next.guildId || !next.textChannelId)
         throw new Error("DISCORD_CONFIG_REQUIRED");
       await start(state, emit, next);
+      configureForum();
       discordManifest.web!.frameOrigins = [
         `https://${state.config.appId}.discordsays.com`,
       ];
@@ -135,6 +198,9 @@ const runtime = pluginRuntime(
     }
     if (operation === "event") {
       const event = input.event as unknown as PluginEvent;
+      // Polling the authoritative snapshot coalesces frequent progress events,
+      // retries failed edits and restores mappings after plugin restarts.
+      if (event.type === "tasks") return { ok: true };
       if (
         event.meetingId !== state.config.meetingId ||
         !["transcript", "minutes"].includes(event.type)
@@ -167,6 +233,8 @@ const runtime = pluginRuntime(
     throw new Error("UNKNOWN_OPERATION");
   },
   async () => {
+    clearInterval(forumTimer);
+    state.forum = undefined;
     for (const request of state.pending.values()) {
       clearTimeout(request.timer);
       request.reject();

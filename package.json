@@ -27,6 +27,10 @@
     "esbuild": "^0.28.1"
   },
   "scripts": {
+    "build:desktop": "npm run build:ido && node scripts/build-desktop.mjs",
+    "start:desktop": "electron .ido-build/desktop/app",
+    "pack:desktop": "electron-builder --config packages/desktop/builder.config.json --publish never",
+    "smoke:desktop": "node scripts/desktop-smoke.mjs",
     "coordination:read": "node scripts/read-github-coordination.mjs",
     "build:ido": "node scripts/build-ido.mjs",
     "check:ido": "tsc -p tsconfig.ido.json --noEmit && tsc -p tsconfig.ui.json",

@@ -36,6 +36,19 @@ export const discordManifest: PluginManifest = {
       required: true,
     },
     { key: "guildId", label: "Guild ID", required: true },
+    {
+      key: "issueForumChannelId",
+      label: "issueフォーラムのID（任意・タスク概要を共有）",
+    },
+    {
+      key: "windowsDownloadUrl",
+      label: "WindowsインストーラーのHTTPSダウンロードURL",
+    },
+    {
+      key: "macArmDownloadUrl",
+      label: "Mac Apple Silicon版のHTTPSダウンロードURL",
+    },
+    { key: "macIntelDownloadUrl", label: "Mac Intel版のHTTPSダウンロードURL" },
     { key: "textChannelId", label: "テキストチャンネルID", required: true },
     { key: "appId", label: "Application ID", required: true },
     {
@@ -54,6 +67,7 @@ export const discordManifest: PluginManifest = {
       "https://*.discordsays.com",
     ],
     publicPaths: [
+      "/connect",
       "/callback",
       "/activity",
       "/assets/",
@@ -66,6 +80,7 @@ export const discordManifest: PluginManifest = {
     ],
   },
   capabilities: [
+    "task-forum",
     "text",
     "audio",
     "activity",

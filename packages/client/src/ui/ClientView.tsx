@@ -14,6 +14,8 @@ import { Card } from "../../../ui/src/components/Card.js";
 import { Form } from "../../../ui/src/components/Form.js";
 import { Status } from "../../../ui/src/components/Status.js";
 import type { Action, ClientState, Invoke } from "../../../ui/src/types.js";
+import { desktopBridge } from "./desktop.js";
+import { ClientRuns } from "./ClientRuns.js";
 export function ClientView({
   page,
   state,
@@ -29,11 +31,25 @@ export function ClientView({
     [network, setNetwork] = useState(false);
   return (
     <Stack>
+      {state.desktop && (
+        <Paper p="md" withBorder>
+          <Group justify="space-between">
+            <Text fw={600}>{state.desktop.name}</Text>
+            <Text size="sm" c="dimmed">
+              v{state.desktop.version} · {state.desktop.platform} · PID{" "}
+              {state.desktop.pid}
+            </Text>
+          </Group>
+          <Text size="xs" c="dimmed">
+            アプリを終了すると、このアプリのタスク実行と接続も停止します。
+          </Text>
+        </Paper>
+      )}
       {page === "overview" ? (
         <>
           <Card
             title="1. 専用Codexでログイン"
-            description="普段のCodexとは認証・設定を分離します。公式ログインの案内は起動したターミナルに表示されます。"
+            description="普段のCodexとは認証・設定を分離します。ブラウザーでOpenAIの公式ログインを完了してください。"
           >
             <Group>
               <Status value={state.loginStatus} />
@@ -47,11 +63,18 @@ export function ClientView({
                 ログイン状態を確認
               </Button>
             </Group>
+            {state.loginUrl && (
+              <Anchor href={state.loginUrl} target="_blank" rel="noreferrer">
+                ログイン画面をブラウザーで開く
+              </Anchor>
+            )}
           </Card>
           <Card title="2. チームのEngineへ接続">
             <Status value={state.status} />
             {!state.settings.deviceId && (
               <Form
+                key={state.suggestedEngine ?? "engine"}
+                initial={{ engineUrl: state.suggestedEngine ?? "" }}
                 fields={[
                   {
                     key: "engineUrl",
@@ -114,7 +137,11 @@ export function ClientView({
                       label: p.name,
                     })),
                   },
-                  { key: "directory", label: "ローカルrepoの絶対パス" },
+                  {
+                    key: "directory",
+                    label: "ローカルrepoの絶対パス",
+                    pick: desktopBridge()?.pickDirectory,
+                  },
                 ]}
                 submit={(data) =>
                   action("mappings", { ...data, network, slots: 1 })
@@ -185,44 +212,7 @@ export function ClientView({
               </Paper>
             ))}
           </Card>
-          {state.runs.map((r) => (
-            <Card
-              key={r.task.runId}
-              title={r.task.text}
-              description={`実行版 ${r.task.revision}`}
-            >
-              <Status value={r.state} />
-              <Code block>{r.directory}</Code>
-              <Text className="minutes" size="sm">
-                {r.result ?? r.progress}
-              </Text>
-              <Group>
-                <Button
-                  color="red"
-                  variant="light"
-                  onClick={() => invoke("stop", { runId: r.task.runId })}
-                >
-                  停止
-                </Button>
-              </Group>
-              <Form
-                fields={[
-                  {
-                    key: "port",
-                    label: "この実行のプレビュー用ローカルポート",
-                  },
-                ]}
-                submit={(data) =>
-                  action("preview", {
-                    ...data,
-                    port: Number(data.port),
-                    runId: r.task.runId,
-                  })
-                }
-                label="プレビューを明示的に登録"
-              />
-            </Card>
-          ))}
+          <ClientRuns state={state} action={action} invoke={invoke} />
         </>
       )}
     </Stack>

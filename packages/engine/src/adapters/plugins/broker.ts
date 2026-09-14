@@ -2,7 +2,7 @@ import type {
   ConversationInput,
   InputContext,
 } from "../../../../common/src/contracts/plugins.js";
-import { text } from "../../../../common/src/contracts/protocol.js";
+import { text, type Task } from "../../../../common/src/contracts/protocol.js";
 import { Contexts } from "../../management/contexts.js";
 import { Identities } from "../../management/identities.js";
 import type { Workspace } from "../../output/queries/workspace.js";
@@ -59,6 +59,24 @@ export class PluginBroker {
     token?: string,
   ): Promise<unknown> {
     const plugin = this.plugins().get(pluginId);
+    if (operation === "connection.info") return { origin: this.origin() };
+    if (operation === "tasks.snapshot") {
+      const config = this.store.get<Record<string, string>>("config", pluginId);
+      if (
+        !plugin.manifest?.capabilities.includes("task-forum") ||
+        !config?.issueForumChannelId ||
+        !config.meetingId ||
+        !config.projectId
+      )
+        throw new Error("PERMISSION_DENIED");
+      return this.store
+        .list<Task>("task")
+        .filter(
+          (task) =>
+            task.meetingId === config.meetingId &&
+            task.projectId === config.projectId,
+        );
+    }
     if (operation.startsWith("storage.")) {
       const key = text(input.key, 500);
       if (operation === "storage.get")

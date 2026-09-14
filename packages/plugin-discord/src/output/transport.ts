@@ -5,15 +5,23 @@ export async function deliver(
   message: Record<string, unknown>,
 ) {
   const epoch = state.speechEpoch;
-  const valid = () =>
-    epoch === state.speechEpoch &&
-    message.channelId === state.config.textChannelId;
+  const allowedChannel = () =>
+    message.channelId === state.config.textChannelId ||
+    !!state.forum?.taskForThread(String(message.channelId));
+  const valid = () => epoch === state.speechEpoch && allowedChannel();
   if (state.client) {
-    if (message.channelId !== state.config.textChannelId) return;
+    if (!allowedChannel()) return;
     if (message.content) {
       const channel = await state.client.channels.fetch(
         String(message.channelId),
       );
+      if (
+        message.channelId !== state.config.textChannelId &&
+        (!channel?.isThread() ||
+          channel.parentId !== state.config.issueForumChannelId ||
+          channel.guildId !== state.config.guildId)
+      )
+        return;
       if (channel?.isTextBased() && "send" in channel)
         for (
           let offset = 0;

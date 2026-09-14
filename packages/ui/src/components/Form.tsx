@@ -16,6 +16,7 @@ export type Field = {
   multiline?: boolean;
   placeholder?: string;
   optional?: boolean;
+  pick?: () => Promise<string | undefined>;
 };
 export function Form({
   fields,
@@ -89,6 +90,28 @@ export function Form({
               key={f.key}
               label={f.label}
               placeholder={f.placeholder}
+              rightSectionWidth={f.pick ? 86 : undefined}
+              rightSection={
+                f.pick ? (
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={async () => {
+                      try {
+                        const picked = await f.pick!();
+                        if (picked)
+                          setValues((v) => ({ ...v, [f.key]: picked }));
+                      } catch {
+                        setError(
+                          "フォルダーを選択できません。実行を停止して再試行してください。",
+                        );
+                      }
+                    }}
+                  >
+                    選択
+                  </Button>
+                ) : undefined
+              }
               value={values[f.key] ?? ""}
               onChange={(e) =>
                 setValues({ ...values, [f.key]: e.currentTarget.value })

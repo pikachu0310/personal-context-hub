@@ -18,6 +18,7 @@ export function Shell({
   refresh,
   error,
   children,
+  workspaceLinks = title !== "CLIENT",
 }: {
   title: string;
   pages: string[][];
@@ -26,6 +27,7 @@ export function Shell({
   refresh: () => void;
   error?: string;
   children: ReactNode;
+  workspaceLinks?: boolean;
 }) {
   return (
     <AppShell
@@ -38,7 +40,7 @@ export function Shell({
           <Text className="wordmark">
             IDO <span>/ {title}</span>
           </Text>
-          {title !== "CLIENT" && (
+          {workspaceLinks && (
             <Group>
               <Anchor href="/admin">管理</Anchor>
               <Anchor href="/dashboard/">Dashboard</Anchor>

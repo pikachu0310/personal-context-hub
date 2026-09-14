@@ -5,6 +5,7 @@ export function normalizeInput(
   config: Record<string, string>,
   voiceChannel?: string,
   audioSessionId?: string,
+  forumTask?: string,
 ): ConversationInput | undefined {
   const voice =
     Boolean(event.audio || event.audioFrame || event.activity) ||
@@ -13,7 +14,12 @@ export function normalizeInput(
   if (
     event.guildId !== config.guildId ||
     !discordUserAllowed(config, String(event.userId)) ||
-    event.channelId !== (voice ? voiceChannel : config.textChannelId) ||
+    (!forumTask &&
+      event.channelId !== (voice ? voiceChannel : config.textChannelId)) ||
+    (forumTask &&
+      (voice ||
+        event.taskId !== forumTask ||
+        !["stop", "steer"].includes(String(event.command)))) ||
     (voice && !voiceChannel) ||
     (capture && audioSessionId && capture.sessionId !== audioSessionId) ||
     (event.meetingId && event.meetingId !== config.meetingId) ||
@@ -41,7 +47,7 @@ export function normalizeInput(
     taskId: typeof event.taskId === "string" ? event.taskId : undefined,
     interaction: Boolean(event.interaction),
     replyTo: {
-      channelId: config.textChannelId,
+      channelId: forumTask ? event.channelId : config.textChannelId,
       interaction: Boolean(event.interaction),
       speechEpoch: event.speechEpoch,
       audioSessionId: capture?.sessionId ?? audioSessionId,

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { startLogin } from "../auth/login.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
@@ -44,6 +44,9 @@ export async function route(
       status: this.status,
       allow: this.allow,
       loginStatus: this.loginStatus,
+      loginUrl: this.loginUrl,
+      suggestedEngine: this.suggestedEngine,
+      desktop: this.desktop,
       pairing: this.pairing
         ? { url: this.pairing.url, fingerprint: this.pairing.fingerprint }
         : null,
@@ -63,6 +66,7 @@ export async function route(
   switch (url.pathname) {
     case "/api/pair":
       await this.pair(text(input.engineUrl, 2048));
+      this.suggestedEngine = undefined;
       break;
     case "/api/disconnect": {
       if (this.executor.active.size)
@@ -118,21 +122,7 @@ export async function route(
       }
       break;
     case "/api/codex/login": {
-      if (this.login) throw new Error("LOGIN_ALREADY_RUNNING");
-      this.loginStatus = "Follow the official Codex login in the terminal.";
-      const child = spawn(codexBinary(), ["login", "--device-auth"], {
-        env: workerEnvironment(this.executor.home),
-        stdio: "inherit",
-      });
-      this.login = child;
-      child.once("error", () => {
-        this.loginStatus = "Codex unavailable";
-        this.login = undefined;
-      });
-      child.once("exit", (code) => {
-        this.loginStatus = code === 0 ? "authenticated" : "login failed";
-        this.login = undefined;
-      });
+      startLogin(this);
       break;
     }
     case "/api/stop": {
