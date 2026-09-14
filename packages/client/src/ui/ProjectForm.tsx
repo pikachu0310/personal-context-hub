@@ -168,8 +168,8 @@ export function AddProjectForm({
 }) {
   const [name, setName] = useState(""),
     [directory, setDirectory] = useState(""),
-    [allow, setAllow] = useState(false),
-    [network, setNetwork] = useState(false),
+    [allow, setAllow] = useState(true),
+    [network, setNetwork] = useState(true),
     [mode, setMode] = useState("auto");
   return (
     <div className="project-add-form">
