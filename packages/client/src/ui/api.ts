@@ -2,6 +2,11 @@ import { lifecycleError } from "@ido/common-ui";
 import { browserApi } from "@ido/common/runtime/browser-api";
 const request = browserApi("/api/");
 const errors: Record<string, string> = {
+  MINUTES_CONFLICT:
+    "議事録が更新されました。入力を保持しています。最新版を確認して再度保存してください。",
+  INVALID_MINUTES: "議事録は100,000文字以内で入力してください。",
+  MEETING_NOT_FOUND:
+    "議事録は削除されたか、このプロジェクトから参照できません。",
   SOURCE_LIMIT_EXCEEDED: "ソースは20件、合計64,000文字まで追加できます。",
   INVALID_AVATAR:
     "画像を読み込めません。別のPNG・JPEG・WebP画像を選択してください。",

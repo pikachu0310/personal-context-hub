@@ -52,6 +52,7 @@
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,mjs,css,html}\" \"packages/*/test/**/*.{ts,mjs}\" \"scripts/**/*.mjs\" \"docs/*.md\" \"*.{js,json,md}\" \".github/**/*.yml\"",
     "audit": "npm audit",
     "coordination:read": "node scripts/read-github-coordination.mjs",
-    "smoke:dashboard": "node scripts/ido-dashboard-smoke.mjs"
+    "smoke:dashboard": "node scripts/ido-dashboard-smoke.mjs",
+    "smoke:minutes": "node scripts/client-minutes-smoke.mjs"
   }
 }

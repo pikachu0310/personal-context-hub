@@ -436,6 +436,9 @@ export class ClientConnections {
                   input.name,
                 );
                 break;
+              case "project.minutes.update":
+                result = team.updateMinutes(device.id, input);
+                break;
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
