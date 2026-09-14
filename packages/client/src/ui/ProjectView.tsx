@@ -11,15 +11,22 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Form } from "@ido/common-ui";
 import type { ProjectWorkspace } from "@ido/common/contracts/api";
+import { TaskDispatchNotice } from "./TaskDispatchNotice.js";
+import { stateLabel } from "./ActivityFeed.js";
+import type { ClientState } from "@ido/common/contracts/api";
 import { api } from "./api.js";
 export function ProjectView({
   projectId,
   taskId,
   deviceId,
+  clientState,
+  openSettings,
 }: {
   projectId: string;
   taskId?: string;
   deviceId?: string;
+  clientState: ClientState;
+  openSettings: () => void;
 }) {
   const [state, setState] = useState<ProjectWorkspace>(),
     [error, setError] = useState("");
@@ -64,7 +71,7 @@ export function ProjectView({
         </Group>
         {task ? (
           <Paper p="lg" withBorder>
-            <Badge>{task.state}</Badge>
+            <Badge>{stateLabel(task.state)}</Badge>
             <Text mt="md" style={{ whiteSpace: "pre-wrap" }}>
               {task.text}
             </Text>
@@ -78,6 +85,13 @@ export function ProjectView({
               {state.participants.find((p) => p.id === task.clientId)?.name ??
                 "割り当て待ち"}
             </Text>
+            {task.state === "queued" && !task.clientId && (
+              <TaskDispatchNotice
+                state={clientState}
+                task={task}
+                openSettings={openSettings}
+              />
+            )}
           </Paper>
         ) : (
           <>
@@ -163,6 +177,15 @@ export function ProjectView({
               <Title order={3} mb="md">
                 タスクを追加
               </Title>
+              <TaskDispatchNotice
+                state={clientState}
+                task={{ projectId }}
+                waiting={false}
+                openSettings={openSettings}
+              />
+              <Text size="sm" mt="md">
+                追加したタスクは、実行条件を満たすClientへ順番に割り当てます。同じ依頼を追加し直す必要はありません。
+              </Text>
               <Form
                 fields={[{ key: "text", label: "依頼内容", multiline: true }]}
                 submit={async (data) => {

@@ -1,4 +1,5 @@
 import {
+  Alert,
   NumberInput,
   Button,
   Paper,
@@ -32,6 +33,15 @@ export function ProjectSettings({
       <Stack>
         <Title order={2}>接続・設定</Title>
         <Text c="dimmed">このClientでのプロジェクト設定です。</Text>
+        {!allowed && (
+          <Alert color="yellow" title="このプロジェクトの実行許可はOFFです">
+            タスクを始めるには、下の「このプロジェクトのタスクを受け取って実行する」をONにしてください。
+            {(state.projectTasks ?? []).filter(
+              (t) => t.projectId === projectId && t.state === "queued",
+            ).length > 0 &&
+              `このプロジェクトには${(state.projectTasks ?? []).filter((t) => t.projectId === projectId && t.state === "queued").length}件の待機タスクがあります。許可すると実行枠の範囲で順番に割り当てます。`}
+          </Alert>
+        )}
         <Paper p="lg" withBorder>
           <Title order={3} mb="md">
             保存先と接続
