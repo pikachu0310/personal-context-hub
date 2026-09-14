@@ -1,6 +1,9 @@
 import { browserApi } from "@ido/common/runtime/browser-api";
 const request = browserApi("/api/");
 const errors: Record<string, string> = {
+  INVALID_AVATAR:
+    "画像を読み込めません。別のPNG・JPEG・WebP画像を選択してください。",
+  PAIRING_REQUIRED: "先にチームのEngineへの接続を設定してください。",
   CONTINUATION_UNSUPPORTED:
     "Engineを更新すると、このタスクの続きを依頼できます。",
   TASK_STILL_ACTIVE:

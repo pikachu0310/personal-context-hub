@@ -10,7 +10,7 @@ import { Client } from "../packages/client/dist/index.js";
 
 const directory = await mkdtemp(join(tmpdir(), "ido-workspace-ui-"));
 const client = new Client(join(directory, "client"));
-let catalogAgents = [
+const catalogAgents = [
   {
     agent: "codex",
     authenticated: true,
@@ -75,6 +75,13 @@ try {
         title: "共有ルーティングを確認",
         state: "running",
         clientId: "other-device",
+        participants: [
+          { id: "other-device", name: "Demo teammate" },
+          { id: "member-two", name: "Alex" },
+          { id: "member-three", name: "Sam" },
+          { id: "member-four", name: "Taylor" },
+          { id: "idobot", name: "idobot", bot: true },
+        ],
         ownerName: "Demo teammate",
         deviceName: "Demo Mac",
         deviceConnected: true,
@@ -177,6 +184,7 @@ try {
     projectId: "project",
     meetingId: "meeting",
     authorId: "member",
+    createdByBot: true,
     requestId: "request",
     title: "Discordフォーラムの同期を整える",
     text: "フォーラムのスレッドとタスクを同期したい。\nまず方針を相談してから実装を進めよう。",
@@ -232,6 +240,8 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(client.origin);
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  assert.equal(await page.locator(".avatar-overflow").innerText(), "+2");
+  assert.ok((await page.locator(".task-avatars .bot-avatar").count()) > 0);
   await page
     .getByRole("region", { name: "ほかのPC", exact: true })
     .getByRole("button")
@@ -306,6 +316,8 @@ try {
   await page
     .getByText("公開せず、ローカルの検証までお願いします", { exact: true })
     .waitFor();
+  for (let attempt = 0; !steers.length && attempt < 100; attempt++)
+    await new Promise((resolve) => setTimeout(resolve, 20));
   assert.deepEqual(steers, ["公開せず、ローカルの検証までお願いします"]);
   await page
     .locator(".tool-entry")
@@ -355,100 +367,88 @@ try {
     .click();
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
+  // The project workspace replaces the old global local-task/run navigation.
+  assert.equal(
+    await page
+      .getByRole("button", { name: "新しいローカルタスク", exact: true })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await page.getByRole("button", { name: "実行と承認", exact: true }).count(),
+    0,
+  );
+  client.settings.profile = { name: "Demo user", context: "" };
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page.getByRole("button", { name: "ユーザー設定を開く" }).click();
+  const avatarFile = await page.locator(".brand-symbol").screenshot();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "avatar.png",
+    mimeType: "image/png",
+    buffer: avatarFile,
+  });
+  await page.locator(".profile-avatar-editor img").waitFor();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await page.locator(".local-avatar img").waitFor();
+  assert.match(client.settings.profile.avatar, /^data:image\/jpeg;base64,/);
+  await page.reload();
+  await page.locator(".local-avatar img").waitFor();
+  await page.locator(".task-avatars img").first().waitFor();
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-avatars.png",
+  });
+  await page.getByRole("button", { name: "ユーザー設定を開く" }).click();
+  await page.getByRole("button", { name: "アイコンを削除" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "保存", exact: true })
+    .click();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.equal(client.settings.profile.avatar, undefined);
+
   client.connected = false;
-  client.allowedProjects.clear();
-  const localFrames = [];
-  client.emit = (frame) => localFrames.push(frame);
-  await page
-    .getByRole("button", { name: "新しいローカルタスク", exact: true })
-    .click();
-  await page.getByLabel("タイトル", { exact: true }).fill("ローカルの実験");
-  await page
-    .getByRole("option", { name: "Test Codex" })
-    .waitFor({ state: "attached" });
-  await page
-    .getByLabel("使用するモデル", { exact: true })
-    .selectOption("test-codex-model");
-  await page
-    .getByLabel("Gitリポジトリのフォルダー", { exact: true })
-    .fill(repository);
-  await page
-    .getByLabel("依頼内容", { exact: true })
-    .fill("このPCで実験の方針を相談してから試してください");
-  await page.getByLabel("進め方", { exact: true }).selectOption("manual");
-  await page.getByRole("button", { name: "相談を開始", exact: true }).click();
-  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
-  await page.getByText("このアプリからの依頼", { exact: true }).waitFor();
-  await page
-    .locator(".model-label")
-    .filter({ hasText: "test-codex-model" })
-    .waitFor();
-  await page
-    .getByLabel("エージェントへの追加指示")
-    .fill("実験の前提も整理してください");
-  await page
-    .getByRole("button", { name: "追加指示を送信", exact: true })
-    .click();
-  await page
-    .getByText("実験の前提も整理してください", { exact: true })
-    .waitFor();
-  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
-  await page.getByRole("button", { name: "実行する", exact: true }).click();
-  await page
-    .getByText("1 件のファイルを変更", { exact: true })
-    .first()
-    .waitFor();
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page.locator(".connection-required").waitFor();
+  for (const row of await page.locator(".task-link").all())
+    assert.ok(await row.isDisabled());
+  for (const button of await page.locator(".project-compose").all())
+    assert.ok(await button.isDisabled());
+  assert.equal(await page.getByLabel("エージェントへの追加指示").count(), 0);
   await page.screenshot({
-    path: ".ido-build/screenshots/workspace-local-experiment.png",
+    path: ".ido-build/screenshots/workspace-disconnected.png",
   });
-  await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
-  await page.getByText("停止済み", { exact: true }).waitFor();
-  assert.deepEqual(localFrames, []);
-  // Provider selection uses the same app lifecycle without contacting Claude.
-  client.executor.createClaude = client.executor.createCodex;
+  let reconnects = 0;
+  client.settings.engineUrl = "https://engine.example.invalid";
+  client.connect = async () => {
+    reconnects++;
+    client.connected = true;
+    client.status = "connected";
+  };
+  await page.getByRole("button", { name: "再接続", exact: true }).click();
+  await page.locator(".connection-required").waitFor({ state: "hidden" });
+  assert.equal(reconnects, 1);
+  for (const row of await page.locator(".task-link").all())
+    assert.ok(await row.isEnabled());
+  client.projectCreationSupported = true;
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
-    .getByRole("button", { name: "新しいローカルタスク", exact: true })
+    .getByRole("button", { name: "プロジェクトを追加", exact: true })
     .click();
-  await page.getByLabel("エージェント", { exact: true }).selectOption("claude");
-  await page.getByLabel("使用するモデル", { exact: true }).selectOption("opus");
-  await page.getByLabel("エージェント", { exact: true }).selectOption("codex");
-  await page
-    .getByLabel("使用するモデル", { exact: true })
-    .selectOption("test-codex-model");
-  await page.getByLabel("エージェント", { exact: true }).selectOption("claude");
-  assert.equal(
-    await page.getByLabel("使用するモデル", { exact: true }).inputValue(),
-    "opus",
+  const dialog = page.getByRole("dialog");
+  await dialog.waitFor();
+  await page.waitForTimeout(250);
+  const box = await dialog.boundingBox();
+  assert.ok(
+    Math.abs(box.y + box.height / 2 - 490) < 25,
+    "Project modal must be vertically centered",
   );
-  await page.getByLabel("タイトル", { exact: true }).fill("Claudeで実験");
-  await page
-    .getByLabel("Gitリポジトリのフォルダー", { exact: true })
-    .fill(repository);
-  await page
-    .getByLabel("依頼内容", { exact: true })
-    .fill("Claudeで方針を相談してください");
-  await page.getByLabel("進め方", { exact: true }).selectOption("manual");
-  await page
-    .getByRole("checkbox", { name: /Claudeのツールは操作ごとに承認/ })
-    .check();
-  await page.getByRole("button", { name: "相談を開始", exact: true }).click();
-  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
-  await page
-    .locator(".model-label")
-    .filter({ hasText: "Claude Code" })
-    .waitFor();
   await page.screenshot({
-    path: ".ido-build/screenshots/workspace-claude.png",
+    path: ".ido-build/screenshots/workspace-project-modal.png",
   });
-  assert.equal(
-    Object.values(client.executor.runs).find(
-      (run) => run.task.title === "Claudeで実験",
-    )?.agent,
-    "claude",
-  );
-  await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
-  await page.getByText("停止済み", { exact: true }).waitFor();
-  assert.deepEqual(localFrames, []);
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 430, height: 850 });
   await page
     .getByRole("button", { name: "サイドバーを閉じる", exact: true })
@@ -464,47 +464,8 @@ try {
     ),
   );
   assert.deepEqual(errors, []);
-  await page.setViewportSize({ width: 1360, height: 980 });
-  await page
-    .getByRole("button", { name: "サイドバーの表示を切り替える", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "新しいローカルタスク", exact: true })
-    .click();
-  catalogAgents = [
-    {
-      agent: "claude",
-      authenticated: true,
-      models: [{ id: "opus", name: "Test Claude" }],
-    },
-  ];
-  await page
-    .getByRole("button", { name: "ログイン状況・モデル一覧を更新" })
-    .click();
-  await page
-    .getByRole("option", { name: "Test Claude", exact: true })
-    .waitFor({ state: "attached" });
-  assert.equal(
-    await page.getByRole("option", { name: "Codex", exact: true }).count(),
-    0,
-  );
-  catalogAgents = [];
-  await page
-    .getByRole("button", { name: "ログイン状況・モデル一覧を更新" })
-    .click();
-  await page.getByText(/ログイン済みのエージェントがありません/).waitFor();
-  assert.equal(
-    await page.getByLabel("エージェント", { exact: true }).count(),
-    0,
-  );
-  assert.equal(
-    await page
-      .getByRole("button", { name: "ローカルで開始", exact: true })
-      .isDisabled(),
-    true,
-  );
   console.log(
-    "Workspace smoke passed: Manual discussion -> execute, live instruction, command output, diff, search, stop and narrow layout.",
+    "Workspace smoke passed: Manual discussion -> execute, live instruction, command output, diff, search, stop, offline gating, reconnect, avatar upload/removal, centered modal and narrow layout.",
   );
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];

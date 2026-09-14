@@ -28,7 +28,7 @@ import { checkAccount } from "../auth/account.js";
 import { workspaceRequest } from "../connection/workspace.js";
 import { createProject } from "../connection/projects.js";
 interface Settings {
-  profile?: { name: string; context: string };
+  profile?: { name: string; context: string; avatar?: string };
   pendingProject?: {
     requestId: string;
     name: string;

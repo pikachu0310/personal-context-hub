@@ -1,3 +1,4 @@
+import { taskParticipants } from "../../processing/projects/task-participants.js";
 import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
 import { clean, type Task } from "@ido/common/contracts/protocol";
 import type { Device } from "../../domain/models.js";
@@ -18,6 +19,24 @@ export function taskSnapshot(
         Number(active(b)) - Number(active(a)) || b.updatedAt - a.updatedAt,
     );
   return {
+    profiles: [
+      ...new Set(
+        tasks.flatMap((task) => taskParticipants(store, task).map((p) => p.id)),
+      ),
+    ]
+      .slice(0, 200)
+      .flatMap((id) => {
+        const device = store.get<Device>("device", id);
+        return device && !device.revoked && device.profile?.avatar
+          ? [
+              {
+                id,
+                name: clean(device.profile.name).slice(0, 100),
+                avatar: device.profile.avatar,
+              },
+            ]
+          : [];
+      }),
     updatedAt: Date.now(),
     total: tasks.length,
     tasks: tasks.slice(0, 200).map((task) => {
@@ -25,6 +44,7 @@ export function taskSnapshot(
         ? store.get<Device>("device", task.clientId)
         : undefined;
       return {
+        participants: taskParticipants(store, task),
         id: task.id,
         runId: task.runId,
         revision: task.revision,

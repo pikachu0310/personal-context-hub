@@ -55,3 +55,53 @@ test("shared task summaries bound payloads and exclude private execution fields"
     undefined,
   );
 });
+
+test("task participants distinguish self, other executors and bot-created work with shared avatar profiles", () => {
+  const avatar = "data:image/png;base64,iVBORw0KGgo=";
+  const devices = [
+    { id: "self", name: "Alex", profile: { name: "Alex", avatar } },
+    { id: "other", name: "Sam", profile: { name: "Sam", avatar } },
+  ];
+  const tasks = [
+    {
+      id: "mine",
+      authorId: "client-self",
+      clientId: "self",
+      createdByBot: true,
+    },
+    { id: "theirs", authorId: "client-other", clientId: "other" },
+    { id: "collaborative", authorId: "client-self", clientId: "other" },
+  ].map((task) => ({
+    ...task,
+    projectId: "project",
+    state: "running",
+    updatedAt: 1,
+    text: "Task",
+  }));
+  const store = {
+    list: () => tasks,
+    get: (kind: string, id: string) =>
+      kind === "device"
+        ? devices.find((device) => device.id === id)
+        : undefined,
+  } as unknown as Repository;
+  const snapshot = taskSnapshot(store, new Map(), new Set(["project"]));
+  assert.deepEqual(
+    snapshot.tasks[0].participants?.map((p) => p.name),
+    ["Alex", "idobot"],
+  );
+  assert.deepEqual(
+    snapshot.tasks[1].participants?.map((p) => p.name),
+    ["Sam"],
+  );
+  assert.deepEqual(
+    snapshot.tasks[2].participants?.map((p) => p.name),
+    ["Sam", "Alex"],
+  );
+  assert.equal(snapshot.profiles?.length, 2);
+  assert.ok(snapshot.profiles?.every((p) => p.avatar === avatar));
+  assert.ok(
+    snapshot.tasks.every((t) => t.participants?.every((p) => !p.avatar)),
+  );
+  assert.deepEqual(taskSnapshot(store, new Map(), new Set()).profiles, []);
+});

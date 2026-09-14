@@ -39,6 +39,7 @@ export interface ProjectWorkspace {
     id: string;
     name: string;
     context: string;
+    avatar?: string;
     codexConnected: boolean;
   }>;
 }
@@ -126,7 +127,7 @@ export interface ClientState {
   csrf: string;
   suggestedInvite?: { engineUrl: string; token: string };
   settings: {
-    profile?: { name: string; context: string };
+    profile?: { name: string; context: string; avatar?: string };
     progressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
@@ -167,6 +168,7 @@ export interface ClientState {
 }
 /** Shared summaries only: no local paths, command output or approval data. */
 export interface TeamTaskSnapshot {
+  profiles?: import("./protocol.js").TaskParticipant[];
   updatedAt: number;
   total: number;
   tasks: Array<
@@ -181,6 +183,7 @@ export interface TeamTaskSnapshot {
       | "clientId"
       | "updatedAt"
     > & {
+      participants?: import("./protocol.js").TaskParticipant[];
       ownerName?: string;
       deviceName?: string;
       deviceConnected?: boolean;
