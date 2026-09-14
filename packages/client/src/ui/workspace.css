@@ -1065,6 +1065,30 @@ button {
   flex: 0 0 26px;
 }
 
+.project-form-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.85fr) minmax(0, 1.15fr);
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+.project-form-control {
+  min-width: 0;
+}
+.project-settings-modal .mantine-Modal-title {
+  font-size: 18px;
+  font-weight: 600;
+}
+.project-settings-modal .mantine-Modal-body {
+  padding: 24px;
+}
+@media (max-width: 540px) {
+  .project-form-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+}
 /* Task details stay beside the conversation and scroll independently. */
 .with-inspector {
   position: relative;
