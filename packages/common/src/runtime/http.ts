@@ -58,6 +58,8 @@ export async function asset(
       ".js": "text/javascript",
       ".css": "text/css",
       ".svg": "image/svg+xml",
+      ".ico": "image/x-icon",
+      ".webmanifest": "application/manifest+json",
       ".png": "image/png",
       ".gif": "image/gif",
     };
