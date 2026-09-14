@@ -17,16 +17,16 @@ ido-engine start
 
 The first start prompts for the administrator name and a password of at least 12 characters in the terminal. No unauthenticated web registration endpoint exists. For a headless host, use `ido-engine init --name admin --password-stdin` and pipe a password from your secret manager; do not put passwords in command arguments. Then run `ido-engine start --no-open`.
 
-The dashboard opens at `http://127.0.0.1:4310`. The preview relay uses port 4311. `--port` and `--preview-port` change these. Processes remain in the foreground; use a second terminal for `stop`, `status`, or `doctor`. OS service registration is intentionally not included. After a crash, `doctor --recover` removes a stale process lock only if the recorded process has stopped.
+The dashboard opens at `http://127.0.0.1:4310`. Public previews use `/preview/` on the same Engine host. Port 4311 remains an internal relay listener and does not need a public tunnel. `--port` and `--preview-port` change these. Processes remain in the foreground; use a second terminal for `stop`, `status`, or `doctor`. OS service registration is intentionally not included. After a crash, `doctor --recover` removes a stale process lock only if the recorded process has stopped.
 
 In the dashboard:
 
 1. Save an OpenAI API key and run its connection check.
 2. Create a project and a meeting; associate the meeting with a project to enable task extraction from implementation requests.
 3. Add the catalog's Discord plugin. Dependencies install into the Engine data directory, not the global npm package directory.
-4. Create a Discord application and Bot, enable Message Content Intent, invite the Bot, and configure the guild and channels. Grant only View Channel, Send Messages, Connect and Speak for the chosen channels. Voice reception uses Discord's voice library; obtain participants' agreement before enabling recording in a channel.
-5. Save Application ID and OAuth Client Secret. Start the plugin. Link each IDO member to their own Discord account using the dashboard. Unlinked Discord users cannot submit work or access Activity data.
-6. Set two distinct HTTPS origins and configure the reverse proxy or a tunnel. Complete the independent connection checks.
+4. Create a Discord application and Bot, enable Message Content Intent, invite the Bot with `bot` and `applications.commands`, and configure the guild and text channel. Grant only View Channel, Send Messages, Connect and Speak for the chosen channels. Voice reception uses Discord's voice library; obtain participants' agreement before enabling recording in a channel.
+5. Save Application ID and OAuth Client Secret. Start the plugin; it registers `/join` and `/leave` in the configured guild. Join a voice channel yourself and invoke `/join` to bring the Bot there. `/leave` from the same channel disconnects it and stops audio reception/playback. Startup no longer auto-joins a configured voice channel; old voice-channel settings are ignored. Link each IDO member to their own Discord account using the dashboard. Unlinked Discord users cannot submit work or access Activity data.
+6. Set one HTTPS origin, or use the ngrok button to acquire it automatically. Complete the independent connection checks.
 
 Guidance can be hidden and redisplayed; hiding it does not mark credentials or connectivity as verified. `!ido task <instruction>` explicitly creates a task. Other text and voice messages contribute to minutes; direct implementation requests are extracted into tasks for the configured project. Model output supplies task content, never identities, roles, device grants or administration commands. The dashboard remains usable when the Discord plugin is stopped or fails.
 
@@ -68,18 +68,26 @@ Follow [Discord's Activity setup](https://docs.discord.com/developers/activities
 | ---------------------- | ---------------------------------------------------------------------- |
 | OAuth redirect         | `https://engine.example.com/api/discord/callback`                      |
 | URL Mapping `/`        | Engine's HTTPS host                                                    |
-| URL Mapping `/preview` | Preview's separate HTTPS host                                          |
+| Preview path           | `/preview/` on the same host; no extra URL Mapping required            |
 | Browser Activity entry | `/activity` (Discord frame query parameters also select Activity mode) |
 
 The Embedded App SDK supplies an authorization code; token exchange and identity verification occur in the Discord plugin process. The Engine maps the verified Discord identity to an existing IDO member. Activity receives a separate, short-lived bearer credential for its limited routes. It never receives a management session or OAuth Client Secret. Discord access tokens used for the SDK's authenticate command are held in memory.
 
 To expose a generated app, start it on a loopback port from the worktree and explicitly register that port in the local Client's execution panel. No remote route can choose an arbitrary URL or local port. The relay pins each registration to task/run/revision, caps request and response bodies at 1 MiB, and expires the registration after one hour; issued view capabilities last at most 15 minutes. Disconnection clears active registrations. A new revision invalidates old preview capabilities.
 
-The app must support relative assets or use the supplied `X-Forwarded-Prefix` base path. A minimal compatible app is in `examples/ido-preview/`. HTTP methods, forms and WebSocket frames travel over the authenticated Client connection. Request cookies and Authorization headers and response Set-Cookie headers are not relayed. Both response CSP and the UI iframe apply `sandbox allow-scripts allow-forms`; there is no `allow-same-origin`, pop-up or top-navigation escape. Capability paths are bearer credentials scoped to one preview: do not share them beyond intended viewers. No referrer is sent. Ordinary browsers use a different preview origin; Activity uses its separately mapped sandbox iframe.
+The app must support relative assets or use the supplied `X-Forwarded-Prefix` base path. A minimal compatible app is in `examples/ido-preview/`. HTTP methods, forms and WebSocket frames travel over the authenticated Client connection. Request cookies and Authorization headers and response Set-Cookie headers are not relayed. Both response CSP and the UI iframe apply `sandbox allow-scripts allow-forms`; there is no `allow-same-origin`, pop-up or top-navigation escape. Capability paths are bearer credentials scoped to one preview: do not share them beyond intended viewers. No referrer is sent. Both ordinary browsers and Activity use `/preview/p/<capability>/` on the same host. Path separation is not an origin boundary: isolation relies on the enforced opaque-origin CSP sandbox (including direct navigation), iframe sandbox, management Origin checks, and stripped relay credentials. Worker and nested-frame creation are disabled.
 
 External OAuth, WebRTC, absolute root asset paths and device-specific APIs are outside the supported preview contract. Do not loosen sandbox flags to accommodate an incompatible app. Authentication and mutable app-specific state must fit the sandbox; management credentials are never a compatibility fallback.
 
-Cloudflare/ngrok accounts and fixed domains must be prepared with the provider. The dashboard installs the selected adapter and starts/stops it. Configure Cloudflare public hostnames to forward to Engine and Preview ports separately. ngrok requires two reserved endpoints supported by the account. Tunnel process startup is not proof of usable deployment: HTTPS reachability, actual Client WSS connection, Discord Activity and a separate-network device must all be checked. URL changes require updating Discord mappings and explicit Client registration to the new origin.
+Use one public host for both management and previews. For ngrok:
+
+1. Create an ngrok account and copy **Your Authtoken** from its dashboard (not an API key).
+2. Open IDO setup step 5 and paste the Authtoken. Leave the optional ngrok URL blank to use the account's assigned dev domain, or supply a reserved domain available to that account.
+3. Click **ngrokで公開する**. IDO installs the SDK if needed, starts one endpoint forwarding to Engine port 4310, and saves the returned HTTPS URL. It reuses the stored token on subsequent starts.
+4. Run **HTTPS・接続診断**, then open the saved URL. The free tier may display a browser warning page; verify the actual Discord Activity flow as well.
+5. Use the saved host for Discord's `/` URL Mapping and the displayed OAuth callback. Remove any old `/preview` mapping to a separate host; the Engine now handles that path itself.
+
+No second domain, separate CLI command or preview tunnel is required. For Cloudflare, prepare one public hostname forwarding to `http://localhost:4310`, save it in IDO, and supply the Tunnel token; IDO installs and starts the adapter. Manual reverse proxies forward all paths and WebSocket upgrades to the same Engine port. Tunnel process startup is not proof of usable deployment: HTTPS reachability, actual Client WSS connection, Discord Activity and a separate-network device must all be checked. URL changes require updating Discord mappings and explicit Client registration to the new origin.
 
 ## Build and verify without publishing
 

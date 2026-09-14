@@ -9,17 +9,15 @@ process.once("message", (config: any) => {
     const require = createRequire(join(config.directory, "package.json"));
     if (config.provider === "ngrok") {
       const ngrok = require("@ngrok/ngrok");
-      await ngrok.forward({
+      cleanup = () => ngrok.disconnect();
+      const listener = await ngrok.forward({
         addr: `127.0.0.1:${config.ports.engine}`,
         authtoken: config.secret,
-        domain: new URL(config.engineUrl).hostname,
+        ...(config.engineUrl
+          ? { domain: new URL(config.engineUrl).hostname }
+          : {}),
       });
-      await ngrok.forward({
-        addr: `127.0.0.1:${config.ports.preview}`,
-        authtoken: config.secret,
-        domain: new URL(config.previewUrl).hostname,
-      });
-      cleanup = () => ngrok.disconnect();
+      process.send?.({ type: "public-url", url: listener.url() });
     } else if (config.provider === "cloudflare") {
       const cloudflared = require("cloudflared");
       const binary = join(
@@ -46,9 +44,15 @@ process.once("message", (config: any) => {
       });
     } else throw new Error("INVALID_PROVIDER");
     process.send?.({ type: "status", status: "running; diagnostics required" });
-  })().catch(() => {
-    process.send?.({ type: "status", status: "failed" });
-    process.exitCode = 1;
+  })().catch((error) => {
+    // SDK errors can contain configuration details; expose only its public error code.
+    const code = String(error?.message ?? "").match(/\bERR_NGROK_\d+\b/)?.[0];
+    process.send?.({
+      type: "status",
+      status: "failed",
+      error: code ?? "TUNNEL_START_FAILED",
+    });
+    void cleanup().finally(() => process.exit(1));
   });
 });
 const close = () => void cleanup().finally(() => process.exit(0));

@@ -1,4 +1,9 @@
-import { Client, GatewayIntentBits, Events, ChannelType } from "discord.js";
+import {
+  Client,
+  GatewayIntentBits,
+  Events,
+  type VoiceChannel,
+} from "discord.js";
 import {
   joinVoiceChannel,
   EndBehaviorType,
@@ -7,12 +12,15 @@ import {
   createAudioPlayer,
   createAudioResource,
   StreamType,
+  type VoiceConnection,
 } from "@discordjs/voice";
 import { Readable } from "node:stream";
 import prism from "prism-media";
 import { text, discordManifest } from "../../common/src/protocol.js";
+import { registerVoiceCommands, voiceCommandHandler } from "./commands.js";
 import { exchange } from "./auth.js";
 let client: Client | undefined;
+let voice: VoiceConnection | undefined;
 const player = createAudioPlayer();
 const emit = (data: unknown) => process.send?.(data as object);
 function wav(pcm: Buffer) {
@@ -58,7 +66,7 @@ process.on("message", (message: any) => {
           content: String(message.content).slice(0, 1900),
           allowedMentions: { parse: [] },
         });
-      if (message.audio)
+      if (message.audio && voice?.state.status === VoiceConnectionStatus.Ready)
         player.play(
           createAudioResource(
             Readable.from(Buffer.from(message.audio, "base64")),
@@ -98,70 +106,150 @@ process.on("message", (message: any) => {
         command: task ? "task" : "message",
       });
     });
-    client.once(Events.ClientReady, async () => {
-      emit({ type: "status", status: "connected" });
-      if (!config.voiceChannelId) return;
-      const guild = await client!.guilds.fetch(config.guildId);
-      const channel = await guild.channels.fetch(config.voiceChannelId);
-      if (channel?.type !== ChannelType.GuildVoice)
-        throw new Error("VOICE_CHANNEL_REQUIRED");
-      const connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: guild.id,
-        adapterCreator: guild.voiceAdapterCreator,
-        selfDeaf: false,
-        selfMute: false,
-      });
-      connection.subscribe(player);
-      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-      const active = new Set<string>();
-      connection.receiver.speaking.on("start", (userId) => {
-        if (active.has(userId) || active.size >= 8) return;
-        active.add(userId);
-        const stream = connection.receiver.subscribe(userId, {
-          end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
+    const handleCommand = voiceCommandHandler(
+      config.guildId,
+      async (channel: VoiceChannel) => {
+        if (
+          voice?.joinConfig.channelId === channel.id &&
+          voice.state.status === VoiceConnectionStatus.Ready
+        )
+          return;
+        if (voice && voice.state.status !== VoiceConnectionStatus.Destroyed)
+          voice.destroy();
+        voice = undefined;
+        player.stop();
+        emit({ type: "voice", channelId: null });
+        const connection = joinVoiceChannel({
+          channelId: channel.id,
+          guildId: channel.guild.id,
+          adapterCreator: channel.guild.voiceAdapterCreator,
+          selfDeaf: false,
+          selfMute: false,
         });
-        const decoder = new prism.opus.Decoder({
-          rate: 48000,
-          channels: 2,
-          frameSize: 960,
+        voice = connection;
+        connection.on("error", () => {
+          if (voice === connection) emit({ type: "voice", channelId: null });
         });
-        const chunks: Buffer[] = [];
-        let size = 0;
-        const timer = setTimeout(() => stream.destroy(), 30000);
-        stream.pipe(decoder);
-        decoder.on("data", (chunk: Buffer) => {
-          size += chunk.length;
-          if (size > 6 * 1024 * 1024) {
-            stream.destroy();
-            decoder.destroy();
-            return;
-          }
-          chunks.push(chunk);
-        });
-        stream.on("error", () => decoder.destroy());
-        decoder.on("error", () => {});
-        stream.once("close", () => {
-          clearTimeout(timer);
-          active.delete(userId);
-        });
-        decoder.once("end", () => {
-          if (size)
+        connection.on("stateChange", (_old, state) => {
+          if (voice === connection)
             emit({
-              type: "input",
-              guildId: guild.id,
-              channelId: channel.id,
-              userId,
-              eventId: `voice-${Date.now()}-${userId}`,
-              audio: wav(Buffer.concat(chunks)).toString("base64"),
+              type: "voice",
+              channelId:
+                state.status === VoiceConnectionStatus.Ready
+                  ? channel.id
+                  : null,
             });
         });
-      });
+        connection.subscribe(player);
+        try {
+          await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+        } catch (error) {
+          connection.destroy();
+          if (voice === connection) voice = undefined;
+          emit({ type: "voice", channelId: null });
+          throw error;
+        }
+        emit({ type: "voice", channelId: channel.id });
+        const active = new Set<string>();
+        const streams = new Set<{ destroy(): void }>();
+        connection.once(VoiceConnectionStatus.Destroyed, () => {
+          for (const stream of streams) stream.destroy();
+          streams.clear();
+        });
+        connection.receiver.speaking.on("start", (userId) => {
+          if (
+            voice !== connection ||
+            connection.state.status !== VoiceConnectionStatus.Ready ||
+            active.has(userId) ||
+            active.size >= 8
+          )
+            return;
+          active.add(userId);
+          const stream = connection.receiver.subscribe(userId, {
+            end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
+          });
+          const decoder = new prism.opus.Decoder({
+            rate: 48000,
+            channels: 2,
+            frameSize: 960,
+          });
+          streams.add(stream);
+          streams.add(decoder);
+          decoder.once("close", () => streams.delete(decoder));
+          const chunks: Buffer[] = [];
+          let size = 0;
+          const timer = setTimeout(() => stream.destroy(), 30000);
+          stream.pipe(decoder);
+          decoder.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > 6 * 1024 * 1024) {
+              stream.destroy();
+              decoder.destroy();
+              return;
+            }
+            chunks.push(chunk);
+          });
+          stream.on("error", () => decoder.destroy());
+          decoder.on("error", () => {});
+          stream.once("close", () => {
+            clearTimeout(timer);
+            active.delete(userId);
+            streams.delete(stream);
+          });
+          decoder.once("end", () => {
+            if (
+              size &&
+              voice === connection &&
+              connection.state.status === VoiceConnectionStatus.Ready
+            )
+              emit({
+                type: "input",
+                guildId: channel.guild.id,
+                channelId: channel.id,
+                userId,
+                eventId: `voice-${Date.now()}-${userId}`,
+                audio: wav(Buffer.concat(chunks)).toString("base64"),
+              });
+          });
+        });
+      },
+      () => {
+        const previous = voice;
+        voice = undefined;
+        player.stop();
+        if (
+          previous &&
+          previous.state.status !== VoiceConnectionStatus.Destroyed
+        )
+          previous.destroy();
+        emit({ type: "voice", channelId: null });
+      },
+      () =>
+        voice?.state.status !== VoiceConnectionStatus.Destroyed
+          ? (voice?.joinConfig.channelId ?? undefined)
+          : undefined,
+    );
+    client.on(Events.InteractionCreate, (interaction) => {
+      if (interaction.isChatInputCommand())
+        void handleCommand(interaction).catch(() =>
+          emit({ type: "status", status: "command-error" }),
+        );
+    });
+    client.once(Events.ClientReady, () => {
+      void (async () => {
+        const guild = await client!.guilds.fetch(config.guildId);
+        await registerVoiceCommands(guild);
+        emit({ type: "status", status: "connected" });
+      })().catch(() =>
+        emit({ type: "status", status: "command-registration-failed" }),
+      );
     });
     await client.login(text(config.botToken, 4000));
   })().catch(() => emit({ type: "status", status: "failed" }));
 });
 process.on("disconnect", () => {
+  if (voice && voice.state.status !== VoiceConnectionStatus.Destroyed)
+    voice.destroy();
   client?.destroy();
   process.exit(0);
 });

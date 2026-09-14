@@ -5,12 +5,20 @@ import { mkdir } from "node:fs/promises";
 import { run, npmRun, workerEnvironment } from "../../common/src/platform.js";
 import { Credentials } from "../../common/src/credentials.js";
 import { Store } from "./store.js";
+import { HttpError } from "../../common/src/http.js";
 import { endpoint } from "../../common/src/protocol.js";
 import { WebSocket } from "ws";
 export class Tunnels {
   child?: ChildProcess;
   status = "stopped";
   busy = false;
+  error?: string;
+  starting = false;
+  workerPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    "tunnel-worker.js",
+  );
+  startupTimer?: NodeJS.Timeout;
   constructor(
     readonly directory: string,
     readonly store: Store,
@@ -47,50 +55,113 @@ export class Tunnels {
       this.busy = false;
     }
   }
-  async start(provider: string, ports: { engine: number; preview: number }) {
-    const installation = this.store.get<{ directory: string }>(
-      "tunnel",
-      provider,
-    );
-    if (!installation) throw new Error("TUNNEL_NOT_INSTALLED");
-    const secret = await this.credentials.get(`tunnel.${provider}`);
-    if (!secret) throw new Error("TUNNEL_CREDENTIAL_REQUIRED");
-    const config = this.store.get<Record<string, string>>("config", "public");
-    if (!config?.engineUrl || !config.previewUrl)
-      throw new Error("PUBLIC_URLS_REQUIRED");
-    this.stop();
-    this.status = "starting";
-    const child = fork(
-      join(dirname(fileURLToPath(import.meta.url)), "tunnel-worker.js"),
-      [],
-      {
+  async start(
+    provider: string,
+    ports: { engine: number },
+    requestedUrl?: string,
+  ) {
+    if (!["ngrok", "cloudflare"].includes(provider))
+      throw new HttpError(400, "INVALID_PROVIDER");
+    if (this.starting || this.busy || this.status === "starting")
+      throw new HttpError(409, "TUNNEL_BUSY");
+    this.starting = true;
+    this.error = undefined;
+    try {
+      const secret = await this.credentials.get(`tunnel.${provider}`);
+      if (!secret) throw new HttpError(400, "TUNNEL_CREDENTIAL_REQUIRED");
+      const config = this.store.get<Record<string, string>>("config", "public");
+      // ngrok can assign the account's dev domain. Do not reuse an old provider's URL.
+      const engineUrl = requestedUrl
+        ? endpoint(requestedUrl).origin
+        : provider === "cloudflare"
+          ? config?.engineUrl
+          : undefined;
+      if (engineUrl && !engineUrl.startsWith("https:"))
+        throw new HttpError(400, "PUBLIC_HTTPS_REQUIRED");
+      if (provider === "cloudflare" && !engineUrl)
+        throw new HttpError(400, "PUBLIC_URL_REQUIRED");
+      if (!this.store.get("tunnel", provider)) {
+        this.status = "installing";
+        try {
+          await this.install(provider);
+        } catch {
+          throw new HttpError(502, "TUNNEL_INSTALL_FAILED");
+        }
+      }
+      const installation = this.store.get<{ directory: string }>(
+        "tunnel",
+        provider,
+      )!;
+      this.stop();
+      this.status = "starting";
+      const child = fork(this.workerPath, [], {
         env: workerEnvironment(this.directory),
         stdio: ["ignore", "ignore", "ignore", "ipc"],
-      },
-    );
-    this.child = child;
-    child.on("message", (message: any) => {
-      if (message.type === "status") this.status = String(message.status);
-    });
-    child.on("error", () => {
+      });
+      this.child = child;
+      this.startupTimer = setTimeout(() => {
+        if (this.child !== child) return;
+        this.error = "TUNNEL_START_TIMEOUT";
+        this.status = "failed";
+        child.kill();
+      }, 30000);
+      child.on("message", (message: any) => {
+        if (this.child !== child) return;
+        if (message.type === "public-url") {
+          try {
+            const url = endpoint(message.url).origin;
+            if (!url.startsWith("https:")) throw new Error("HTTPS_REQUIRED");
+            this.store.put("config", "public", { provider, engineUrl: url });
+          } catch {
+            this.error = "TUNNEL_URL_INVALID";
+            this.status = "failed";
+            child.kill();
+          }
+        }
+        if (message.type === "status" && !this.error) {
+          clearTimeout(this.startupTimer);
+          this.status = String(message.status);
+          this.error = /^(ERR_NGROK_\d+|TUNNEL_START_FAILED)$/.test(
+            message.error ?? "",
+          )
+            ? message.error
+            : undefined;
+        }
+      });
+      child.on("error", () => {
+        if (this.child !== child) return;
+        clearTimeout(this.startupTimer);
+        this.status = "failed";
+        this.error = "TUNNEL_START_FAILED";
+      });
+      child.once("exit", () => {
+        if (this.child === child) {
+          clearTimeout(this.startupTimer);
+          this.child = undefined;
+          if (this.status !== "stopped") {
+            this.status = "failed";
+            this.error ??= "TUNNEL_START_FAILED";
+          }
+        }
+      });
+      child.send({
+        provider,
+        directory: installation.directory,
+        secret,
+        engineUrl,
+        ports,
+      });
+    } catch (error) {
       this.status = "failed";
-    });
-    child.once("exit", () => {
-      if (this.child === child) {
-        this.child = undefined;
-        this.status = "stopped";
-      }
-    });
-    child.send({
-      provider,
-      directory: installation.directory,
-      secret,
-      engineUrl: endpoint(config.engineUrl).origin,
-      previewUrl: endpoint(config.previewUrl).origin,
-      ports,
-    });
+      this.error =
+        error instanceof HttpError ? error.message : "TUNNEL_START_FAILED";
+      throw error instanceof HttpError ? error : new HttpError(502, this.error);
+    } finally {
+      this.starting = false;
+    }
   }
   stop() {
+    clearTimeout(this.startupTimer);
     this.child?.kill();
     this.child = undefined;
     this.status = "stopped";
@@ -99,17 +170,17 @@ export class Tunnels {
     const config =
       this.store.get<Record<string, string>>("config", "public") ?? {};
     const checks = await Promise.all(
-      ["engineUrl", "previewUrl"].map(async (key) => {
+      ["engine", "preview"].map(async (key) => {
         try {
-          const url = endpoint(config[key]);
+          const url = endpoint(config.engineUrl);
           if (url.protocol !== "https:") throw new Error("HTTPS_REQUIRED");
           const response = await fetch(
-            url.origin + (key === "engineUrl" ? "/health" : "/"),
+            url.origin + (key === "engine" ? "/health" : "/preview/"),
             { redirect: "error", signal: AbortSignal.timeout(10000) },
           );
           return {
             check: key,
-            ok: key === "engineUrl" ? response.ok : response.status === 410,
+            ok: key === "engine" ? response.ok : response.status === 410,
           };
         } catch {
           return { check: key, ok: false };

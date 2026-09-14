@@ -6,12 +6,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { WebSocket, WebSocketServer } from "ws";
-import { Store } from "../src/store.js";
+import { Engine } from "../src/index.js";
 import { PreviewRelay } from "../src/preview.js";
 import { ClientPreview } from "../../client/src/preview.js";
 test("registered previews relay HTTP, forms and WebSockets without management credentials; stale versions fail closed", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-preview-")),
-    store = new Store(directory);
+    engine = new Engine({ directory, port: 0, previewPort: 0 }),
+    store = engine.store;
   const user = store.createUser("member", "test-password-long", "member");
   store.put("project", "project", { id: "project", name: "Demo" });
   const task = store.createTask({
@@ -46,7 +47,6 @@ test("registered previews relay HTTP, forms and WebSockets without management cr
   upstream.listen(0, "127.0.0.1");
   await once(upstream, "listening");
   const address = upstream.address() as { port: number };
-  let online = true;
   let relay: PreviewRelay;
   const client = new ClientPreview((data) => relay.receive("device", data));
   client.register("preview", address.port);
@@ -54,7 +54,11 @@ test("registered previews relay HTTP, forms and WebSockets without management cr
     readyState: WebSocket.OPEN,
     send: (value: string) => void client.receive(JSON.parse(value)),
   } as unknown as WebSocket;
-  relay = new PreviewRelay(store, () => (online ? connection : undefined));
+  relay = engine.preview;
+  engine.ready.add("device");
+  engine.peers.set("device", connection);
+  // The test uses a synthetic Client transport; all HTTP/WS traffic goes through Engine.
+  await engine.listen();
   relay.register("device", {
     v: 1,
     type: "preview.register",
@@ -63,17 +67,15 @@ test("registered previews relay HTTP, forms and WebSockets without management cr
     runId: task.runId,
     revision: 1,
   });
-  relay.server.listen(0, "127.0.0.1");
-  await once(relay.server, "listening");
-  const origin = `http://127.0.0.1:${(relay.server.address() as { port: number }).port}`;
+  const origin = engine.origin;
   t.after(async () => {
     client.close();
-    relay.close();
+    engine.peers.clear();
+    await engine.close();
     for (const ws of wss.clients) ws.terminate();
     wss.close();
     upstream.closeAllConnections();
     await new Promise<void>((r) => upstream.close(() => r()));
-    store.close();
     await rm(directory, { recursive: true, force: true });
   });
   const path = relay.ticket(task.id, user.id);
@@ -104,11 +106,20 @@ test("registered previews relay HTTP, forms and WebSockets without management cr
   const message = await once(ws, "message");
   assert.equal(String(message[0]), "hello");
   ws.close();
-  assert.equal((await fetch(origin + "/api/state")).status, 410);
-  assert.equal((await fetch(origin + "/p/unknown/")).status, 410);
+  assert.equal((await fetch(origin + "/api/state")).status, 401);
+  assert.equal(
+    (
+      await fetch(origin + "/api/state", {
+        headers: { Origin: "null", Cookie: "ido_session=must-not-forward" },
+      })
+    ).status,
+    403,
+  );
+  assert.equal((await fetch(origin + "/preview/api/state")).status, 410);
+  assert.equal((await fetch(origin + "/preview/p/unknown/")).status, 410);
   task.revision = 2;
   store.put("task", task.id, task);
   assert.equal((await fetch(origin + path)).status, 410);
-  online = false;
+  engine.ready.delete("device");
   assert.throws(() => relay.ticket(task.id, user.id), /OFFLINE/);
 });

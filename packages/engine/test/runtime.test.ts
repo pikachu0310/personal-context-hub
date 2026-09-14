@@ -264,3 +264,128 @@ test("failed plugin installation preserves the active installation", async (t) =
   await assert.rejects(e.plugins.install("unlisted"));
   assert.equal(e.store.get<any>("plugin", "discord").version, "previous");
 });
+
+test("one public HTTPS origin serves management and preview; public setup validates HTTPS", async (t) => {
+  const engine = await fixture(t),
+    session = await login(engine);
+  assert.equal(
+    (
+      await post(
+        engine,
+        "public",
+        { provider: "ngrok", engineUrl: "https://ido.example.com" },
+        session,
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(engine.config(), {
+    provider: "ngrok",
+    engineUrl: "https://ido.example.com",
+  });
+  assert.equal(
+    (
+      await post(
+        engine,
+        "public",
+        { provider: "manual", engineUrl: "http://127.0.0.1:9999" },
+        session,
+      )
+    ).status,
+    400,
+  );
+  assert.equal((await fetch(engine.origin + "/preview/")).status, 410);
+  const result = await post(
+    engine,
+    "tunnels/start",
+    { provider: "ngrok" },
+    session,
+  );
+  assert.equal(result.status, 400);
+  assert.equal(
+    ((await result.json()) as any).error,
+    "TUNNEL_CREDENTIAL_REQUIRED",
+  );
+});
+
+test("Discord linking from localhost uses the configured public callback, with local fallback", async (t) => {
+  const engine = await fixture(t),
+    session = await login(engine);
+  engine.store.put("config", "discord", { appId: "123456789" });
+  const local = await post(engine, "discord/link", {}, session);
+  const localUrl = new URL(((await local.json()) as any).url);
+  assert.equal(
+    localUrl.searchParams.get("redirect_uri"),
+    engine.origin + "/api/discord/callback",
+  );
+  engine.store.put("config", "public", {
+    provider: "ngrok",
+    engineUrl: "https://ido.example.com",
+  });
+  const remote = await post(engine, "discord/link", {}, session);
+  assert.equal(remote.status, 200);
+  const remoteUrl = new URL(((await remote.json()) as any).url);
+  assert.equal(
+    remoteUrl.searchParams.get("redirect_uri"),
+    "https://ido.example.com/api/discord/callback",
+  );
+  assert.equal(remoteUrl.searchParams.get("client_id"), "123456789");
+});
+
+test("OAuth callback reports stopped Discord plugin without exposing authorization material", async (t) => {
+  const engine = await fixture(t);
+  engine.store.put("config", "discord", { appId: "123456789" });
+  await engine.credentials.set(
+    "discord.clientSecret",
+    "synthetic-client-secret",
+  );
+  const user = engine.store.users()[0];
+  const url = new URL(engine.discordAuth.start(user.id, engine.origin));
+  const callback = new URL("/api/discord/callback", engine.origin);
+  callback.search = new URLSearchParams({
+    state: url.searchParams.get("state")!,
+    code: "synthetic-code",
+  }).toString();
+  const response = await fetch(callback);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), {
+    error: "DISCORD_PLUGIN_NOT_RUNNING",
+  });
+});
+
+test("voice inputs follow the active plugin channel and reject obsolete configured channels after leave", async (t) => {
+  const engine = await fixture(t);
+  const user = engine.store.users()[0];
+  engine.store.put("config", "discord", {
+    guildId: "guild",
+    textChannelId: "text",
+    voiceChannelId: "old",
+    meetingId: "meeting",
+    projectId: "project",
+  });
+  engine.store.put("discord-user", "speaker", { userId: user.id });
+  let processed = 0;
+  engine.conversation.transcribe = async () => "synthetic transcript";
+  engine.conversation.process = async () => {
+    processed++;
+    return { id: "meeting", name: "Test", summary: "Summary", messages: [] };
+  };
+  engine.conversation.speak = async () => "";
+  const event = {
+    guildId: "guild",
+    userId: "speaker",
+    audio: Buffer.from("synthetic").toString("base64"),
+  };
+  await engine.pluginInput({ ...event, channelId: "old", eventId: "old" });
+  assert.equal(processed, 0);
+  engine.plugins.voiceChannelId = "active";
+  await engine.pluginInput({
+    ...event,
+    channelId: "active",
+    eventId: "joined",
+  });
+  assert.equal(processed, 1);
+  engine.plugins.stop();
+  await engine.pluginInput({ ...event, channelId: "active", eventId: "left" });
+  assert.equal(processed, 1);
+});

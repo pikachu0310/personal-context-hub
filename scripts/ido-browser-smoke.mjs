@@ -46,6 +46,38 @@ try {
     .waitFor();
   await page.getByRole("button", { name: "説明をスキップ" }).click();
   await page.getByRole("button", { name: "説明を再表示" }).waitFor();
+  await page.getByRole("button", { name: "5. 公開URL" }).click();
+  assert.equal(
+    await page.getByLabel("Preview公開URL", { exact: true }).count(),
+    0,
+  );
+  let tunnelRequest;
+  engine.tunnels.start = async (provider, ports, url) => {
+    tunnelRequest = { provider, ports, url };
+    engine.store.put("config", "public", {
+      provider,
+      engineUrl: "https://assigned.ngrok-free.app",
+    });
+    engine.tunnels.status = "running; diagnostics required";
+  };
+  await page
+    .getByLabel("ngrok Authtoken（保存済みなら省略可）")
+    .fill("synthetic-test-token");
+  await page
+    .getByRole("button", { name: "ngrokで公開する", exact: true })
+    .click();
+  await page
+    .getByRole("link", { name: "https://assigned.ngrok-free.app", exact: true })
+    .waitFor();
+  assert.equal(tunnelRequest.provider, "ngrok");
+  assert.equal(tunnelRequest.url, undefined);
+  assert.equal(tunnelRequest.ports.engine, Number(new URL(engine.origin).port));
+  assert.equal(
+    await page.getByLabel("ngrok Authtoken（保存済みなら省略可）").inputValue(),
+    "",
+  );
+  // Restore local setup before pairing a test Client.
+  engine.store.remove("config", "public");
   const clientPage = await browser.newPage();
   await clientPage.goto(client.origin);
   await clientPage.getByLabel("EngineのURL").fill(engine.origin);

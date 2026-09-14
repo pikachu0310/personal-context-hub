@@ -47,9 +47,24 @@ async function api(path: string, input?: Data) {
   return data;
 }
 const errorMessages: Record<string, string> = {
+  DISCORD_PLUGIN_NOT_RUNNING:
+    "Discordプラグインが停止しています。セットアップの「2. Discord追加」で起動してから、連携をやり直してください。",
+  DISCORD_TOKEN_EXCHANGE_FAILED:
+    "Discordの認証情報を交換できませんでした。Application ID・Client Secret・Redirect URLを確認し、連携をやり直してください。",
+  DISCORD_PLUGIN_TIMEOUT:
+    "Discordプラグインの応答がありません。プラグインの接続状態を確認してください。",
   LOGIN_REQUIRED: "ログインしてください。",
   INVALID_LOGIN: "名前またはパスワードを確認してください。",
   REQUEST_FAILED: "操作に失敗しました。設定と接続状態を確認してください。",
+  TUNNEL_CREDENTIAL_REQUIRED:
+    "ngrokのAuthtoken、またはCloudflareのTunnel tokenを入力してください。",
+  TUNNEL_INSTALL_FAILED:
+    "トンネルの導入に失敗しました。ネットワークを確認して再試行してください。",
+  TUNNEL_START_FAILED:
+    "トンネルを起動できませんでした。トークンとngrok側の利用状況を確認してください。",
+  TUNNEL_BUSY: "トンネルを準備中です。完了までお待ちください。",
+  PUBLIC_HTTPS_REQUIRED: "公開URLにはhttps://で始まるURLを指定してください。",
+  PUBLIC_URL_REQUIRED: "先に公開URLを保存してください。",
   PREVIEW_OFFLINE: "プレビューが未登録、停止中、または期限切れです。",
   LINK_DISCORD_IN_DASHBOARD_FIRST:
     "先にEngine管理画面からDiscordアカウントを連携してください。",
@@ -265,7 +280,7 @@ function App() {
       const result = await action(activity ? "activity/preview" : "preview", {
         taskId,
       });
-      setPreview(activity ? "/preview" + result.url : result.url);
+      setPreview(result.url);
     } catch (e) {
       setError(errorMessages[(e as Error).message] ?? (e as Error).message);
     }
@@ -1048,6 +1063,18 @@ function Setup({
               必要なライブラリを専用領域に導入します。Discordを停止しても、この管理画面とタスク台帳は使えます。
             </Text>
           )}
+          <Text size="sm">
+            起動後、Discordで音声チャンネルに入り /join
+            を実行してください。退出は同じ通話で /leave
+            を実行します。起動だけでは通話に参加しません。
+          </Text>
+          {state.plugins.status === "command-registration-failed" && (
+            <Alert color="red">
+              /join・/leave を登録できませんでした。Botのサーバー参加と
+              applications.commands
+              の招待スコープを確認し、起動し直してください。
+            </Alert>
+          )}
           <Group>
             <Status value={state.plugins.status} />
             <Button
@@ -1079,7 +1106,9 @@ function Setup({
             <>
               <Text size="sm">
                 Developer PortalでアプリとBotを作成し、Message Content
-                Intentを有効にしてください。招待時はチャンネル閲覧・メッセージ送信・音声接続の権限を許可します。音声は参加者へ説明したチャンネルでのみ設定してください。
+                Intentを有効にしてください。招待時はチャンネル閲覧・メッセージ送信・音声接続の権限を許可します。音声は通話に参加して
+                /join
+                で開始します。文字起こしすることを参加者へ案内してください。
               </Text>
               <Anchor
                 href="https://discord.com/developers/applications"
@@ -1109,11 +1138,6 @@ function Setup({
                         .map((c) => ({ value: c.id, label: c.name })),
                     }
                   : {}),
-              },
-              {
-                key: "voiceChannelId",
-                label: "音声チャンネル（任意）",
-                optional: true,
               },
               {
                 key: "projectId",
@@ -1189,7 +1213,7 @@ function Setup({
           />
           <Code
             block
-          >{`OAuth Redirect: ${state.config.engineUrl ?? location.origin}/api/discord/callback\nURL Mapping / → ${state.config.engineUrl ?? "Engine公開URL"}\nURL Mapping /preview → ${state.config.previewUrl ?? "Preview公開URL"}\nActivity entry: /activity`}</Code>
+          >{`OAuth Redirect: ${state.config.engineUrl ?? location.origin}/api/discord/callback\nURL Mapping / → ${state.config.engineUrl ?? "Engine公開URL"}\nActivity entry: /activity`}</Code>
           <Button
             variant="light"
             onClick={() =>
@@ -1205,13 +1229,79 @@ function Setup({
       {step === 4 && (
         <Card
           title="5. 公開先とトンネル"
-          description="管理画面と生成アプリには別のHTTPSホスト名を用意します。"
+          description="公開URLは1つ。生成アプリは /preview/ 以下で表示します。"
         >
+          <Text size="sm">
+            同じPCのローカルテストやBotだけの利用では、この手順はスキップできます。
+          </Text>
+          <Divider label="ngrokでかんたん公開" />
           {guide && (
             <Text size="sm">
-              Cloudflareまたはngrok側でアカウントと固定URLを準備してください。Cloudflareでは管理画面を
-              localhost:4310、プレビューを
-              localhost:4311へ転送します。URL変更後はActivityのMapping更新とClientの再登録が必要です。
+              ngrokにログインしてAuthtokenをコピーし、下に入力してください。必要なライブラリの導入・トンネル起動・公開URLの保存まで自動で行います。URLを空欄にすると、アカウントに割り当てられた開発用ドメインを利用します。
+            </Text>
+          )}
+          <Anchor
+            href="https://dashboard.ngrok.com/get-started/your-authtoken"
+            target="_blank"
+          >
+            ngrokのAuthtokenを取得
+          </Anchor>
+          <Form
+            fields={[
+              {
+                key: "token",
+                label: "ngrok Authtoken（保存済みなら省略可）",
+                secret: true,
+                optional: true,
+              },
+              {
+                key: "engineUrl",
+                label: "ngrok公開URL（省略すると自動取得）",
+                optional: true,
+                placeholder: "https://your-domain.ngrok-free.app",
+              },
+            ]}
+            submit={(data) =>
+              action("tunnels/start", { ...data, provider: "ngrok" })
+            }
+            label="ngrokで公開する"
+          />
+          <Group>
+            <Status value={state.tunnels.status} />
+            {state.tunnels.busy && <Loader size="xs" />}
+            <Button
+              variant="default"
+              disabled={state.tunnels.busy}
+              onClick={() => invoke("tunnels/stop", {})}
+            >
+              停止
+            </Button>
+          </Group>
+          {state.tunnels.error && (
+            <Alert color="red">
+              {errorMessages[state.tunnels.error] ?? state.tunnels.error}
+            </Alert>
+          )}
+          {state.config.engineUrl && (
+            <Alert title="保存された公開URL">
+              <Anchor href={state.config.engineUrl} target="_blank">
+                {state.config.engineUrl}
+              </Anchor>
+              <Text size="sm">
+                停止中はアクセスできません。起動後は接続診断を実行してください。
+              </Text>
+            </Alert>
+          )}
+          <Text size="sm">
+            無料プランでは初回アクセス時にngrokの確認画面が出る場合があります。Discord
+            Activity内での表示も確認してください。
+          </Text>
+          <Divider label="Cloudflare・既存URLを使う場合" />
+          {guide && (
+            <Text size="sm">
+              Cloudflareでは1つの公開ホスト名を http://localhost:4310
+              に転送してください。手動で公開する場合も転送先は同じです。URL変更後はDiscordのMapping・OAuth
+              Redirect更新とClientの再登録が必要です。
             </Text>
           )}
           <Form
@@ -1222,64 +1312,38 @@ function Setup({
                 options: [
                   { value: "manual", label: "既存のHTTPS URL" },
                   { value: "cloudflare", label: "Cloudflare Tunnel" },
-                  { value: "ngrok", label: "ngrok" },
                 ],
               },
               {
                 key: "engineUrl",
-                label: "Engine公開URL",
-                placeholder: "https://engine.example.com",
-              },
-              {
-                key: "previewUrl",
-                label: "Preview公開URL",
-                placeholder: "https://preview.example.com",
+                label: "公開URL",
+                placeholder: "https://ido.example.com",
               },
             ]}
-            initial={{ provider: "manual", ...state.config }}
+            initial={{
+              provider:
+                state.config.provider === "cloudflare"
+                  ? "cloudflare"
+                  : "manual",
+              engineUrl: state.config.engineUrl,
+            }}
             submit={(data) => action("public", data)}
           />
-          {state.config.provider && state.config.provider !== "manual" && (
-            <>
-              <Divider />
-              <Group>
-                <Status value={state.tunnels.status} />
-                <Button
-                  loading={state.tunnels.busy}
-                  variant="light"
-                  onClick={() =>
-                    invoke("tunnels/install", {
-                      provider: state.config.provider,
-                    })
-                  }
-                >
-                  トンネルを導入
-                </Button>
-                <Button
-                  variant="default"
-                  onClick={() => invoke("tunnels/stop", {})}
-                >
-                  停止
-                </Button>
-              </Group>
-              <Form
-                fields={[
-                  {
-                    key: "token",
-                    label: "Tunnel token / ngrok authtoken（変更時のみ）",
-                    secret: true,
-                    optional: true,
-                  },
-                ]}
-                submit={(data) =>
-                  action("tunnels/start", {
-                    ...data,
-                    provider: state.config.provider,
-                  })
-                }
-                label="接続・起動"
-              />
-            </>
+          {state.config.provider === "cloudflare" && (
+            <Form
+              fields={[
+                {
+                  key: "token",
+                  label: "Cloudflare Tunnel token（保存済みなら省略可）",
+                  secret: true,
+                  optional: true,
+                },
+              ]}
+              submit={(data) =>
+                action("tunnels/start", { ...data, provider: "cloudflare" })
+              }
+              label="Cloudflareで公開する"
+            />
           )}
           <Button
             variant="light"
@@ -1292,7 +1356,7 @@ function Setup({
             HTTPS・接続診断
           </Button>
           <Text size="sm">
-            公開後、別端末のClient接続とDiscord内Activityをそれぞれ確認してください。
+            別端末のClient接続とDiscord内Activityは、それぞれ実際に操作して確認してください。
           </Text>
         </Card>
       )}

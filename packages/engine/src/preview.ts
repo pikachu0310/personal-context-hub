@@ -126,11 +126,11 @@ export class PreviewRelay {
       userId,
       expires: Math.min(preview.expiresAt, Date.now() + 15 * 60000),
     });
-    return `/p/${token}/`;
+    return `/preview/p/${token}/`;
   }
   authorize(req: IncomingMessage) {
     const url = new URL(req.url ?? "/", "http://preview.local");
-    const match = /^\/p\/([\w-]+)\/(.*)$/.exec(url.pathname);
+    const match = /^\/preview\/p\/([\w-]+)\/(.*)$/.exec(url.pathname);
     if (!match) return;
     const ticket = this.tickets.get(match[1]);
     const preview = ticket && this.registrations.get(ticket.previewId);
@@ -152,9 +152,16 @@ export class PreviewRelay {
     const path = "/" + match[2] + url.search;
     if (/%2e|%2f|%5c|\\/i.test(match[2]) || match[2].split("/").includes(".."))
       return;
-    return { preview, path, basePath: `/p/${match[1]}/` };
+    return { preview, path, basePath: `/preview/p/${match[1]}/` };
   }
   async http(req: IncomingMessage, res: ServerResponse) {
+    res.setHeader(
+      "Content-Security-Policy",
+      "sandbox allow-scripts allow-forms; default-src 'none'; frame-ancestors 'self' https://*.discordsays.com",
+    );
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
     const context = this.authorize(req);
     if (!context) {
       send(res, 410, { error: "PREVIEW_EXPIRED_OR_OFFLINE" });
@@ -221,7 +228,7 @@ export class PreviewRelay {
     });
     res.setHeader(
       "Content-Security-Policy",
-      "sandbox allow-scripts allow-forms; default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; object-src 'none'; base-uri 'self'",
+      "sandbox allow-scripts allow-forms; default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:; object-src 'none'; base-uri 'none'; frame-src 'none'; worker-src 'none'; form-action 'self'; frame-ancestors 'self' https://*.discordsays.com",
     );
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -231,7 +238,12 @@ export class PreviewRelay {
     for (const key of ["content-type", "content-language"])
       if (responseHeaders?.[key]) res.setHeader(key, responseHeaders[key]);
     const location = responseHeaders?.location;
-    if (location?.startsWith("/") && !location.startsWith("//"))
+    if (
+      location?.startsWith("/") &&
+      !location.startsWith("//") &&
+      !/%2e|%2f|%5c|\\/i.test(location) &&
+      !location.split(/[/?#]/).includes("..")
+    )
       res.setHeader("location", context.basePath + location.slice(1));
     res.statusCode = Math.max(
       200,

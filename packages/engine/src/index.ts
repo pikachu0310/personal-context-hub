@@ -122,6 +122,10 @@ export class Engine {
       this.ready.has(id) ? this.peers.get(id) : undefined,
     );
     this.server.on("upgrade", (req, socket, head) => {
+      if (req.url?.startsWith("/preview/") && this.trustedHost(req)) {
+        this.preview.server.emit("upgrade", req, socket, head);
+        return;
+      }
       if (
         req.url !== "/connect" ||
         req.headers.origin ||
@@ -214,12 +218,18 @@ export class Engine {
   }
   async route(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? "/", this.origin);
+    if (!this.trustedHost(req))
+      throw new HttpError(403, "HTTPS_PROXY_OR_LOCALHOST_REQUIRED");
+    // Preview requests use a scoped capability, never the management session.
+    // Opaque sandbox origins must reach the relay but cannot reach management APIs.
+    if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) {
+      await this.preview.http(req, res);
+      return;
+    }
     headers(
       res,
       url.pathname.startsWith("/activity") || url.searchParams.has("frame_id"),
     );
-    if (!this.trustedHost(req))
-      throw new HttpError(403, "HTTPS_PROXY_OR_LOCALHOST_REQUIRED");
     const requestOrigin = req.headers.origin;
     const expected =
       req.headers.host === new URL(this.origin).host
@@ -421,7 +431,8 @@ export class Engine {
         tunnels: {
           status: this.tunnels.status,
           installed: this.store.list("tunnel"),
-          busy: this.tunnels.busy,
+          busy: this.tunnels.busy || this.tunnels.starting,
+          error: this.tunnels.error,
         },
         config: admin ? this.config() : {},
         discord: admin ? this.store.get("config", "discord") : {},
@@ -459,7 +470,10 @@ export class Engine {
     switch (url.pathname) {
       case "/api/discord/link":
         send(res, 200, {
-          url: this.discordAuth.start(auth.user.id, expected!),
+          url: this.discordAuth.start(
+            auth.user.id,
+            this.config().engineUrl ?? expected!,
+          ),
         });
         return;
       case "/api/logout":
@@ -579,7 +593,7 @@ export class Engine {
       case "/api/preview": {
         const path = this.preview.ticket(id(input.taskId), auth.user.id);
         send(res, 200, {
-          url: (this.config().previewUrl ?? this.previewOrigin) + path,
+          url: (this.config().engineUrl ?? this.origin) + path,
         });
         return;
       }
@@ -640,7 +654,6 @@ export class Engine {
           for (const key of [
             "guildId",
             "textChannelId",
-            "voiceChannelId",
             "appId",
             "projectId",
             "meetingId",
@@ -653,13 +666,13 @@ export class Engine {
       }
       case "/api/public": {
         this.mutate(req, auth, true);
-        const engineUrl = endpoint(input.engineUrl).origin,
-          previewUrl = endpoint(input.previewUrl).origin;
-        if (engineUrl === previewUrl)
-          throw new HttpError(400, "SEPARATE_PREVIEW_ORIGIN_REQUIRED");
+        const engineUrl = endpoint(input.engineUrl).origin;
+        if (!engineUrl.startsWith("https:"))
+          throw new HttpError(400, "PUBLIC_HTTPS_REQUIRED");
+        if (!["ngrok", "cloudflare", "manual"].includes(input.provider))
+          throw new HttpError(400, "INVALID_PROVIDER");
         this.store.put("config", "public", {
           engineUrl,
-          previewUrl,
           provider: text(input.provider, 30),
         });
         this.store.audit(auth.user.id, "public.update", "origins");
@@ -680,10 +693,11 @@ export class Engine {
             `tunnel.${text(input.provider, 30)}`,
             text(input.token, 8000),
           );
-        await this.tunnels.start(text(input.provider, 30), {
-          engine: Number(new URL(this.origin).port),
-          preview: Number(new URL(this.previewOrigin).port),
-        });
+        await this.tunnels.start(
+          text(input.provider, 30),
+          { engine: Number(new URL(this.origin).port) },
+          input.engineUrl ? text(input.engineUrl, 2048) : undefined,
+        );
         break;
       case "/api/tunnels/stop":
         this.mutate(req, auth, true);
@@ -862,8 +876,10 @@ export class Engine {
     if (
       !config ||
       event.guildId !== config.guildId ||
-      (event.channelId !== config.textChannelId &&
-        event.channelId !== config.voiceChannelId)
+      (event.audio
+        ? !this.plugins.voiceChannelId ||
+          event.channelId !== this.plugins.voiceChannelId
+        : event.channelId !== config.textChannelId)
     )
       return;
     const identity = this.store.get<{ userId: string }>(

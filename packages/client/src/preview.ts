@@ -37,7 +37,7 @@ export class ClientPreview {
       !path.startsWith("/") ||
       path.startsWith("//") ||
       path.includes("\\") ||
-      !/^\/p\/[\w-]+\/$/.test(basePath)
+      !/^\/preview\/p\/[\w-]+\/$/.test(basePath)
     )
       return;
     const target = `http://127.0.0.1:${registration.port}${path}`;

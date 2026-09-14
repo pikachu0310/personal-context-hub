@@ -5,12 +5,14 @@ import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { RELEASE, discordManifest } from "../../common/src/protocol.js";
 import { run, npmRun, workerEnvironment } from "../../common/src/platform.js";
+import { HttpError } from "../../common/src/http.js";
 import { Store } from "./store.js";
 import { Credentials } from "../../common/src/credentials.js";
 
 export class Plugins {
   child?: ChildProcess;
   status = "stopped";
+  voiceChannelId?: string;
   busy = false;
   pending = new Map<
     string,
@@ -31,6 +33,7 @@ export class Plugins {
       manifest: discordManifest,
       installed: this.store.get("plugin", "discord"),
       status: this.status,
+      voiceChannelId: this.voiceChannelId,
       busy: this.busy,
     };
   }
@@ -132,7 +135,8 @@ export class Plugins {
     );
     this.child = child;
     child.on("message", (message: unknown) => {
-      if (!message || typeof message !== "object") return;
+      if (this.child !== child || !message || typeof message !== "object")
+        return;
       const event = message as Record<string, unknown>;
       if (event.type === "reply") {
         const pending = this.pending.get(String(event.id));
@@ -140,12 +144,20 @@ export class Plugins {
           clearTimeout(pending.timer);
           this.pending.delete(String(event.id));
           event.error
-            ? pending.reject(new Error("PLUGIN_REQUEST_FAILED"))
+            ? pending.reject(
+                new HttpError(502, "DISCORD_TOKEN_EXCHANGE_FAILED"),
+              )
             : pending.resolve(event.result);
         }
         return;
       }
-      if (event.type === "status") this.status = String(event.status);
+      if (event.type === "voice") {
+        this.voiceChannelId =
+          typeof event.channelId === "string" &&
+          /^\d{1,24}$/.test(event.channelId)
+            ? event.channelId
+            : undefined;
+      } else if (event.type === "status") this.status = String(event.status);
       else if (event.type === "input")
         void this.input(event).catch(() => {
           this.status = "input-error";
@@ -157,6 +169,7 @@ export class Plugins {
     child.once("exit", () => {
       if (this.child === child) {
         this.child = undefined;
+        this.voiceChannelId = undefined;
         this.status = "stopped";
       }
     });
@@ -167,18 +180,19 @@ export class Plugins {
   }
   request(operation: string, input: Record<string, unknown>): Promise<any> {
     if (!this.child?.connected)
-      return Promise.reject(new Error("PLUGIN_NOT_RUNNING"));
+      return Promise.reject(new HttpError(503, "DISCORD_PLUGIN_NOT_RUNNING"));
     return new Promise((resolve, reject) => {
       const id = randomUUID();
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error("PLUGIN_REQUEST_TIMEOUT"));
+        reject(new HttpError(504, "DISCORD_PLUGIN_TIMEOUT"));
       }, 20000);
       this.pending.set(id, { resolve, reject, timer });
       this.child!.send({ type: "request", v: 1, id, operation, input });
     });
   }
   stop() {
+    this.voiceChannelId = undefined;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error("PLUGIN_STOPPED"));

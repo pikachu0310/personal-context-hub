@@ -66,7 +66,6 @@ export interface Command {
 export interface PluginConfig {
   guildId: string;
   textChannelId: string;
-  voiceChannelId?: string;
   appId: string;
   projectId: string;
   meetingId: string;
@@ -93,7 +92,6 @@ export const discordManifest: PluginManifest = {
     { key: "botToken", label: "Bot token", secret: true, required: true },
     { key: "guildId", label: "Guild", required: true },
     { key: "textChannelId", label: "Text channel", required: true },
-    { key: "voiceChannelId", label: "Voice channel" },
     { key: "appId", label: "Application ID", required: true },
     {
       key: "clientSecret",
