@@ -1,4 +1,4 @@
-import { Modal, Paper, SimpleGrid, Text } from "@mantine/core";
+import { Modal, Select, Paper, SimpleGrid, Text } from "@mantine/core";
 import { useState } from "react";
 import { Shell } from "../components/Shell.js";
 import type { Action, Invoke, WorkspaceState } from "../types.js";
@@ -23,8 +23,12 @@ export function Workspace({
   error: string;
   activity?: boolean;
 }) {
-  const [page, setPage] = useState("overview"),
+  const [page, setPage] = useState("meetings"),
     [preview, setPreview] = useState("");
+  const [selectedProject, selectProject] = useState("");
+  const projectId = state.projects.some((p) => p.id === selectedProject)
+    ? selectedProject
+    : (state.projects.find((p) => p.isDefault)?.id ?? state.projects[0]?.id);
   const showPreview = (taskId: string) => {
     void action("preview", { taskId }).then((result) =>
       setPreview(result.url ?? ""),
@@ -32,6 +36,7 @@ export function Workspace({
   };
   const props = {
     state,
+    projectId,
     action,
     invoke,
     showPreview,
@@ -42,8 +47,8 @@ export function Workspace({
   };
   const pages = [
     ["overview", "チームの状況"],
-    ["meetings", "会議"],
-    ["minutes", "議事録"],
+    ["meetings", "会話"],
+    ["minutes", "過去の議事録"],
     ...(!activity ? [["projects", "プロジェクト"]] : []),
     ["tasks", "タスク"],
     ["artifacts", "成果物"],
@@ -58,6 +63,15 @@ export function Workspace({
         refresh={refresh}
         error={error}
       >
+        <Select
+          mb="md"
+          label="現在のプロジェクト"
+          searchable
+          allowDeselect={false}
+          value={projectId ?? null}
+          data={state.projects.map((p) => ({ value: p.id, label: p.name }))}
+          onChange={(v) => selectProject(v ?? "")}
+        />
         {page === "overview" && (
           <>
             <SimpleGrid cols={{ base: 1, sm: 3 }} mb="xl">

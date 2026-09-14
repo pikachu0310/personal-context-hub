@@ -28,6 +28,7 @@ export interface PluginManifest {
     | "audio-stream"
     | "playback-control"
     | "task-forum"
+    | "project-conversation"
   >;
 }
 

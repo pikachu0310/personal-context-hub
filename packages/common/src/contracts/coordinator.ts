@@ -10,6 +10,7 @@ export interface CoordinatorHandle {
 }
 
 export interface CoordinatorSource {
+  meetingId?: string;
   id: string;
   authorId: string;
   authorName?: string;
@@ -36,6 +37,7 @@ export type CoordinatorEvent =
   | {
       id: string;
       type: "task_result";
+      meetingId?: string;
       taskId: string;
       revision: number;
       text: string;

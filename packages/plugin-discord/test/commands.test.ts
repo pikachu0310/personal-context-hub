@@ -54,7 +54,7 @@ test("register join and leave individually without replacing unrelated commands"
   await registerVoiceCommands({
     commands: { create: async (data: any) => names.push(data.name) },
   } as unknown as Guild);
-  assert.deepEqual(names, ["join", "leave", "ido"]);
+  assert.deepEqual(names, ["project", "join", "leave", "ido"]);
 });
 test("join acknowledges first and uses the invoking member's voice channel", async () => {
   const i = interaction();

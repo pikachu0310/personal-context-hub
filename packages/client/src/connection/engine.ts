@@ -16,6 +16,7 @@ export async function connect(this: Client) {
   this.ws?.close();
   this.connected = false;
   this.controlSupported = false;
+  this.projectCreationSupported = false;
   this.status = "connecting";
   const privateKey = await this.credentials.get("device.privateKey");
   if (!privateKey) {
@@ -32,6 +33,7 @@ export async function connect(this: Client) {
   this.ws = ws;
   ws.on("error", () => {});
   ws.on("message", (raw) => {
+    if (this.ws !== ws) return;
     let data: Command;
     try {
       data = frame(raw.toString());
@@ -60,6 +62,7 @@ export async function connect(this: Client) {
       this.generation = Number(data.generation);
       this.connected = true;
       this.controlSupported = data.controlVersion === 1;
+      this.projectCreationSupported = data.projectVersion === 1;
       this.status = "connected";
       this.settings.projects = data.projects as Project[];
       void this.save();
@@ -73,6 +76,21 @@ export async function connect(this: Client) {
       return;
     }
     if (data.generation !== this.generation) return;
+    if (data.type === "projects.updated") {
+      this.settings.projects = data.projects as Project[];
+      void this.save();
+      return;
+    }
+    if (data.type === "project.result") {
+      const request = this.projectRequests.get(String(data.requestId));
+      if (request) {
+        clearTimeout(request.timer);
+        this.projectRequests.delete(String(data.requestId));
+        if (data.error) request.reject(new HttpError(409, String(data.error)));
+        else request.resolve(data.project as Project);
+      }
+      return;
+    }
     if (data.type === "work.control.result") {
       const request = this.controlRequests.get(String(data.requestKey));
       if (request) {
@@ -134,11 +152,17 @@ export async function connect(this: Client) {
     if (this.ws !== ws) return;
     this.connected = false;
     this.controlSupported = false;
+    this.projectCreationSupported = false;
     for (const request of this.controlRequests.values()) {
       clearTimeout(request.timer);
       request.reject(new HttpError(409, "CONTROL_DELIVERY_UNKNOWN"));
     }
     this.controlRequests.clear();
+    for (const request of this.projectRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new HttpError(409, "PROJECT_DELIVERY_UNKNOWN"));
+    }
+    this.projectRequests.clear();
     this.status = code === 4003 ? "revoked or permission changed" : "offline";
     this.preview.close();
     if (!this.stopping && code !== 4003)

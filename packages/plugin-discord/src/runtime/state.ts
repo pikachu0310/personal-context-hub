@@ -6,6 +6,13 @@ export interface DiscordState {
   config: Record<string, string>;
   client?: Client;
   forum?: ForumSync;
+  projectCommand?: (
+    subject: string,
+    projectId?: string,
+  ) => Promise<{
+    projects: import("@ido/common/contracts/protocol").Project[];
+    projectId: string;
+  }>;
   connectionGuide?: () => Promise<string>;
   voice?: VoiceConnection;
   speechEpoch: number;

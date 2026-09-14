@@ -16,7 +16,7 @@ export function Projects({
     <>
       {page === "projects" && (
         <Stack>
-          {admin && (
+          {!readonly && (
             <Card
               title="プロジェクトを追加"
               description="各Clientが、このプロジェクトと自分のローカルrepoを対応付けます。"

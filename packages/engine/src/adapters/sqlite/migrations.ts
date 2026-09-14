@@ -1,13 +1,14 @@
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 // VACUUM INTO includes committed WAL contents. Never copy a live SQLite file.
-export function migrate(db: DatabaseSync, directory: string) {
+function migrateV1(db: DatabaseSync, directory: string) {
   const version = Number(
     db.prepare("PRAGMA user_version").get()?.user_version ?? 0,
   );
-  if (version > 1) throw new Error("DATABASE_VERSION_UNSUPPORTED");
+  if (version > 1) return;
   if (version === 1) return;
   const backup = join(directory, "engine.before-v1.sqlite");
   if (!existsSync(backup)) db.prepare("VACUUM INTO ?").run(backup);
@@ -82,6 +83,108 @@ export function migrate(db: DatabaseSync, directory: string) {
     db.exec(
       "DELETE FROM records WHERE kind IN ('discord-participant','discord-user','discord-publication'); PRAGMA user_version=1; COMMIT",
     );
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function migrate(db: DatabaseSync, directory: string) {
+  const version = Number(
+    db.prepare("PRAGMA user_version").get()?.user_version ?? 0,
+  );
+  if (version > 2) throw new Error("DATABASE_VERSION_UNSUPPORTED");
+  migrateV1(db, directory);
+  if (version === 2) return;
+  const backup = join(directory, "engine.before-v2.sqlite");
+  if (!existsSync(backup)) db.prepare("VACUUM INTO ?").run(backup);
+  if (process.platform !== "win32") chmodSync(backup, 0o600);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const write = db.prepare("INSERT OR REPLACE INTO records VALUES (?,?,?)");
+    write.run(
+      "project",
+      "default",
+      JSON.stringify({
+        id: "default",
+        name: "デフォルト",
+        remote: "",
+        isDefault: true,
+      }),
+    );
+    for (const row of db
+      .prepare(
+        "SELECT kind,id,data FROM records WHERE kind IN ('meeting','config','voice-route')",
+      )
+      .all()) {
+      const value = JSON.parse(String(row.data));
+      if (row.kind === "meeting" && !value.projectId)
+        write.run(
+          row.kind,
+          row.id,
+          JSON.stringify({ ...value, projectId: "default" }),
+        );
+      if (row.kind === "config" && row.id === "discord") {
+        const meeting =
+          value.meetingId &&
+          db
+            .prepare("SELECT data FROM records WHERE kind='meeting' AND id=?")
+            .get(value.meetingId);
+        value.projectId ||= meeting
+          ? (JSON.parse(String(meeting.data)).projectId ?? "default")
+          : "default";
+        if (value.issueForumChannelId) {
+          const key = (parts: string[]) =>
+            `forum-${createHash("sha256").update(JSON.stringify(parts)).digest("hex")}`;
+          const bindings = db
+            .prepare("SELECT id,data FROM records WHERE kind='meeting'")
+            .all()
+            .map((m) => ({
+              meetingId: String(m.id),
+              projectId: JSON.parse(String(m.data)).projectId ?? "default",
+            }));
+          if (value.meetingId)
+            bindings.push({
+              meetingId: value.meetingId,
+              projectId: value.projectId,
+            });
+          for (const binding of bindings) {
+            const oldKey = key([
+              value.guildId,
+              value.issueForumChannelId,
+              binding.meetingId,
+              binding.projectId,
+            ]);
+            const newKey = key([
+              value.guildId,
+              value.issueForumChannelId,
+              binding.projectId,
+            ]);
+            const read = (id: string) =>
+              db
+                .prepare(
+                  "SELECT data FROM records WHERE kind='plugin:discord' AND id=?",
+                )
+                .get(id);
+            const old = read(oldKey);
+            if (!old) continue;
+            const current = read(newKey);
+            const records = current ? JSON.parse(String(current.data)) : [];
+            for (const record of JSON.parse(String(old.data)))
+              if (
+                !records.some(
+                  (r: { taskId: string }) => r.taskId === record.taskId,
+                )
+              )
+                records.push(record);
+            write.run("plugin:discord", newKey, JSON.stringify(records));
+          }
+        }
+        delete value.meetingId;
+        write.run(row.kind, row.id, JSON.stringify(value));
+      }
+    }
+    db.exec("PRAGMA user_version=2; COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;

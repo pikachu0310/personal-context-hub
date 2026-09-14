@@ -9,6 +9,7 @@ export interface User {
   role: Role;
 }
 export interface Project {
+  isDefault?: boolean;
   id: string;
   name: string;
   remote: string;

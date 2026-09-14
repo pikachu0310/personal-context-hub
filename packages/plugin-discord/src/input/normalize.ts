@@ -23,13 +23,16 @@ export function normalizeInput(
     (voice && !voiceChannel) ||
     (capture && audioSessionId && capture.sessionId !== audioSessionId) ||
     (event.meetingId && event.meetingId !== config.meetingId) ||
-    (event.projectId && event.projectId !== config.projectId)
+    (event.projectId && event.projectId !== config.projectId && !capture)
   )
     return;
   return {
     eventId: String(event.eventId),
-    meetingId: config.meetingId,
-    projectId: config.projectId,
+    meetingId: config.meetingId ?? "",
+    projectId:
+      capture && typeof event.projectId === "string"
+        ? event.projectId
+        : config.projectId,
     subject: String(event.userId),
     text: typeof event.text === "string" ? event.text : undefined,
     audio: typeof event.audio === "string" ? event.audio : undefined,

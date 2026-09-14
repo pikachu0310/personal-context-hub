@@ -29,6 +29,7 @@ import { createOpenAICoordinatorFactory } from "../adapters/openai/coordinator.j
 import { createLiveSession } from "../adapters/openai/live.mjs";
 import type { CoordinatorFactory } from "../ports/coordinator.js";
 import type { ConversationMode } from "@ido/common/contracts/coordinator";
+import { Projects } from "../processing/projects/service.js";
 export interface EngineOptions {
   directory: string;
   port?: number;
@@ -94,6 +95,7 @@ export class Engine {
   });
   constructor(readonly options: EngineOptions) {
     this.store = new Store(options.directory);
+    new Projects(this.store).ensure();
     this.credentials = new Credentials(options.directory, "ido-engine");
     this.origin = `http://127.0.0.1:${options.port ?? 4310}`;
     this.previewOrigin = `http://127.0.0.1:${options.previewPort ?? 4311}`;
@@ -237,6 +239,7 @@ export class Engine {
     return this.broker.contexts;
   }
   flush() {
+    this.connections.broadcastProjects();
     this.connections.flush();
     this.taskEvents.flush();
   }

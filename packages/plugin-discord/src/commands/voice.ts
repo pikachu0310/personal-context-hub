@@ -11,6 +11,18 @@ import {
 export async function registerVoiceCommands(guild: Guild) {
   // Upsert only this command; preserve unrelated commands on the application.
   await guild.commands.create({
+    name: "project",
+    description: "会話するプロジェクトを選択・確認",
+    options: [
+      {
+        name: "name",
+        description: "既存プロジェクトを候補から選択",
+        type: Option.String,
+        autocomplete: true,
+      },
+    ],
+  });
+  await guild.commands.create({
     name: "join",
     description: "自分がいる音声チャンネルにIDOを呼ぶ",
   });

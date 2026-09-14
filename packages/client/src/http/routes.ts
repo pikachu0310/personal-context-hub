@@ -1,3 +1,4 @@
+import { projectDirectory } from "../execution/project-directory.js";
 import { startLogin } from "../auth/login.js";
 import { activityText } from "../execution/activity.js";
 import { randomUUID } from "node:crypto";
@@ -39,6 +40,7 @@ export async function route(
       settings: this.settings,
       connected: this.connected,
       controlSupported: this.controlSupported,
+      projectCreationSupported: this.projectCreationSupported,
       status: this.status,
       allow: this.allow,
       loginStatus: this.loginStatus,
@@ -93,6 +95,7 @@ export async function route(
       this.settings.engineUrl = undefined;
       this.settings.projects = [];
       this.settings.mappings = [];
+      delete this.settings.pendingProject;
       clearTimeout(this.reconnect);
       this.ws?.close();
       this.connected = false;
@@ -100,14 +103,96 @@ export async function route(
       await this.save();
       break;
     }
+    case "/api/projects": {
+      if (this.projectCreationBusy)
+        throw new HttpError(409, "PROJECT_REQUEST_BUSY");
+      this.projectCreationBusy = true;
+      try {
+        if (!this.connected || !this.projectCreationSupported)
+          throw new HttpError(409, "PROJECT_CONNECTION_REQUIRED");
+        if (this.allow || this.executor.active.size)
+          throw new HttpError(409, "PAUSE_BEFORE_EDITING");
+        const name = text(input.name, 100);
+        if (
+          this.settings.projects.some(
+            (p) =>
+              p.name.normalize("NFKC").toLowerCase() ===
+              name.normalize("NFKC").toLowerCase(),
+          ) &&
+          !this.settings.pendingProject
+        )
+          throw new HttpError(409, "PROJECT_NAME_EXISTS");
+        const path = await realpath(text(input.directory, 4000));
+        const pending = this.settings.pendingProject;
+        if (
+          pending &&
+          (pending.name !== name ||
+            pending.directory !== path ||
+            pending.engineUrl !== this.settings.engineUrl ||
+            pending.deviceId !== this.settings.deviceId)
+        )
+          throw new HttpError(409, "FINISH_PENDING_PROJECT_FIRST");
+        const directory = await projectDirectory(path);
+        if (this.allow || this.executor.active.size)
+          throw new HttpError(409, "PAUSE_BEFORE_EDITING");
+        this.settings.pendingProject ??= {
+          requestId: randomUUID(),
+          name,
+          directory,
+          engineUrl: this.settings.engineUrl,
+          deviceId: this.settings.deviceId,
+        };
+        await this.save();
+        let project;
+        try {
+          project = await this.createProject(
+            name,
+            this.settings.pendingProject.requestId,
+          );
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            [
+              "PROJECT_NAME_EXISTS",
+              "PROJECT_REQUEST_MISMATCH",
+              "INVALID_TEXT",
+              "PERMISSION_DENIED",
+            ].includes(error.message)
+          ) {
+            delete this.settings.pendingProject;
+            await this.save();
+          }
+          throw error;
+        }
+        if (this.allow || this.executor.active.size)
+          throw new HttpError(409, "PAUSE_BEFORE_EDITING");
+        if (!this.settings.projects.some((p) => p.id === project.id))
+          this.settings.projects.push(project);
+        this.settings.mappings = this.settings.mappings
+          .filter((m) => m.projectId !== project.id)
+          .concat({
+            projectId: project.id,
+            directory,
+            network: false,
+            slots: 1,
+          });
+        delete this.settings.pendingProject;
+        await this.save();
+        this.ready();
+      } finally {
+        this.projectCreationBusy = false;
+      }
+      break;
+    }
     case "/api/mappings": {
       if (this.allow || this.executor.active.size)
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
-      const directory = await realpath(text(input.directory, 4000));
-      await run("git", ["-C", directory, "rev-parse", "--show-toplevel"]);
       const projectId = id(input.projectId);
       if (!this.settings.projects.some((p) => p.id === projectId))
         throw new HttpError(400, "UNKNOWN_PROJECT");
+      const directory = await projectDirectory(text(input.directory, 4000));
+      if (this.allow || this.executor.active.size)
+        throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       this.settings.mappings = this.settings.mappings
         .filter((m) => m.projectId !== projectId)
         .concat({

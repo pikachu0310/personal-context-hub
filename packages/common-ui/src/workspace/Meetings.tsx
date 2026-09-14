@@ -1,4 +1,5 @@
-import { Code, Group, Paper, ScrollArea, Stack, Text } from "@mantine/core";
+import { useRef } from "react";
+import { Paper, ScrollArea, Stack, Text } from "@mantine/core";
 import { Card } from "../components/Card.js";
 import { Form } from "../components/Form.js";
 import { Status } from "../components/Status.js";
@@ -6,104 +7,67 @@ import type { WorkspaceProps } from "../types.js";
 export function Meetings({
   state,
   action,
-  invoke,
-  showPreview,
   readonly,
-  activity,
   page,
+  projectId,
 }: WorkspaceProps) {
-  const admin = state.user.role === "admin";
+  const pending = useRef<
+    { text: string; projectId?: string; requestId: string } | undefined
+  >(undefined);
+  if (page !== "meetings") return null;
+  const messages = state.meetings
+    .filter((m) => m.projectId === projectId)
+    .flatMap((m) => m.messages)
+    .sort((a, b) => a.at - b.at)
+    .slice(-100);
   return (
-    <>
-      {page === "meetings" && (
-        <Stack>
-          {!readonly && !activity && (
-            <Card title="新しい会議">
-              <Form
-                fields={[
-                  { key: "name", label: "会議名" },
-                  {
-                    key: "projectId",
-                    label: "会議のプロジェクト",
-                    optional: true,
-                    options: state.projects.map((p) => ({
-                      value: p.id,
-                      label: p.name,
-                    })),
-                  },
-                ]}
-                submit={(data) => action("meetings", data)}
-                label="会議を作成"
-              />
-            </Card>
-          )}
-          {state.meetings.map((meeting) => (
-            <Card
-              key={meeting.id}
-              title={meeting.name}
-              description={`${meeting.messages.length} messages`}
-            >
-              <Code>{meeting.id}</Code>
-              <Text className="minutes">
-                {meeting.summary ||
-                  "会話を受け付けると、ここに議事録がまとまります。"}
+    <Stack>
+      <Card
+        title="現在のプロジェクトの会話"
+        description="全ての入力元の会話を共有します。会話が途切れると議事録を自動で分けます。"
+      >
+        <ScrollArea h={messages.length ? 400 : 0}>
+          {messages.map((m) => (
+            <Paper key={m.id} p="sm" mb="xs" bg="gray.0">
+              <Text size="xs" fw={600}>
+                {m.authorName ?? (m.role === "assistant" ? "IDO" : m.authorId)}
               </Text>
-              <ScrollArea h={meeting.messages.length ? 180 : 0}>
-                {meeting.messages.slice(-30).map((m) => (
-                  <Paper key={m.id} p="sm" mb="xs" bg="gray.0">
-                    <Text
-                      size="xs"
-                      fw={600}
-                      c={m.role === "assistant" ? "blue" : "dimmed"}
-                    >
-                      {m.authorName ??
-                        (m.role === "assistant" ? "IDO" : m.authorId)}
-                    </Text>
-                    <Group justify="space-between">
-                      <Text size="sm">{m.text}</Text>
-                      <Status value={m.stage} />
-                      {Object.entries(m.steps ?? {}).map(([step, value]) => (
-                        <Text size="xs" key={step}>
-                          {(
-                            {
-                              transcription: "文字起こし",
-                              reply: "即時応答",
-                              minutes: "議事録",
-                              delivery: "送信",
-                            } as Record<string, string>
-                          )[step] ?? step}
-                          : {value.state}
-                          {value.errorId && ` · ${value.errorId}`}
-                        </Text>
-                      ))}
-                    </Group>
-                    {m.replyText && (
-                      <Text mt="xs" size="sm" c="blue">
-                        IDO: {m.replyText}
-                      </Text>
-                    )}
-                  </Paper>
-                ))}
-              </ScrollArea>
-              {!readonly && (
-                <Form
-                  fields={[
-                    {
-                      key: "text",
-                      label: "会話に追加",
-                      multiline: true,
-                    },
-                  ]}
-                  submit={(data) =>
-                    action("messages", { ...data, meetingId: meeting.id })
-                  }
-                  label="会話を送信"
-                />
+              <Text style={{ whiteSpace: "pre-wrap" }}>{m.text}</Text>
+              <Status value={m.stage} />
+              {m.replyText && (
+                <Text mt="xs" c="blue">
+                  IDO: {m.replyText}
+                </Text>
               )}
-            </Card>
+            </Paper>
           ))}
-        </Stack>
-      )}
-    </>
+        </ScrollArea>
+        {!messages.length && (
+          <Text c="dimmed">ここから会話を始められます。</Text>
+        )}
+        {!readonly && projectId && (
+          <Form
+            key={projectId}
+            fields={[{ key: "text", label: "会話に追加", multiline: true }]}
+            submit={async (data) => {
+              const text = String(data.text ?? "");
+              if (
+                !pending.current ||
+                pending.current.text !== text ||
+                pending.current.projectId !== projectId
+              )
+                pending.current = {
+                  text,
+                  projectId,
+                  requestId: crypto.randomUUID(),
+                };
+              await action("messages", pending.current);
+              pending.current = undefined;
+            }}
+            label="会話を送信"
+          />
+        )}
+      </Card>
+    </Stack>
   );
 }

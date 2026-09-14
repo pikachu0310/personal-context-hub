@@ -223,8 +223,9 @@ export class InputRouter {
           .list<Task>("task")
           .filter(
             (t) =>
-              t.meetingId === config.meetingId &&
-              t.projectId === config.projectId &&
+              (config.projectId
+                ? t.projectId === config.projectId
+                : t.meetingId === config.meetingId) &&
               (control.action === "stop"
                 ? ["queued", "assigned", "running", "interrupted"]
                 : ["queued", "assigned", "running"]

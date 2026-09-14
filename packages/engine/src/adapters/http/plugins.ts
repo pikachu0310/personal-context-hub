@@ -13,6 +13,12 @@ export async function plugins(
 ) {
   const admin = auth.user.role === "admin";
   switch (url.pathname) {
+    case "/api/admin/plugins/setup": {
+      this.mutate(req, auth, true);
+      const result = await this.plugins.setup(id(input.pluginId), input.config);
+      send(res, 200, result);
+      return true;
+    }
     case "/api/admin/plugins/configure": {
       this.mutate(req, auth, true);
       await this.plugins.configure(id(input.pluginId), input.config);

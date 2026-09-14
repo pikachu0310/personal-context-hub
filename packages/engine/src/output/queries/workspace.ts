@@ -8,6 +8,7 @@ import { id, text } from "@ido/common/contracts/protocol";
 import type { Repository } from "../../ports/repository.js";
 import type { InputRouter } from "../../processing/routing/input.js";
 import { Tasks } from "../../processing/tasks/service.js";
+import { Projects } from "../../processing/projects/service.js";
 export class Workspace {
   constructor(
     readonly store: Repository,
@@ -89,6 +90,7 @@ export class Workspace {
         user,
         projects:
           this.store.list<WorkspaceState["projects"][number]>("project"),
+        conversations: this.store.list("project-conversation"),
         meetings: this.meetings(),
         tasks: this.store.list<WorkspaceState["tasks"][number]>("task"),
       } satisfies WorkspaceState;
@@ -152,14 +154,12 @@ export class Workspace {
         throw new Error("INVALID_ACTION");
       }
       case "projects": {
-        if (user.role !== "admin") throw new Error("PERMISSION_DENIED");
-        const project = {
-          id: randomUUID(),
-          name: text(input.name, 100),
-          remote:
-            typeof input.remote === "string" ? input.remote.slice(0, 2000) : "",
-        };
-        this.store.put("project", project.id, project);
+        const project = new Projects(this.store).create(
+          input.name,
+          `${user.id}:${id(input.requestId ?? randomUUID())}`,
+          typeof input.remote === "string" ? input.remote.slice(0, 2000) : "",
+        );
+        this.flush();
         return project;
       }
       case "meetings": {
@@ -184,19 +184,21 @@ export class Workspace {
           throw new Error("INVALID_INPUT_PRIORITY");
         const event: ConversationInput = {
           eventId: id(input.requestId ?? randomUUID()),
-          meetingId: id(input.meetingId),
+          meetingId: "",
           text: text(input.text),
           interaction: true,
           priority: input.priority === "normal" ? "normal" : "immediate",
         };
-        const meeting = this.store.get<{ projectId?: string }>(
-          "meeting",
-          event.meetingId,
+        const routed = new Projects(this.store).accept(
+          {
+            ...event,
+            meetingId: input.meetingId ? id(input.meetingId) : undefined,
+            projectId: input.projectId ? id(input.projectId) : undefined,
+          },
+          context.pluginId,
         );
-        if (!meeting) throw new Error("MEETING_NOT_FOUND");
-        event.projectId = meeting.projectId;
         // Processing continues independently of the HTTP response and remains fenced by the session and plugin generation.
-        void this.router.handle(event, context).catch((error) =>
+        void this.router.handle(routed, context).catch((error) =>
           this.store.logError(error, {
             source: context.pluginId,
             operation: "input.process",
@@ -206,9 +208,18 @@ export class Workspace {
         return { ok: true };
       }
       case "tasks": {
+        const routed = new Projects(this.store).accept(
+          {
+            eventId: id(input.requestId),
+            projectId: input.projectId ? id(input.projectId) : undefined,
+            meetingId: input.meetingId ? id(input.meetingId) : undefined,
+            text: text(input.text),
+          },
+          context.pluginId,
+        );
         const task = this.tasks.createTask({
-          projectId: id(input.projectId),
-          meetingId: id(input.meetingId),
+          projectId: routed.projectId!,
+          meetingId: routed.meetingId,
           authorId: user.id,
           text: text(input.text),
           requestId: id(input.requestId),

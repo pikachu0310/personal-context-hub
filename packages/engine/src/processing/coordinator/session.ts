@@ -43,7 +43,7 @@ export interface CoordinatedOptions {
 const stableId = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 
-// One meeting owns one inbox and model handle. Repository records are the state
+// One project owns one inbox and model handle, anchored to a stable minutes ID. Records are the state
 // authority; model hosts, work executors and audio devices are replaceable ports.
 class MeetingCoordinator {
   readonly inbox: CoordinatorInbox;
@@ -69,7 +69,7 @@ class MeetingCoordinator {
       createLiveSession: options.createLiveSession,
       synthesize: options.synthesize,
       currentResults: () =>
-        options.work.list(meetingId).flatMap((task) => {
+        this.projectTasks().flatMap((task) => {
           const result = options.work.getResult(task.id);
           return result
             ? [
@@ -98,9 +98,10 @@ class MeetingCoordinator {
           run: async (observation: CoordinatorObservation, runOptions: any) => {
             const modeRevision = this.modeRevision;
             const controlVersions = Object.fromEntries(
-              options.work
-                .list(meetingId)
-                .map((task) => [task.id, task.controlVersion ?? 0]),
+              this.projectTasks().map((task) => [
+                task.id,
+                task.controlVersion ?? 0,
+              ]),
             );
             return {
               response: await runtime.run(observation, runOptions),
@@ -126,8 +127,24 @@ class MeetingCoordinator {
     this.timer.unref();
   }
 
-  meeting() {
-    return this.store.get<Meeting>("meeting", this.meetingId);
+  meeting(meetingId = this.meetingId) {
+    return this.store.get<Meeting>("meeting", meetingId);
+  }
+  projectMeetings() {
+    const projectId = this.meeting()?.projectId;
+    return this.store
+      .list<Meeting>("meeting")
+      .filter((m) =>
+        projectId ? m.projectId === projectId : m.id === this.meetingId,
+      );
+  }
+  projectTasks() {
+    const projectId = this.meeting()?.projectId;
+    return this.options.work
+      .list()
+      .filter((t) =>
+        projectId ? t.projectId === projectId : t.meetingId === this.meetingId,
+      );
   }
   save(inbox: unknown = this.inbox.snapshot()) {
     this.store.put("coordinator", this.meetingId, {
@@ -153,10 +170,13 @@ class MeetingCoordinator {
     }
     this.publish("transcript");
   }
-  publish(type: "transcript" | "minutes") {
-    const meeting = this.meeting();
+  publish(
+    type: "transcript" | "minutes",
+    meetingId = this.lastRoute?.event.meetingId ?? this.meetingId,
+  ) {
+    const meeting = this.meeting(meetingId);
     if (meeting)
-      this.options.publish({ type, meetingId: this.meetingId, data: meeting });
+      this.options.publish({ type, meetingId: meeting.id, data: meeting });
   }
   active(route?: Route) {
     return (
@@ -199,8 +219,7 @@ class MeetingCoordinator {
             }
           : event,
       ),
-      activeTasks: this.options.work
-        .list(this.meetingId)
+      activeTasks: this.projectTasks()
         .slice(-12)
         .map((task) => ({
           id: task.id,
@@ -227,7 +246,8 @@ class MeetingCoordinator {
       ),
     );
     const entries = [
-      ...(this.meeting()?.messages ?? [])
+      ...this.projectMeetings()
+        .flatMap((m) => m.messages)
         .filter(
           (message) =>
             message.stage === "completed" && !current.has(message.id),
@@ -250,7 +270,7 @@ class MeetingCoordinator {
         }>("conversation-output")
         .filter(
           (output) =>
-            output.meetingId === this.meetingId &&
+            this.projectMeetings().some((m) => m.id === output.meetingId) &&
             (output.delivered || output.provider === "live") &&
             typeof output.text === "string",
         )
@@ -318,7 +338,7 @@ class MeetingCoordinator {
     for (const source of selected as CoordinatorSource[]) {
       const event: ConversationInput = {
         eventId: `resume-${source.id}`,
-        meetingId: this.meetingId,
+        meetingId: source.meetingId ?? this.meetingId,
         projectId: source.projectId,
         text: source.text,
       };
@@ -333,7 +353,7 @@ class MeetingCoordinator {
     messageId?: string,
   ) {
     const capture = event.capture!;
-    const key = `${this.meetingId}:${context.pluginId}:${capture.sessionId}:${capture.utteranceId}`;
+    const key = `${event.meetingId}:${context.pluginId}:${capture.sessionId}:${capture.utteranceId}`;
     const saved = this.store.get<any>("speech-assembly", key) ?? {
       id: key,
       authorId: context.actor.id,
@@ -345,7 +365,7 @@ class MeetingCoordinator {
     if (capture.segmentIndex < 0 || capture.segmentIndex > 200)
       throw new Error("UTTERANCE_TOO_LONG");
     const message = this.messages.record(
-      this.meetingId,
+      event.meetingId,
       context.actor.id,
       content,
       messageId,
@@ -363,7 +383,7 @@ class MeetingCoordinator {
     };
     if (capture.final) saved.finalIndex = capture.segmentIndex;
     this.store.put("speech-assembly", key, saved);
-    this.publish("transcript");
+    this.publish("transcript", event.meetingId);
     if (saved.finalIndex === undefined) return true;
     const parts = Array.from(
       { length: saved.finalIndex + 1 },
@@ -386,7 +406,7 @@ class MeetingCoordinator {
           });
       }
       this.store.remove("speech-assembly", key);
-      this.publish("transcript");
+      this.publish("transcript", event.meetingId);
       return false;
     }
     // Intermediate pieces are not complete utterances. Only the final marker
@@ -432,7 +452,7 @@ class MeetingCoordinator {
     if (this.routes.size > 1000)
       this.routes.delete(this.routes.keys().next().value!);
     const record = this.messages.record(
-      this.meetingId,
+      event.meetingId,
       context.actor.id,
       partIds
         ? (this.store.get<Message>("message", id)?.text ?? content)
@@ -459,7 +479,7 @@ class MeetingCoordinator {
       pluginId: context.pluginId,
     });
     // Mechanical log projection; full statements remain separate message records.
-    const meeting = this.meeting()!;
+    const meeting = this.meeting(event.meetingId)!;
     meeting.summary = meeting.messages
       .filter((message) => message.text)
       .map(
@@ -469,8 +489,8 @@ class MeetingCoordinator {
       .join("\n")
       .slice(-12_000);
     this.store.put("meeting", meeting.id, meeting);
-    this.publish("transcript");
-    this.publish("minutes");
+    this.publish("transcript", event.meetingId);
+    this.publish("minutes", event.meetingId);
     const addressed =
       event.interaction === true ||
       event.command === "ask" ||
@@ -483,6 +503,7 @@ class MeetingCoordinator {
       Boolean(event.projectId) &&
       record.complete !== false;
     const source: CoordinatorSource = {
+      meetingId: event.meetingId,
       id,
       authorId: record.authorId,
       authorName: record.authorName,
@@ -497,14 +518,14 @@ class MeetingCoordinator {
       workAllowed: canWork && event.command !== "ask",
       researchAllowed: canWork && addressed,
     };
-    this.audio.observeMessage({ ...record, meetingId: this.meetingId });
+    this.audio.observeMessage({ ...record, meetingId: event.meetingId });
     if (event.audio) await this.audio.handleMedia(event, context);
     // Explicit task commands retain their exact intent and retry key. Normal
     // speech is interpreted only by the main model through sourced proposals.
     if (event.command === "task" && canWork && this.active(route)) {
       this.options.work.submit({
         requestKey: inputId,
-        meetingId: this.meetingId,
+        meetingId: event.meetingId,
         projectId: event.projectId!,
         authorId: context.actor.id,
         request: content,
@@ -549,7 +570,7 @@ class MeetingCoordinator {
     this.store.put("conversation-output", id, {
       ...event,
       id,
-      meetingId: this.meetingId,
+      meetingId: this.lastRoute?.event.meetingId ?? this.meetingId,
       role: "assistant",
       provider: "live",
       playbackStatus: "unknown",
@@ -583,6 +604,7 @@ class MeetingCoordinator {
     const event: CoordinatorEvent = {
       id: `result:${result.id}:${result.runId}:${result.runRevision}`,
       type: "task_result",
+      meetingId: result.meetingId,
       taskId: result.id,
       revision: result.runRevision,
       text: result.result.slice(0, 8000),
@@ -649,7 +671,7 @@ class MeetingCoordinator {
         continue;
       this.options.work.submit({
         requestKey: `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`,
-        meetingId: this.meetingId,
+        meetingId: author.meetingId ?? this.meetingId,
         projectId: author.projectId,
         authorId: author.authorId,
         title: task.title,
@@ -664,7 +686,7 @@ class MeetingCoordinator {
         kind: task.kind,
         sourceStatements: selected.map((source) => ({
           id: source.id,
-          meetingId: this.meetingId,
+          meetingId: source.meetingId ?? this.meetingId,
           authorId: source.authorId,
           speakerName: source.authorName,
           startedAt: source.at,
@@ -684,9 +706,9 @@ class MeetingCoordinator {
         )
       )
         continue;
-      const target = this.options.work
-        .list(this.meetingId)
-        .find((task) => task.id === control.taskId);
+      const target = this.projectTasks().find(
+        (task) => task.id === control.taskId,
+      );
       if (
         !target ||
         !selected.every((source) => source.projectId === target.projectId)
@@ -699,17 +721,15 @@ class MeetingCoordinator {
           (parsed.action === "stop" ? "stop" : "instruction") !== control.type
         )
           return false;
-        const candidates = this.options.work
-          .list(this.meetingId)
-          .filter(
-            (task) =>
-              task.projectId === source.projectId &&
-              (parsed.action === "stop"
-                ? ["queued", "assigned", "running", "interrupted"]
-                : ["queued", "assigned", "running"]
-              ).includes(task.state) &&
-              (!parsed.taskId || task.id.startsWith(parsed.taskId)),
-          );
+        const candidates = this.projectTasks().filter(
+          (task) =>
+            task.projectId === source.projectId &&
+            (parsed.action === "stop"
+              ? ["queued", "assigned", "running", "interrupted"]
+              : ["queued", "assigned", "running"]
+            ).includes(task.state) &&
+            (!parsed.taskId || task.id.startsWith(parsed.taskId)),
+        );
         return candidates.length === 1 && candidates[0].id === target.id;
       });
       if (!authorized) continue;
@@ -765,7 +785,10 @@ class MeetingCoordinator {
         const previous = this.store.get<any>("conversation-output", outputId);
         const output = previous ?? {
           id: outputId,
-          meetingId: this.meetingId,
+          meetingId:
+            selected.at(-1)?.meetingId ??
+            results.at(-1)?.meetingId ??
+            this.meetingId,
           role: "assistant",
           provider: "coordinator",
           text: answer.text,
@@ -876,12 +899,25 @@ export class CoordinatedConversation {
   ) {}
   session(meetingId: string) {
     if (this.closed) throw new Error("COORDINATOR_CLOSED");
-    if (!this.store.get("meeting", meetingId))
-      throw new Error("MEETING_NOT_FOUND");
-    let session = this.sessions.get(meetingId);
+    const meeting = this.store.get<Meeting>("meeting", meetingId);
+    if (!meeting) throw new Error("MEETING_NOT_FOUND");
+    const saved = meeting.projectId
+      ? this.store.get<{ coordinatorId: string }>(
+          "project-conversation",
+          meeting.projectId,
+        )
+      : undefined;
+    const coordinatorId = saved?.coordinatorId ?? meetingId;
+    if (meeting.projectId && !saved)
+      this.store.put("project-conversation", meeting.projectId, {
+        projectId: meeting.projectId,
+        meetingId,
+        coordinatorId,
+      });
+    let session = this.sessions.get(coordinatorId);
     if (!session) {
-      session = new MeetingCoordinator(this.store, meetingId, this.options);
-      this.sessions.set(meetingId, session);
+      session = new MeetingCoordinator(this.store, coordinatorId, this.options);
+      this.sessions.set(coordinatorId, session);
     }
     return session;
   }
@@ -932,7 +968,11 @@ export class CoordinatedConversation {
       if (this.closed) return;
       if (
         !this.sessions.has(task.meetingId) &&
-        !this.store.get("coordinator", task.meetingId)
+        !this.store.get("coordinator", task.meetingId) &&
+        !this.store.get(
+          "project-conversation",
+          this.store.get<Meeting>("meeting", task.meetingId)?.projectId ?? "",
+        )
       )
         continue;
       if (!["completed", "failed"].includes(task.state)) continue;

@@ -1,3 +1,4 @@
+import { Projects } from "../../processing/projects/service.js";
 import { randomUUID, verify } from "node:crypto";
 import { WebSocket } from "ws";
 import {
@@ -36,6 +37,31 @@ export class ClientConnections {
   readonly preview: PreviewRelay;
   readonly scheduler: Scheduler;
   readonly tasks: Tasks;
+  private projectSnapshot = "";
+  broadcastProjects() {
+    const projects = this.store.list("project");
+    const snapshot = JSON.stringify(projects);
+    if (snapshot === this.projectSnapshot) return;
+    this.projectSnapshot = snapshot;
+    for (const [deviceId, ws] of this.peers) {
+      const device = this.store.get<Device>("device", deviceId);
+      if (
+        device &&
+        !device.revoked &&
+        this.store.user(device.userId) &&
+        this.store.user(device.userId)?.role !== "viewer" &&
+        ws.readyState === WebSocket.OPEN
+      )
+        ws.send(
+          JSON.stringify({
+            v: 1,
+            type: "projects.updated",
+            generation: device.generation,
+            projects,
+          }),
+        );
+    }
+  }
   constructor(
     readonly store: Repository,
     readonly changed: () => void,
@@ -96,6 +122,7 @@ export class ClientConnections {
               type: "authenticated",
               generation,
               controlVersion: 1,
+              projectVersion: 1,
               projects: this.store.list("project"),
             }),
           );
@@ -109,6 +136,49 @@ export class ClientConnections {
           data.generation !== generation
         )
           throw new Error("STALE_CONNECTION");
+        if (data.type === "project.create") {
+          const requestId = id(data.requestId);
+          try {
+            const owner = this.store.user(device.userId);
+            if (!owner || owner.role === "viewer")
+              throw new Error("PERMISSION_DENIED");
+            const project = new Projects(this.store).create(
+              data.name,
+              `${device.id}:${owner.id}:${requestId}`,
+            );
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "project.result",
+                generation,
+                requestId,
+                project,
+              }),
+            );
+            this.broadcastProjects();
+          } catch (error) {
+            const code =
+              error instanceof Error &&
+              [
+                "PERMISSION_DENIED",
+                "PROJECT_NAME_EXISTS",
+                "PROJECT_REQUEST_MISMATCH",
+                "INVALID_TEXT",
+              ].includes(error.message)
+                ? error.message
+                : "PROJECT_CREATE_FAILED";
+            ws.send(
+              JSON.stringify({
+                v: 1,
+                type: "project.result",
+                generation,
+                requestId,
+                error: code,
+              }),
+            );
+          }
+          return;
+        }
         if (data.type === "artifact.result") {
           const pending = this.artifactRequests.get(String(data.requestId));
           if (

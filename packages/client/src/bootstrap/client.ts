@@ -21,7 +21,15 @@ import { Executor } from "../execution/executor.js";
 import { route } from "../http/routes.js";
 import { ClientPreview } from "../preview/relay.js";
 
+import { createProject } from "../connection/projects.js";
 interface Settings {
+  pendingProject?: {
+    requestId: string;
+    name: string;
+    directory: string;
+    engineUrl?: string;
+    deviceId?: string;
+  };
   progressMode?: "auto" | "manual";
   engineUrl?: string;
   deviceId?: string;
@@ -40,6 +48,16 @@ export class Client {
   generation = 0;
   connected = false;
   controlSupported = false;
+  projectCreationSupported = false;
+  projectCreationBusy = false;
+  projectRequests = new Map<
+    string,
+    {
+      resolve: (project: Project) => void;
+      reject: (error: Error) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
   controlRequests = new Map<
     string,
     {
@@ -129,6 +147,7 @@ export class Client {
       slots: this.settings.slots,
     });
   }
+  readonly createProject = createProject.bind(this);
   readonly connect = connect.bind(this);
   readonly control = control.bind(this);
   readonly pair = pair.bind(this);
@@ -145,6 +164,11 @@ export class Client {
       request.reject(new HttpError(409, "CONTROL_DELIVERY_UNKNOWN"));
     }
     this.controlRequests.clear();
+    for (const request of this.projectRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new HttpError(409, "PROJECT_DELIVERY_UNKNOWN"));
+    }
+    this.projectRequests.clear();
     this.preview.close();
     await this.executor.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));

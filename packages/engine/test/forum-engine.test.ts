@@ -142,9 +142,12 @@ test("Engine tasks synchronize to a forum, controls return to the same task and 
       (task.specRevision ?? 0),
   );
   assert.equal(outputs.at(-1).replyTo.channelId, "thread");
-  await send("200", "stop", "denied", "stop");
+  await assert.rejects(
+    send("200", "stop", "denied", "stop"),
+    /PERMISSION_DENIED/,
+  );
   assert.equal(store.get<Task>("task", task.id)?.state, "queued");
-  assert.match(outputs.at(-1).content, /閲覧者/);
+
   await send("100", "stop", "stop", "stop");
   assert.equal(store.get<Task>("task", task.id)?.state, "cancelled");
   await forum.sync(await snapshot());

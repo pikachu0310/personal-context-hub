@@ -12,6 +12,8 @@ export interface Device {
   executionPolicyVersion?: number;
 }
 export interface Meeting {
+  startedAt?: number;
+  closedAt?: number;
   id: string;
   name: string;
   projectId?: string;

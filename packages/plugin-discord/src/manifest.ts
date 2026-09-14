@@ -50,12 +50,11 @@ export const discordManifest: PluginManifest = {
     },
     { key: "macIntelDownloadUrl", label: "Mac Intel版のHTTPSダウンロードURL" },
     { key: "textChannelId", label: "テキストチャンネルID", required: true },
-    { key: "appId", label: "Application ID", required: true },
+    { key: "appId", label: "Application ID（自動取得）" },
     {
       key: "clientSecret",
       label: "OAuthクライアントシークレット（変更時のみ）",
       secret: true,
-      required: true,
     },
   ],
   web: {
@@ -81,6 +80,7 @@ export const discordManifest: PluginManifest = {
   },
   capabilities: [
     "task-forum",
+    "project-conversation",
     "text",
     "audio",
     "activity",

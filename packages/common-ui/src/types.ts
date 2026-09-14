@@ -14,6 +14,7 @@ export type Action = (
 ) => Promise<ApiResult>;
 export type Invoke = (path: string, input: Record<string, unknown>) => void;
 export interface WorkspaceProps {
+  projectId?: string;
   state: WorkspaceState;
   action: Action;
   invoke: Invoke;

@@ -1,3 +1,6 @@
+import { Modal, Text } from "@mantine/core";
+import { Form } from "@ido/common-ui";
+import { desktopBridge } from "./desktop.js";
 import { useEffect, useRef, useState } from "react";
 import { ClientView } from "./ClientView.js";
 import { ClientRuns } from "./ClientRuns.js";
@@ -11,6 +14,7 @@ export function App() {
   const [selected, select] = useState<string>();
   const [query, search] = useState("");
   const [sidebar, showSidebar] = useState(true);
+  const [projectDialog, setProjectDialog] = useState<string | undefined>();
   const wasConnected = useRef(false);
   useEffect(() => {
     if (state?.connected && !wasConnected.current) setPage("runs");
@@ -92,6 +96,14 @@ export function App() {
         <div className="project-list">
           <div className="sidebar-caption">
             プロジェクト<span>{runs.length} タスク</span>
+            <button
+              className="icon-button"
+              aria-label="プロジェクトを追加"
+              disabled={!state.connected || !state.projectCreationSupported}
+              onClick={() => setProjectDialog("")}
+            >
+              ＋
+            </button>
           </div>
           {projects.map((id) => {
             const items = filtered.filter((r) => r.task.projectId === id);
@@ -104,6 +116,16 @@ export function App() {
                     {state.settings.projects.find((p) => p.id === id)?.name ??
                       "ローカルプロジェクト"}
                   </span>
+                  {!state.settings.mappings.some((m) => m.projectId === id) && (
+                    <button
+                      className="icon-button"
+                      aria-label="保存先を選択"
+                      disabled={!state.connected}
+                      onClick={() => setProjectDialog(id)}
+                    >
+                      ＋
+                    </button>
+                  )}
                 </div>
                 {items.map((run) => (
                   <button
@@ -160,6 +182,38 @@ export function App() {
           </button>
         </footer>
       </aside>
+      <Modal
+        opened={projectDialog !== undefined}
+        onClose={() => setProjectDialog(undefined)}
+        title={
+          projectDialog ? "プロジェクトの保存先を選択" : "プロジェクトを追加"
+        }
+      >
+        <Text size="sm" mb="md">
+          コミット済みGitリポジトリ、または空フォルダを選択してください。空フォルダはGitで初期化します。実行を許可する前に保存先を設定します。
+        </Text>
+        <Form
+          key={projectDialog}
+          fields={[
+            ...(!projectDialog ? [{ key: "name", label: "名前" }] : []),
+            {
+              key: "directory",
+              label: "ディレクトリ",
+              pick: desktopBridge()?.pickDirectory,
+            },
+          ]}
+          submit={async (data) => {
+            await action(projectDialog ? "mappings" : "projects", {
+              ...data,
+              ...(projectDialog
+                ? { projectId: projectDialog, network: false, slots: 1 }
+                : {}),
+            });
+            setProjectDialog(undefined);
+          }}
+          label={projectDialog ? "保存先を設定" : "追加"}
+        />
+      </Modal>
       <main className="workspace-main">
         <header className="workspace-header">
           <button

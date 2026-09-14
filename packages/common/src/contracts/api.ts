@@ -12,6 +12,8 @@ export interface MessageView {
   steps?: Record<string, { state: string; errorId?: string }>;
 }
 export interface MeetingView {
+  startedAt?: number;
+  closedAt?: number;
   id: string;
   name: string;
   projectId?: string;
@@ -21,6 +23,11 @@ export interface MeetingView {
 export interface WorkspaceState {
   user: User;
   projects: Project[];
+  conversations?: Array<{
+    projectId: string;
+    meetingId: string;
+    lastHumanAt?: number;
+  }>;
   meetings: MeetingView[];
   tasks: Task[];
 }
@@ -96,6 +103,7 @@ export interface ClientActivityState {
   version: number;
 }
 export interface ClientState {
+  projectCreationSupported?: boolean;
   controlSupported?: boolean;
   csrf: string;
   settings: {
