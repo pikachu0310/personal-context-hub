@@ -33,6 +33,14 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
     "fixture",
   );
   const client = new Client(join(directory, "client"));
+  let loggedIn = true;
+  client.agentCatalog = async () => [
+    {
+      agent: "codex",
+      authenticated: loggedIn,
+      models: loggedIn ? [{ id: "test-model", name: "Test" }] : [],
+    },
+  ];
   client.credentials.backend = "file";
   t.after(async () => {
     await client.close();
@@ -82,6 +90,19 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   const value = client.executor.runs[runId];
   assert.equal(value.origin, "local");
   assert.equal(value.model, "test-model");
+  loggedIn = false;
+  const expired = await post("local-tasks/start", {
+    ...input,
+    requestKey: "expired",
+  });
+  assert.equal((await expired.json()).error, "AGENT_LOGIN_REQUIRED");
+  loggedIn = true;
+  const unavailable = await post("local-tasks/start", {
+    ...input,
+    requestKey: "invalid-model",
+    model: "other",
+  });
+  assert.equal((await unavailable.json()).error, "MODEL_UNAVAILABLE");
   assert.equal(value.progressMode, "manual");
   assert.equal(value.task.executionPolicy?.sandboxMode, "read-only");
   assert.equal(value.task.network, false);

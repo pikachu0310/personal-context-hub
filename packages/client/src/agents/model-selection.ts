@@ -7,9 +7,3 @@ export function selectedModel(value: unknown): string | undefined {
     throw new Error("INVALID_MODEL");
   return value;
 }
-
-export const claudeModels = [
-  { id: "sonnet", name: "Sonnet" },
-  { id: "opus", name: "Opus" },
-  { id: "haiku", name: "Haiku" },
-];

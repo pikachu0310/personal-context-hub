@@ -162,8 +162,14 @@ export interface TeamTaskSnapshot {
     }
   >;
 }
+export interface AgentCatalogEntry {
+  agent: "codex" | "claude";
+  authenticated: boolean;
+  models: Array<{ id: string; name: string }>;
+  error?: string;
+}
 export interface ApiResult {
-  models?: Array<{ id: string; name: string }>;
+  agents?: AgentCatalogEntry[];
   runId?: string;
   url?: string;
   error?: string;

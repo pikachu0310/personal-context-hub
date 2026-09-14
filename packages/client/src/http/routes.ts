@@ -1,5 +1,4 @@
 import { startLogin } from "../auth/login.js";
-import { codexModels } from "../agents/model-catalog.js";
 import { startClaudeLogin, checkClaudeLogin } from "../auth/claude.js";
 import { activityText } from "../execution/activity.js";
 import {
@@ -105,7 +104,7 @@ export async function route(
   const input = await body(req);
   switch (url.pathname) {
     case "/api/agents/models":
-      send(res, 200, { models: await codexModels(this.executor.home) });
+      send(res, 200, { agents: await this.agentCatalog() });
       return;
     case "/api/claude/login":
       startClaudeLogin(this);

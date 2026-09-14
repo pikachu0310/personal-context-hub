@@ -62,6 +62,13 @@ export async function startLocalTask(
       }
       if (agent !== "codex" && agent !== "claude")
         throw new HttpError(400, "INVALID_AGENT");
+      const available = (await client.agentCatalog()).find(
+        (value) => value.agent === agent,
+      );
+      if (!available?.authenticated)
+        throw new HttpError(409, "AGENT_LOGIN_REQUIRED");
+      if (!model || !available.models.some((value) => value.id === model))
+        throw new HttpError(409, "MODEL_UNAVAILABLE");
       if (agent === "claude" && input.claudePermissionsAcknowledged !== true)
         throw new HttpError(400, "CLAUDE_PERMISSIONS_REQUIRED");
       const title = text(input.title || instruction.slice(0, 100), 200);

@@ -1,7 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Action } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
-import { claudeModels } from "../agents/model-selection.js";
+import type { AgentCatalogEntry } from "@ido/common/contracts/api";
 
 export function NewLocalTask({
   action,
@@ -17,24 +17,67 @@ export function NewLocalTask({
   const [text, setText] = useState("");
   const [progressMode, setMode] = useState(mode);
   const [network, setNetwork] = useState(false);
-  const [agent, setAgent] = useState("codex");
+  const [requestedAgent, setAgent] = useState("");
   const [models, setModels] = useState<Record<string, string>>({});
-  const [customModels, setCustomModels] = useState<Record<string, string>>({});
-  const [codexOptions, setCodexOptions] = useState<
-    Array<{ id: string; name: string }>
-  >([]);
-  const [loadingModels, setLoadingModels] = useState(false);
+  const [catalog, setCatalog] = useState<AgentCatalogEntry[]>([]);
+  const [loadingModels, setLoadingModels] = useState(true);
   const [modelError, setModelError] = useState("");
-  const modelChoice = models[agent] ?? "";
+  const actionRef = useRef(action);
+  actionRef.current = action;
+  const fetching = useRef(false);
+  const mounted = useRef(true);
+  async function refreshModels() {
+    if (fetching.current) return;
+    fetching.current = true;
+    setLoadingModels(true);
+    setCatalog([]);
+    setModelError("");
+    try {
+      const result = await actionRef.current("agents/models", {});
+      if (!result.agents) throw new Error("NO_CATALOG");
+      if (mounted.current) setCatalog(result.agents);
+    } catch {
+      if (mounted.current)
+        setModelError(
+          "ログイン状況とモデル一覧を取得できませんでした。再確認してください。",
+        );
+    } finally {
+      fetching.current = false;
+      if (mounted.current) setLoadingModels(false);
+    }
+  }
+  useEffect(() => {
+    mounted.current = true;
+    void refreshModels();
+    const refresh = () => {
+      void refreshModels();
+    };
+    const timer = setInterval(refresh, 60000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      mounted.current = false;
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  const available = catalog.filter((value) => value.authenticated);
+  const agent =
+    available.find((value) => value.agent === requestedAgent)?.agent ??
+    available[0]?.agent ??
+    "";
+  const options =
+    available.find((value) => value.agent === agent)?.models ?? [];
   const model =
-    modelChoice === "custom" ? (customModels[agent] ?? "") : modelChoice;
+    models[agent] === undefined
+      ? (options[0]?.id ?? "")
+      : (options.find((value) => value.id === models[agent])?.id ?? "");
   const [claudePermissionsAcknowledged, acknowledgeClaude] = useState(false);
   const [sandbox, setSandbox] = useState("workspace-write");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const request = useRef<{ fingerprint: string; key: string }>(undefined);
   async function submit() {
-    if (busy) return;
+    if (busy || loadingModels || !agent || !model) return;
     const input = {
       agent,
       model,
@@ -66,6 +109,10 @@ export function NewLocalTask({
               "同時実行枠が埋まっています。実行中のタスクが終わるか、停止してから開始してください。",
             COMMITTED_REPOSITORY_REQUIRED:
               "コミットがあるGitリポジトリを選択してください。",
+            AGENT_LOGIN_REQUIRED:
+              "ログインが切れています。接続とセットアップでログインして、一覧を再確認してください。",
+            MODEL_UNAVAILABLE:
+              "選択したモデルは現在利用できません。一覧を再確認してください。",
             INVALID_TEXT: "作業フォルダーと依頼内容を入力してください。",
             INVALID_MODEL:
               "モデルIDを確認してください。空白や改行は使えません。",
@@ -90,82 +137,66 @@ export function NewLocalTask({
           }}
         >
           <fieldset disabled={busy}>
-            <label>
-              エージェント
-              <select
-                aria-label="エージェント"
-                value={agent}
-                onChange={(event) => setAgent(event.currentTarget.value)}
-              >
-                <option value="codex">Codex</option>
-                <option value="claude">Claude Code</option>
-              </select>
-            </label>
-            <label>
-              使用するモデル
-              <select
-                aria-label="使用するモデル"
-                value={modelChoice}
-                onChange={(event) =>
-                  setModels({ ...models, [agent]: event.currentTarget.value })
-                }
-              >
-                <option value="">既定モデル（エージェント設定に従う）</option>
-                {(agent === "claude" ? claudeModels : codexOptions).map(
-                  (value) => (
-                    <option key={value.id} value={value.id}>
-                      {value.name}
-                    </option>
-                  ),
-                )}
-                <option value="custom">モデルIDを指定…</option>
-              </select>
-            </label>
-            {modelChoice === "custom" && (
-              <label>
-                モデルID
-                <input
-                  aria-label="モデルID"
-                  value={customModels[agent] ?? ""}
-                  required
-                  maxLength={128}
-                  onChange={(event) =>
-                    setCustomModels({
-                      ...customModels,
-                      [agent]: event.currentTarget.value,
-                    })
-                  }
-                />
-              </label>
+            <button
+              type="button"
+              className="soft-button"
+              disabled={loadingModels}
+              onClick={() => void refreshModels()}
+            >
+              {loadingModels
+                ? "ログインとモデルを確認中…"
+                : "ログイン状況・モデル一覧を更新"}
+            </button>
+            {modelError && <p role="alert">{modelError}</p>}
+            {!loadingModels && !available.length && (
+              <p role="status">
+                ログイン済みのエージェントがありません。「接続とセットアップ」でログインしてから再確認してください。
+              </p>
             )}
-            {agent === "codex" && (
+            {!!available.length && (
               <>
-                <button
-                  type="button"
-                  className="soft-button"
-                  disabled={loadingModels}
-                  onClick={() => {
-                    setLoadingModels(true);
-                    setModelError("");
-                    void action("agents/models", {})
-                      .then((result) => {
-                        if (!result.models?.length)
-                          throw new Error("NO_MODELS");
-                        setCodexOptions(result.models);
+                <label>
+                  エージェント
+                  <select
+                    aria-label="エージェント"
+                    value={agent}
+                    onChange={(event) => setAgent(event.currentTarget.value)}
+                  >
+                    {available.map((value) => (
+                      <option key={value.agent} value={value.agent}>
+                        {value.agent === "claude" ? "Claude Code" : "Codex"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  使用するモデル
+                  <select
+                    aria-label="使用するモデル"
+                    value={model}
+                    required
+                    onChange={(event) =>
+                      setModels({
+                        ...models,
+                        [agent]: event.currentTarget.value,
                       })
-                      .catch(() =>
-                        setModelError(
-                          "モデル一覧を取得できませんでした。Codexのログイン状態を確認して再取得するか、モデルIDを指定してください。",
-                        ),
-                      )
-                      .finally(() => setLoadingModels(false));
-                  }}
-                >
-                  {loadingModels
-                    ? "モデルを取得中…"
-                    : "Codexのモデル一覧を取得・更新"}
-                </button>
-                {modelError && <p role="alert">{modelError}</p>}
+                    }
+                  >
+                    <option value="" disabled>
+                      モデルを選択してください
+                    </option>
+                    {options.map((value) => (
+                      <option key={value.id} value={value.id}>
+                        {value.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {!options.length && (
+                  <p role="alert">
+                    モデル一覧を取得できませんでした。認証と通信状態を確認し、再取得してください。
+                  </p>
+                )}
               </>
             )}
             <p>
@@ -276,7 +307,11 @@ export function NewLocalTask({
               </label>
             )}
             {error && <p role="alert">{error}</p>}
-            <button className="primary-button" type="submit">
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={loadingModels || !agent || !model}
+            >
               {busy
                 ? "開始しています…"
                 : progressMode === "manual"

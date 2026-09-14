@@ -1,4 +1,4 @@
-// Real Client routes and executor, synthetic Codex responses; no account login,
+﻿// Real Client routes and executor, synthetic Codex responses; no account login,
 // remote Engine, Discord message, or model request is made by this smoke test.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -10,6 +10,19 @@ import { Client } from "../packages/client/dist/index.js";
 
 const directory = await mkdtemp(join(tmpdir(), "ido-workspace-ui-"));
 const client = new Client(join(directory, "client"));
+let catalogAgents = [
+  {
+    agent: "codex",
+    authenticated: true,
+    models: [{ id: "test-codex-model", name: "Test Codex" }],
+  },
+  {
+    agent: "claude",
+    authenticated: true,
+    models: [{ id: "opus", name: "Test Claude" }],
+  },
+];
+client.agentCatalog = async () => catalogAgents;
 client.credentials.backend = "file";
 let browser, running, release;
 const steers = [];
@@ -344,17 +357,6 @@ try {
     .getByRole("button", { name: "新しいローカルタスク", exact: true })
     .click();
   await page.getByLabel("タイトル", { exact: true }).fill("ローカルの実験");
-  await page.route("**/api/agents/models", (route) =>
-    route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({
-        models: [{ id: "test-codex-model", name: "Test Codex" }],
-      }),
-    }),
-  );
-  await page
-    .getByRole("button", { name: "Codexのモデル一覧を取得・更新" })
-    .click();
   await page
     .getByRole("option", { name: "Test Codex" })
     .waitFor({ state: "attached" });
@@ -406,8 +408,7 @@ try {
   await page.getByLabel("エージェント", { exact: true }).selectOption("codex");
   await page
     .getByLabel("使用するモデル", { exact: true })
-    .selectOption("custom");
-  await page.getByLabel("モデルID", { exact: true }).fill("test-codex-model");
+    .selectOption("test-codex-model");
   await page.getByLabel("エージェント", { exact: true }).selectOption("claude");
   assert.equal(
     await page.getByLabel("使用するモデル", { exact: true }).inputValue(),
@@ -457,6 +458,45 @@ try {
     ),
   );
   assert.deepEqual(errors, []);
+  await page.setViewportSize({ width: 1360, height: 980 });
+  await page
+    .getByRole("button", { name: "サイドバーの表示を切り替える", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "新しいローカルタスク", exact: true })
+    .click();
+  catalogAgents = [
+    {
+      agent: "claude",
+      authenticated: true,
+      models: [{ id: "opus", name: "Test Claude" }],
+    },
+  ];
+  await page
+    .getByRole("button", { name: "ログイン状況・モデル一覧を更新" })
+    .click();
+  await page
+    .getByRole("option", { name: "Test Claude", exact: true })
+    .waitFor({ state: "attached" });
+  assert.equal(
+    await page.getByRole("option", { name: "Codex", exact: true }).count(),
+    0,
+  );
+  catalogAgents = [];
+  await page
+    .getByRole("button", { name: "ログイン状況・モデル一覧を更新" })
+    .click();
+  await page.getByText(/ログイン済みのエージェントがありません/).waitFor();
+  assert.equal(
+    await page.getByLabel("エージェント", { exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page
+      .getByRole("button", { name: "ローカルで開始", exact: true })
+      .isDisabled(),
+    true,
+  );
   console.log(
     "Workspace smoke passed: Manual discussion -> execute, live instruction, command output, diff, search, stop and narrow layout.",
   );

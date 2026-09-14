@@ -1,7 +1,54 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { codexModels } from "../src/agents/model-catalog.js";
+import {
+  codexModels,
+  claudeModels,
+  agentCatalog,
+} from "../src/agents/model-catalog.js";
 import { selectedModel } from "../src/agents/model-selection.js";
+
+test("Claude catalog initializes only the control channel and closes without submitting a prompt", async () => {
+  let closed = false;
+  let prompt: AsyncIterable<unknown>;
+  const models = await claudeModels("unused", ".", ((input: any) => {
+    prompt = input.prompt;
+    assert.deepEqual(input.options.tools, []);
+    assert.deepEqual(input.options.settingSources, []);
+    return {
+      supportedModels: async () => [
+        { value: "account-model", displayName: "Account model" },
+      ],
+      close: () => {
+        closed = true;
+      },
+    };
+  }) as any);
+  assert.deepEqual(models, [{ id: "account-model", name: "Account model" }]);
+  assert.equal(closed, true);
+  for await (const _value of prompt!)
+    assert.fail("Catalog must never submit a turn");
+});
+
+test("catalog hides logged out agents and never uses a static fallback on failure", async () => {
+  const calls: string[] = [];
+  const catalog = await agentCatalog("unused", ".", {
+    authenticated: async (agent) => agent === "claude",
+    models: async (agent) => {
+      calls.push(agent);
+      throw new Error("PRIVATE_PROVIDER_DETAIL");
+    },
+  });
+  assert.deepEqual(calls, ["claude"]);
+  assert.deepEqual(catalog, [
+    { agent: "codex", authenticated: false, models: [] },
+    {
+      agent: "claude",
+      authenticated: true,
+      models: [],
+      error: "MODEL_LIST_UNAVAILABLE",
+    },
+  ]);
+});
 
 test("model selection validates identifiers and leaves defaults unset", () => {
   for (const value of [undefined, ""])

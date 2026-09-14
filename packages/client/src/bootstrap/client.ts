@@ -20,6 +20,7 @@ import { pair } from "../connection/pair.js";
 import { pollPair } from "../connection/poll.js";
 import { Executor } from "../execution/executor.js";
 import { route } from "../http/routes.js";
+import { agentCatalog } from "../agents/model-catalog.js";
 import { ClientPreview } from "../preview/relay.js";
 
 interface Settings {
@@ -32,6 +33,18 @@ interface Settings {
   projects: Project[];
 }
 export class Client {
+  agentCatalog = async () => {
+    const catalog = await agentCatalog(this.executor.home, this.directory);
+    this.loginStatus = catalog.find((value) => value.agent === "codex")
+      ?.authenticated
+      ? "authenticated"
+      : "login required";
+    this.claudeLoginStatus = catalog.find((value) => value.agent === "claude")
+      ?.authenticated
+      ? "authenticated"
+      : "not authenticated";
+    return catalog;
+  };
   settings: Settings = { mappings: [], slots: 1, projects: [] };
   credentials: Credentials;
   executor: Executor;
