@@ -7,7 +7,7 @@ import type {
   ProjectWorkspace,
   TaskReference,
 } from "@ido/common/contracts/api";
-import { NewLocalTask } from "./NewLocalTask.js";
+import { emptyDraftState, projectDrafts } from "./project-drafts.js";
 import { ProfileSettings } from "./ProfileSettings.js";
 import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
 import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
@@ -18,7 +18,7 @@ import { InviteDialog } from "./InviteDialog.js";
 import { Modal, Text, Button, Anchor } from "@mantine/core";
 import { TaskMenu } from "@ido/common-ui";
 import { AddProjectForm } from "./ProjectForm.js";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useReducer } from "react";
 import { ClientView } from "./ClientView.js";
 import { ClientRuns } from "./ClientRuns.js";
 import { TeamTaskDetail } from "./TeamTasks.js";
@@ -56,16 +56,33 @@ export function App() {
   const [sidebar, showSidebar] = useState(true);
   const [projectDialog, setProjectDialog] = useState<string | undefined>();
   const [profileDialog, showProfile] = useState(false);
-  const [localTaskProject, setLocalTaskProject] = useState<string>();
   const [settingsProject, setSettingsProject] = useState<string>();
-  const [taskDrafts, setTaskDrafts] = useState<
-    Record<string, { text: string; requestId: string; sentText?: string }>
-  >({});
+  const [draftState, dispatchDraft] = useReducer(
+    projectDrafts,
+    emptyDraftState,
+  );
+  const taskDrafts = draftState.drafts;
   const [projectView, setProjectView] = useState<{
     projectId: string;
     taskId?: string;
     draft?: boolean;
   }>();
+  const projectViewRef = useRef(projectView);
+  projectViewRef.current = projectView;
+  useEffect(() => {
+    dispatchDraft({
+      type: "leave",
+      active: projectView?.draft ? projectView.projectId : undefined,
+    });
+  }, [projectView]);
+  function openNewTask(projectId: string) {
+    if (!confirmNavigation()) return;
+    openingLink.current++;
+    setLinkError("");
+    dispatchDraft({ type: "open", projectId, requestId: crypto.randomUUID() });
+    setProjectView({ projectId, draft: true });
+    selectShared(undefined);
+  }
   const [invite, setInvite] = useState<{ engineUrl: string; token: string }>();
   const [dismissedInvite, dismissInvite] = useState("");
   useEffect(() => {
@@ -210,7 +227,6 @@ export function App() {
     currentPage !== "runs" ||
     projectDialog !== undefined ||
     profileDialog ||
-    localTaskProject ||
     settingsProject ||
     invite
       ? undefined
@@ -242,6 +258,7 @@ export function App() {
         onClickCapture={(event) => {
           if (
             !(event.target instanceof Element) ||
+            event.target.closest(".project-compose, .draft-task-row") ||
             !event.target.closest(
               ".task-link, .sidebar-nav button, [data-minutes-navigation]",
             )
@@ -333,7 +350,8 @@ export function App() {
                           project={project}
                           deviceId={state.settings.deviceId}
                           action={action}
-                          startLocal={() => setLocalTaskProject(id)}
+                          newTask={() => openNewTask(id)}
+                          canCreate={projectConnected}
                           mapping={() => setSettingsProject(id)}
                         />
                         <button
@@ -342,17 +360,7 @@ export function App() {
                           aria-label={`${project.name}に新しいタスクを追加`}
                           title="新しいタスク"
                           disabled={!projectConnected}
-                          onClick={() => {
-                            setTaskDrafts((drafts) => ({
-                              ...drafts,
-                              [id]: drafts[id] ?? {
-                                text: "",
-                                requestId: crypto.randomUUID(),
-                              },
-                            }));
-                            setProjectView({ projectId: id, draft: true });
-                            selectShared(undefined);
-                          }}
+                          onClick={() => openNewTask(id)}
                         >
                           <Icon name="plus" size={18} />
                         </button>
@@ -371,20 +379,24 @@ export function App() {
                     </button>
                   )}
                   {Object.hasOwn(taskDrafts, id) && (
-                    <button
-                      disabled={!projectConnected}
-                      className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
-                      onClick={() =>
-                        setProjectView({ projectId: id, draft: true })
-                      }
+                    <div
+                      className="task-row draft-task-row"
+                      data-draft-project={id}
                     >
-                      <span>新しいタスク</span>
-                      <TaskAvatars
-                        state={state}
-                        task={{ id: `draft-${id}` }}
-                        local
-                      />
-                    </button>
+                      <button
+                        disabled={!projectConnected}
+                        className={`task-link ${projectView?.projectId === id && projectView.draft ? "selected" : ""}`}
+                        onClick={() => openNewTask(id)}
+                      >
+                        <span className="task-title">新しいタスク</span>
+                        <TaskAvatars
+                          state={state}
+                          task={{ id: `draft-${id}` }}
+                          local
+                        />
+                        <span className="task-indicator-slot" />
+                      </button>
+                    </div>
                   )}
                   <SidebarTaskList
                     items={items}
@@ -569,38 +581,6 @@ export function App() {
           saved={() => setProjectDialog(undefined)}
         />
       </Modal>
-      <Modal
-        opened={!!localTaskProject}
-        onClose={() => setLocalTaskProject(undefined)}
-        title="このPCでタスクを開始"
-        size="lg"
-      >
-        {localTaskProject && (
-          <NewLocalTask
-            action={action}
-            mode={
-              state.settings.mappings.find(
-                (m) => m.projectId === localTaskProject,
-              )?.progressMode ?? "auto"
-            }
-            projects={state.settings.projects}
-            initialProjectId={localTaskProject}
-            initialDirectory={
-              state.settings.mappings.find(
-                (m) => m.projectId === localTaskProject,
-              )?.directory
-            }
-            started={(runId) => {
-              setLocalTaskProject(undefined);
-              setProjectView(undefined);
-              selectShared(undefined);
-              select(runId);
-              setPage("runs");
-              void refresh();
-            }}
-          />
-        )}
-      </Modal>
       <main className="workspace-main">
         <header className="workspace-header">
           <button
@@ -673,31 +653,37 @@ export function App() {
             projectId={projectView.projectId}
             draft={taskDrafts[projectView.projectId]}
             sendingText={(sentText) =>
-              setTaskDrafts((drafts) => ({
-                ...drafts,
-                [projectView.projectId]: {
-                  ...drafts[projectView.projectId],
-                  sentText,
-                },
-              }))
+              dispatchDraft({
+                type: "sending",
+                projectId: projectView.projectId,
+                requestId: taskDrafts[projectView.projectId].requestId,
+                text: sentText,
+              })
+            }
+            settled={(requestId) =>
+              dispatchDraft({
+                type: "settled",
+                projectId: projectView.projectId,
+                requestId,
+              })
             }
             connected={state.connected}
             onChange={(text) =>
-              setTaskDrafts((drafts) => ({
-                ...drafts,
-                [projectView.projectId]: {
-                  ...drafts[projectView.projectId],
-                  text,
-                },
-              }))
+              dispatchDraft({
+                type: "edit",
+                projectId: projectView.projectId,
+                text,
+              })
             }
             created={async (task) => {
-              setProjectView({ projectId: task.projectId, taskId: task.id });
-              setTaskDrafts((drafts) => {
-                const copy = { ...drafts };
-                delete copy[task.projectId];
-                return copy;
+              const view = projectViewRef.current;
+              dispatchDraft({
+                type: "complete",
+                projectId: task.projectId,
+                requestId: taskDrafts[task.projectId].requestId,
               });
+              if (view?.draft && view.projectId === task.projectId)
+                setProjectView({ projectId: task.projectId, taskId: task.id });
               await refresh();
             }}
           />

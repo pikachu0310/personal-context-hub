@@ -55,6 +55,7 @@ export function TeamTaskDetail({
         </div>
       </div>
       <SharedTaskInspector
+        state={state}
         key={task.id}
         summary={task}
         registrationLabel={

@@ -247,6 +247,7 @@ export function ProjectView({
       </div>
       {task && (
         <SharedTaskInspector
+          state={clientState}
           key={task.id}
           task={task}
           summary={clientState.teamTasks?.tasks.find(

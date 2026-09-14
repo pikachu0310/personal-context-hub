@@ -1,7 +1,8 @@
+import { TaskOwner } from "./TaskOwner.js";
 import { Stack, Text } from "@mantine/core";
 import { useState } from "react";
 import type { Task } from "@ido/common/contracts/protocol";
-import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
+import type { TeamTaskSnapshot, ClientState } from "@ido/common/contracts/api";
 import { EnvironmentRow, TaskInspector } from "./TaskInspector.js";
 import { stateLabel } from "./ActivityFeed.js";
 
@@ -10,7 +11,9 @@ export function SharedTaskInspector({
   summary,
   ownerName,
   registrationLabel,
+  state,
 }: {
+  state: ClientState;
   task?: Task;
   summary?: TeamTaskSnapshot["tasks"][number];
   ownerName?: string;
@@ -70,9 +73,11 @@ export function SharedTaskInspector({
           タスク
         </Text>
         <EnvironmentRow label="担当者">
-          {ownerName ||
-            summary?.ownerName ||
-            (current?.clientId ? "未取得" : "未割り当て")}
+          {current ? (
+            <TaskOwner state={state} task={current} ownerName={ownerName} />
+          ) : (
+            "未割り当て"
+          )}
         </EnvironmentRow>
         <EnvironmentRow label="状態">
           {current ? stateLabel(current.state) : "未取得"}

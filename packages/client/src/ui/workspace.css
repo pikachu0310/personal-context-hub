@@ -700,6 +700,8 @@ button {
 }
 .send-button,
 .stop-button {
+  margin-left: auto;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1845,6 +1847,103 @@ button {
 }
 @media (prefers-reduced-motion: reduce) {
   .with-inspector,
+  .with-inspector > .task-inspector,
+  .with-inspector > .task-inspector[data-closed] {
+    transition: none;
+  }
+}
+
+/* Shared action columns keep the project and task controls aligned. */
+.sidebar-caption {
+  padding-right: 0;
+}
+.sidebar-caption > .icon-button,
+.project-actions > .project-compose {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.task-search input:focus,
+.task-search input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.composer-dropdown > svg {
+  display: block;
+  flex: 0 0 auto;
+}
+.inspector-section .environment-row {
+  align-items: center;
+}
+.inspector-section .environment-row > div {
+  align-items: center;
+  margin-top: 0;
+}
+.inspector-section .environment-row .task-dot,
+.inspector-section .environment-row svg {
+  margin-top: 0;
+}
+.inspector-action {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  min-height: 24px;
+  font-size: 14px;
+  line-height: 1.6;
+  font-weight: 400;
+}
+.inspector-action > svg {
+  flex: 0 0 auto;
+  color: var(--workspace-muted);
+}
+.task-owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.task-owner .user-avatar {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  font-size: 10px;
+}
+@media (hover: none) {
+  .draft-task-row .task-link {
+    padding-right: 42px;
+  }
+  .draft-task-row .task-indicator-slot {
+    display: none;
+  }
+}
+@media (min-width: 1151px) {
+  .with-inspector:has(> .task-inspector) {
+    grid-template-columns: minmax(0, 1fr) var(--inspector-panel-width, 340px);
+  }
+  .with-inspector:has(> .task-inspector[data-closed]) {
+    grid-template-columns: minmax(0, 1fr) 0px;
+  }
+  .with-inspector > .task-inspector {
+    width: var(--inspector-panel-width, 340px);
+    transition:
+      width var(--inspector-duration) var(--inspector-easing),
+      transform var(--inspector-duration) var(--inspector-easing),
+      opacity var(--inspector-duration) ease,
+      visibility 0s;
+  }
+  .with-inspector > .task-inspector[data-closed] {
+    transition:
+      width var(--inspector-duration) var(--inspector-easing),
+      transform var(--inspector-duration) var(--inspector-easing),
+      opacity var(--inspector-duration) ease,
+      visibility 0s var(--inspector-duration);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
   .with-inspector > .task-inspector,
   .with-inspector > .task-inspector[data-closed] {
     transition: none;

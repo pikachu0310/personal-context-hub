@@ -1,3 +1,9 @@
+import {
+  verifyClientAlignment,
+  verifyProjectDrafts,
+  verifyChangesWidth,
+  verifyMobileChanges,
+} from "./client-layout-assertions.mjs";
 // Real Client routes and executor, synthetic Codex responses; no account login,
 // remote Engine, Discord message, or model request is made by this smoke test.
 import assert from "node:assert/strict";
@@ -577,6 +583,7 @@ try {
   await page.reload();
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
   await schemeIs("dark");
+  await verifyClientAlignment(page);
   await page.screenshot({ path: ".ido-build/screenshots/workspace-dark.png" });
   await page.getByRole("button", { name: "ユーザー設定を開く" }).click();
   await page.getByRole("dialog").getByText("ライト", { exact: true }).click();
@@ -802,6 +809,8 @@ try {
     path: ".ido-build/screenshots/workspace-changes.png",
   });
   await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  await verifyChangesWidth(page, inspector);
+  await verifyClientAlignment(page);
   await page.getByLabel("タスクを検索").fill("Mac");
   await page
     .locator(".task-link")
@@ -837,61 +846,8 @@ try {
   await page
     .getByRole("button", { name: "discord-voiceの設定", exact: true })
     .click();
-  await page
-    .getByRole("menuitem", { name: "このPCでタスクを開始", exact: true })
-    .click();
-  const localDialog = page.getByRole("dialog", {
-    name: "このPCでタスクを開始",
-    exact: true,
-  });
-  await localDialog.getByText("保存先・共有設定", { exact: true }).click();
-  assert.match(
-    await localDialog
-      .getByRole("button", { name: "Discordにも共有", exact: true })
-      .innerText(),
-    /Discordにも共有/,
-  );
-  await localDialog
-    .getByRole("button", { name: "Discordにも共有", exact: true })
-    .click();
-  await page.getByRole("menuitem", { name: "このPCのみ", exact: true }).click();
-  assert.equal(await localDialog.getByLabel("共有先プロジェクト").count(), 0);
-  await localDialog
-    .getByRole("button", { name: "Discordにも共有", exact: true })
-    .click();
-  await page
-    .getByRole("menuitem", { name: "Discordにも共有", exact: true })
-    .click();
-  await page.screenshot({
-    path: ".ido-build/screenshots/ido-new-composer.png",
-    animations: "disabled",
-  });
-  let localInput;
-  await page.route("**/api/local-tasks/start", async (route) => {
-    localInput = route.request().postDataJSON();
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ runId: "run" }),
-    });
-  });
-  await localDialog.getByLabel(/^タイトル/).fill("Local shared fixture");
-  await localDialog.getByText("保存先・共有設定", { exact: true }).click();
-  await localDialog
-    .getByLabel("依頼内容", { exact: true })
-    .fill("Test local sharing");
-  await page.screenshot({
-    path: ".ido-build/screenshots/ido-new-composer.png",
-    animations: "disabled",
-  });
-  await localDialog
-    .getByRole("button", { name: "ローカルで開始", exact: true })
-    .click();
-  await localDialog.waitFor({ state: "hidden" });
-  assert.equal(localInput.shareDiscord, true);
-  assert.equal(localInput.shareProjectId, "project");
-  assert.equal(localInput.accessMode, "full");
-  await page.unroute("**/api/local-tasks/start");
+  await page.keyboard.press("Escape");
+  await verifyProjectDrafts(page);
   // Retain access-mode labels and place sharing notices inside the right panel.
   value.origin = "local";
   value.accessMode = "full";
@@ -1024,6 +980,7 @@ try {
   await page
     .getByRole("dialog", { name: "タスクの詳細", exact: true })
     .waitFor();
+  await verifyMobileChanges(page);
   await page.getByRole("tab", { name: "ソース", exact: true }).click();
   await page.screenshot({
     path: ".ido-build/screenshots/workspace-mobile-panel.png",
