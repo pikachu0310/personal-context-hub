@@ -1,3 +1,4 @@
+import { TaskPriority } from "./TaskPriority.js";
 import { TaskOwner } from "./TaskOwner.js";
 import { Stack, Text } from "@mantine/core";
 import { useState } from "react";
@@ -90,6 +91,9 @@ export function SharedTaskInspector({
                   ?.name || "プロジェクトからの依頼"}
           </EnvironmentRow>
         )}
+        <EnvironmentRow label="優先度">
+          <TaskPriority priority={current?.priority} />
+        </EnvironmentRow>
         <EnvironmentRow label="実行">{current?.revision}</EnvironmentRow>
         {current && (
           <EnvironmentRow label="最終更新">

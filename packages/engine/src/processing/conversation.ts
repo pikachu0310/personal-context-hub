@@ -16,9 +16,9 @@ export class Conversation {
     readonly store: Repository,
     readonly models: Models,
   ) {
-    this.document = new MinutesDocument(store, (meeting, links) => {
+    this.document = new MinutesDocument(store, (meeting, links, results) => {
       if (!models.summarize) throw new Error("MINUTES_GENERATOR_UNAVAILABLE");
-      return models.summarize(meeting, links);
+      return models.summarize(meeting, links, results);
     });
     this.minutes = new MinutesUpdater(store, models);
     this.messages = new Messages(store);

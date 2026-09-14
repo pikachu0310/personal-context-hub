@@ -1,11 +1,13 @@
 import type { Task } from "@ido/common/contracts/protocol";
 import type {
   ExecutionPolicy,
+  TaskPriority,
   WorkReceipt,
   WorkSource,
 } from "@ido/common/contracts/work";
 
 export interface WorkRequest {
+  priority?: TaskPriority;
   // Set by the Engine input route, never inferred from the actor's ID.
   sourcePluginId?: string;
   trigger?: "requested" | "proactive";
@@ -49,7 +51,18 @@ export interface WorkResult {
   sourceStatements: WorkSource[];
   sourceSequences: number[];
 }
+export interface PriorityUpdate {
+  taskId: string;
+  projectId: string;
+  expectedRevision: number;
+  expectedControlVersion: number;
+  expectedVersion: number;
+  priority: TaskPriority;
+}
 export interface WorkPort {
+  // Release after the synchronous registration/reassessment phase.
+  deferDispatch?(): () => void;
+  prioritize?(updates: PriorityUpdate[]): string[];
   submit(request: WorkRequest): Task;
   control(control: WorkControl): WorkReceipt;
   list(meetingId?: string): Task[];

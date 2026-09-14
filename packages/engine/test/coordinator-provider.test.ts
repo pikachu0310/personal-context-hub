@@ -296,3 +296,102 @@ test("speech decisions require a matching-shaped candidate, revision and bounded
       /INVALID_COORDINATOR_RESPONSE/,
     );
 });
+
+test("scoring shares the extraction call and malformed ratings preserve topics and replies", async (t) => {
+  const { evaluation } = await import("./priority-fixture.js");
+  const { coordinatorSchema } =
+    await import("../src/adapters/openai/coordinator-prompt.js");
+  const wire = {
+    ...silent,
+    priorityEvaluations: [],
+    speech: null,
+    minutes: [],
+    reply: {
+      text: "独立した回答",
+      reason: "direct_answer",
+      sourceIds: ["one"],
+      delivery: "notify",
+    },
+    tasks: [
+      {
+        title: "調査",
+        kind: "research",
+        sourceIds: ["one"],
+        acceptanceCriteria: ["出典"],
+        evaluation: evaluation(["one"]),
+      },
+    ],
+  };
+  const f = fixture(async () => ({
+    status: "completed",
+    output_text: JSON.stringify(wire),
+  }));
+  t.after(() => f.factory.close());
+  const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+  const result = await runtime.run(observation());
+  assert.equal(f.calls.length, 1);
+  assert.equal(result.tasks[0].evaluation?.specificity, 4);
+  const bad = parseCoordinatorResponse(
+    JSON.stringify({
+      ...wire,
+      tasks: [
+        {
+          ...wire.tasks[0],
+          evaluation: { ...wire.tasks[0].evaluation, certainty: 9 },
+        },
+      ],
+    }),
+  );
+  assert.equal(bad.tasks[0].evaluation, null);
+  assert.equal(bad.reply?.text, "独立した回答");
+  assert.deepEqual(bad.minutes, []);
+  const inspect = (schema: any) => {
+    if (schema.type === "object")
+      assert.deepEqual(
+        [...schema.required].sort(),
+        Object.keys(schema.properties).sort(),
+      );
+    for (const value of Object.values(schema))
+      if (value && typeof value === "object") {
+        if (Array.isArray(value))
+          for (const item of value)
+            if (item && typeof item === "object") inspect(item);
+            else {
+            }
+        if (!Array.isArray(value)) inspect(value);
+      }
+  };
+  inspect(coordinatorSchema);
+});
+
+test("topic extraction instructions retain the fixed distinction between proposals, decisions and postponement", () => {
+  const prompt = coordinatorPrompt(observation(), { initial: true });
+  for (const text of [
+    "試作の依頼を製品仕様の本採用と同一視しません",
+    "延期を記録してもDB方式は未決のまま",
+    "仕事の判断に関係しない天気・食事・挨拶は、原発言ログだけに残します",
+    "訂正は以前の議題を更新して反映し、無関係な既存議題は変更しません",
+  ])
+    assert.ok(prompt.includes(text));
+});
+
+test("a new API task with missing scoring cannot enter the saved-legacy compatibility path", async (t) => {
+  const f = fixture(async () => ({
+    status: "completed",
+    output_text: JSON.stringify({
+      ...silent,
+      tasks: [
+        {
+          title: "未評価",
+          kind: "research",
+          sourceIds: ["one"],
+          acceptanceCriteria: [],
+        },
+      ],
+    }),
+  }));
+  t.after(() => f.factory.close());
+  const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+  const response = await runtime.run(observation());
+  assert.equal(response.tasks[0].evaluation, null);
+});

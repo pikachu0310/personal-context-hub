@@ -1,3 +1,4 @@
+import type { MinutesTaskResult } from "@ido/common/contracts/work";
 import type { Task } from "@ido/common/contracts/protocol";
 import type { Meeting } from "../domain/models.js";
 export interface Models {
@@ -9,7 +10,11 @@ export interface Models {
     tasks: Task[],
     question: string,
   ): Promise<string>;
-  summarize?(meeting: Meeting, taskLinks: string[]): Promise<string>;
+  summarize?(
+    meeting: Meeting,
+    taskLinks: string[],
+    taskResults?: MinutesTaskResult[],
+  ): Promise<string>;
   update(
     meeting: Meeting,
     messageId: string,

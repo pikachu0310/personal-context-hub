@@ -1,3 +1,4 @@
+import { evaluation } from "./priority-fixture.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,6 +69,7 @@ test("default Engine answers, restores local history and delegates work using on
                 title: "依頼された変更",
                 kind: "implementation",
                 sourceIds,
+                evaluation: evaluation(sourceIds),
                 acceptanceCriteria: [],
               },
             ],

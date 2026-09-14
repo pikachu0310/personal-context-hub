@@ -390,3 +390,151 @@ test("queued instructions retain separate authors and timestamps without changin
     saved.queuedInstructions,
   );
 });
+
+test("priority updates reorder queued work, suppress resolved work, preserve running work and reject stale versions", async (t) => {
+  const { store, work, request, device } = await fixture(t);
+  const { taskPriority } = await import("../src/processing/tasks/priority.js");
+  const { evaluation } = await import("./priority-fixture.js");
+  const make = (key: string, score: number) =>
+    work.submit({
+      ...request,
+      requestKey: key,
+      title: key,
+      trigger: "proactive",
+      priority: taskPriority(
+        evaluation([], {
+          immediacy: score,
+          importance: score,
+          certainty: score,
+          intent: "proposal",
+        }),
+        "research",
+        { batchId: key, version: 1, runRevision: 1 },
+      ),
+    });
+  const low = make("low", 2),
+    high = make("high", 4),
+    other = make("other", 3);
+  const worker = device("worker", 1);
+  worker.slots = 1;
+  worker.grants[0].slots = 1;
+  store.put("device", "worker", worker);
+  const scheduler = new Scheduler(store);
+  scheduler.schedule(new Set(["worker"]));
+  assert.equal(store.get<Task>("task", high.id)?.state, "assigned");
+  assert.equal(store.get<Task>("task", low.id)?.state, "queued");
+  const update = (
+    task: Task,
+    resolution: "resolved" | "unresolved",
+    version = task.priority!.version,
+  ) => ({
+    taskId: task.id,
+    projectId: task.projectId,
+    expectedRevision: task.revision,
+    expectedControlVersion: task.controlVersion ?? 0,
+    expectedVersion: version,
+    priority: taskPriority(evaluation([], { resolution }), task.kind, {
+      batchId: `update-${task.id}`,
+      version: version + 1,
+      runRevision: task.revision,
+    }),
+  });
+  assert.deepEqual(
+    work.prioritize!([
+      update(high, "resolved"),
+      update(other, "resolved"),
+      update(low, "unresolved"),
+    ]),
+    [high.id, other.id, low.id],
+  );
+  assert.equal(store.get<Task>("task", high.id)?.state, "assigned");
+  assert.deepEqual(work.prioritize!([update(low, "resolved")]), []);
+  const current = store.get<Task>("task", low.id)!;
+  assert.deepEqual(
+    work.prioritize!([
+      { ...update(current, "resolved"), expectedRevision: 99 },
+      { ...update(current, "resolved"), expectedControlVersion: 99 },
+    ]),
+    [],
+  );
+  store.put("task", high.id, {
+    ...store.get<Task>("task", high.id)!,
+    state: "completed",
+  });
+  scheduler.schedule(new Set(["worker"]));
+  assert.equal(store.get<Task>("task", low.id)?.state, "assigned");
+  assert.equal(store.get<Task>("task", other.id)?.state, "queued");
+  const resumed = createWorkPort({
+    repository: store,
+    tasks: new Tasks(store),
+  });
+  assert.equal(
+    resumed.list().find((task) => task.id === other.id)?.priority?.evaluation
+      .resolution,
+    "resolved",
+  );
+});
+
+test("equal priority is dispatched FIFO", async (t) => {
+  const { store, work, request, device } = await fixture(t);
+  const first = work.submit({ ...request, requestKey: "first" });
+  const second = work.submit({ ...request, requestKey: "second" });
+  store.put("task", first.id, { ...first, createdAt: 100 });
+  store.put("task", second.id, { ...second, createdAt: 200 });
+  const worker = device("worker", 1);
+  worker.slots = 1;
+  worker.grants[0].slots = 1;
+  store.put("device", "worker", worker);
+  new Scheduler(store).schedule(new Set(["worker"]));
+  assert.equal(store.get<Task>("task", first.id)?.state, "assigned");
+  assert.equal(store.get<Task>("task", second.id)?.state, "queued");
+});
+
+test("one response registers all priorities before dispatch and releases exactly once", async (t) => {
+  const { store, tasks, request, device } = await fixture(t);
+  const { taskPriority } = await import("../src/processing/tasks/priority.js");
+  const { evaluation } = await import("./priority-fixture.js");
+  const worker = device("worker", 1);
+  worker.slots = 1;
+  worker.grants[0].slots = 1;
+  store.put("device", "worker", worker);
+  let changes = 0;
+  const work = createWorkPort({
+    repository: store,
+    tasks,
+    onChange: () => {
+      changes++;
+      new Scheduler(store).schedule(new Set(["worker"]));
+    },
+  });
+  const release = work.deferDispatch!();
+  const low = work.submit({
+    ...request,
+    requestKey: "low",
+    priority: taskPriority(
+      evaluation([], {
+        intent: "proposal",
+        immediacy: 1,
+        certainty: 2,
+        importance: 2,
+      }),
+      "research",
+      { batchId: "batch", version: 1, runRevision: 1 },
+    ),
+  });
+  const high = work.submit({
+    ...request,
+    requestKey: "high",
+    priority: taskPriority(evaluation(), "research", {
+      batchId: "batch",
+      version: 1,
+      runRevision: 1,
+    }),
+  });
+  assert.equal(changes, 0);
+  release();
+  release();
+  assert.equal(changes, 1);
+  assert.equal(store.get<Task>("task", low.id)?.state, "queued");
+  assert.equal(store.get<Task>("task", high.id)?.state, "assigned");
+});

@@ -53,6 +53,7 @@ export function taskSnapshot(
         projectId: task.projectId,
         title: clean(task.title ?? task.text).slice(0, 300),
         state: task.state,
+        priority: task.priority,
         clientId: task.clientId,
         clientIdentityId: device ? deviceIdentity(store, device) : undefined,
         updatedAt: task.updatedAt,

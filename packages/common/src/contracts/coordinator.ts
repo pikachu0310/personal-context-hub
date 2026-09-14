@@ -73,6 +73,9 @@ export type CoordinatorEvent =
   | { id: string; type: "attention"; sourceIds: string[] };
 
 export interface CoordinatorTask {
+  priority?: import("./work.js").TaskPriority;
+  kind?: string;
+  meetingId?: string;
   id: string;
   text: string;
   state: string;
@@ -81,6 +84,7 @@ export interface CoordinatorTask {
 }
 
 export interface CoordinatorObservation {
+  deferredTasks?: Array<{ title: string; kind: string; reason: string }>;
   // Engine validation feedback for one bounded correction of task proposals.
   taskValidation?: {
     allowedSourceIds: string[];
@@ -113,14 +117,24 @@ export interface CoordinatorObservation {
 }
 
 export interface CoordinatorResponse {
+  // Undefined only for saved legacy responses. Invalid individual assessments
+  // are null, so they cannot discard unrelated replies or minutes.
+  priorityEvaluations?: Array<{
+    taskId: string;
+    revision: number;
+    expectedVersion: number;
+    evaluation: import("./work.js").TaskEvaluation | null;
+  }>;
   speech?: SpeechDecision | null;
   minutes?: import("./knowledge.js").MinutesUpdate[];
   reply: null | {
+    delivery?: "notify" | "record_only";
     text: string;
     reason: "direct_answer" | "verified_correction" | "new_finding";
     sourceIds: string[];
   };
   tasks: Array<{
+    evaluation?: import("./work.js").TaskEvaluation | null;
     title: string;
     kind: "research" | "implementation" | "test" | "benchmark";
     sourceIds: string[];

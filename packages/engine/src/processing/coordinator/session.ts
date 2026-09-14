@@ -1,9 +1,16 @@
+import {
+  evaluatePriority,
+  parseTaskEvaluation,
+  priorityPolicy,
+  taskPriority,
+} from "../tasks/priority.js";
 import { ProjectTeam } from "../projects/team.js";
 import { createHash } from "node:crypto";
 import type {
   ConversationMode,
   CoordinatorEvent,
   CoordinatorObservation,
+  CoordinatorResponse,
   CoordinatorSource,
   CoordinatorFactory,
   SpeechReview,
@@ -17,13 +24,15 @@ import type {
 import type { Meeting, Message } from "../../domain/models.js";
 import { Messages } from "../../messages/store.js";
 import type { Repository } from "../../ports/repository.js";
-import type { WorkPort, WorkResult } from "../../ports/work.js";
+import type { WorkPort, WorkResult, PriorityUpdate } from "../../ports/work.js";
 import { ConversationAudio } from "../../output/audio/session.js";
 import { parseBotInvocation } from "../immediate/invocation.mjs";
 import {
   deferredDelegation,
   explicitDelegation,
   proactiveOpportunity,
+  prohibitedDelegation,
+  quotedOnly,
 } from "./intent.mjs";
 import { taskControl } from "../routing/control.js";
 import type { Task } from "@ido/common/contracts/protocol";
@@ -98,7 +107,11 @@ class MeetingCoordinator {
                 {
                   id: result.id,
                   runRevision: result.runRevision,
-                  superseded: result.superseded,
+                  superseded:
+                    result.superseded ||
+                    (task.priority
+                      ? !task.priority.notify
+                      : task.trigger === "proactive"),
                 },
               ]
             : [];
@@ -136,6 +149,15 @@ class MeetingCoordinator {
               modeRevision,
               audioRevision,
               controlVersions,
+              priorityVersions: Object.fromEntries(
+                observation.activeTasks.map((task) => [
+                  task.id,
+                  {
+                    version: task.priority?.version ?? 0,
+                    revision: task.revision,
+                  },
+                ]),
+              ),
             };
           },
           steer: (observation: CoordinatorObservation) =>
@@ -376,6 +398,19 @@ class MeetingCoordinator {
 
   observation(events: CoordinatorEvent[]): CoordinatorObservation {
     this.requireRoutes(events);
+    const resultIds = new Set(
+      events.flatMap((event) =>
+        event.type === "task_result" ? [event.taskId] : [],
+      ),
+    );
+    const tasks = this.projectTasks();
+    const visibleTasks = [
+      ...tasks.filter((task) => resultIds.has(task.id)),
+      ...tasks
+        .slice()
+        .reverse()
+        .filter((task) => !resultIds.has(task.id)),
+    ].slice(0, 12);
     return {
       meetingId: this.meetingId,
       projectId: this.meeting()?.projectId,
@@ -394,21 +429,45 @@ class MeetingCoordinator {
             }
           : event,
       ),
-      activeTasks: this.projectTasks()
-        .slice(-12)
-        .map((task) => ({
-          id: task.id,
-          text: task.text.slice(0, 800),
-          state: task.state,
-          revision: task.revision,
-          result: task.result?.slice(0, 800),
-          controls: Object.values(task.controlReceipts ?? {})
-            .slice(-3)
-            .map(({ type, delivery, controlVersion }) => ({
-              type,
-              delivery,
-              controlVersion,
-            })),
+      activeTasks: visibleTasks.map((task) => ({
+        id: task.id,
+        text: task.text.slice(0, 800),
+        state: task.state,
+        revision: task.revision,
+        priority: task.priority,
+        kind: task.kind,
+        meetingId: task.meetingId,
+        result: task.result?.slice(0, 800),
+        controls: Object.values(task.controlReceipts ?? {})
+          .slice(-3)
+          .map(({ type, delivery, controlVersion }) => ({
+            type,
+            delivery,
+            controlVersion,
+          })),
+      })),
+      deferredTasks: this.store
+        .list<TaskApplication>("coordinator-trace")
+        .filter(
+          (entry) =>
+            entry.kind === "application" &&
+            entry.projectId === this.meeting()?.projectId,
+        )
+        .slice(-5)
+        .flatMap((entry) => entry.decisions ?? [])
+        .filter((item) =>
+          [
+            "unrated",
+            "below_threshold",
+            "unspecified",
+            "proactive_limit",
+          ].includes(item.reason),
+        )
+        .slice(-8)
+        .map((item) => ({
+          title: item.task.title,
+          kind: item.task.kind,
+          reason: item.reason,
         })),
       context: this.history(events),
       minutes: this.minutesContext(events),
@@ -723,7 +782,7 @@ class MeetingCoordinator {
       requestReply: addressed,
       direct: event.interaction === true,
       workAllowed: canWork && event.command !== "ask",
-      researchAllowed: canWork && (addressed || proactiveOpportunity(content)),
+      researchAllowed: canWork,
     };
     this.audio.observeMessage({ ...record, meetingId: event.meetingId });
     if (event.audio) await this.audio.handleMedia(event, context);
@@ -1000,161 +1059,341 @@ class MeetingCoordinator {
         // The Markdown writer owns the minutes processing status.
       }
     }
-    let automaticStarted = 0;
+    const evaluated =
+      response.priorityEvaluations !== undefined ||
+      response.tasks.some((task) => task.evaluation !== undefined);
+    let legacyAutomaticStarted = 0;
+    const freshPriorities = new Set<string>();
+    const updates: PriorityUpdate[] = [];
+    application.priorityDecisions ??= [];
     const receipts = new Set<string>();
-    for (const [index, task] of response.tasks.entries()) {
-      const decision = (reason: string, taskId?: string) => {
-        application.decisions = application.decisions.filter(
-          (item) => item.index !== index,
+    const pendingReceipts: Array<() => Promise<void>> = [];
+    const releaseDispatch = this.options.work.deferDispatch?.();
+    try {
+      for (const item of response.priorityEvaluations ?? []) {
+        const task = this.projectTasks().find(
+          (task) => task.id === item.taskId,
         );
-        application.decisions.push({ index, task, reason, taskId });
-        saveApplication();
-      };
-      const selected = select(task.sourceIds);
-      const rejection =
-        sourceRejection(task, allowed) ??
-        (selected.some((source) => !this.active(this.routes.get(source.id)))
-          ? "inactive_source"
-          : selected.some((source) => source.complete === false)
-            ? "incomplete_source"
-            : selected.some((source) => source.handled)
-              ? "already_handled"
-              : selected.some((source) => source.contextOnly)
-                ? "context_only_source"
-                : undefined);
-      if (rejection) {
-        decision(rejection);
-        continue;
-      }
-      const research = task.kind === "research";
-      const eligible = selected.filter(
-        (source) =>
-          this.permitted(source) &&
-          (research ? source.researchAllowed : source.workAllowed),
-      );
-      const requested = eligible.findLast(
-        (source) =>
-          (research && source.requestReply) ||
-          explicitDelegation(source.text, {
-            explicitlyAsked:
-              source.command === "task" || source.direct === true,
-          }),
-      );
-      const automatic = !requested;
-      const author =
-        requested ??
-        eligible.findLast((source) => proactiveOpportunity(source.text));
-      if (
-        !author ||
-        selected.some((source) => deferredDelegation(source.text))
-      ) {
-        decision(
-          !eligible.length
-            ? "permission_denied"
-            : selected.some((source) => deferredDelegation(source.text))
-              ? "deferred"
-              : "no_current_intent",
+        const evaluation = parseTaskEvaluation(item.evaluation);
+        const snapshot = value.priorityVersions?.[item.taskId];
+        const evidence = evaluation ? select(evaluation.sourceIds) : [];
+        const result = batch.events.find(
+          (event) =>
+            event.type === "task_result" &&
+            event.taskId === item.taskId &&
+            event.revision === item.revision,
         );
-        continue;
-      }
-      if (
-        !author.projectId ||
-        !selected.every((source) => source.projectId === author.projectId)
-      ) {
-        decision("project_mismatch");
-        continue;
-      }
-      const existingTasks = this.projectTasks();
-      const requestKey = `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`;
-      const previous = this.options.work.getReceipt({
-        requestKey,
-        authorId: author.authorId,
-        projectId: author.projectId,
-      });
-      const duplicate = previous
-        ? undefined
-        : duplicateWork(existingTasks, task.title, automatic);
-      if (duplicate) {
-        decision("duplicate_task", duplicate.id);
-        if (author.requestReply) {
-          await this.receipt(
-            author,
-            `duplicate:${batch.id}:${duplicate.id}`,
-            `同じ目的のタスク「${duplicate.title ?? duplicate.text.slice(0, 100)}」が既にあります。進捗と追加指示はそのタスクで確認できます。`,
-            [duplicate.id],
-          );
-          receipts.add(author.id);
+        const currentResult =
+          result && this.options.work.getResult(item.taskId);
+        const validResult =
+          result?.type === "task_result" &&
+          currentResult &&
+          !currentResult.superseded &&
+          result.id ===
+            `result:${currentResult.id}:${currentResult.runId}:${currentResult.runRevision}`;
+        let reason = "invalid_evaluation";
+        if (
+          task &&
+          evaluation &&
+          snapshot &&
+          snapshot.version === item.expectedVersion &&
+          snapshot.revision === item.revision &&
+          task.revision === item.revision &&
+          (task.controlVersion ?? 0) ===
+            (value.controlVersions[task.id] ?? 0) &&
+          ((evaluation.sourceIds.length > 0 &&
+            evidence.length === evaluation.sourceIds.length &&
+            evidence.every(
+              (source) =>
+                this.permitted(source) &&
+                !source.handled &&
+                !source.contextOnly &&
+                source.complete !== false &&
+                source.projectId === task.projectId &&
+                !quotedOnly(source.text),
+            )) ||
+            (evaluation.sourceIds.length === 0 && validResult))
+        ) {
+          // A saved response may be applied again after a crash. Do not increment twice.
+          if (task.priority?.batchId === batch.id) {
+            freshPriorities.add(task.id);
+            reason = "already_applied";
+          } else if ((task.priority?.version ?? 0) === item.expectedVersion) {
+            const priority = taskPriority(evaluation, task.kind, {
+              batchId: batch.id,
+              version: item.expectedVersion + 1,
+              runRevision: task.revision,
+            });
+            if (
+              evidence.some(
+                (source) =>
+                  prohibitedDelegation(source.text) ||
+                  taskControl(source.text)?.action === "stop",
+              )
+            ) {
+              priority.eligible = false;
+              priority.notify = false;
+              priority.reason = "deferred";
+            }
+            updates.push({
+              taskId: task.id,
+              projectId: task.projectId,
+              expectedRevision: task.revision,
+              expectedControlVersion: value.controlVersions[task.id] ?? 0,
+              expectedVersion: item.expectedVersion,
+              priority,
+            });
+            reason = "evaluated";
+          } else reason = "stale_evaluation";
         }
-        continue;
+        application.priorityDecisions.push({ taskId: item.taskId, reason });
       }
-      if (
-        !previous &&
-        automatic &&
-        (automaticStarted >= 1 ||
+      for (const id of this.options.work.prioritize?.(updates) ?? [])
+        freshPriorities.add(id);
+      saveApplication();
+      for (const [index, task] of [...response.tasks.entries()].sort((a, b) => {
+        const score = (task: CoordinatorResponse["tasks"][number]) => {
+          const evaluation = parseTaskEvaluation(task.evaluation);
+          return evaluation
+            ? evaluatePriority(evaluation, task.kind).score
+            : 80;
+        };
+        return score(b[1]) - score(a[1]) || a[0] - b[0];
+      })) {
+        const decision = (reason: string, taskId?: string) => {
+          application.decisions = application.decisions.filter(
+            (item) => item.index !== index,
+          );
+          application.decisions.push({ index, task, reason, taskId });
+          saveApplication();
+        };
+        const selected = select(task.sourceIds);
+        const rejection =
+          sourceRejection(task, allowed) ??
+          (selected.some((source) => !this.active(this.routes.get(source.id)))
+            ? "inactive_source"
+            : selected.some((source) => source.complete === false)
+              ? "incomplete_source"
+              : selected.some((source) => source.handled)
+                ? "already_handled"
+                : selected.some((source) => source.contextOnly)
+                  ? "context_only_source"
+                  : undefined);
+        if (rejection) {
+          decision(rejection);
+          continue;
+        }
+        const evaluation = parseTaskEvaluation(task.evaluation);
+        if (
+          evaluated &&
+          (!evaluation ||
+            !evaluation.sourceIds.length ||
+            evaluation.sourceIds.some((id) => !task.sourceIds.includes(id)))
+        ) {
+          decision("unrated");
+          continue;
+        }
+        if (evaluated && selected.every((source) => quotedOnly(source.text))) {
+          decision("quoted_source");
+          continue;
+        }
+        const priority = evaluation
+          ? taskPriority(evaluation, task.kind, {
+              batchId: batch.id,
+              version: 1,
+              runRevision: 1,
+            })
+          : undefined;
+        const research = task.kind === "research";
+        const eligible = selected.filter(
+          (source) =>
+            this.permitted(source) &&
+            (research ? source.researchAllowed : source.workAllowed),
+        );
+        const requested = evaluation
+          ? evaluation.intent === "requested" && evaluation.certainty === 4
+            ? eligible.findLast((source) =>
+                evaluation.sourceIds.includes(source.id),
+              )
+            : undefined
+          : eligible.findLast(
+              (source) =>
+                (research && source.requestReply) ||
+                explicitDelegation(source.text, {
+                  explicitlyAsked:
+                    source.command === "task" || source.direct === true,
+                }),
+            );
+        const automatic = !requested;
+        const author =
+          requested ??
+          (evaluation
+            ? eligible.findLast((source) =>
+                evaluation.sourceIds.includes(source.id),
+              )
+            : eligible.findLast((source) => proactiveOpportunity(source.text)));
+        const deferred = selected.some(
+          (source) =>
+            (evaluated ? prohibitedDelegation : deferredDelegation)(
+              source.text,
+            ) ||
+            (evaluated && taskControl(source.text)?.action === "stop"),
+        );
+        if (!author || deferred) {
+          decision(
+            !eligible.length
+              ? "permission_denied"
+              : deferred
+                ? "deferred"
+                : "no_current_intent",
+          );
+          continue;
+        }
+        if (
+          !author.projectId ||
+          !selected.every((source) => source.projectId === author.projectId)
+        ) {
+          decision("project_mismatch");
+          continue;
+        }
+        if (priority && !priority.eligible) {
+          decision(priority.reason);
+          continue;
+        }
+        const existingTasks = this.projectTasks();
+        const requestKey = `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`;
+        const previous = this.options.work.getReceipt({
+          requestKey,
+          authorId: author.authorId,
+          projectId: author.projectId,
+        });
+        const duplicate = previous
+          ? undefined
+          : duplicateWork(existingTasks, task.title, automatic);
+        if (duplicate) {
+          decision("duplicate_task", duplicate.id);
+          const snapshot = value.priorityVersions?.[duplicate.id];
+          if (priority && requested && snapshot) {
+            this.options.work.prioritize?.([
+              {
+                taskId: duplicate.id,
+                projectId: duplicate.projectId,
+                expectedRevision: snapshot.revision,
+                expectedControlVersion:
+                  value.controlVersions[duplicate.id] ?? 0,
+                expectedVersion: snapshot.version,
+                priority: {
+                  ...priority,
+                  version: snapshot.version + 1,
+                  runRevision: snapshot.revision,
+                },
+              },
+            ]);
+          }
+          if (priority ? priority.notify : author.requestReply) {
+            pendingReceipts.push(() =>
+              this.receipt(
+                author,
+                `duplicate:${batch.id}:${duplicate.id}`,
+                `同じ目的のタスク「${duplicate.title ?? duplicate.text.slice(0, 100)}」が既にあります。進捗と追加指示はそのタスクで確認できます。`,
+                [duplicate.id],
+              ),
+            );
+            receipts.add(author.id);
+          }
+          continue;
+        }
+        if (
+          !previous &&
+          automatic &&
           existingTasks.filter(
             (existing) =>
               existing.trigger === "proactive" &&
-              ["queued", "assigned", "running", "interrupted"].includes(
-                existing.state,
-              ),
-          ).length >= 2 ||
-          existingTasks.some(
-            (existing) =>
-              existing.trigger === "proactive" &&
-              Date.now() - existing.createdAt < 45_000,
-          ))
-      ) {
-        decision("proactive_limit");
-        continue;
+              existing.state === "queued" &&
+              !existing.clientId,
+          ).length >= priorityPolicy.maximumPendingProactive
+        ) {
+          decision("proactive_limit");
+          continue;
+        }
+        // Saved pre-evaluation responses keep their original bounded behavior.
+        if (
+          !evaluated &&
+          !previous &&
+          automatic &&
+          (legacyAutomaticStarted >= 1 ||
+            existingTasks.filter(
+              (task) =>
+                task.trigger === "proactive" &&
+                ["queued", "assigned", "running", "interrupted"].includes(
+                  task.state,
+                ),
+            ).length >= 2 ||
+            existingTasks.some(
+              (task) =>
+                task.trigger === "proactive" &&
+                Date.now() - task.createdAt < 45_000,
+            ))
+        ) {
+          decision("proactive_limit");
+          continue;
+        }
+        decision("submitting");
+        let created: Task;
+        try {
+          created =
+            previous ??
+            this.options.work.submit({
+              sourcePluginId: this.routes.get(author.id)?.context.pluginId,
+              requestKey,
+              meetingId: author.meetingId ?? this.meetingId,
+              projectId: author.projectId,
+              authorId: author.authorId,
+              title: task.title,
+              request: [
+                `担当範囲: ${task.title}`,
+                ...task.acceptanceCriteria.map(
+                  (criterion) => `完了条件: ${criterion}`,
+                ),
+                "利用者の元発言:",
+                ...selected.map((source) => source.text),
+              ].join("\n"),
+              kind: task.kind,
+              trigger: automatic ? "proactive" : "requested",
+              priority,
+              sourceStatements: selected.map((source) => ({
+                id: source.id,
+                meetingId: source.meetingId ?? this.meetingId,
+                authorId: source.authorId,
+                speakerName: source.authorName,
+                startedAt: source.at,
+                text: source.text,
+              })),
+              sourceIds: task.sourceIds,
+              executionPolicy: research
+                ? { sandboxMode: "read-only" }
+                : undefined,
+            });
+        } catch (error) {
+          decision("submission_failed");
+          throw error;
+        }
+        decision("accepted", created.id);
+        if (automatic) legacyAutomaticStarted++;
+        if (priority ? priority.notify : true)
+          pendingReceipts.push(() =>
+            this.receipt(
+              author,
+              `work:${batch.id}:${created.id}`,
+              `${automatic ? "会議の確認を進めるため、" : ""}タスク「${created.title ?? task.title}」を受け付けました。${created.state === "queued" ? "実行先の空き・許可を待っています。" : "進捗は同じタスクで確認できます。"}`,
+              [created.id],
+            ),
+          );
+        for (const source of selected) receipts.add(source.id);
       }
-      decision("submitting");
-      let created: Task;
-      try {
-        created =
-          previous ??
-          this.options.work.submit({
-            sourcePluginId: this.routes.get(author.id)?.context.pluginId,
-            requestKey,
-            meetingId: author.meetingId ?? this.meetingId,
-            projectId: author.projectId,
-            authorId: author.authorId,
-            title: task.title,
-            request: [
-              `担当範囲: ${task.title}`,
-              ...task.acceptanceCriteria.map(
-                (criterion) => `完了条件: ${criterion}`,
-              ),
-              "利用者の元発言:",
-              ...selected.map((source) => source.text),
-            ].join("\n"),
-            kind: task.kind,
-            trigger: automatic ? "proactive" : "requested",
-            sourceStatements: selected.map((source) => ({
-              id: source.id,
-              meetingId: source.meetingId ?? this.meetingId,
-              authorId: source.authorId,
-              speakerName: source.authorName,
-              startedAt: source.at,
-              text: source.text,
-            })),
-            sourceIds: task.sourceIds,
-            executionPolicy: research
-              ? { sandboxMode: "read-only" }
-              : undefined,
-          });
-      } catch (error) {
-        decision("submission_failed");
-        throw error;
-      }
-      decision("accepted", created.id);
-      if (automatic) automaticStarted++;
-      await this.receipt(
-        author,
-        `work:${batch.id}:${created.id}`,
-        `${automatic ? "会議の確認を進めるため、" : ""}タスク「${created.title ?? task.title}」を受け付けました。${created.state === "queued" ? "実行先の空き・許可を待っています。" : "進捗は同じタスクで確認できます。"}`,
-        [created.id],
-      );
-      for (const source of selected) receipts.add(source.id);
+    } finally {
+      releaseDispatch?.();
+      for (const receipt of pendingReceipts) await receipt();
     }
     for (const meetingId of new Set(
       sources.map((source) => source.meetingId ?? this.meetingId),
@@ -1230,9 +1469,10 @@ class MeetingCoordinator {
     let replyApplied = false;
     if (answer && value.modeRevision === this.modeRevision) {
       const selected = select(answer.sourceIds);
-      const results = batch.events.filter(
-        (event) => event.type === "task_result",
-      );
+      const results =
+        answer.reason === "direct_answer" && selected.length > 0
+          ? []
+          : batch.events.filter((event) => event.type === "task_result");
       const resultEvent =
         results.length > 0 &&
         results.every((event) => {
@@ -1246,19 +1486,45 @@ class MeetingCoordinator {
               `result:${current.id}:${current.runId}:${current.runRevision}`
           );
         });
+      const resultsNotifiable = results.every((event) => {
+        const task = this.projectTasks().find(
+          (task) => task.id === event.taskId,
+        );
+        if (!task) return false;
+        if (!evaluated && !task.priority) return task.trigger !== "proactive";
+        return freshPriorities.has(task.id) && task.priority?.notify === true;
+      });
       const allowed =
-        !response.tasks.length &&
+        answer.delivery !== "record_only" &&
+        resultsNotifiable &&
+        (!response.tasks.length ||
+          (evaluated &&
+            selected.length > 0 &&
+            response.tasks.every(
+              (task) =>
+                !task.sourceIds.some((id) => answer.sourceIds.includes(id)),
+            ))) &&
         !response.controls.length &&
         !selected.some((source) => source.handled || receipts.has(source.id)) &&
         (!results.length || resultEvent) &&
         (resultEvent ||
           (selected.length === answer.sourceIds.length &&
             selected.length > 0 &&
-            selected.every((source) =>
-              this.active(this.routes.get(source.id)),
+            selected.every(
+              (source) =>
+                this.active(this.routes.get(source.id)) &&
+                !source.contextOnly &&
+                source.complete !== false,
             ) &&
-            (selected.some((source) => source.requestReply) ||
+            (answer.delivery === "notify" ||
+              selected.some((source) => source.requestReply) ||
               answer.reason !== "direct_answer")));
+      application.notification = allowed
+        ? "notify"
+        : answer.delivery === "record_only"
+          ? "record_only"
+          : "not_relevant_or_not_requested";
+      saveApplication();
       const directLiveVoice =
         this.audio.mode === "live" &&
         answer.reason === "direct_answer" &&
@@ -1467,6 +1733,16 @@ export class CoordinatedConversation {
   ) {
     for (const task of tasks) {
       if (this.closed) return;
+      if (
+        ["completed", "failed", "cancelled", "interrupted"].includes(task.state)
+      )
+        void this.options.updateMinutes?.(task.meetingId).catch((error) =>
+          this.store.logError(error, {
+            source: "meeting",
+            operation: "minutes.task-result",
+            meetingId: task.meetingId,
+          }),
+        );
       if (
         !this.sessions.has(task.meetingId) &&
         !this.store.get("coordinator", task.meetingId) &&
