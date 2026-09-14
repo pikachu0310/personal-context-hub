@@ -1,3 +1,4 @@
+import { ComposerDropdown } from "./ComposerDropdown.js";
 import { ModelControls } from "./ModelControls.js";
 import { ComposerAction } from "./ComposerAction.js";
 import { Button, Group, Stack, Text } from "@mantine/core";
@@ -436,39 +437,44 @@ export function ClientRuns({
               }}
             />
             <div className="composer-toolbar">
-              <select
-                className="progress-mode"
-                aria-label="入力欄の進め方"
-                title="タスクの進め方。実行中の変更は次のターンから反映されます。実行権限は維持します。"
+              <ComposerDropdown
+                label="入力欄の進め方"
                 value={
                   current.pendingProgressMode ?? current.progressMode ?? "auto"
                 }
-                onChange={(e) =>
-                  invoke("progress-mode", {
-                    runId,
-                    mode: e.currentTarget.value,
-                  })
-                }
-              >
-                <option value="auto">Auto</option>
-                <option value="manual">Manual · 会話する</option>
-              </select>
-              <button type="button" className="policy-button" onClick={setup}>
-                <Icon name="shield" size={16} />
-                {!policy?.sandboxMode &&
-                policy?.networkAccessEnabled !== false &&
-                current.accessMode === "full"
-                  ? "フルアクセス・承認なし"
-                  : !policy?.sandboxMode &&
+                options={[
+                  { value: "auto", label: "Auto" },
+                  { value: "manual", label: "Manual" },
+                ]}
+                onChange={(mode) => invoke("progress-mode", { runId, mode })}
+              />
+              <ComposerDropdown
+                label="実行権限"
+                value="current"
+                options={[
+                  {
+                    value: "current",
+                    label:
+                      !policy?.sandboxMode &&
                       policy?.networkAccessEnabled !== false &&
-                      current.accessMode === "approval"
-                    ? "許可を求める"
-                    : current.agent === "claude"
-                      ? "Claude · 操作ごとに承認"
-                      : policy?.sandboxMode === "read-only"
-                        ? "読み取り専用"
-                        : "作業フォルダー内で実行"}
-              </button>
+                      current.accessMode === "full"
+                        ? "フルアクセス・承認なし"
+                        : !policy?.sandboxMode &&
+                            policy?.networkAccessEnabled !== false &&
+                            current.accessMode === "approval"
+                          ? "許可を求める"
+                          : current.agent === "claude"
+                            ? "Claude · 操作ごとに承認"
+                            : policy?.sandboxMode === "read-only"
+                              ? "読み取り専用"
+                              : "作業フォルダー内で実行",
+                  },
+                  { value: "settings", label: "接続・設定を開く" },
+                ]}
+                onChange={(value) => {
+                  if (value === "settings") setup();
+                }}
+              />
               <span className="composer-spacer" />
               <ModelControls
                 key={runId}

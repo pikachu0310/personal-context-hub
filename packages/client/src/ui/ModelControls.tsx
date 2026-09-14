@@ -1,3 +1,4 @@
+import { ComposerDropdown, ComposerModelPicker } from "./ComposerDropdown.js";
 import { useEffect, useState } from "react";
 import type { AgentCatalogEntry } from "@ido/common/contracts/api";
 import { api } from "./api.js";
@@ -73,75 +74,46 @@ export function ModelControls({
       setBusy(false);
     }
   }
-  const current = models.find((entry) => entry.id === selection.model);
   return (
-    <div className="composer-model-controls">
+    <div
+      className={
+        projectId
+          ? "composer-model-controls composer-project-controls"
+          : "composer-model-controls"
+      }
+    >
       {projectId && (
-        <select
-          aria-label="入力欄の進め方"
-          disabled={busy}
+        <ComposerDropdown
+          label="入力欄の進め方"
           value={selection.progressMode ?? "auto"}
-          onChange={async (e) => {
-            const mode = e.currentTarget.value as "auto" | "manual";
+          disabled={busy}
+          options={[
+            { value: "auto", label: "Auto" },
+            { value: "manual", label: "Manual" },
+          ]}
+          onChange={async (value) => {
+            const mode = value as "auto" | "manual";
             setBusy(true);
             try {
               await api("progress-mode", { projectId, mode });
               setSelection((previous) => ({ ...previous, progressMode: mode }));
               setError("");
             } catch {
-              setError(
-                "進め方を保存できませんでした。接続設定を確認してください。",
-              );
+              setError("進め方を保存できませんでした。");
             } finally {
               setBusy(false);
             }
           }}
-        >
-          <option value="auto">Auto</option>
-          <option value="manual">Manual · 会話する</option>
-        </select>
+        />
       )}
-
-      <label>
-        モデル
-        <select
-          aria-label="入力欄のモデル"
-          disabled={busy || !models.length}
-          value={selection.model ?? ""}
-          onChange={(e) => void save(e.currentTarget.value)}
-        >
-          {!current && (
-            <option value={selection.model ?? ""}>
-              {selection.model ?? "既定モデル"}
-            </option>
-          )}
-          {models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        推論
-        <select
-          aria-label="入力欄の推論エフォート"
-          disabled={busy || !current?.supportedEfforts?.length}
-          value={selection.reasoningEffort ?? ""}
-          onChange={(e) =>
-            void save(selection.model!, e.currentTarget.value || undefined)
-          }
-        >
-          <option value="">
-            既定{current?.defaultEffort ? " · " + current.defaultEffort : ""}
-          </option>
-          {current?.supportedEfforts?.map((effort) => (
-            <option key={effort}>{effort}</option>
-          ))}
-        </select>
-      </label>
-      {busy && <small>保存中…</small>}
-      {projectId && <small>このPCで新しく受け取るタスクに適用</small>}
+      {projectId && <span className="composer-spacer" />}
+      <ComposerModelPicker
+        models={models}
+        model={selection.model ?? ""}
+        effort={selection.reasoningEffort}
+        disabled={busy}
+        onChange={(model, effort) => void save(model, effort)}
+      />
       {error && <small role="alert">{error}</small>}
     </div>
   );

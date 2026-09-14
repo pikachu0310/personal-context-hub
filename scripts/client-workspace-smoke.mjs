@@ -289,8 +289,13 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(client.origin);
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
-  await page.getByLabel("入力欄のモデル").selectOption("test-codex-model");
-  await page.getByLabel("入力欄の推論エフォート").selectOption("high");
+  await page
+    .getByRole("button", { name: "入力欄のモデル", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Test Codex", exact: false }).click();
+  await page
+    .getByRole("slider", { name: "入力欄の推論エフォート" })
+    .press("End");
   await page.waitForFunction(
     () =>
       !globalThis.document.querySelector('[aria-label="入力欄のモデル"]')
@@ -304,12 +309,24 @@ try {
     await page.getByText("次の実行ターンから適用", { exact: true }).count(),
     0,
   );
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-model-effort.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
   const originalAccess = configured.accessMode;
   for (const mode of ["auto", "manual"]) {
     const response = page.waitForResponse((value) =>
       value.url().endsWith("/api/progress-mode"),
     );
-    await page.getByLabel("入力欄の進め方").selectOption(mode);
+    await page.getByRole("button", { name: "入力欄の進め方" }).click();
+    await page
+      .getByRole("menuitem", {
+        name: mode === "auto" ? "Auto" : "Manual",
+        exact: false,
+      })
+      .click();
     assert.equal((await response).status(), 200);
     assert.equal(
       configured.pendingProgressMode ?? configured.progressMode,
@@ -751,23 +768,28 @@ try {
     name: "このPCでタスクを開始",
     exact: true,
   });
-  assert.equal(
+  await localDialog.getByText("保存先・共有設定", { exact: true }).click();
+  assert.match(
     await localDialog
-      .getByRole("checkbox", { name: "Discordにも共有", exact: true })
-      .isChecked(),
-    true,
-  );
-  assert.equal(
-    await localDialog.getByLabel("共有先プロジェクト").inputValue(),
-    "project",
+      .getByRole("button", { name: "Discordにも共有", exact: true })
+      .innerText(),
+    /Discordにも共有/,
   );
   await localDialog
-    .getByRole("checkbox", { name: "Discordにも共有", exact: true })
-    .uncheck();
+    .getByRole("button", { name: "Discordにも共有", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: "このPCのみ", exact: true }).click();
   assert.equal(await localDialog.getByLabel("共有先プロジェクト").count(), 0);
   await localDialog
-    .getByRole("checkbox", { name: "Discordにも共有", exact: true })
-    .check();
+    .getByRole("button", { name: "Discordにも共有", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Discordにも共有", exact: true })
+    .click();
+  await page.screenshot({
+    path: ".ido-build/screenshots/ido-new-composer.png",
+    animations: "disabled",
+  });
   let localInput;
   await page.route("**/api/local-tasks/start", async (route) => {
     localInput = route.request().postDataJSON();
@@ -778,9 +800,14 @@ try {
     });
   });
   await localDialog.getByLabel(/^タイトル/).fill("Local shared fixture");
+  await localDialog.getByText("保存先・共有設定", { exact: true }).click();
   await localDialog
     .getByLabel("依頼内容", { exact: true })
     .fill("Test local sharing");
+  await page.screenshot({
+    path: ".ido-build/screenshots/ido-new-composer.png",
+    animations: "disabled",
+  });
   await localDialog
     .getByRole("button", { name: "ローカルで開始", exact: true })
     .click();
@@ -801,7 +828,8 @@ try {
   };
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
-    .getByRole("button", { name: "フルアクセス・承認なし", exact: true })
+    .getByRole("button", { name: "実行権限", exact: true })
+    .filter({ hasText: "フルアクセス・承認なし" })
     .waitFor();
   await inspector.getByText("Discord共有", { exact: true }).waitFor();
   await inspector
@@ -814,7 +842,8 @@ try {
   value.discordShare.status = "synced";
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
-    .getByRole("button", { name: "許可を求める", exact: true })
+    .getByRole("button", { name: "実行権限", exact: true })
+    .filter({ hasText: "許可を求める" })
     .waitFor();
   await inspector
     .getByText(
