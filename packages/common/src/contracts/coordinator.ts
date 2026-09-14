@@ -63,6 +63,15 @@ export interface CoordinatorTask {
 }
 
 export interface CoordinatorObservation {
+  // Engine validation feedback for one bounded correction of task proposals.
+  taskValidation?: {
+    allowedSourceIds: string[];
+    rejectedTasks: Array<{
+      index: number;
+      task: CoordinatorResponse["tasks"][number];
+      reason: string;
+    }>;
+  };
   minutes?: Array<{
     meetingId: string;
     name: string;

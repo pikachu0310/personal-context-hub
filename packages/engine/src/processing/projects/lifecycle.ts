@@ -199,6 +199,7 @@ export class WorkspaceLifecycle {
               "utterance-route",
               "conversation-output",
               "coordinator",
+              "coordinator-trace",
               "coordinator-source-route",
               "speech-assembly",
               "speech-sources",
@@ -327,6 +328,17 @@ export class WorkspaceLifecycle {
       .filter((m) => m.projectId === projectId);
     const meetingIds = new Set(meetings.map((m) => m.id));
     for (const entry of this.store.entries()) {
+      // Model inputs/outputs contain free-form references to prior task content.
+      // Purge the project's traces when a task is completely deleted rather
+      // than trying to redact arbitrary text by matching identifiers.
+      if (
+        entry.kind === "coordinator-trace" &&
+        (entry.value?.projectId === projectId ||
+          meetingIds.has(entry.value?.meetingId))
+      ) {
+        this.store.remove(entry.kind, entry.id);
+        continue;
+      }
       if (
         entry.kind !== "conversation-output" ||
         !meetingIds.has(entry.value?.meetingId) ||

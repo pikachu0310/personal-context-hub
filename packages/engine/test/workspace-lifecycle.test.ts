@@ -249,7 +249,12 @@ test("delete checks creator/owner/admin and confirmation, revalidates after asyn
     runId: task.runId,
     task,
   });
+  store.put("coordinator-trace", "task-trace", {
+    projectId: f.project.id,
+    observation: task.text,
+  });
   await lifecycle.deleteTask(actor("a"), task.id, version(task));
+  assert.equal(store.get("coordinator-trace", "task-trace"), undefined);
   assert.equal(store.get("task", task.id), undefined);
   assert.throws(() => create(), /TASK_DELETED/);
   assert.equal(
@@ -401,6 +406,12 @@ test("project deletion cascades only owned resources and preserves unrelated pro
     parts: { 0: { text: "project-private audio" } },
   });
   const other = f.projects.create("Other", "other");
+  store.put("coordinator-trace", "owned-trace", {
+    projectId: project.id,
+    meetingId: f.meetingId,
+    observation: "project-private trace",
+  });
+  store.put("coordinator-trace", "other-trace", { projectId: other.id });
   await assert.rejects(
     lifecycle.deleteProject(actor("a"), project.id, {
       name: project.name,
@@ -442,6 +453,8 @@ test("project deletion cascades only owned resources and preserves unrelated pro
   assert.equal(store.get("project", project.id), undefined);
   assert.ok(store.get("project", other.id));
   assert.ok(!JSON.stringify(store.entries()).includes("project-private audio"));
+  assert.equal(store.get("coordinator-trace", "owned-trace"), undefined);
+  assert.ok(store.get("coordinator-trace", "other-trace"));
   assert.throws(
     () => f.projects.create(project.name, "create-project"),
     /PROJECT_DELETED/,
