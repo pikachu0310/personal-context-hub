@@ -263,6 +263,12 @@ export async function route(
       mode: "engine",
       user: auth.user,
       csrf: auth.csrf,
+      pendingClients: admin
+        ? this.store
+            .list<Pair>("pair")
+            .filter((pair) => !pair.userId && pair.expires > Date.now())
+            .map(({ id, name, expires }) => ({ id, name, expires }))
+        : [],
       clients: this.store.list<Device>("device").map(({ publicKey, ...d }) => ({
         ...d,
         connected: this.ready.has(d.id),

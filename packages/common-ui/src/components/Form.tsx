@@ -6,10 +6,9 @@ import {
   Stack,
   Textarea,
   TextInput,
-  Group,
-  Badge,
 } from "@mantine/core";
 import React, { useState } from "react";
+import { SecretInput } from "./SecretInput.js";
 export type Field = {
   key: string;
   label: string;
@@ -86,54 +85,20 @@ export function Form({
               autoComplete={f.password}
             />
           ) : f.secret ? (
-            <Stack key={f.key} gap="xs">
-              <TextInput
-                label={f.label}
-                type="text"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                data-lpignore="true"
-                data-1p-ignore="true"
-                value={
-                  f.configured && !editing[f.key]
-                    ? "********"
-                    : (values[f.key] ?? "")
-                }
-                readOnly={f.configured && !editing[f.key]}
-                placeholder="新しい値を入力"
-                description={
-                  f.configured
-                    ? "保存済みの値を使用します。変更する場合だけ入力してください。"
-                    : "未設定です。保存すると入力欄から値を消去します。"
-                }
-                onChange={(e) =>
-                  setValues({ ...values, [f.key]: e.currentTarget.value })
-                }
-                required={!f.optional && (!f.configured || editing[f.key])}
-              />
-              <Group gap="xs">
-                <Badge color={f.configured ? "teal" : "gray"} variant="light">
-                  {f.configured ? "設定済み" : "未設定"}
-                </Badge>
-                {f.configured && (
-                  <Button
-                    type="button"
-                    variant="subtle"
-                    size="xs"
-                    disabled={busy}
-                    aria-label={`${f.label}を${editing[f.key] ? "変更せずに戻る" : "変更"}`}
-                    onClick={() => {
-                      setValues((v) => ({ ...v, [f.key]: "" }));
-                      setEditing((v) => ({ ...v, [f.key]: !v[f.key] }));
-                    }}
-                  >
-                    {editing[f.key] ? "変更せずに戻る" : "変更"}
-                  </Button>
-                )}
-              </Group>
-            </Stack>
+            <SecretInput
+              key={f.key}
+              label={f.label}
+              configured={f.configured}
+              editing={!!editing[f.key]}
+              value={values[f.key] ?? ""}
+              busy={busy}
+              required={!f.optional}
+              onChange={(value) => setValues({ ...values, [f.key]: value })}
+              onToggleEdit={() => {
+                setValues((v) => ({ ...v, [f.key]: "" }));
+                setEditing((v) => ({ ...v, [f.key]: !v[f.key] }));
+              }}
+            />
           ) : f.multiline ? (
             <Textarea
               key={f.key}

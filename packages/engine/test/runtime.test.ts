@@ -72,6 +72,38 @@ async function post(
     },
   );
 }
+test("pending connections expose only unexpired, unapproved summaries to administrators", async (t) => {
+  const e = await fixture(t);
+  for (const [id, extra] of [
+    ["pending", {}],
+    ["expired", { expires: Date.now() - 1000 }],
+    ["approved", { userId: "admin" }],
+  ] as const) {
+    e.store.put("pair", id, {
+      id,
+      name: `${id} device`,
+      expires: Date.now() + 60000,
+      proof: "private-pair-proof",
+      publicKey: "private-device-key",
+      ...extra,
+    });
+  }
+  for (const role of ["admin", "member", "viewer"] as const) {
+    if (role !== "admin") e.store.createUser(role, "test-password-long", role);
+    const session = await login(e, role);
+    const response = await fetch(e.origin + "/api/admin/state", {
+      headers: { cookie: session.cookie },
+    });
+    const state = (await response.json()) as any;
+    assert.deepEqual(
+      state.pendingClients.map((pair: any) => pair.id),
+      role === "admin" ? ["pending"] : [],
+    );
+    assert.ok(!JSON.stringify(state).includes("private-pair-proof"));
+    assert.ok(!JSON.stringify(state).includes("private-device-key"));
+  }
+});
+
 test("only administrators can read Engine diagnostics", async (t) => {
   const e = await fixture(t);
   const entry = e.store.logError(new Error("OPENAI_KEY_REQUIRED"), {
