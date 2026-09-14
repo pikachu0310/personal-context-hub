@@ -28,6 +28,7 @@ export function NewLocalTask({
   const [progressMode, setMode] = useState(mode);
   const [accessMode, setAccessMode] = useState("approval");
   const [requestedAgent, setAgent] = useState("");
+  const [effort, setEffort] = useState("");
   const [models, setModels] = useState<Record<string, string>>({});
   const [catalog, setCatalog] = useState<AgentCatalogEntry[]>([]);
   const [loadingModels, setLoadingModels] = useState(true);
@@ -90,6 +91,11 @@ export function NewLocalTask({
     const input = {
       agent,
       model,
+      reasoningEffort: options
+        .find((entry) => entry.id === model)
+        ?.supportedEfforts?.includes(effort)
+        ? effort
+        : undefined,
       shareDiscord,
       shareProjectId,
 
@@ -298,6 +304,50 @@ export function NewLocalTask({
                 rows={6}
                 placeholder="試したいことや確認したいことを入力"
               />
+            </label>
+            <label>
+              入力欄のモデル
+              <select
+                aria-label="入力欄のモデル"
+                value={model}
+                onChange={(e) => {
+                  setModels({ ...models, [agent]: e.currentTarget.value });
+                  setEffort("");
+                }}
+                disabled={!options.length}
+              >
+                {!model && <option value="">モデルを選択してください</option>}
+                {options.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              推論エフォート
+              <select
+                aria-label="推論エフォート"
+                value={
+                  options
+                    .find((entry) => entry.id === model)
+                    ?.supportedEfforts?.includes(effort)
+                    ? effort
+                    : ""
+                }
+                onChange={(e) => setEffort(e.currentTarget.value)}
+                disabled={
+                  !options.find((entry) => entry.id === model)?.supportedEfforts
+                    ?.length
+                }
+              >
+                <option value="">既定</option>
+                {options
+                  .find((entry) => entry.id === model)
+                  ?.supportedEfforts?.map((value) => (
+                    <option key={value}>{value}</option>
+                  ))}
+              </select>
             </label>
             <label>
               進め方

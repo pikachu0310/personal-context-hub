@@ -1,3 +1,4 @@
+import { ModelControls } from "./ModelControls.js";
 import { ComposerAction } from "./ComposerAction.js";
 import { Button, Group, Stack, Text } from "@mantine/core";
 import { EnvironmentRow, TaskInspector } from "./TaskInspector.js";
@@ -437,14 +438,23 @@ export function ClientRuns({
               }}
             />
             <div className="composer-toolbar">
-              <span
+              <select
                 className="progress-mode"
-                title="タスクの進め方。実行権限とは別です。"
+                aria-label="入力欄の進め方"
+                title="タスクの進め方。実行中の変更は次のターンから反映されます。実行権限は維持します。"
+                value={
+                  current.pendingProgressMode ?? current.progressMode ?? "auto"
+                }
+                onChange={(e) =>
+                  invoke("progress-mode", {
+                    runId,
+                    mode: e.currentTarget.value,
+                  })
+                }
               >
-                {current.progressMode === "manual"
-                  ? "Manual · 会話する"
-                  : "Auto"}
-              </span>
+                <option value="auto">Auto</option>
+                <option value="manual">Manual · 会話する</option>
+              </select>
               <button type="button" className="policy-button" onClick={setup}>
                 <Icon name="shield" size={16} />
                 {!policy?.sandboxMode &&
@@ -462,9 +472,11 @@ export function ClientRuns({
                         : "作業フォルダー内で実行"}
               </button>
               <span className="composer-spacer" />
-              <span className="model-label">
-                {agentName} · {current.model ?? "既定モデル"}
-              </span>
+              <ModelControls
+                key={runId}
+                runId={runId}
+                agent={current.agent ?? "codex"}
+              />
               <ComposerAction
                 running={running}
                 text={draft}

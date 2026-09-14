@@ -1,3 +1,4 @@
+import { ModelControls } from "./ModelControls.js";
 import { useState } from "react";
 import type { Task } from "@ido/common/contracts/protocol";
 import { api } from "./api.js";
@@ -87,6 +88,7 @@ export function ProjectTaskDraft({
           />
           <div className="composer-toolbar">
             <span className="composer-spacer" />
+            <ModelControls key={projectId} projectId={projectId} />
             <ComposerAction
               running={false}
               text={text}

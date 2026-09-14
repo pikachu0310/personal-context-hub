@@ -14,7 +14,14 @@ const catalogAgents = [
   {
     agent: "codex",
     authenticated: true,
-    models: [{ id: "test-codex-model", name: "Test Codex" }],
+    models: [
+      {
+        id: "test-codex-model",
+        name: "Test Codex",
+        supportedEfforts: ["low", "high"],
+        defaultEffort: "low",
+      },
+    ],
   },
   {
     agent: "claude",
@@ -282,6 +289,49 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(client.origin);
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await page.getByLabel("入力欄のモデル").selectOption("test-codex-model");
+  await page.getByLabel("入力欄の推論エフォート").selectOption("high");
+  await page.waitForFunction(
+    () =>
+      !globalThis.document.querySelector('[aria-label="入力欄のモデル"]')
+        .disabled,
+  );
+  const configured = Object.values(client.executor.runs).find(
+    (run) => run.reasoningEffort === "high",
+  );
+  assert.equal(configured.model, "test-codex-model");
+  assert.equal(
+    await page.getByText("次の実行ターンから適用", { exact: true }).count(),
+    0,
+  );
+  const originalAccess = configured.accessMode;
+  for (const mode of ["auto", "manual"]) {
+    const response = page.waitForResponse((value) =>
+      value.url().endsWith("/api/progress-mode"),
+    );
+    await page.getByLabel("入力欄の進め方").selectOption(mode);
+    assert.equal((await response).status(), 200);
+    assert.equal(
+      configured.pendingProgressMode ?? configured.progressMode,
+      mode,
+    );
+  }
+  assert.equal(configured.accessMode, originalAccess);
+  const projectToggle = page.locator(
+    '[data-project-id="project"] > .project-collapse > .collapse-heading > button',
+  );
+  await projectToggle.click();
+  assert.equal(await projectToggle.getAttribute("aria-expanded"), "false");
+  await page.reload();
+  assert.equal(await projectToggle.getAttribute("aria-expanded"), "false");
+  await projectToggle.click();
+  const groupToggle = page
+    .getByRole("region", { name: "このPCで実装中", exact: true })
+    .first()
+    .locator(".collapse-toggle");
+  await groupToggle.click();
+  assert.equal(await groupToggle.getAttribute("aria-expanded"), "false");
+  await groupToggle.click();
   assert.equal(
     await page.locator("html").getAttribute("data-mantine-color-scheme"),
     "light",
@@ -469,7 +519,7 @@ try {
   const voiceGroup = page.locator('.project-group[data-project-id="project"]');
   const toolsGroup = page.locator('.project-group[data-project-id="tools"]');
   for (const project of [voiceGroup, toolsGroup]) {
-    assert.equal(await project.locator(".project-tasks").count(), 1);
+    assert.equal(await project.locator(".project-tasks").count(), 6);
     assert.equal(
       await project.locator(".sidebar-caption, .shared-task-owner").count(),
       0,
@@ -494,7 +544,8 @@ try {
   );
   const addTask = await voiceGroup.locator(".project-compose").boundingBox();
   const projectTitle = await voiceGroup
-    .locator(".project-name > span")
+    .locator(".project-collapse > .collapse-heading > .collapse-toggle > span")
+    .last()
     .boundingBox();
   assert.ok(
     Math.abs(
@@ -537,7 +588,7 @@ try {
     await page
       .locator('.project-group[data-project-id="project"]')
       .getByRole("region", { name: "ほかのPC", exact: true })
-      .getByRole("button")
+      .locator(".task-link")
       .count(),
     0,
   );
@@ -635,7 +686,9 @@ try {
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
   await page
-    .locator('.project-group[data-project-id="project"] .project-name')
+    .locator(
+      '.project-group[data-project-id="project"] .project-collapse > .collapse-heading',
+    )
     .hover();
   await page
     .getByRole("button", { name: "discord-voiceの設定", exact: true })

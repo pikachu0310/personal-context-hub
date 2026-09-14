@@ -9,6 +9,7 @@ export interface AgentRuntimeOptions {
 export interface AgentThreadOptions {
   approvalPolicy?: string;
   model?: string;
+  reasoningEffort?: string;
   workingDirectory: string;
   sandboxMode: string;
   networkAccessEnabled: boolean;
