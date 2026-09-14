@@ -1,23 +1,16 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { PassThrough } from "node:stream";
-import test, { type TestContext } from "node:test";
-import type {
-  CoordinatorHandle,
-  CoordinatorObservation,
-} from "@ido/common/contracts/coordinator";
-import { AppServerCodex } from "@ido/common/runtime/codex/app-server";
-import {
-  createCodexCoordinatorFactory,
-  type CoordinatorDriver,
-} from "../src/adapters/codex/coordinator.js";
+import test from "node:test";
+import OpenAI from "openai";
+import { createOpenAICoordinatorFactory } from "../src/adapters/openai/coordinator.js";
 import {
   coordinatorPrompt,
   parseCoordinatorResponse,
-} from "../src/adapters/codex/prompt.js";
+} from "../src/adapters/openai/coordinator-prompt.js";
+import { describeError } from "../src/domain/diagnostics.js";
+import type {
+  CoordinatorObservation,
+  CoordinatorHandle,
+} from "@ido/common/contracts/coordinator";
 
 const silent = { reply: null, tasks: [], controls: [] };
 const observation = (
@@ -27,295 +20,200 @@ const observation = (
   meetingId,
   mode: "text-speech",
   activeTasks: [],
-  context: "initial context",
+  context: "previous question and answer",
   events: [
     {
+      id,
       type: "message",
-      id: `event-${id}`,
       source: {
         id,
         authorId: "actor",
-        text: `input ${id}`,
+        text: "質問",
         at: 1,
         origin: "text",
-        command: "ask",
-        researchAllowed: true,
-        workAllowed: false,
+        requestReply: true,
       },
     },
   ],
 });
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-async function until(check: () => boolean) {
-  // Startup includes filesystem I/O; event-loop turns are not a time budget.
-  const deadline = performance.now() + 5_000;
-  while (performance.now() < deadline) {
-    if (check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  assert.ok(check(), "Expected provider state was not reached within 5 seconds");
-}
-async function fixture(t: TestContext) {
-  const directory = await mkdtemp(join(tmpdir(), "ido-coordinator-"));
-  const configurations: Record<string, any>[] = [];
-  const threads: Array<any> = [];
-  const calls: Array<{
-    prompt: string;
-    signal: AbortSignal;
-    outputSchema: unknown;
-  }> = [];
-  const steers: string[] = [];
-  let gate: ReturnType<typeof deferred> | undefined;
-  let steerError = false;
-  let incomplete = false;
-  let preparationFailed = false;
-  let closes = 0;
-  const factory = createCodexCoordinatorFactory(
-    { directory, codexExecutable: "fixture-codex" },
+function fixture(
+  respond: (request: any, options: any) => Promise<any> = async () => ({
+    status: "completed",
+    output_text: JSON.stringify(silent),
+  }),
+) {
+  const calls: any[] = [],
+    keys: string[] = [];
+  let key: string | undefined = "fixture-key";
+  const factory = createOpenAICoordinatorFactory(
+    { credentials: { get: async () => key } },
     {
-      createDriver(config) {
-        configurations.push(config);
-        const make = (options: Record<string, unknown>, resumed?: string) => {
-          let threadId = resumed;
-          const thread = {
-            get id() {
-              return threadId;
-            },
-            options,
-            resumed,
-            disposed: false,
-            active: false,
-            async prepare() {
-              if (preparationFailed)
-                throw new Error("fixture auth unavailable");
-              threadId ??= `thread-${threads.indexOf(thread) + 1}`;
-            },
-            async runStreamed(
-              prompt: string,
-              options: { signal: AbortSignal; outputSchema: unknown },
-            ) {
-              calls.push({ prompt, ...options });
-              const hold = gate;
-              return {
-                events: (async function* () {
-                  yield { type: "thread.started", thread_id: threadId };
-                  thread.active = true;
-                  yield { type: "turn.started" };
-                  try {
-                    await hold?.promise;
-                    options.signal.throwIfAborted();
-                    yield {
-                      type: "item.completed",
-                      item: {
-                        type: "agent_message",
-                        text: JSON.stringify(silent),
-                      },
-                    };
-                    if (!incomplete) yield { type: "turn.completed" };
-                  } finally {
-                    thread.active = false;
-                  }
-                })(),
-              };
-            },
-            async steer(prompt: string) {
-              if (steerError) throw new Error("fixture timeout");
-              steers.push(prompt);
-              return thread.active;
-            },
-            async dispose() {
-              thread.disposed = true;
-            },
-          };
-          threads.push(thread);
-          return thread;
-        };
+      createClient: (apiKey) => {
+        keys.push(apiKey);
         return {
-          startThread: (options) => make(options),
-          resumeThread: (id, options) => make(options, id),
-          close: async () => {
-            closes++;
+          responses: {
+            create: async (request: any, options: any) => {
+              calls.push({ request, options });
+              return respond(request, options);
+            },
           },
-        };
+        } as unknown as OpenAI;
       },
     },
   );
-  t.after(async () => {
-    gate?.resolve();
-    await factory.close();
-    assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
-    await rm(directory, { recursive: true, force: true });
-  });
   return {
-    directory,
     factory,
-    configurations,
-    threads,
     calls,
-    steers,
-    hold: () => (gate = deferred()),
-    setSteerError: () => {
-      steerError = true;
-    },
-    setIncomplete: (value: boolean) => {
-      incomplete = value;
-    },
-    setPreparationFailure: (value: boolean) => {
-      preparationFailed = value;
-    },
-    get closes() {
-      return closes;
+    keys,
+    setKey: (value: string | undefined) => {
+      key = value;
     },
   };
 }
 
-test("Engine coordinator is lazy and does not need a Client or credentials to construct", async (t) => {
-  const f = await fixture(t);
-  await f.factory.createCoordinator({ meetingId: "meeting" });
-  assert.equal(f.configurations.length, 0);
-  assert.equal(f.factory.codexHome, join(f.directory, "codex"));
-  await assert.rejects(stat(f.factory.codexHome), { code: "ENOENT" });
-});
-
-test("one meeting retains its thread and checkpoints before the first model turn", async (t) => {
-  const f = await fixture(t);
+test("coordinator uses only Responses API and the current Engine API key, with context on every request", async (t) => {
+  const f = fixture();
+  t.after(() => f.factory.close());
   const handles: CoordinatorHandle[] = [];
   const runtime = await f.factory.createCoordinator({
     meetingId: "meeting",
-    onCheckpoint(handle) {
-      assert.equal(f.calls.length, 0);
-      handles.push(handle);
+    onCheckpoint: (h) => {
+      handles.push(h);
     },
   });
+  assert.equal(f.calls.length, 0);
   assert.deepEqual(await runtime.run(observation()), silent);
-  assert.deepEqual(await runtime.run(observation("two")), silent);
-  assert.equal(f.configurations.length, 1);
-  assert.equal(f.threads.length, 1);
-  assert.deepEqual(handles, [
-    { backend: "codex", meetingId: "meeting", threadId: "thread-1" },
-  ]);
-  assert.equal(f.configurations[0].env.CODEX_HOME, f.factory.codexHome);
-  assert.equal(f.configurations[0].config.features.shell_tool, false);
-  assert.equal(f.configurations[0].config.features.multi_agent, false);
-  assert.equal(f.threads[0].options.sandboxMode, "read-only");
-  assert.equal(f.threads[0].options.networkAccessEnabled, false);
-  assert.equal(f.threads[0].options.disableShellTool, true);
-  assert.equal(f.threads[0].options.model, "gpt-5.6-sol");
-  assert.match(f.calls[0].prompt, /initial context/);
-  assert.doesNotMatch(f.calls[1].prompt, /initial context|input one/);
+  f.setKey("replacement-key");
+  assert.deepEqual(await runtime.run(observation("next")), silent);
+  assert.deepEqual(f.keys, ["fixture-key", "replacement-key"]);
+  assert.equal(handles[0].backend, "openai-responses");
+  for (const { request, options } of f.calls) {
+    assert.equal(request.model, "gpt-4.1-mini");
+    assert.equal(request.store, false);
+    assert.deepEqual(request.tools, []);
+    assert.equal(request.previous_response_id, undefined);
+    assert.match(request.input, /previous question and answer/);
+    assert.equal(request.text.format.type, "json_schema");
+    assert.equal(request.text.format.strict, true);
+    assert.equal(options.maxRetries, 0);
+    assert.equal(options.timeout, 60000);
+  }
 });
 
-test("resume handles remain meeting scoped and closing one coordinator does not close another", async (t) => {
-  const f = await fixture(t);
-  const first = await f.factory.createCoordinator({
-    meetingId: "meeting",
-    handle: { backend: "codex", meetingId: "meeting", threadId: "saved" },
+test("missing API key rejects before sending and recovers when configured", async (t) => {
+  const f = fixture();
+  t.after(() => f.factory.close());
+  const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+  f.setKey(undefined);
+  await assert.rejects(runtime.run(observation()), {
+    code: "OPENAI_KEY_REQUIRED",
+    delivery: "rejected",
   });
-  await first.run(observation());
-  const second = await f.factory.createCoordinator({ meetingId: "other" });
-  await second.run(observation("other", "other"));
-  assert.equal(f.threads[0].resumed, "saved");
+  assert.equal(f.calls.length, 0);
+  f.setKey("configured");
+  assert.deepEqual(await runtime.run(observation()), silent);
+});
+
+test("legacy Codex handles migrate without resuming a Codex thread; mismatched meetings reject", async (t) => {
+  const f = fixture();
+  t.after(() => f.factory.close());
+  let saved: CoordinatorHandle | undefined;
+  const runtime = await f.factory.createCoordinator({
+    meetingId: "meeting",
+    handle: { backend: "codex", meetingId: "meeting", threadId: "old-thread" },
+    onCheckpoint: (h) => {
+      saved = h;
+    },
+  });
+  await runtime.run(observation());
+  assert.equal(saved?.backend, "openai-responses");
   await assert.rejects(
-    f.factory.createCoordinator({
-      meetingId: "wrong",
-      handle: { backend: "codex", meetingId: "meeting", threadId: "saved" },
-    }),
+    f.factory.createCoordinator({ meetingId: "other", handle: saved }),
     { code: "COORDINATOR_HANDLE_MISMATCH" },
   );
   await assert.rejects(f.factory.createCoordinator({ meetingId: "meeting" }), {
     code: "COORDINATOR_ALREADY_OPEN",
   });
-  assert.throws(() => first.run(observation("bad", "other")), {
-    code: "COORDINATOR_MEETING_MISMATCH",
+  await assert.rejects(runtime.run(observation("wrong", "other")), {
+    delivery: "rejected",
   });
-  await first.close();
-  assert.equal(f.threads[0].disposed, true);
-  assert.equal(f.threads[1].disposed, false);
-  assert.deepEqual(
-    await second.run(observation("still-running", "other")),
-    silent,
+  await assert.rejects(
+    runtime.run({ ...observation(), context: "x".repeat(64001) }),
+    { code: "COORDINATOR_INPUT_TOO_LARGE" },
   );
 });
 
-test("active steering preserves message IDs and unknown delivery remains an explicit error", async (t) => {
-  const f = await fixture(t);
-  const hold = f.hold();
+test("API authentication errors retain safe status/code/request ID and allow retry", async (t) => {
+  const f = fixture(async () => {
+    throw new OpenAI.AuthenticationError(
+      401,
+      { message: "private transcript sk-secret", code: "invalid_api_key" },
+      undefined,
+      new Headers({ "x-request-id": "req_fixture" }),
+    );
+  });
+  t.after(() => f.factory.close());
   const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
-  assert.equal(await runtime.steer(observation("early")), false);
-  const running = runtime.run(observation());
-  await until(() => f.threads[0]?.active);
-  await assert.rejects(runtime.run(observation("busy")), {
-    code: "COORDINATOR_BUSY",
-    delivery: "rejected",
+  await assert.rejects(runtime.run(observation()), (error: any) => {
+    const detail = describeError(error);
+    assert.equal(error.delivery, "rejected");
+    assert.equal(detail.status, 401);
+    assert.equal(detail.code, "invalid_api_key");
+    assert.equal(detail.requestId, "req_fixture");
+    assert.ok(!JSON.stringify(error).includes("secret"));
+    assert.ok(!JSON.stringify(detail).includes("transcript"));
+    return true;
   });
-  assert.equal(await runtime.steer(observation("correction")), true);
-  assert.match(f.steers[0], /"id":"correction"/);
-  f.setSteerError();
-  await assert.rejects(runtime.steer(observation("unknown")), {
-    code: "COORDINATOR_STEER_UNCERTAIN",
-    delivery: "unknown",
-  });
-  hold.resolve();
-  await running;
 });
 
-test("closing an active coordinator waits for actual provider settlement", async (t) => {
-  const f = await fixture(t);
-  const hold = f.hold();
-  const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
-  const running = runtime.run(observation()).catch((error) => error);
-  await until(() => f.threads[0]?.active);
-  let settled = false;
-  const closing = runtime.close().then(() => {
-    settled = true;
-  });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(f.calls[0].signal.aborted, true);
-  assert.equal(f.threads[0].disposed, false);
-  assert.equal(settled, false);
-  hold.resolve();
-  assert.equal((await running).delivery, "unknown");
-  await closing;
-  assert.equal(f.threads[0].disposed, true);
-});
-
-test("preparation and checkpoint failures never start a model turn and can be retried deliberately", async (t) => {
-  const f = await fixture(t);
-  let writable = false;
-  const runtime = await f.factory.createCoordinator({
-    meetingId: "meeting",
-    onCheckpoint() {
-      if (!writable) throw new Error("disk unavailable");
+test("connection failure, incomplete output and invalid JSON stay uncertain without replay", async (t) => {
+  for (const respond of [
+    async () => {
+      throw new OpenAI.APIConnectionError({ message: "private" });
     },
-  });
-  f.setPreparationFailure(true);
-  await assert.rejects(runtime.run(observation()), {
-    code: "COORDINATOR_UNAVAILABLE_CHECK_ENGINE_CODEX_LOGIN",
-    delivery: "rejected",
-  });
-  f.setPreparationFailure(false);
-  await assert.rejects(runtime.run(observation()), { delivery: "rejected" });
-  assert.equal(f.calls.length, 0);
-  writable = true;
-  assert.deepEqual(await runtime.run(observation()), silent);
+    async () => ({ status: "incomplete", output_text: JSON.stringify(silent) }),
+    async () => ({ status: "completed", output_text: "not json" }),
+  ]) {
+    const f = fixture(respond);
+    t.after(() => f.factory.close());
+    const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+    await assert.rejects(runtime.run(observation()), { delivery: "unknown" });
+    assert.equal(f.calls.length, 1);
+  }
 });
 
-test("incomplete model runs cannot become successful responses", async (t) => {
-  const f = await fixture(t);
+test("busy and steering never start extra API calls; close aborts the active request", async () => {
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const f = fixture(
+    async (_request, { signal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        });
+        started();
+      }),
+  );
   const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
-  f.setIncomplete(true);
-  await assert.rejects(runtime.run(observation()), {
-    code: "COORDINATOR_RESPONSE_UNCERTAIN",
+  const pending = assert.rejects(runtime.run(observation()), {
     delivery: "unknown",
   });
-  f.setIncomplete(false);
-  assert.deepEqual(await runtime.run(observation("next")), silent);
+  await ready;
+  await assert.rejects(runtime.run(observation()), {
+    code: "COORDINATOR_BUSY",
+  });
+  assert.equal(await runtime.steer(observation("urgent")), false);
+  assert.equal(f.calls.length, 1);
+  await f.factory.close();
+  await pending;
+  await assert.rejects(runtime.run(observation()), {
+    code: "COORDINATOR_CLOSED",
+  });
+  await assert.rejects(f.factory.createCoordinator({ meetingId: "new" }), {
+    code: "COORDINATOR_CLOSED",
+  });
 });
 
 test("response parsing defaults empty lists but rejects malformed task authority and ignores invented grants", () => {
@@ -350,96 +248,5 @@ test("response parsing defaults empty lists but rejects malformed task authority
   assert.match(
     coordinatorPrompt({ ...observation(), mode: "live" }, { initial: true }),
     /Liveが音声会話を担当/,
-  );
-});
-
-test("Engine coordinator uses the shared App Server protocol with read-only settings and active-turn steer", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "ido-coordinator-rpc-"));
-  const child = new EventEmitter() as any;
-  child.stdin = new PassThrough();
-  child.stdout = new PassThrough();
-  child.stderr = new PassThrough();
-  child.exitCode = null;
-  child.signalCode = null;
-  child.kill = () => {
-    child.signalCode = "SIGTERM";
-    child.emit("exit", null, "SIGTERM");
-  };
-  const messages: any[] = [];
-  const emit = (value: unknown) =>
-    child.stdout.write(JSON.stringify(value) + "\n");
-  let buffer = "";
-  child.stdin.on("data", (chunk: Buffer) => {
-    buffer += chunk.toString();
-    while (buffer.includes("\n")) {
-      const index = buffer.indexOf("\n"),
-        message = JSON.parse(buffer.slice(0, index));
-      buffer = buffer.slice(index + 1);
-      messages.push(message);
-      if (message.id === undefined) continue;
-      emit({
-        id: message.id,
-        result:
-          message.method === "thread/resume"
-            ? { thread: { id: "saved" } }
-            : message.method === "turn/start"
-              ? { turn: { id: "active" } }
-              : message.method === "turn/steer"
-                ? { turnId: "active" }
-                : {},
-      });
-    }
-  });
-  const factory = createCodexCoordinatorFactory(
-    { directory, codexExecutable: "fixture" },
-    {
-      createDriver: (options) =>
-        new AppServerCodex(options, {
-          spawnProcess: () => child,
-          requestTimeoutMs: 1000,
-        }) as unknown as CoordinatorDriver,
-    },
-  );
-  t.after(async () => {
-    await factory.close();
-    assert.equal(dirname(resolve(directory)), resolve(tmpdir()));
-    await rm(directory, { recursive: true, force: true });
-  });
-  const runtime = await factory.createCoordinator({
-    meetingId: "meeting",
-    handle: { backend: "codex", meetingId: "meeting", threadId: "saved" },
-  });
-  const pending = runtime.run(observation());
-  await until(() =>
-    messages.some((message) => message.method === "turn/start"),
-  );
-  const params = messages.find(
-    (message) => message.method === "thread/resume",
-  ).params;
-  assert.equal(params.sandbox, "read-only");
-  assert.equal(params.config["features.shell_tool"], false);
-  assert.equal(params.config["features.unified_exec"], false);
-  assert.equal(await runtime.steer(observation("new")), true);
-  assert.equal(
-    messages.find((message) => message.method === "turn/steer").params
-      .expectedTurnId,
-    "active",
-  );
-  emit({
-    method: "item/completed",
-    params: {
-      threadId: "saved",
-      turnId: "active",
-      item: { type: "agentMessage", text: JSON.stringify(silent) },
-    },
-  });
-  emit({
-    method: "turn/completed",
-    params: { threadId: "saved", turn: { id: "active", status: "completed" } },
-  });
-  assert.deepEqual(await pending, silent);
-  await runtime.close();
-  assert.ok(
-    messages.some((message) => message.method === "thread/unsubscribe"),
   );
 });

@@ -8,7 +8,7 @@
 
 ## 配置の決定
 
-Engineに会議中の永続メインCodexを置き、会話・タスク・回答を管理します。Engine自身のCodex homeと認証を使用します。作業ClientはEngineの指示を受け、自分の認証・プロジェクト設定・実行許可に従って調査や実装を行います。main2の当初方針にあった「CodexはClientでのみ動く」という制約は、この統合では変更しています。
+Engineは会議の状態をSQLiteに保持し、OpenAI Responses APIで会話・タスク・回答を管理します。EngineにはCodexを置きません。以前の統合で追加したEngine専用Codexと認証は撤去しました。作業ClientはEngineの指示を受け、自分のCodex認証・プロジェクト設定・実行許可に従って調査や実装を行います。
 
 ```mermaid
 flowchart TB
@@ -34,7 +34,7 @@ flowchart TB
 | `src/engine/output/speech-controller.mjs` とspeech ticket | `engine/src/output/audio/{controller,ticket,deliver,support}.mjs` | キュー、候補取消、開始条件を移植し旧依存を除去  |
 | `src/providers/live.mjs`                                  | `engine/src/adapters/openai/live.mjs`                             | Live接続、PCMミックス、委任照合、出力断片を移植 |
 | `MeetingSession` の会話管理                               | `engine/src/processing/coordinator/session.ts`、routing、messages | 現Repository・権限・Message構造へ組み直し       |
-| `CodexVoiceRunner.observeMeeting`                         | `engine/src/adapters/codex/coordinator.ts`                        | 会議ごとの永続主モデルと独立Engine認証へ置換    |
+| `CodexVoiceRunner.observeMeeting`                         | `engine/src/adapters/openai/coordinator.ts`                       | 会議状態とAPIキーを使うResponses APIへ置換      |
 | 旧TaskQueue・WorkerGateway                                | `engine/src/processing/tasks`、`clients`、Client WS               | main2の作業状態・配布・再接続機構を採用         |
 | 旧Discordランタイムの受信・再生                           | `plugin-discord/src/{input,output,runtime}`                       | プロトコル2のプラグイン境界へ適応               |
 | 日付別JSONLの会話アーカイブ                               | Engineのmessage / conversation-outputレコード                     | SQLite記録へ置換。旧JSONLへ追記しない           |
@@ -103,4 +103,4 @@ Engine内の保存ログを主モデルや任意のClientが全文検索する�
 
 今回のローカル検証では、Node.js 24で型検査、ビルド、174件のテスト、Lint、全体の整形検査が成功しました。比較元main2もビルド後に69件すべて成功しています。4パッケージのtarball作成と、Engine・Clientの新規インストール検証を実施しました。依存関係監査は検出0件です。ブラウザ試験はPlaywright用Chromiumが未導入のため実行できていません。実アカウントのCodex、STT、TTS、Live、Discord通話の成功を意味する結果ではありません。
 
-ビルドやtarball作成だけでは、既存のEngine・Client・インストール済みDiscordプラグインは置き換わりません。配備時はそれぞれの更新と再起動が必要です。Engine・各Clientの独立したCodex認証と、音声APIキーも個別に確認します。
+ビルドやtarball作成だけでは、既存のEngine・Client・インストール済みDiscordプラグインは置き換わりません。配備時はそれぞれの更新と再起動が必要です。EngineのOpenAI APIキーと、各ClientのCodex認証を確認します。

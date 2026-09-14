@@ -44,7 +44,7 @@ for (const name of ["engine", "client", "plugin-discord", "plugin-dashboard"]) {
     throw new Error(`Bundled UI missing for ${name}`);
   if (
     name === "engine" &&
-    (!manifest.dependencies["@openai/codex"] ||
+    (manifest.dependencies["@openai/codex"] ||
       Object.keys(manifest.dependencies).some((d) =>
         /discord|electron/.test(d),
       ))

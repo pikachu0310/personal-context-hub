@@ -105,8 +105,8 @@ are not selected as read-only research executors merely because network access
 is disabled. Raw paths, credentials and local Codex handles are not supplied by
 the conversation request.
 
-The main model itself uses an Engine-local, restricted Codex environment with
-separate authentication. It is not the executor for these research tasks.
+The main model uses the OpenAI Responses API with the Engine API key and no
+external tools. It is not the executor for these research tasks.
 Client policy negotiation and local opt-in still apply even when Engine and
 Client happen to run on the same machine. Engine archival logs are not exposed
 as a general log-reading tool to the main model or arbitrary Clients; read-only

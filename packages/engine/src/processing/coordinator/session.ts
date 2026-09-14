@@ -216,8 +216,56 @@ class MeetingCoordinator {
               controlVersion,
             })),
         })),
-      context: this.meeting()?.summary.slice(-12_000),
+      context: this.history(events),
     };
+  }
+
+  history(events: CoordinatorEvent[]) {
+    const current = new Set(
+      events.flatMap((event) =>
+        event.type === "message" ? [event.source.id] : [],
+      ),
+    );
+    const entries = [
+      ...(this.meeting()?.messages ?? [])
+        .filter(
+          (message) =>
+            message.stage === "completed" && !current.has(message.id),
+        )
+        .slice(-30)
+        .map((message) => ({
+          role: "user",
+          authorId: message.authorId,
+          at: message.at,
+          text: message.text.slice(-2000),
+        })),
+      ...this.store
+        .list<{
+          meetingId: string;
+          text: string;
+          at?: number;
+          startedAt?: number;
+          delivered?: boolean;
+          provider?: string;
+        }>("conversation-output")
+        .filter(
+          (output) =>
+            output.meetingId === this.meetingId &&
+            (output.delivered || output.provider === "live") &&
+            typeof output.text === "string",
+        )
+        .slice(-30)
+        .map((output) => ({
+          role: "assistant",
+          authorId: "assistant",
+          at: output.at ?? output.startedAt ?? 0,
+          text: output.text.slice(-2000),
+        })),
+    ]
+      .sort((a, b) => a.at - b.at)
+      .slice(-30);
+    while (JSON.stringify(entries).length > 12_000) entries.shift();
+    return JSON.stringify(entries);
   }
 
   // Saved inputs retain intent, but a process restart does not recreate the
