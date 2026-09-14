@@ -128,6 +128,7 @@ export interface ClientState {
   suggestedInvite?: { engineUrl: string; token: string };
   settings: {
     profile?: { name: string; context: string; avatar?: string };
+    accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
@@ -149,12 +150,19 @@ export interface ClientState {
     agent?: "codex" | "claude";
     model?: string;
     origin?: "local";
+    discordShare?: {
+      projectId: string;
+      taskId?: string;
+      status?: "pending" | "synced" | "error";
+      error?: string;
+    };
     task: Task;
     directory: string;
     state: string;
     result?: string;
     progress?: string;
     activityVersion?: number;
+    accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
     phase?: "planning" | "awaiting-plan" | "executing";
     updatedAt?: number;

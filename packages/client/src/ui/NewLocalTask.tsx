@@ -7,16 +7,26 @@ export function NewLocalTask({
   action,
   started,
   mode,
+  projects,
+  initialProjectId,
+  initialDirectory,
 }: {
+  projects: Array<{ id: string; name: string }>;
+  initialProjectId?: string;
+  initialDirectory?: string;
   action: Action;
   started: (runId: string) => void;
   mode: "auto" | "manual";
 }) {
-  const [directory, setDirectory] = useState("");
+  const [directory, setDirectory] = useState(initialDirectory ?? "");
+  const [shareDiscord, setShareDiscord] = useState(true);
+  const [shareProjectId, setShareProjectId] = useState(
+    initialProjectId ?? projects[0]?.id ?? "",
+  );
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [progressMode, setMode] = useState(mode);
-  const [network, setNetwork] = useState(false);
+  const [accessMode, setAccessMode] = useState("approval");
   const [requestedAgent, setAgent] = useState("");
   const [models, setModels] = useState<Record<string, string>>({});
   const [catalog, setCatalog] = useState<AgentCatalogEntry[]>([]);
@@ -71,8 +81,7 @@ export function NewLocalTask({
     models[agent] === undefined
       ? (options[0]?.id ?? "")
       : (options.find((value) => value.id === models[agent])?.id ?? "");
-  const [claudePermissionsAcknowledged, acknowledgeClaude] = useState(false);
-  const [sandbox, setSandbox] = useState("workspace-write");
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const request = useRef<{ fingerprint: string; key: string }>(undefined);
@@ -81,13 +90,14 @@ export function NewLocalTask({
     const input = {
       agent,
       model,
-      claudePermissionsAcknowledged,
+      shareDiscord,
+      shareProjectId,
+
       directory,
       title,
       text,
       mode: progressMode,
-      network,
-      sandboxMode: sandbox,
+      accessMode: progressMode === "auto" ? "full" : accessMode,
     };
     const fingerprint = JSON.stringify(input);
     if (request.current?.fingerprint !== fingerprint)
@@ -113,6 +123,8 @@ export function NewLocalTask({
               "ログインが切れています。接続とセットアップでログインして、一覧を再確認してください。",
             MODEL_UNAVAILABLE:
               "選択したモデルは現在利用できません。一覧を再確認してください。",
+            SHARE_PROJECT_REQUIRED:
+              "共有先のチームとプロジェクトを設定してください。PC内だけで実行する場合は共有を外してください。",
             INVALID_TEXT: "作業フォルダーと依頼内容を入力してください。",
             INVALID_MODEL:
               "モデルIDを確認してください。空白や改行は使えません。",
@@ -202,6 +214,39 @@ export function NewLocalTask({
             <p>
               選択したモデルはこのタスクの相談・実行・追加指示に適用します。利用可否はログイン中のアカウントによって異なります。
             </p>
+            <label className="local-network">
+              <input
+                type="checkbox"
+                checked={shareDiscord}
+                onChange={(e) => setShareDiscord(e.currentTarget.checked)}
+              />
+              Discordにも共有
+            </label>
+            {shareDiscord && (
+              <label>
+                共有先プロジェクト
+                <select
+                  aria-label="共有先プロジェクト"
+                  required
+                  value={shareProjectId}
+                  onChange={(e) => setShareProjectId(e.currentTarget.value)}
+                >
+                  <option value="" disabled>
+                    選択してください
+                  </option>
+                  {projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <p>
+              {shareDiscord
+                ? "依頼文・実行状態を共有し、Discordのissueスレッドから追加指示と停止を受け付けます。未接続・フォーラム未設定の場合は共有待ちになり、同じ接続先で再試行します。実行ログ・ファイル内容・認証情報は共有しません。"
+                : "このPCだけで実行します。Discordには送信しません。"}
+            </p>
             <label>
               タイトル
               <input
@@ -267,45 +312,29 @@ export function NewLocalTask({
                 <option value="manual">Manual · まず相談・計画</option>
               </select>
             </label>
-            <label>
-              実行権限
-              <select
-                aria-label="実行権限"
-                value={sandbox}
-                onChange={(event) => setSandbox(event.currentTarget.value)}
-              >
-                <option value="workspace-write">
-                  {agent === "claude"
-                    ? "Claude · 操作ごとに承認"
-                    : "専用の作業フォルダー内で変更"}
-                </option>
-                <option value="read-only">読み取り専用の調査</option>
-              </select>
-            </label>
-            <label className="local-network">
-              <input
-                type="checkbox"
-                checked={network}
-                onChange={(event) => setNetwork(event.currentTarget.checked)}
-              />
-              このタスクの通信を許可する
-            </label>
-            <p>
-              追加権限はアプリで承認します。Botへの進捗共有はまだ接続していません。
-            </p>
-            {agent === "claude" && (
-              <label className="local-network">
-                <input
-                  type="checkbox"
-                  required
-                  checked={claudePermissionsAcknowledged}
-                  onChange={(event) =>
-                    acknowledgeClaude(event.currentTarget.checked)
-                  }
-                />
-                Claudeのツールは操作ごとに承認します。OSサンドボックスではなく、承認したシェル操作はPC全体に影響できます。通信禁止・相談中・読み取り専用の場合はシェルを使いません。
+            {progressMode === "auto" ? (
+              <p>実行権限：フルアクセス・承認なし（Autoでは固定）</p>
+            ) : (
+              <label>
+                実行権限
+                <select
+                  aria-label="実行権限"
+                  value={accessMode}
+                  onChange={(event) => setAccessMode(event.currentTarget.value)}
+                >
+                  <option value="approval">許可を求める</option>
+                  <option value="full">フルアクセス・承認なし</option>
+                </select>
               </label>
             )}
+            <p>
+              OSサンドボックスは使いません。作業フォルダー外のファイル操作や通信も可能です。
+              「許可を求める」ではエージェントの承認要求をアプリに表示します。安全な読み取りなどは確認なしで実行される場合があります。
+              Manualは相談・計画の後、「実行する」で作業を開始します。
+            </p>
+            <p>
+              権限はこのタスクに保存されます。共有を有効にしたタスクの送信状況は実行画面で確認できます。
+            </p>
             {error && <p role="alert">{error}</p>}
             <button
               className="primary-button"

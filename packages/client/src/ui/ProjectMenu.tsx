@@ -8,11 +8,13 @@ export function ProjectMenu({
   deviceId,
   action,
   mapping,
+  startLocal,
 }: {
   project: Project;
   deviceId?: string;
   action: Action;
   mapping: () => void;
+  startLocal: () => void;
 }) {
   const [rename, setRename] = useState(false),
     [url, setUrl] = useState(""),
@@ -30,6 +32,7 @@ export function ProjectMenu({
           </button>
         </Menu.Target>
         <Menu.Dropdown>
+          <Menu.Item onClick={startLocal}>このPCでタスクを開始</Menu.Item>
           <Menu.Item onClick={mapping}>接続・設定</Menu.Item>
           {owner && (
             <>

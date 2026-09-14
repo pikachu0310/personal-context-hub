@@ -74,20 +74,35 @@ export async function execute(
       value.task.effectiveExecutionPolicy,
       value.effectiveExecutionPolicy,
     );
+    const localAccess =
+      !policy.sandboxMode && policy.networkAccessEnabled !== false
+        ? value.accessMode
+        : undefined;
     const options = {
       model: value.model,
       workingDirectory: value.directory,
-      sandboxMode: policy.sandboxMode ?? "workspace-write",
-      requireWritableSandbox: policy.sandboxMode !== "read-only",
+      sandboxMode: localAccess
+        ? "danger-full-access"
+        : (policy.sandboxMode ?? "workspace-write"),
+      requireWritableSandbox:
+        !localAccess && policy.sandboxMode !== "read-only",
       networkAccessEnabled:
-        mapping.network &&
-        value.task.network &&
-        policy.networkAccessEnabled !== false,
-      approvalPolicy: "on-request",
+        !!localAccess ||
+        (mapping.network &&
+          value.task.network &&
+          policy.networkAccessEnabled !== false),
+      approvalPolicy:
+        localAccess === "full"
+          ? "never"
+          : localAccess === "approval"
+            ? "untrusted"
+            : "on-request",
       webSearchMode: "disabled",
     };
     value.effectiveExecutionPolicy = {
-      sandboxMode: options.sandboxMode,
+      sandboxMode: localAccess
+        ? undefined
+        : (policy.sandboxMode ?? "workspace-write"),
       networkAccessEnabled: options.networkAccessEnabled,
     };
     value.activeSpecRevision ??= value.task.specRevision ?? 1;

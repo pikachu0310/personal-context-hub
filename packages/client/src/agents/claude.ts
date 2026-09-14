@@ -129,10 +129,13 @@ class ClaudeThread {
               !turn.signal.aborted &&
               (await claudeToolAllowed(tool, input, this.options, planning))
             ) {
-              const decision = await this.runtime.config.onApprovalRequest(
-                `claude/${tool}`,
-                input,
-              );
+              const decision =
+                this.options.approvalPolicy === "never"
+                  ? { decision: "accept" }
+                  : await this.runtime.config.onApprovalRequest(
+                      `claude/${tool}`,
+                      input,
+                    );
               if (
                 decision.decision === "accept" &&
                 !turn.signal.aborted &&

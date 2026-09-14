@@ -35,7 +35,14 @@ export function forumContent(task: Task, marker: string) {
     .replace(/@/g, "＠")
     .slice(0, 500);
   // Logs, credentials, source statements, local paths and patches stay on the Client.
-  return `${marker}\n**${title}**\n状態: **${task.state}** · 実行版: ${task.revision}\nTask: \`${task.id}\`\nClient: \`${task.clientId ?? "割り当て待ち"}\`\n\n追加指示: このスレッドにメッセージを送信\n停止: 停止 / 中止 / キャンセル / stop / cancel\n詳しい実行ログと承認は各自のIDO Agentで確認してください。`;
+  const shared = task.localMirror
+    ? `\n依頼: ${clean(task.text).replace(/@/g, "＠").slice(0, 700)}\n進捗: ${clean(
+        task.progress ?? "共有待ち",
+      )
+        .replace(/@/g, "＠")
+        .slice(0, 300)}`
+    : "";
+  return `${marker}\n**${title}**\n状態: **${task.state}** · 実行版: ${task.revision}\nTask: \`${task.id}\`\nClient: \`${task.clientId ?? "割り当て待ち"}\`${shared}\n\n追加指示: このスレッドにメッセージを送信\n停止: 停止 / 中止 / キャンセル / stop / cancel\n詳しい実行ログと承認は各自のIDO Agentで確認してください。`;
 }
 export class ForumSync {
   private queue: Promise<unknown> = Promise.resolve();

@@ -214,5 +214,73 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
     (await post("continue", { ...followup, requestKey: "stale" })).status,
     409,
   );
+  resumed.state = "completed";
+  const auto = await post("local-tasks/start", {
+    ...input,
+    requestKey: "auto-access",
+    mode: "auto",
+    accessMode: "approval",
+  });
+  assert.equal(auto.status, 200);
+  const autoRun = client.executor.runs[(await auto.json()).runId];
+  assert.equal(autoRun.accessMode, "full");
+  assert.equal(autoRun.task.network, true);
+  assert.equal(autoRun.task.executionPolicy?.sandboxMode, undefined);
+  client.settings.projects = [
+    {
+      id: "project",
+      name: "Fixture",
+      remote: "https://example.invalid/project.git",
+    },
+  ];
+  client.settings.mappings = [
+    { projectId: "project", directory: repo, network: false, slots: 1 },
+  ];
+  assert.equal(
+    (
+      await post("progress-mode", {
+        projectId: "project",
+        mode: "auto",
+        accessMode: "approval",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(client.settings.mappings[0].accessMode, "full");
+  assert.equal(client.settings.mappings[0].network, true);
+  assert.equal(
+    (
+      await post("progress-mode", {
+        projectId: "project",
+        mode: "manual",
+        accessMode: "approval",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(client.settings.mappings[0].accessMode, "approval");
+  assert.equal(autoRun.accessMode, "full");
+  autoRun.state = "completed";
+  client.settings.engineUrl = "https://team.example";
+  client.settings.deviceId = "fixture-device";
+  const shared = await post("local-tasks/start", {
+    ...input,
+    requestKey: "shared-local",
+    shareDiscord: true,
+    shareProjectId: "project",
+  });
+  assert.equal(shared.status, 200);
+  const sharedRun = client.executor.runs[(await shared.json()).runId];
+  assert.equal(sharedRun.origin, "local");
+  assert.equal(sharedRun.discordShare?.projectId, "project");
+  assert.equal(sharedRun.discordShare?.engineUrl, "https://team.example");
+  assert.equal(sharedRun.discordShare?.status, "pending");
+  await client.executor.save();
+  const restoredShare = new Executor(client.directory, () => {});
+  await restoredShare.load();
+  assert.equal(
+    restoredShare.runs[sharedRun.task.runId].discordShare?.deviceId,
+    "fixture-device",
+  );
   assert.deepEqual(frames, []);
 });

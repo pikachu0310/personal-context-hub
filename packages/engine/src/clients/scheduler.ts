@@ -16,7 +16,7 @@ export class Scheduler {
           (d) => online.has(d.id) && !d.revoked && d.codexConnected === true,
         );
       for (const task of tasks.filter(
-        (t) => t.state === "queued" && !t.clientId,
+        (t) => t.state === "queued" && !t.clientId && !t.localMirror,
       )) {
         const active = (device: Device) =>
           tasks.filter(

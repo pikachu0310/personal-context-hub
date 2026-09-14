@@ -1,3 +1,4 @@
+import { receiveSharedLocalControl } from "./local-sharing.js";
 import { sign } from "node:crypto";
 import { WebSocket } from "ws";
 import { HttpError } from "@ido/common/runtime/http";
@@ -75,6 +76,8 @@ export async function connect(this: Client) {
       this.continuationSupported = data.continuationVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
       this.workspaceSupported = data.workspaceVersion === 1;
+      this.localSharingSupported = data.localSharingVersion === 1;
+      void this.syncLocalShares();
       this.teamTasksSupported = data.taskListVersion === 1;
       this.status = "connected";
       this.settings.projects = data.projects as Project[];
@@ -170,14 +173,15 @@ export async function connect(this: Client) {
     }
     this.processing = this.processing
       .catch(() => {})
-      .then(() =>
-        this.executor.receive(
+      .then(async () => {
+        if (await receiveSharedLocalControl(this, data)) return;
+        return this.executor.receive(
           data,
           this.executionMappings(),
           this.allow,
           this.settings.slots,
-        ),
-      )
+        );
+      })
       .catch(() => {
         this.status = "command failed; check local execution";
       });
@@ -206,6 +210,7 @@ export async function connect(this: Client) {
     }
     this.workspaceRequests.clear();
     this.workspaceSupported = false;
+    this.localSharingSupported = false;
     this.status = code === 4003 ? "revoked or permission changed" : "offline";
     this.preview.close();
     if (!this.stopping && code !== 4003)

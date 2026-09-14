@@ -243,6 +243,7 @@ try {
   assert.equal(await page.locator(".avatar-overflow").innerText(), "+2");
   assert.ok((await page.locator(".task-avatars .bot-avatar").count()) > 0);
   await page
+    .locator('.project-group[data-project-id="project"]')
     .getByRole("region", { name: "ほかのPC", exact: true })
     .getByRole("button")
     .click();
@@ -261,7 +262,8 @@ try {
     path: ".ido-build/screenshots/workspace-team-tasks.png",
   });
   await page
-    .getByRole("region", { name: "未割り当て", exact: true })
+    .locator('.project-group[data-project-id="project"]')
+    .getByRole("region", { name: "未割当", exact: true })
     .getByRole("button")
     .click();
   await page
@@ -269,6 +271,55 @@ try {
       exact: true,
     })
     .waitFor();
+  const voiceGroup = page.locator('.project-group[data-project-id="project"]');
+  const toolsGroup = page.locator('.project-group[data-project-id="tools"]');
+  for (const project of [voiceGroup, toolsGroup]) {
+    assert.equal(
+      await project
+        .getByRole("region", { name: "このPCで実装中", exact: true })
+        .count(),
+      1,
+    );
+    assert.equal(
+      await project
+        .getByRole("region", { name: "ほかのPC", exact: true })
+        .count(),
+      1,
+    );
+    assert.equal(
+      await project
+        .getByRole("region", { name: "未割当", exact: true })
+        .count(),
+      1,
+    );
+  }
+  assert.equal(
+    await voiceGroup
+      .getByRole("button")
+      .filter({ hasText: "共有ルーティングを確認" })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await toolsGroup
+      .getByRole("button")
+      .filter({ hasText: "共有ルーティングを確認" })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await voiceGroup
+      .getByRole("button")
+      .filter({ hasText: "未割り当ての依頼" })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await page
+      .locator('.project-list > section[aria-label="ほかのPC"]')
+      .count(),
+    0,
+  );
   client.connected = false;
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
@@ -276,6 +327,7 @@ try {
     .waitFor();
   assert.equal(
     await page
+      .locator('.project-group[data-project-id="project"]')
       .getByRole("region", { name: "ほかのPC", exact: true })
       .getByRole("button")
       .count(),
@@ -367,6 +419,56 @@ try {
     .click();
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "discord-voiceの設定", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "このPCでタスクを開始", exact: true })
+    .click();
+  const localDialog = page.getByRole("dialog", {
+    name: "このPCでタスクを開始",
+    exact: true,
+  });
+  assert.equal(
+    await localDialog
+      .getByRole("checkbox", { name: "Discordにも共有", exact: true })
+      .isChecked(),
+    true,
+  );
+  assert.equal(
+    await localDialog.getByLabel("共有先プロジェクト").inputValue(),
+    "project",
+  );
+  await localDialog
+    .getByRole("checkbox", { name: "Discordにも共有", exact: true })
+    .uncheck();
+  assert.equal(await localDialog.getByLabel("共有先プロジェクト").count(), 0);
+  await localDialog
+    .getByRole("checkbox", { name: "Discordにも共有", exact: true })
+    .check();
+  let localInput;
+  await page.route("**/api/local-tasks/start", async (route) => {
+    localInput = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ runId: "run" }),
+    });
+  });
+  await localDialog
+    .getByLabel("タイトル", { exact: true })
+    .fill("Local shared fixture");
+  await localDialog
+    .getByLabel("依頼内容", { exact: true })
+    .fill("Test local sharing");
+  await localDialog
+    .getByRole("button", { name: "ローカルで開始", exact: true })
+    .click();
+  await localDialog.waitFor({ state: "hidden" });
+  assert.equal(localInput.shareDiscord, true);
+  assert.equal(localInput.shareProjectId, "project");
+  assert.equal(localInput.accessMode, "full");
+  await page.unroute("**/api/local-tasks/start");
   // The project workspace replaces the old global local-task/run navigation.
   assert.equal(
     await page

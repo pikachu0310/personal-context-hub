@@ -1,3 +1,4 @@
+import { NewLocalTask } from "./NewLocalTask.js";
 import { ProfileSettings } from "./ProfileSettings.js";
 import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
 import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
@@ -25,6 +26,7 @@ export function App() {
   const [sidebar, showSidebar] = useState(true);
   const [projectDialog, setProjectDialog] = useState<string | undefined>();
   const [profileDialog, showProfile] = useState(false);
+  const [localTaskProject, setLocalTaskProject] = useState<string>();
   const [settingsProject, setSettingsProject] = useState<string>();
   const [taskDrafts, setTaskDrafts] = useState<
     Record<string, { text: string; requestId: string; sentText?: string }>
@@ -99,30 +101,16 @@ export function App() {
     projectView?.projectId ??
     sharedCurrent?.projectId ??
     current?.task.projectId;
+  const localWorkspace =
+    !projectView && !selectedShared && current?.origin === "local";
   const workspaceConnected =
-    state.connected &&
-    (!activeProjectId ||
-      state.settings.projects.some((p) => p.id === activeProjectId));
+    localWorkspace ||
+    (state.connected &&
+      (!activeProjectId ||
+        state.settings.projects.some((p) => p.id === activeProjectId)));
   const currentPage = !workspaceConnected ? "overview" : (page ?? "runs");
   const sharedStale =
     !!state.teamTasks && Date.now() - state.teamTasks.updatedAt > 15000;
-  const sharedGroups = [
-    {
-      name: "このPC · 受け取り待ち",
-      tasks: shared.filter(
-        (task) =>
-          task.clientId === state.settings.deviceId &&
-          !runs.some((run) => run.task.runId === task.runId),
-      ),
-    },
-    {
-      name: "ほかのPC",
-      tasks: shared.filter(
-        (task) => task.clientId && task.clientId !== state.settings.deviceId,
-      ),
-    },
-    { name: "未割り当て", tasks: shared.filter((task) => !task.clientId) },
-  ];
   const filtered = runs.filter((run) =>
     `${run.task.title ?? ""} ${run.task.text}`
       .toLowerCase()
@@ -132,6 +120,8 @@ export function App() {
     ...new Set([
       ...state.settings.projects.map((p) => p.id),
       ...runs.map((r) => r.task.projectId),
+      ...shared.map((task) => task.projectId),
+      ...(state.projectTasks ?? []).map((task) => task.projectId),
     ]),
   ];
   return (
@@ -187,19 +177,56 @@ export function App() {
           {projects.map((id) => {
             const project = state.settings.projects.find((p) => p.id === id);
             const projectConnected = state.connected && !!project;
-            const shared = (state.projectTasks ?? []).filter(
-              (t) =>
-                t.projectId === id &&
-                !runs.some((r) => r.task.id === t.id) &&
-                `${t.title ?? ""} ${t.text}`
+            const candidates = [
+              ...shared,
+              ...(state.projectTasks ?? []).filter(
+                (task) => !shared.some((summary) => summary.id === task.id),
+              ),
+            ].filter(
+              (task) =>
+                task.projectId === id &&
+                !runs.some(
+                  (run) =>
+                    run.task.id === task.id ||
+                    run.discordShare?.taskId === task.id,
+                ) &&
+                [
+                  task.title,
+                  "text" in task ? task.text : task.ownerName,
+                  "deviceName" in task ? task.deviceName : "",
+                ]
+                  .join(" ")
                   .toLowerCase()
                   .includes(query.toLowerCase()),
             );
             const items = filtered.filter((r) => r.task.projectId === id);
-            if (query && !items.length && !shared.length) return null;
+            const sharedGroups = [
+              {
+                name: "このPC · 受け取り待ち",
+                tasks: candidates.filter(
+                  (task) =>
+                    !!task.clientId &&
+                    task.clientId === state.settings.deviceId,
+                ),
+              },
+              {
+                name: "ほかのPC",
+                tasks: candidates.filter(
+                  (task) =>
+                    !!task.clientId &&
+                    task.clientId !== state.settings.deviceId,
+                ),
+              },
+              {
+                name: "未割当",
+                tasks: candidates.filter((task) => !task.clientId),
+              },
+            ];
+            if (query && !items.length && !candidates.length) return null;
             return (
               <section
                 key={id}
+                data-project-id={id}
                 className={`project-group ${!projectConnected ? "project-disconnected" : ""}`}
               >
                 <div className="project-name">
@@ -214,6 +241,7 @@ export function App() {
                         project={project}
                         deviceId={state.settings.deviceId}
                         action={action}
+                        startLocal={() => setLocalTaskProject(id)}
                         mapping={() => setSettingsProject(id)}
                       />
                       <button
@@ -264,115 +292,123 @@ export function App() {
                     />
                   </button>
                 )}
-                {shared.map((task) => (
-                  <button
-                    key={task.id}
-                    disabled={!projectConnected}
-                    className={`task-link ${projectView?.taskId === task.id ? "selected" : ""}`}
-                    onClick={() =>
-                      setProjectView({ projectId: id, taskId: task.id })
-                    }
-                  >
-                    <span>{task.title ?? task.text}</span>
-                    <TaskAvatars state={state} task={task} />
-                    <span
-                      className={`task-dot ${task.state}`}
-                      aria-label={stateLabel(task.state)}
-                    />
-                  </button>
+                {[
+                  {
+                    name: "このPCで実装中",
+                    runs: items.filter((run) => activeState(run.state)),
+                  },
+                  {
+                    name: "このPCの履歴",
+                    runs: items.filter((run) => !activeState(run.state)),
+                  },
+                ].map((group) => (
+                  <section key={group.name} aria-label={group.name}>
+                    <div className="sidebar-caption">
+                      {group.name}
+                      <span>{group.runs.length} タスク</span>
+                    </div>
+                    {group.runs.map((run) => (
+                      <button
+                        key={run.task.runId}
+                        disabled={!projectConnected && run.origin !== "local"}
+                        className={`task-link ${!selectedShared && currentPage === "runs" && run.task.runId === current?.task.runId ? "selected" : ""}`}
+                        aria-current={
+                          currentPage === "runs" &&
+                          !selectedShared &&
+                          run.task.runId === current?.task.runId
+                            ? "page"
+                            : undefined
+                        }
+                        title={run.task.title ?? run.task.text}
+                        onClick={() => {
+                          setProjectView(undefined);
+                          select(run.task.runId);
+                          selectShared(undefined);
+                          setPage("runs");
+                        }}
+                      >
+                        <span>
+                          {run.task.title ?? run.task.text}
+                          {run.origin === "local" && (
+                            <small className="shared-task-owner">
+                              {run.agent === "claude" ? "Claude Code" : "Codex"}{" "}
+                              · ローカルで開始 ·{" "}
+                              {run.discordShare
+                                ? run.discordShare.status === "synced"
+                                  ? "共有登録済み"
+                                  : "共有待ち"
+                                : "PC内のみ"}
+                            </small>
+                          )}
+                        </span>
+                        <TaskAvatars state={state} task={run.task} local />
+                        <span
+                          role="img"
+                          aria-label={stateLabel(run.state)}
+                          className={`task-dot ${activeState(run.state) ? "active" : run.state}`}
+                        />
+                      </button>
+                    ))}
+                  </section>
                 ))}
-                {items.map((run) => (
-                  <button
-                    key={run.task.runId}
-                    disabled={!projectConnected}
-                    className={`task-link ${!selectedShared && currentPage === "runs" && run.task.runId === current?.task.runId ? "selected" : ""}`}
-                    aria-current={
-                      currentPage === "runs" &&
-                      !selectedShared &&
-                      run.task.runId === current?.task.runId
-                        ? "page"
-                        : undefined
-                    }
-                    title={run.task.title ?? run.task.text}
-                    onClick={() => {
-                      setProjectView(undefined);
-                      select(run.task.runId);
-                      selectShared(undefined);
-                      setPage("runs");
-                    }}
-                  >
-                    <span>
-                      {run.task.title ?? run.task.text}
-                      {run.origin === "local" && (
-                        <small className="shared-task-owner">
-                          {run.agent === "claude" ? "Claude Code" : "Codex"} ·
-                          ローカルで開始 · Bot未共有
-                        </small>
-                      )}
-                    </span>
-                    <TaskAvatars state={state} task={run.task} local />
-                    <span
-                      role="img"
-                      aria-label={stateLabel(run.state)}
-                      className={`task-dot ${activeState(run.state) ? "active" : run.state}`}
-                    />
-                  </button>
+                {sharedGroups.map((group) => (
+                  <section key={group.name} aria-label={group.name}>
+                    <div className="sidebar-caption">
+                      {group.name}
+                      <span>{group.tasks.length} タスク</span>
+                    </div>
+                    {group.tasks.map((task) => (
+                      <button
+                        key={task.id}
+                        disabled={!state.connected}
+                        className={`task-link ${currentPage === "runs" && selectedShared === task.id ? "selected" : ""}`}
+                        aria-current={
+                          currentPage === "runs" && selectedShared === task.id
+                            ? "page"
+                            : undefined
+                        }
+                        title={`${task.title} · ${("ownerName" in task ? task.ownerName : undefined) ?? "未割り当て"} · ${stateLabel(task.state)}`}
+                        onClick={() => {
+                          if ("text" in task) {
+                            setProjectView({ projectId: id, taskId: task.id });
+                            selectShared(undefined);
+                          } else {
+                            setProjectView(undefined);
+                            selectShared(task.id);
+                          }
+                          setPage("runs");
+                        }}
+                      >
+                        <span>
+                          {task.title}
+                          <small className="shared-task-owner">
+                            {("ownerName" in task
+                              ? task.ownerName
+                              : undefined) ||
+                              (task.clientId ? "担当不明" : "実行待ち")}{" "}
+                            · {stateLabel(task.state)}
+                          </small>
+                        </span>
+                        <TaskAvatars state={state} task={task} />
+                        <span
+                          className={`task-dot ${activeState(task.state) && !sharedStale && "deviceConnected" in task && task.deviceConnected ? "active" : task.state}`}
+                        />
+                      </button>
+                    ))}
+                  </section>
                 ))}
               </section>
             );
           })}
-          {!filtered.length && (
-            <p className="sidebar-empty">
-              {query
-                ? "一致するタスクはありません"
-                : "Discordから依頼すると、ここにタスクが表示されます。"}
-            </p>
-          )}
-          {sharedGroups.map((group) => (
-            <section key={group.name} aria-label={group.name}>
-              <div className="sidebar-caption">
-                {group.name}
-                <span>{group.tasks.length} タスク</span>
-              </div>
-              {group.tasks
-                .filter((task) =>
-                  `${task.title} ${task.ownerName ?? ""} ${task.deviceName ?? ""}`
-                    .toLowerCase()
-                    .includes(query.toLowerCase()),
-                )
-                .map((task) => (
-                  <button
-                    key={task.id}
-                    disabled={!state.connected}
-                    className={`task-link ${currentPage === "runs" && selectedShared === task.id ? "selected" : ""}`}
-                    aria-current={
-                      currentPage === "runs" && selectedShared === task.id
-                        ? "page"
-                        : undefined
-                    }
-                    title={`${task.title} · ${task.ownerName ?? "未割り当て"} · ${stateLabel(task.state)}`}
-                    onClick={() => {
-                      setProjectView(undefined);
-                      selectShared(task.id);
-                      setPage("runs");
-                    }}
-                  >
-                    <span>
-                      {task.title}
-                      <small className="shared-task-owner">
-                        {task.ownerName ||
-                          (task.clientId ? "担当不明" : "実行待ち")}{" "}
-                        · {stateLabel(task.state)}
-                      </small>
-                    </span>
-                    <TaskAvatars state={state} task={task} />
-                    <span
-                      className={`task-dot ${activeState(task.state) && !sharedStale && task.deviceConnected ? "active" : task.state}`}
-                    />
-                  </button>
-                ))}
-            </section>
-          ))}
+          {!filtered.length &&
+            !shared.length &&
+            !(state.projectTasks ?? []).length && (
+              <p className="sidebar-empty">
+                {query
+                  ? "一致するタスクはありません"
+                  : "Discordから依頼すると、ここにタスクが表示されます。"}
+              </p>
+            )}
           <p className="sidebar-empty" role="status">
             {!state.connected
               ? "ほかのPCの状態を見るには接続してください。"
@@ -530,6 +566,38 @@ export function App() {
           }}
           label={projectDialog ? "保存先を設定" : "追加"}
         />
+      </Modal>
+      <Modal
+        opened={!!localTaskProject}
+        onClose={() => setLocalTaskProject(undefined)}
+        title="このPCでタスクを開始"
+        size="lg"
+      >
+        {localTaskProject && (
+          <NewLocalTask
+            action={action}
+            mode={
+              state.settings.mappings.find(
+                (m) => m.projectId === localTaskProject,
+              )?.progressMode ?? "auto"
+            }
+            projects={state.settings.projects}
+            initialProjectId={localTaskProject}
+            initialDirectory={
+              state.settings.mappings.find(
+                (m) => m.projectId === localTaskProject,
+              )?.directory
+            }
+            started={(runId) => {
+              setLocalTaskProject(undefined);
+              setProjectView(undefined);
+              selectShared(undefined);
+              select(runId);
+              setPage("runs");
+              void refresh();
+            }}
+          />
+        )}
       </Modal>
       <main className="workspace-main">
         <header className="workspace-header">

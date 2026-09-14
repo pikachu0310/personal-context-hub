@@ -81,7 +81,8 @@ export class Tasks {
       this.applyResult(deviceId, generation, data),
     );
   }
-  private applyResult(deviceId: string, generation: number, data: Command) {
+  /** Internal mutation; caller holds the repository transaction. */
+  applyResult(deviceId: string, generation: number, data: Command) {
     const device = this.repository.get<Device>("device", deviceId),
       task = this.repository.get<Task>("task", String(data.taskId));
     if (
@@ -173,6 +174,8 @@ export class Tasks {
     return this.repository.transaction(() => {
       const task = this.repository.get<Task>("task", taskId);
       if (!task) throw new Error("TASK_NOT_FOUND");
+      if (task.localMirror && type === "retry")
+        throw new Error("LOCAL_RETRY_REQUIRED");
       const requestKey = options.requestKey ?? randomUUID();
       if (!requestKey || requestKey.length > 500)
         throw new Error("INVALID_REQUEST_KEY");

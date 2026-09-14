@@ -33,6 +33,7 @@ export interface Grant {
   slots: number;
 }
 export interface Mapping extends Grant {
+  accessMode?: "full" | "approval";
   progressMode?: "auto" | "manual";
   directory: string;
   previewCommand?: string[];
@@ -46,6 +47,7 @@ export type TaskState =
   | "failed"
   | "cancelled";
 export interface Task {
+  localMirror?: { deviceId: string; runId: string; sequence: number };
   createdByBot?: boolean;
   participants?: TaskParticipant[];
   id: string;
