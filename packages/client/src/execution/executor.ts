@@ -23,6 +23,7 @@ import type { AgentKind } from "../agents/types.js";
 import { ClaudeRuntime } from "../agents/claude.js";
 import {
   normalizeExecutionPolicy,
+  type AccessMode,
   restrictExecutionPolicy,
   type ExecutionPolicy,
   type ClientControlReceipt,
@@ -58,7 +59,7 @@ export interface Run {
     status?: "pending" | "synced" | "error";
     error?: string;
   };
-  accessMode?: "full" | "approval";
+  accessMode?: AccessMode;
   progressMode?: "auto" | "manual";
   pendingProgressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
@@ -153,7 +154,7 @@ export class Executor {
     slots: number,
     local?: {
       discordShare?: Run["discordShare"];
-      accessMode?: "full" | "approval";
+      accessMode?: AccessMode;
       progressMode: "auto" | "manual";
       agent?: AgentKind;
       model?: string;

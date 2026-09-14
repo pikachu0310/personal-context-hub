@@ -3,7 +3,10 @@ import { mkdir, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Mapping } from "@ido/common/contracts/protocol";
 import { run, workerEnvironment } from "@ido/common/runtime/platform";
-import { restrictExecutionPolicy } from "@ido/common/contracts/work";
+import {
+  restrictExecutionPolicy,
+  isUnrestrictedAccess,
+} from "@ido/common/contracts/work";
 
 import { codexBinary } from "../codex/binary.js";
 import { activityText, recordActivity, recordEvent } from "./activity.js";
@@ -76,6 +79,8 @@ export async function execute(
   let stopBoardWatch = () => {};
   this.active.set(value.task.runId, active);
   try {
+    if (value.agent === "claude" && value.accessMode === "sandbox")
+      throw new Error("CLAUDE_SANDBOX_UNSUPPORTED");
     if (
       knowledgeAvailable &&
       !value.model &&
@@ -125,7 +130,9 @@ export async function execute(
       value.effectiveExecutionPolicy,
     );
     const localAccess =
-      !policy.sandboxMode && policy.networkAccessEnabled !== false
+      !policy.sandboxMode &&
+      policy.networkAccessEnabled !== false &&
+      isUnrestrictedAccess(value.accessMode)
         ? value.accessMode
         : undefined;
     const options = {

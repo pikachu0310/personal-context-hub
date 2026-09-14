@@ -149,5 +149,12 @@ test("project creation applies network, progress mode and execution opt-in befor
     { projectId: "alpha", network: true, slots: 1 },
   ]);
   const restored = new Client(directory);
-  assert.equal(restored.allow, false);
+  t.mock.method(restored, "checkAccount", async () => {});
+  await restored.start(0);
+  try {
+    assert.equal(restored.allow, true);
+    assert.equal(restored.settings.mappings[0].executionAllowed, true);
+  } finally {
+    await restored.close();
+  }
 });

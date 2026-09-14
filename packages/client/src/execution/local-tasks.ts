@@ -7,6 +7,7 @@ import type { Client } from "../bootstrap/client.js";
 import type { Run } from "./executor.js";
 import { activityText } from "./activity.js";
 import { selectedModel } from "../agents/model-selection.js";
+import { isAccessMode, isUnrestrictedAccess } from "@ido/common/contracts/work";
 
 /** Local-only projection for a future opt-in Bot adapter, never sent to Engine. */
 export function localProgress(runs: Record<string, Run>) {
@@ -91,17 +92,14 @@ export async function startLocalTask(
       const title = text(input.title || instruction.slice(0, 100), 200);
       if (!["auto", "manual"].includes(String(input.mode)))
         throw new HttpError(400, "INVALID_PROGRESS_MODE");
-      if (
-        input.accessMode !== undefined &&
-        !["full", "approval"].includes(String(input.accessMode))
-      )
+      if (input.accessMode !== undefined && !isAccessMode(input.accessMode))
         throw new HttpError(400, "INVALID_ACCESS_MODE");
-      const accessMode =
-        input.accessMode === undefined
-          ? undefined
-          : input.mode === "auto"
-            ? "full"
-            : (input.accessMode as "full" | "approval");
+      const accessMode = isAccessMode(input.accessMode)
+        ? input.accessMode
+        : undefined;
+      if (agent === "claude" && accessMode === "sandbox")
+        throw new HttpError(400, "CLAUDE_SANDBOX_UNSUPPORTED");
+      const unrestricted = isUnrestrictedAccess(accessMode);
       if (
         !accessMode &&
         !["workspace-write", "read-only"].includes(String(input.sandboxMode))
@@ -129,7 +127,7 @@ export async function startLocalTask(
       const mapping = {
         projectId,
         directory,
-        network: accessMode ? true : input.network === true,
+        network: unrestricted ? true : input.network === true,
         slots: client.settings.slots,
       };
       const now = Date.now();
@@ -147,9 +145,11 @@ export async function startLocalTask(
         revision: 1,
         network: mapping.network,
         executionPolicy: {
-          sandboxMode: accessMode
+          sandboxMode: unrestricted
             ? undefined
-            : (input.sandboxMode as "workspace-write" | "read-only"),
+            : accessMode === "sandbox"
+              ? "workspace-write"
+              : (input.sandboxMode as "workspace-write" | "read-only"),
           networkAccessEnabled: mapping.network,
         },
         createdAt: now,

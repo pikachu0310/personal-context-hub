@@ -69,6 +69,7 @@ test("Client applies explicit restrictions in the actual provider options and pr
   await first.load();
   const value: Run = {
     task: baseTask(),
+    accessMode: "full",
     directory,
     state: "assigned",
     model: "test-codex-model",
@@ -316,82 +317,94 @@ test("Client does not report successful completion for missing terminal events o
 test("local access survives restart and controls actual runtime approval and sandbox", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-access-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  for (const accessMode of ["full", "approval"] as const) {
-    const captured: any[] = [];
-    const factory = () =>
-      ({
-        startThread(options: any) {
-          captured.push(options);
-          return {
-            runStreamed: async () => ({
-              events: (async function* () {
-                yield {
-                  type: "item.completed",
-                  item: {
-                    type: "agent_message",
-                    phase: "final_answer",
-                    text: "done",
-                  },
-                };
-                yield {
-                  type: "item.completed",
-                  item: {
-                    type: "agent_message",
-                    phase: "final_answer",
-                    text: "done",
-                  },
-                };
-                yield { type: "turn.completed" };
-              })(),
-            }),
-          };
-        },
-        close: async () => {},
-      }) as any;
-    const executor = new Executor(
-      join(directory, accessMode),
-      () => {},
-      factory,
-    );
-    await executor.load();
-    const task = baseTask();
-    task.executionPolicy = undefined;
-    const value: Run = {
-      task,
-      directory,
-      state: "assigned",
-      origin: "local",
-      accessMode,
-      progressMode: "manual",
-      planApproved: true,
-    };
-    executor.runs.run = value;
-    await executor.execute(
-      value,
-      { projectId: "project", directory, slots: 1, network: true },
-      false,
-    );
-    const restored = new Executor(
-      join(directory, accessMode),
-      () => {},
-      factory,
-    );
-    await restored.load();
-    assert.equal(restored.runs.run.accessMode, accessMode);
-    await restored.execute(
-      restored.runs.run,
-      { projectId: "project", directory, slots: 1, network: true },
-      false,
-    );
-    assert.equal(captured.length, 2);
-    for (const options of captured) {
-      assert.equal(options.sandboxMode, "danger-full-access");
-      assert.equal(
-        options.approvalPolicy,
-        accessMode === "full" ? "never" : "untrusted",
+  for (const accessMode of ["sandbox", "full", "approval"] as const) {
+    for (const network of [false, true]) {
+      const captured: any[] = [];
+      const factory = () =>
+        ({
+          startThread(options: any) {
+            captured.push(options);
+            return {
+              runStreamed: async () => ({
+                events: (async function* () {
+                  yield {
+                    type: "item.completed",
+                    item: {
+                      type: "agent_message",
+                      phase: "final_answer",
+                      text: "done",
+                    },
+                  };
+                  yield {
+                    type: "item.completed",
+                    item: {
+                      type: "agent_message",
+                      phase: "final_answer",
+                      text: "done",
+                    },
+                  };
+                  yield { type: "turn.completed" };
+                })(),
+              }),
+            };
+          },
+          close: async () => {},
+        }) as any;
+      const executor = new Executor(
+        join(directory, `${accessMode}-${network}`),
+        () => {},
+        factory,
       );
-      assert.equal(options.networkAccessEnabled, true);
-      assert.equal(options.requireWritableSandbox, false);
+      await executor.load();
+      const task = baseTask();
+      task.executionPolicy = undefined;
+      const value: Run = {
+        task,
+        directory,
+        state: "assigned",
+        origin: "local",
+        accessMode,
+        progressMode: "manual",
+        planApproved: true,
+      };
+      executor.runs.run = value;
+      await executor.execute(
+        value,
+        { projectId: "project", directory, slots: 1, network },
+        false,
+      );
+      const restored = new Executor(
+        join(directory, `${accessMode}-${network}`),
+        () => {},
+        factory,
+      );
+      await restored.load();
+      assert.equal(restored.runs.run.accessMode, accessMode);
+      await restored.execute(
+        restored.runs.run,
+        { projectId: "project", directory, slots: 1, network },
+        false,
+      );
+      assert.equal(captured.length, 2);
+      for (const options of captured) {
+        assert.equal(
+          options.sandboxMode,
+          accessMode === "sandbox" ? "workspace-write" : "danger-full-access",
+        );
+        assert.equal(
+          options.approvalPolicy,
+          accessMode === "full"
+            ? "never"
+            : accessMode === "approval"
+              ? "untrusted"
+              : "on-request",
+        );
+        assert.equal(
+          options.networkAccessEnabled,
+          accessMode === "sandbox" ? network : true,
+        );
+        assert.equal(options.requireWritableSandbox, accessMode === "sandbox");
+      }
     }
   }
 });
