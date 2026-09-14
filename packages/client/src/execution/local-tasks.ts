@@ -24,6 +24,7 @@ export function localProgress(runs: Record<string, Run>) {
           revision: value.task.revision,
           agent: value.agent ?? "codex",
           model: value.model,
+          reasoningEffort: value.reasoningEffort,
           state: value.state,
           phase: value.phase,
           progressMode: value.progressMode,
@@ -72,6 +73,15 @@ export async function startLocalTask(
         throw new HttpError(409, "AGENT_LOGIN_REQUIRED");
       if (!model || !available.models.some((value) => value.id === model))
         throw new HttpError(409, "MODEL_UNAVAILABLE");
+      const reasoningEffort = input.reasoningEffort || undefined;
+      if (
+        reasoningEffort !== undefined &&
+        (typeof reasoningEffort !== "string" ||
+          !available.models
+            .find((value) => value.id === model)
+            ?.supportedEfforts?.includes(reasoningEffort))
+      )
+        throw new HttpError(400, "EFFORT_UNAVAILABLE");
       if (
         agent === "claude" &&
         input.accessMode === undefined &&
@@ -161,6 +171,7 @@ export async function startLocalTask(
           progressMode: input.mode as "auto" | "manual",
           agent,
           model,
+          reasoningEffort,
           accessMode,
           discordShare: share
             ? {
@@ -274,6 +285,7 @@ export async function continueLocalTask(
           progressMode: value.progressMode ?? "auto",
           agent: value.agent,
           model: value.model,
+          reasoningEffort: value.reasoningEffort,
         },
       );
       if (client.executor.runs[runId].task.revision !== task.revision)

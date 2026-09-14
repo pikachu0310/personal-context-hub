@@ -19,7 +19,7 @@ export async function execute(
   const createRuntime =
     value.agent === "claude" ? this.createClaude : this.createCodex;
   const codex = createRuntime({
-    experimentalApi: value.progressMode === "manual",
+    experimentalApi: true,
     codexPathOverride: codexBinary(),
     env: workerEnvironment(this.home),
     onApprovalRequest: (method: string, params: unknown) =>
@@ -80,6 +80,7 @@ export async function execute(
         : undefined;
     const options = {
       model: value.model,
+      reasoningEffort: value.reasoningEffort,
       workingDirectory: value.directory,
       sandboxMode: localAccess
         ? "danger-full-access"
@@ -126,7 +127,13 @@ export async function execute(
       .join("\n\n");
     while (true) {
       abort.signal.throwIfAborted();
-      const planning = value.progressMode === "manual" && !value.planApproved;
+      if (value.pendingProgressMode) {
+        value.progressMode = value.pendingProgressMode;
+        value.pendingProgressMode = undefined;
+        if (value.progressMode === "manual") value.planApproved = false;
+      }
+      const progressMode = value.progressMode;
+      const planning = progressMode === "manual" && !value.planApproved;
       if (planning) value.plan = undefined;
       value.phase = planning ? "planning" : "executing";
       const discussion = (value.instructions ?? []).filter(
@@ -139,7 +146,9 @@ export async function execute(
       await this.save();
       const { events } = await active.thread.runStreamed(prompt, {
         signal: abort.signal,
-        ...(value.progressMode === "manual"
+        model: value.model,
+        reasoningEffort: value.reasoningEffort ?? null,
+        ...(progressMode === "manual"
           ? { collaborationMode: planning ? "plan" : "default" }
           : {}),
       });

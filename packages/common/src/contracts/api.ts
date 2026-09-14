@@ -84,6 +84,7 @@ export interface AdminState {
     meetingId?: string;
     messageId?: string;
     model?: string;
+    reasoningEffort?: string;
     error: {
       reason: string;
       type: string;
@@ -142,6 +143,7 @@ export interface ClientState {
     profile?: { name: string; context: string; avatar?: string };
     accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
+    pendingProgressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
     identityId?: string;
@@ -162,6 +164,7 @@ export interface ClientState {
   runs: Array<{
     agent?: "codex" | "claude";
     model?: string;
+    reasoningEffort?: string;
     origin?: "local";
     discordShare?: {
       projectId: string;
@@ -177,6 +180,7 @@ export interface ClientState {
     activityVersion?: number;
     accessMode?: "full" | "approval";
     progressMode?: "auto" | "manual";
+    pendingProgressMode?: "auto" | "manual";
     phase?: "planning" | "awaiting-plan" | "executing";
     updatedAt?: number;
   }>;
@@ -216,7 +220,12 @@ export interface TeamTaskSnapshot {
 export interface AgentCatalogEntry {
   agent: "codex" | "claude";
   authenticated: boolean;
-  models: Array<{ id: string; name: string }>;
+  models: Array<{
+    id: string;
+    name: string;
+    supportedEfforts?: string[];
+    defaultEffort?: string;
+  }>;
   error?: string;
 }
 export interface ApiResult {

@@ -31,6 +31,7 @@ export interface WorkInstruction {
 
 export interface Run {
   model?: string;
+  reasoningEffort?: string;
   agent?: AgentKind;
   origin?: "local";
   localMapping?: Mapping;
@@ -46,6 +47,7 @@ export interface Run {
   };
   accessMode?: "full" | "approval";
   progressMode?: "auto" | "manual";
+  pendingProgressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
   planApproved?: boolean;
   plan?: string;
@@ -133,6 +135,7 @@ export class Executor {
       progressMode: "auto" | "manual";
       agent?: AgentKind;
       model?: string;
+      reasoningEffort?: string;
     },
   ) {
     if (!command.id) throw new Error("COMMAND_ID_REQUIRED");
@@ -219,7 +222,12 @@ export class Executor {
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
       const value: Run = {
         agent: previous?.agent ?? local?.agent ?? "codex",
-        model: previous ? previous.model : local?.model,
+        model: previous ? previous.model : (local?.model ?? mapping.model),
+        reasoningEffort: previous
+          ? previous.reasoningEffort
+          : local
+            ? local.reasoningEffort
+            : mapping.reasoningEffort,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
         discordShare: previous?.discordShare ?? local?.discordShare,
@@ -227,6 +235,7 @@ export class Executor {
           ? previous.accessMode
           : (local?.accessMode ?? mapping.accessMode),
         progressMode:
+          previous?.pendingProgressMode ??
           previous?.progressMode ??
           local?.progressMode ??
           mapping.progressMode ??

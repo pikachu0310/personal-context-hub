@@ -49,13 +49,23 @@ class ClaudeThread {
   }
   async runStreamed(
     prompt: string,
-    turn: { signal: AbortSignal; collaborationMode?: string },
+    turn: {
+      signal: AbortSignal;
+      collaborationMode?: string;
+      model?: string;
+      reasoningEffort?: string | null;
+    },
   ) {
     return { events: this.events(prompt, turn) };
   }
   async *events(
     prompt: string,
-    turn: { signal: AbortSignal; collaborationMode?: string },
+    turn: {
+      signal: AbortSignal;
+      collaborationMode?: string;
+      model?: string;
+      reasoningEffort?: string | null;
+    },
   ): AsyncGenerator<any> {
     if (this.closed) throw new Error("CLAUDE_CLOSED");
     const planning = turn.collaborationMode === "plan";
@@ -66,7 +76,9 @@ class ClaudeThread {
       while (true) {
         turn.signal.throwIfAborted();
         const options: Options = {
-          model: this.options.model,
+          model: turn.model ?? this.options.model,
+          effort: (turn.reasoningEffort ??
+            this.options.reasoningEffort) as Options["effort"],
           cwd: this.options.workingDirectory,
           env: this.runtime.config.env,
           resume: this.id,
