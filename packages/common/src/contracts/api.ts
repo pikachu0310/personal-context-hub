@@ -4,6 +4,7 @@ export interface MessageView {
   id: string;
   authorId: string;
   authorName?: string;
+  authorIdentityId?: string;
   role?: "user" | "assistant";
   text: string;
   replyText?: string;
@@ -21,6 +22,7 @@ export interface MeetingView {
   messages: MessageView[];
 }
 export interface WorkspaceState {
+  deletionSync?: { pendingClients: number };
   user: User;
   projects: Project[];
   conversations?: Array<{
@@ -37,6 +39,7 @@ export interface ProjectWorkspace {
   tasks: Task[];
   participants: Array<{
     id: string;
+    identityId?: string;
     name: string;
     context: string;
     avatar?: string;
@@ -116,7 +119,16 @@ export interface ClientActivityState {
   dropped: number;
   version: number;
 }
+export interface ClientAccount {
+  status: "available" | "signed-out" | "unavailable";
+  type?: string;
+  email?: string;
+}
 export interface ClientState {
+  lifecycleSupported?: boolean;
+  deletionSync?: { pendingTasks: number };
+  account?: ClientAccount;
+  identity?: { status: string; directory: string };
   allowedProjectIds?: string[];
   projectTasks?: Task[];
   projectCreationSupported?: boolean;
@@ -132,6 +144,7 @@ export interface ClientState {
     progressMode?: "auto" | "manual";
     slots: number;
     deviceId?: string;
+    identityId?: string;
     engineUrl?: string;
     projects: Project[];
     mappings: Mapping[];
@@ -193,6 +206,7 @@ export interface TeamTaskSnapshot {
     > & {
       participants?: import("./protocol.js").TaskParticipant[];
       ownerName?: string;
+      clientIdentityId?: string;
       deviceName?: string;
       deviceConnected?: boolean;
       progress?: string;
@@ -212,4 +226,90 @@ export interface ApiResult {
   error?: string;
   patch?: string;
   csrf?: string;
+}
+
+/** Administration projection: no credentials, local paths or raw worker output. */
+export interface DashboardTask {
+  membershipVersion?: number;
+  id: string;
+  runId: string;
+  revision: number;
+  controlVersion: number;
+  projectId: string;
+  meetingId: string;
+  title: string;
+  state: Task["state"];
+  clientId?: string;
+  userId?: string;
+  createdAt: number;
+  updatedAt: number;
+  assignedAt?: number;
+  assignmentReason?: string;
+  waitReason?: string;
+  stop?: { delivery: string };
+}
+export interface DashboardConnection {
+  id: string;
+  name: string;
+  userId: string;
+  generation: number;
+  connected: boolean;
+  ready: boolean;
+  disconnecting: boolean;
+  connectedAt?: number;
+  lastSeenAt?: number;
+  slots: number;
+  projectIds: string[];
+}
+export interface DashboardState {
+  deletionSync?: { pendingClients: number };
+  user: User;
+  updatedAt: number;
+  projects: Array<{
+    isDefault?: boolean;
+    membershipVersion?: number;
+    id: string;
+    name: string;
+    userIds: string[];
+    connectedUserIds: string[];
+    running: number;
+    waiting: number;
+    lastActivityAt?: number;
+  }>;
+  users: User[];
+  connections: DashboardConnection[];
+  tasks: DashboardTask[];
+  meetings: Array<{
+    id: string;
+    projectId?: string;
+    name: string;
+    startedAt?: number;
+    closedAt?: number;
+  }>;
+  counts: {
+    running: number;
+    waiting: number;
+    connectedUsers: number;
+    activeConversations: number;
+    projects: number;
+  };
+  activity: {
+    from: number;
+    to: number;
+    observedFrom: number;
+    total: number;
+    buckets: Array<{ at: number; count: number }>;
+  };
+}
+export interface DashboardRawPage {
+  items: Array<{
+    id: string;
+    at: number;
+    projectId?: string;
+    targetId: string;
+    text: string;
+  }>;
+  total: number;
+  offset: number;
+  limit: number;
 }

@@ -78,7 +78,28 @@ export class Store {
         return value;
       });
   }
+  entries(): Array<{ kind: string; id: string; value: any }> {
+    return this.db
+      .prepare("SELECT kind,id,data FROM records")
+      .all()
+      .map((r) => ({
+        kind: String(r.kind),
+        id: String(r.id),
+        value: JSON.parse(String(r.data)),
+      }));
+  }
   put(kind: string, id: string, data: unknown) {
+    const value = data as { projectId?: string; meetingId?: string };
+    // Fence late model callbacks and stale task snapshots after complete deletion.
+    if (
+      !kind.endsWith("-deletion") &&
+      ((kind === "task" && this.get("task-deletion", id)) ||
+        (kind === "project" && this.get("project-deletion", id)) ||
+        (kind === "meeting" && this.get("meeting-deletion", id)) ||
+        (value?.projectId && this.get("project-deletion", value.projectId)) ||
+        (value?.meetingId && this.get("meeting-deletion", value.meetingId)))
+    )
+      throw new Error("RESOURCE_DELETED");
     if (kind === "meeting") {
       const { messages, ...meeting } = data as Meeting;
       for (const message of messages ?? [])

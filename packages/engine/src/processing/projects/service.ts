@@ -44,6 +44,8 @@ export class Projects {
         requestKey,
       );
       if (receipt) {
+        if (!this.store.get("project", receipt.projectId))
+          throw new Error("PROJECT_DELETED");
         if (receipt.name !== normalized)
           throw new Error("PROJECT_REQUEST_MISMATCH");
         return this.store.get<Project>("project", receipt.projectId)!;
@@ -75,6 +77,8 @@ export class Projects {
     if (projectId && meeting?.projectId && projectId !== meeting.projectId)
       throw new Error("INPUT_BINDING_MISMATCH");
     const selected = projectId || meeting?.projectId || DEFAULT_PROJECT;
+    if (this.store.get("project-lock", selected))
+      throw new Error("WORKSPACE_CONFLICT");
     if (!this.store.get("project", id(selected)))
       throw new Error("PROJECT_NOT_FOUND");
     return selected;

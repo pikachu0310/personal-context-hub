@@ -73,10 +73,23 @@ export class MinutesUpdater {
   ) {
     const meeting = this.store.get<Meeting>("meeting", meetingId);
     if (!meeting) throw new Error("MEETING_NOT_FOUND");
+    const contextRevision = this.store.get<{ revision: number }>(
+      "project-context",
+      meeting.projectId ?? "",
+    )?.revision;
     const message = meeting.messages.find((m) => m.id === messageId)!;
     const authorId = message.authorId;
     const save = () => {
-      const latest = this.store.get<Meeting>("meeting", meetingId)!;
+      const latest = this.store.get<Meeting>("meeting", meetingId);
+      if (
+        !latest ||
+        contextRevision !==
+          this.store.get<{ revision: number }>(
+            "project-context",
+            meeting.projectId ?? "",
+          )?.revision
+      )
+        throw new Error("WORKSPACE_CONFLICT");
       latest.summary = meeting.summary;
       const index = latest.messages.findIndex((m) => m.id === messageId);
       if (index >= 0)
@@ -102,7 +115,33 @@ export class MinutesUpdater {
     try {
       message.stage = "analyzing";
       save();
-      const parsed = await this.models.update(meeting, messageId);
+      const parsed = await this.models.update(
+        contextRevision === undefined
+          ? meeting
+          : {
+              ...meeting,
+              summary: "",
+              messages: meeting.messages
+                .filter((m) => (m as { role?: string }).role !== "assistant")
+                .map(({ id, authorId, text, at, stage }) => ({
+                  id,
+                  authorId,
+                  text,
+                  at,
+                  stage,
+                })),
+            },
+        messageId,
+      );
+      if (
+        !this.store.get("meeting", meetingId) ||
+        contextRevision !==
+          this.store.get<{ revision: number }>(
+            "project-context",
+            meeting.projectId ?? "",
+          )?.revision
+      )
+        throw new Error("WORKSPACE_CONFLICT");
       meeting.summary = parsed.minutes;
       const target =
         projectId === null ? undefined : (projectId ?? meeting.projectId);

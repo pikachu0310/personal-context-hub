@@ -9,6 +9,8 @@ export class TaskEvents {
   ) {}
   flush() {
     const tasks = this.repository.list<Task>("task");
+    for (const id of this.snapshots.keys())
+      if (!this.repository.get("meeting", id)) this.snapshots.delete(id);
     for (const meeting of this.repository.list<{ id: string }>("meeting")) {
       const data = tasks.filter((task) => task.meetingId === meeting.id);
       const snapshot = JSON.stringify(data);

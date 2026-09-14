@@ -1,3 +1,4 @@
+import { TaskMenu } from "../components/TaskMenu.js";
 import {
   Button,
   Code,
@@ -50,6 +51,9 @@ export function TaskList({
         >
           <Group>
             <Status value={task.state} />
+            {!readonly && !activity && task.canDelete && (
+              <TaskMenu task={task} action={action} />
+            )}
             {task.clientId && (
               <Text c="dimmed" size="xs">
                 Client {task.clientId.slice(0, 8)}

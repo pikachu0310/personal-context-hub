@@ -1,5 +1,5 @@
 import { receiveSharedLocalControl } from "./local-sharing.js";
-import { sign } from "node:crypto";
+import { randomUUID, sign } from "node:crypto";
 import { WebSocket } from "ws";
 import { HttpError } from "@ido/common/runtime/http";
 import type { WorkReceipt } from "@ido/common/contracts/work";
@@ -18,6 +18,7 @@ export async function connect(this: Client) {
   this.ws?.close();
   this.connected = false;
   this.controlSupported = false;
+  this.lifecycleSupported = false;
   this.continuationSupported = false;
   this.projectCreationSupported = false;
   this.teamTasksSupported = false;
@@ -39,7 +40,7 @@ export async function connect(this: Client) {
   this.ws = ws;
   ws.on("error", () => {});
   ws.on("message", (raw) => {
-    if (this.ws !== ws) return;
+    if (this.ws !== ws || this.stopping) return;
     let data: Command;
     try {
       data = frame(raw.toString());
@@ -53,6 +54,7 @@ export async function connect(this: Client) {
           v: 1,
           type: "authenticate",
           deviceId: this.settings.deviceId,
+          lifecycleVersion: 1,
           profile: {
             ...this.settings.profile,
             name: this.settings.profile?.name || "参加者",
@@ -70,6 +72,11 @@ export async function connect(this: Client) {
       return;
     }
     if (data.type === "authenticated") {
+      this.settings.identityId =
+        typeof data.identityId === "string" &&
+        /^client:[a-f0-9]{64}$/.test(data.identityId)
+          ? data.identityId
+          : undefined;
       this.generation = Number(data.generation);
       this.connected = true;
       this.controlSupported = data.controlVersion === 1;
@@ -79,15 +86,29 @@ export async function connect(this: Client) {
       this.localSharingSupported = data.localSharingVersion === 1;
       void this.syncLocalShares();
       this.teamTasksSupported = data.taskListVersion === 1;
+      this.lifecycleSupported = data.lifecycleVersion === 1;
       this.status = "connected";
-      this.settings.projects = data.projects as Project[];
+      this.syncProjects(data.projects as Project[]);
       if (Array.isArray(data.tasks))
         this.projectTasks =
           data.tasks as import("@ido/common/contracts/protocol").Task[];
       void this.save();
-      for (const value of Object.values(this.executor.runs))
-        this.executor.report(value);
-      this.ready();
+      this.processing = this.processing
+        .catch(() => {})
+        .then(async () => {
+          for (const command of (Array.isArray(data.deletions)
+            ? data.deletions
+            : []) as Command[])
+            await this.executor.receive(command, [], false, 0);
+          if (this.ws !== ws || this.stopping) return;
+          for (const value of Object.values(this.executor.runs))
+            this.executor.report(value);
+          this.ready();
+        })
+        .catch(() => {
+          this.status = "削除履歴の同期を再試行しています";
+          this.ready();
+        });
       return;
     }
     if (data.type.startsWith("preview.")) {
@@ -96,10 +117,12 @@ export async function connect(this: Client) {
     }
     if (data.generation !== this.generation) return;
     if (data.type === "projects.updated") {
-      this.settings.projects = data.projects as Project[];
-      if (Array.isArray(data.tasks))
-        this.projectTasks =
-          data.tasks as import("@ido/common/contracts/protocol").Task[];
+      this.syncProjects(
+        data.projects as Project[],
+        Array.isArray(data.tasks)
+          ? (data.tasks as import("@ido/common/contracts/protocol").Task[])
+          : undefined,
+      );
       void this.save();
       return;
     }
@@ -171,6 +194,8 @@ export async function connect(this: Client) {
         );
       return;
     }
+    if (data.type === "task.purge" && data.taskId)
+      this.preview.removeTask(data.taskId);
     this.processing = this.processing
       .catch(() => {})
       .then(async () => {
@@ -190,6 +215,7 @@ export async function connect(this: Client) {
     if (this.ws !== ws) return;
     this.connected = false;
     this.controlSupported = false;
+    this.lifecycleSupported = false;
     this.continuationSupported = false;
     this.projectCreationSupported = false;
     this.teamTasksSupported = false;
@@ -211,9 +237,47 @@ export async function connect(this: Client) {
     this.workspaceRequests.clear();
     this.workspaceSupported = false;
     this.localSharingSupported = false;
-    this.status = code === 4003 ? "revoked or permission changed" : "offline";
+    this.status =
+      code === 4004
+        ? "管理者が接続を切断しました。再接続できます。"
+        : code === 4003
+          ? "revoked or permission changed"
+          : "offline";
+    if (code === 4004) {
+      const targets = Object.values(this.executor.runs).filter(
+        (r) =>
+          r.origin !== "local" &&
+          ["assigned", "running", "interrupted"].includes(r.state),
+      );
+      // Stop only runs present on this connection, never local work or later runs.
+      for (const run of targets)
+        this.executor.active.get(run.task.runId)?.abort.abort();
+      const stopping: Command[] = targets.map((run) => ({
+        v: 1,
+        type: "stop",
+        id: randomUUID(),
+        taskId: run.task.id,
+        runId: run.task.runId,
+        revision: run.task.revision,
+        task: structuredClone(run.task),
+      }));
+      this.processing = this.processing
+        .catch(() => {})
+        .then(async () => {
+          for (const command of stopping)
+            await this.executor.receive(
+              command,
+              this.executionMappings(),
+              this.allow,
+              this.settings.slots,
+            );
+        })
+        .catch(() => {
+          this.status = "切断しました。実行停止を端末で確認してください。";
+        });
+    }
     this.preview.close();
-    if (!this.stopping && code !== 4003)
+    if (!this.stopping && code !== 4003 && code !== 4004)
       this.reconnect = setTimeout(() => void this.connect(), 3000);
   });
 }

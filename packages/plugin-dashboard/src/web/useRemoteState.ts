@@ -1,36 +1,68 @@
-import { useCallback, useEffect, useState } from "react";
-import type { ApiResult, WorkspaceState } from "@ido/common-ui";
-import { api } from "./api.js";
-export function useRemoteState() {
-  const [state, setState] = useState<WorkspaceState>(),
-    [error, setError] = useState("");
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { DashboardState } from "@ido/common/contracts/api";
+export function useRemoteState(projectId: string) {
+  const [state, setState] = useState<DashboardState>();
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [scope, setScope] = useState("");
+  const [now, setNow] = useState(Date.now());
+  const generation = useRef(0),
+    controller = useRef<AbortController | undefined>(undefined);
   const refresh = useCallback(async () => {
+    const current = ++generation.current;
+    controller.current?.abort();
+    const request = new AbortController();
+    controller.current = request;
+    const timeout = setTimeout(() => request.abort(), 8000);
+    setLoading(true);
     try {
-      setState(await api<WorkspaceState>("state"));
+      const response = await fetch(
+        "/api/admin/dashboard" +
+          (projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""),
+        { cache: "no-store", signal: request.signal },
+      );
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || "REQUEST_FAILED");
+      if (current !== generation.current) return;
+      setState(value);
+      setScope(projectId);
       setError("");
-    } catch (error) {
-      setError((error as Error).message);
+    } catch (e) {
+      if (current === generation.current) {
+        const reason = (e as Error).message;
+        if (["LOGIN_REQUIRED", "PERMISSION_DENIED"].includes(reason))
+          setState(undefined);
+        setError(reason);
+      }
+    } finally {
+      clearTimeout(timeout);
+      if (current === generation.current) {
+        setLoading(false);
+        controller.current = undefined;
+      }
     }
-  }, []);
+  }, [projectId]);
   useEffect(() => {
-    let disposed = false;
-    const poll = () => {
-      if (!disposed) void refresh();
-    };
-    poll();
-    const timer = setInterval(poll, 2500);
+    void refresh();
+    const poll = setInterval(() => {
+      if (!controller.current) void refresh();
+    }, 2500);
+    const clock = setInterval(() => setNow(Date.now()), 1000);
     return () => {
-      disposed = true;
-      clearInterval(timer);
+      generation.current++;
+      controller.current?.abort();
+      controller.current = undefined;
+      clearInterval(poll);
+      clearInterval(clock);
     };
   }, [refresh]);
-  const action = async (path: string, input: Record<string, unknown>) => {
-    const result = await api<ApiResult>(path, input);
-    await refresh();
-    return result;
+  return {
+    state,
+    error,
+    loading,
+    refresh,
+    now,
+    stale:
+      !!error || !state || now - state.updatedAt > 10000 || scope !== projectId,
   };
-  const invoke = (path: string, input: Record<string, unknown>) => {
-    void action(path, input).catch((error) => setError(error.message));
-  };
-  return { state, error, refresh, action, invoke };
 }

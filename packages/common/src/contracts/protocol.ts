@@ -10,6 +10,7 @@ export interface User {
 }
 export interface TaskParticipant {
   id: string;
+  identityId?: string;
   name: string;
   avatar?: string;
   bot?: boolean;
@@ -21,6 +22,7 @@ export interface ClientProfile {
   codexConnected: boolean;
 }
 export interface Project {
+  membershipVersion?: number;
   ownerDeviceId?: string;
   isDefault?: boolean;
   id: string;
@@ -48,6 +50,9 @@ export type TaskState =
   | "cancelled";
 export interface Task {
   localMirror?: { deviceId: string; runId: string; sequence: number };
+  memberStates?: Record<string, boolean>;
+  membershipVersion?: number;
+  canDelete?: boolean;
   createdByBot?: boolean;
   participants?: TaskParticipant[];
   id: string;
@@ -58,6 +63,8 @@ export interface Task {
   text: string;
   state: TaskState;
   clientId?: string;
+  assignedAt?: number;
+  assignmentReason?: string;
   runId: string;
   revision: number;
   network: boolean;

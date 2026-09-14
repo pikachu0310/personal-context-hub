@@ -1,4 +1,9 @@
-import { taskParticipants } from "./task-participants.js";
+import {
+  seedParticipants,
+  taskBusy,
+  taskParticipants,
+} from "./task-participants.js";
+import { deviceIdentity } from "../../clients/identity.js";
 import { randomBytes } from "node:crypto";
 import { hash } from "@ido/common/runtime/platform";
 import {
@@ -6,6 +11,7 @@ import {
   id,
   text,
   type Project,
+  type Task,
   type ClientProfile,
 } from "@ido/common/contracts/protocol";
 import type { Repository } from "../../ports/repository.js";
@@ -28,6 +34,8 @@ export class ProjectTeam {
   }
   require(deviceId: string, projectId: string) {
     this.approved(deviceId);
+    if (this.store.get("project-lock", projectId))
+      throw new Error("WORKSPACE_CONFLICT");
     if (!this.store.get("project-member", `${projectId}:${deviceId}`))
       throw new Error("PROJECT_INVITATION_REQUIRED");
   }
@@ -63,6 +71,8 @@ export class ProjectTeam {
     if (targetId === deviceId) throw new Error("OWNER_CANNOT_REMOVE_SELF");
     this.store.remove("project-member", `${projectId}:${targetId}`);
     this.store.put("project-removal", `${projectId}:${targetId}`, {
+      projectId,
+      deviceId: targetId,
       at: Date.now(),
     });
     const target = this.store.get<Device>("device", targetId);
@@ -71,6 +81,55 @@ export class ProjectTeam {
       this.store.put("device", target.id, target);
     }
     return { ok: true };
+  }
+  transfer(
+    deviceId: string,
+    projectId: string,
+    targetId: string,
+    version: unknown,
+  ) {
+    return this.store.transaction(() => {
+      this.owner(deviceId, projectId);
+      this.require(targetId, projectId);
+      const project = this.store.get<Project>("project", projectId)!;
+      if (version !== (project.membershipVersion ?? 0))
+        throw new Error("WORKSPACE_CONFLICT");
+      if (targetId === deviceId) throw new Error("INVALID_OWNER");
+      project.ownerDeviceId = targetId;
+      project.membershipVersion = (project.membershipVersion ?? 0) + 1;
+      this.store.put("project", projectId, project);
+      return project;
+    });
+  }
+  leave(deviceId: string, projectId: string, version: unknown) {
+    return this.store.transaction(() => {
+      this.require(deviceId, projectId);
+      const project = this.store.get<Project>("project", projectId)!;
+      if (version !== (project.membershipVersion ?? 0))
+        throw new Error("WORKSPACE_CONFLICT");
+      if (project.ownerDeviceId === deviceId)
+        throw new Error("OWNER_TRANSFER_REQUIRED");
+      const tasks = this.store
+        .list<Task>("task")
+        .filter((t) => t.projectId === projectId);
+      if (tasks.some((t) => t.clientId === deviceId && taskBusy(t)))
+        throw new Error("PROJECT_TASKS_ACTIVE");
+      for (const task of tasks) {
+        seedParticipants(this.store, task);
+        task.memberStates![deviceId] = false;
+        task.membershipVersion = (task.membershipVersion ?? 0) + 1;
+        this.store.put("task", task.id, task);
+      }
+      this.store.remove("project-member", `${projectId}:${deviceId}`);
+      this.store.put("project-exit", `${projectId}:${deviceId}`, {
+        projectId,
+        deviceId,
+      });
+      const device = this.approved(deviceId);
+      device.grants = device.grants.filter((g) => g.projectId !== projectId);
+      this.store.put("device", deviceId, device);
+      return { ok: true };
+    });
   }
   profile(deviceId: string, input: unknown) {
     const device = this.approved(deviceId);
@@ -91,7 +150,15 @@ export class ProjectTeam {
       name: profile.name,
       role: "member",
     });
-    this.join(deviceId, DEFAULT_PROJECT);
+    if (
+      !this.store.get("project-exit", `${DEFAULT_PROJECT}:${deviceId}`) &&
+      !this.store.get("project-removal", `${DEFAULT_PROJECT}:${deviceId}`)
+    )
+      // Default cannot be deleted; a task context reset must not reject profile/reconnect.
+      this.store.put("project-member", `${DEFAULT_PROJECT}:${deviceId}`, {
+        projectId: DEFAULT_PROJECT,
+        deviceId,
+      });
     return profile;
   }
   participants(projectId: string) {
@@ -104,6 +171,7 @@ export class ProjectTeam {
         ? [
             {
               id: device.id,
+              identityId: deviceIdentity(this.store, device),
               name: device.profile?.name ?? device.name,
               avatar: device.profile?.avatar,
               context: device.profile?.context ?? "",
@@ -114,11 +182,14 @@ export class ProjectTeam {
     });
   }
   invite(deviceId: string, projectId: string) {
-    this.owner(deviceId, projectId);
+    this.require(deviceId, projectId);
+    return this.issueInvite(projectId);
+  }
+  issueInvite(projectId: string) {
+    new Projects(this.store).project(projectId);
     const token = randomBytes(32).toString("base64url");
     this.store.put("project-invite", hash(token), {
       projectId,
-      createdBy: deviceId,
       createdAt: Date.now(),
       expiresAt: Date.now() + 7 * 86400000,
     });
@@ -147,7 +218,7 @@ export class ProjectTeam {
     }>("project-invite", hash(text(token, 200)));
     if (!invitation || invitation.expiresAt < Date.now())
       throw new Error("INVITATION_EXPIRED");
-    this.owner(invitation.createdBy, invitation.projectId);
+
     const project = this.store.get<Project>("project", invitation.projectId);
     if (!project) throw new Error("PROJECT_NOT_FOUND");
     return project;
@@ -177,7 +248,24 @@ export class ProjectTeam {
       project: this.store.get<Project>("project", projectId),
       minutes: this.store
         .list<Meeting>("meeting")
-        .filter((m) => m.projectId === projectId),
+        .filter((m) => m.projectId === projectId)
+        .map((meeting) => ({
+          ...meeting,
+          messages: meeting.messages.map((message) => {
+            const device = message.authorId.startsWith("client-")
+              ? this.store.get<Device>("device", message.authorId.slice(7))
+              : undefined;
+            return {
+              ...message,
+              ...(device
+                ? {
+                    authorIdentityId: deviceIdentity(this.store, device),
+                    authorName: device.profile?.name ?? device.name,
+                  }
+                : {}),
+            };
+          }),
+        })),
       participants: this.participants(projectId),
       tasks: this.store
         .list<import("@ido/common/contracts/protocol").Task>("task")
@@ -185,6 +273,10 @@ export class ProjectTeam {
         .map((task) => ({
           ...task,
           participants: taskParticipants(this.store, task),
+          canDelete:
+            task.authorId === `client-${deviceId}` ||
+            this.store.get<Project>("project", projectId)?.ownerDeviceId ===
+              deviceId,
         })),
     };
   }

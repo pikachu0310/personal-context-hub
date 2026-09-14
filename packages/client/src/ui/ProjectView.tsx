@@ -15,6 +15,7 @@ import { TaskDispatchNotice } from "./TaskDispatchNotice.js";
 import { stateLabel } from "./ActivityFeed.js";
 import type { ClientState } from "@ido/common/contracts/api";
 import { api } from "./api.js";
+import { isSelf, participantGroups } from "./participant-identity.js";
 export function ProjectView({
   projectId,
   taskId,
@@ -55,6 +56,12 @@ export function ProjectView({
       clearInterval(timer);
     };
   }, [projectId]);
+  if (
+    taskId &&
+    clientState.projectTasks &&
+    !clientState.projectTasks.some((t) => t.id === taskId)
+  )
+    return <Text p="xl">タスクは削除されたか、表示できなくなりました。</Text>;
   if (error) return <Alert color="red">{error}</Alert>;
   if (!state) return <Text p="xl">読み込み中…</Text>;
   const owner = state.project.ownerDeviceId === deviceId;
@@ -110,46 +117,63 @@ export function ProjectView({
               <summary>詳細を見る</summary>
               <Stack mt="md">
                 <Title order={3}>参加しているユーザー</Title>
-                {state.participants.map((p) => (
-                  <Paper key={p.id} p="md" withBorder>
-                    <Group justify="space-between">
-                      <Text fw={600}>
-                        {p.name}
-                        {p.id === state.project.ownerDeviceId
-                          ? " · オーナー"
-                          : ""}
+                {participantGroups(state.participants).map((devices) => {
+                  const p =
+                    devices.find((d) => d.id === deviceId) ?? devices[0];
+                  const self = isSelf(p, clientState.settings);
+                  return (
+                    <Paper key={p.identityId ?? p.id} p="md" withBorder>
+                      <Group justify="space-between">
+                        <Text fw={600}>
+                          {self
+                            ? (clientState.settings.profile?.name ?? p.name)
+                            : p.name}
+                          {self ? " · 自分" : ""}
+                          {devices.some(
+                            (d) => d.id === state.project.ownerDeviceId,
+                          )
+                            ? " · オーナー"
+                            : ""}
+                        </Text>
+                        <Badge color={p.codexConnected ? "teal" : "gray"}>
+                          {p.codexConnected ? "Codex連携済み" : "Codex未連携"}
+                        </Badge>
+                      </Group>
+                      <Text mt="sm" style={{ whiteSpace: "pre-wrap" }}>
+                        {p.context || "個人コンテキストは未設定です。"}
                       </Text>
-                      <Badge color={p.codexConnected ? "teal" : "gray"}>
-                        {p.codexConnected ? "Codex連携済み" : "Codex未連携"}
-                      </Badge>
-                    </Group>
-                    <Text mt="sm" style={{ whiteSpace: "pre-wrap" }}>
-                      {p.context || "個人コンテキストは未設定です。"}
-                    </Text>
-                    {owner && p.id !== deviceId && (
-                      <Button
-                        mt="sm"
-                        color="red"
-                        variant="subtle"
-                        onClick={async () => {
-                          try {
-                            await api("project/remove-member", {
-                              projectId,
-                              deviceId: p.id,
-                            });
-                            setState(
-                              await api("project/snapshot", { projectId }),
-                            );
-                          } catch (e) {
-                            setError((e as Error).message);
-                          }
-                        }}
-                      >
-                        プロジェクトから削除
-                      </Button>
-                    )}
-                  </Paper>
-                ))}
+                      {owner &&
+                        devices
+                          .filter((d) => d.id !== deviceId)
+                          .map((d) => (
+                            <Button
+                              key={d.id}
+                              mt="sm"
+                              color="red"
+                              variant="subtle"
+                              onClick={async () => {
+                                try {
+                                  await api("project/remove-member", {
+                                    projectId,
+                                    deviceId: d.id,
+                                  });
+                                  setState(
+                                    await api("project/snapshot", {
+                                      projectId,
+                                    }),
+                                  );
+                                } catch (e) {
+                                  setError((e as Error).message);
+                                }
+                              }}
+                            >
+                              プロジェクトから削除
+                              {devices.length > 1 ? ` · ${d.id}` : ""}
+                            </Button>
+                          ))}
+                    </Paper>
+                  );
+                })}
                 <Title order={3}>生の会話データ</Title>
                 {state.minutes.map((m) => (
                   <Paper key={m.id} p="md" withBorder>
@@ -161,7 +185,11 @@ export function ProjectView({
                         style={{ whiteSpace: "pre-wrap" }}
                       >
                         {new Date(message.at).toLocaleString()} ·{" "}
-                        {message.authorName ?? message.authorId}
+                        {message.authorIdentityId &&
+                        message.authorIdentityId ===
+                          clientState.settings.identityId
+                          ? `${clientState.settings.profile?.name ?? "自分"} · 自分`
+                          : (message.authorName ?? message.authorId)}
                         {"\n"}
                         {message.text}
                         {message.replyText && `\nIDO: ${message.replyText}`}

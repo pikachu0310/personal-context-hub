@@ -1,5 +1,6 @@
 import type { ClientState } from "@ido/common/contracts/api";
 import type { Task, TaskParticipant } from "@ido/common/contracts/protocol";
+import { isSelf, participantGroups } from "./participant-identity.js";
 
 export function UserAvatar({ person }: { person: TaskParticipant }) {
   return (
@@ -38,19 +39,28 @@ export function TaskAvatars({
 }) {
   const summary = state.teamTasks?.tasks.find((t) => t.id === task.id);
   const people = new Map<string, TaskParticipant>();
-  for (const person of summary?.participants ?? task.participants ?? [])
-    people.set(person.id, person);
+  const authoritative =
+    state.projectTasks?.find((t) => t.id === task.id)?.participants ??
+    task.participants ??
+    summary?.participants;
+  for (const person of authoritative ?? []) people.set(person.id, person);
   if (
-    local ||
-    (state.settings.deviceId && task.clientId === state.settings.deviceId)
+    authoritative === undefined &&
+    (local ||
+      (state.settings.deviceId && task.clientId === state.settings.deviceId))
   ) {
     const id = state.settings.deviceId ?? "local";
     people.set(id, {
       id,
+      identityId: state.settings.identityId,
       name: state.settings.profile?.name || "自分",
       avatar: state.settings.profile?.avatar,
     });
-  } else if (!people.size && (summary?.ownerName || task.clientId)) {
+  } else if (
+    authoritative === undefined &&
+    !people.size &&
+    (summary?.ownerName || task.clientId)
+  ) {
     const id = task.clientId ?? summary?.clientId ?? "unknown";
     people.set(id, { id, name: summary?.ownerName ?? "担当者" });
   }
@@ -59,16 +69,18 @@ export function TaskAvatars({
     (task.createdByBot === undefined && (task.kind || task.sourceIds?.length))
   )
     people.set("idobot", { id: "idobot", name: "idobot", bot: true });
-  const participants = [...people.values()].map((person) => ({
-    ...person,
-    ...(state.teamTasks?.profiles?.find((p) => p.id === person.id) ?? {}),
-    ...(person.id === state.settings.deviceId
-      ? {
-          name: state.settings.profile?.name || "自分",
-          avatar: state.settings.profile?.avatar,
-        }
-      : {}),
-  }));
+  const participants = participantGroups([...people.values()]).map(
+    ([person]) => ({
+      ...person,
+      ...(state.teamTasks?.profiles?.find((p) => p.id === person.id) ?? {}),
+      ...(isSelf(person, state.settings)
+        ? {
+            name: state.settings.profile?.name || "自分",
+            avatar: state.settings.profile?.avatar,
+          }
+        : {}),
+    }),
+  );
   if (!participants.length) return null;
   return (
     <span

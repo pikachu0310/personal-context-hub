@@ -3,6 +3,7 @@ import type { Diagnostic, DiagnosticContext } from "../domain/diagnostics.js";
 export interface Repository {
   get<T>(kind: string, id: string): T | undefined;
   list<T>(kind: string): T[];
+  entries(): Array<{ kind: string; id: string; value: any }>;
   put(kind: string, id: string, value: unknown): void;
   remove(kind: string, id: string): void;
   transaction<T>(fn: () => T): T;

@@ -1,5 +1,4 @@
 import { type ChildProcess } from "node:child_process";
-import { generateKeyPairSync } from "node:crypto";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +11,8 @@ import {
 } from "@ido/common/contracts/protocol";
 import { Credentials } from "@ido/common/runtime/credentials";
 import { HttpError, send } from "@ido/common/runtime/http";
-import { atomic, json, secret } from "@ido/common/runtime/platform";
+import { atomic, hash, json, secret } from "@ido/common/runtime/platform";
+import { restoreIdentity } from "../storage/identity.js";
 import { syncLocalShares } from "../connection/local-sharing.js";
 import { connect } from "../connection/engine.js";
 import { control } from "../connection/control.js";
@@ -29,6 +29,8 @@ import { checkAccount } from "../auth/account.js";
 import { workspaceRequest } from "../connection/workspace.js";
 import { createProject } from "../connection/projects.js";
 interface Settings {
+  pendingPair?: { id: string; engineUrl: string; expires: number };
+  identityId?: string;
   profile?: { name: string; context: string; avatar?: string };
   pendingProject?: {
     requestId: string;
@@ -67,6 +69,7 @@ export class Client {
   origin = "";
   generation = 0;
   connected = false;
+  lifecycleSupported = false;
   controlSupported = false;
   continuationSupported = false;
   localSharingSupported = false;
@@ -109,6 +112,23 @@ export class Client {
   get allow() {
     return this.allowedProjects.size > 0;
   }
+  syncProjects(projects: Project[], tasks?: Task[]) {
+    const joined = new Set(projects.map((p) => p.id));
+    for (const id of this.allowedProjects)
+      if (!joined.has(id)) this.allowedProjects.delete(id);
+    this.settings.projects = projects;
+    if (tasks) this.projectTasks = tasks;
+    else
+      this.projectTasks = this.projectTasks.filter((t) =>
+        joined.has(t.projectId),
+      );
+    if (this.teamTasks)
+      this.teamTasks.tasks = this.teamTasks.tasks.filter(
+        (t) =>
+          joined.has(t.projectId) &&
+          (!tasks || tasks.some((current) => current.id === t.id)),
+      );
+  }
   executionMappings() {
     return this.settings.mappings.filter(
       (m) =>
@@ -129,9 +149,14 @@ export class Client {
   reconnect?: NodeJS.Timeout;
   pairing?: { id: string; proof: string; url: string; fingerprint: string };
   pairTimer?: NodeJS.Timeout;
+  pairRequest?: Promise<void>;
+  pairStart?: Promise<void>;
   status = "offline";
+  identityStatus = "not checked";
   login?: ChildProcess;
   loginStatus = "not checked";
+  account?: import("@ido/common/contracts/api").ClientAccount;
+  accountCheck?: Promise<void>;
   claudeLoginStatus = "not checked";
   claudeLoginUrl?: string;
   loginUrl?: string;
@@ -168,16 +193,25 @@ export class Client {
       delete this.settings.progressMode;
       await this.save();
     }
-    if (!this.settings.publicKey) {
-      const keys = generateKeyPairSync("ed25519");
-      this.settings.publicKey = keys.publicKey
-        .export({ format: "pem", type: "spki" })
-        .toString();
-      await this.credentials.set(
-        "device.privateKey",
-        keys.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
-      );
-      await this.save();
+    await restoreIdentity(this);
+    if (this.settings.pendingPair) {
+      const pending = this.settings.pendingPair;
+      const proof = await this.credentials.get(`pair.${pending.id}`);
+      if (pending.expires > Date.now() && proof) {
+        this.pairing = {
+          id: pending.id,
+          proof,
+          url: `${pending.engineUrl}/admin/pair/${pending.id}`,
+          fingerprint: hash(this.settings.publicKey!),
+        };
+      } else {
+        this.status = proof ? "pairing expired" : "pairing proof unavailable";
+        if (pending.expires <= Date.now()) {
+          delete this.settings.pendingPair;
+          await this.save();
+          await this.credentials.set(`pair.${pending.id}`, "");
+        }
+      }
     }
     await new Promise<void>((resolve, reject) => {
       this.server.once("error", reject);
@@ -191,11 +225,22 @@ export class Client {
     );
     this.localSharingTimer.unref();
     void this.checkAccount();
-    if (this.settings.deviceId) this.connect();
+    if (this.pairing) this.pollPair();
+    else if (this.settings.deviceId) void this.connect();
     return this;
   }
+  private saving: Promise<void> = Promise.resolve();
   save() {
-    return atomic(join(this.directory, "client.json"), this.settings);
+    const snapshot = structuredClone(this.settings);
+    this.saving = this.saving
+      .catch(() => {})
+      .then(() => atomic(join(this.directory, "client.json"), snapshot));
+    // Event-driven callers do not await save; retain the rejection for close()
+    // while making failure visible without an unhandled promise rejection.
+    void this.saving.catch(() => {
+      this.status = "settings save failed";
+    });
+    return this.saving;
   }
   emit(data: Command) {
     if (this.ws?.readyState === WebSocket.OPEN && this.connected)
@@ -258,7 +303,12 @@ export class Client {
     }
     this.projectRequests.clear();
     this.preview.close();
+    await this.pairStart?.catch(() => {});
+    await this.pairRequest;
+    await this.accountCheck;
+    await this.processing.catch(() => {});
     await this.executor.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
+    await this.saving;
   }
 }

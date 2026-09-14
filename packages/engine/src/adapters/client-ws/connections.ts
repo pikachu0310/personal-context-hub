@@ -1,5 +1,7 @@
 import { shareLocalTask } from "../../processing/tasks/local-sharing.js";
+import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
 import { taskParticipants } from "../../processing/projects/task-participants.js";
+import { deviceIdentity } from "../../clients/identity.js";
 import { ProjectTeam } from "../../processing/projects/team.js";
 import { Projects } from "../../processing/projects/service.js";
 import { randomUUID, verify } from "node:crypto";
@@ -27,6 +29,141 @@ import { taskSnapshot } from "./task-list.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
+  readonly sessions = new Map<
+    string,
+    {
+      generation: number;
+      connectedAt: number;
+      lastSeenAt: number;
+      disconnecting: boolean;
+    }
+  >();
+  readonly disconnects = new Map<
+    string,
+    Promise<{ disconnected: boolean; unconfirmedTaskIds: string[] }>
+  >();
+
+  disconnect(
+    deviceId: string,
+    generation: number,
+    actor: string,
+    expected: Array<{
+      id: string;
+      runId: string;
+      revision: number;
+      controlVersion: number;
+    }>,
+  ) {
+    const key = `${deviceId}:${generation}`;
+    const previous = this.disconnects.get(key);
+    if (previous) return previous;
+    const socket = this.peers.get(deviceId),
+      session = this.sessions.get(deviceId);
+    if (!socket || !session || session.generation !== generation)
+      throw new Error("CONNECTION_CHANGED");
+    const tasks = this.store
+      .list<Task>("task")
+      .filter(
+        (t) =>
+          t.clientId === deviceId &&
+          ["assigned", "running", "interrupted"].includes(t.state),
+      );
+    if (
+      tasks.length !== expected.length ||
+      tasks.some(
+        (t) =>
+          !expected.some(
+            (e) =>
+              e.id === t.id &&
+              e.runId === t.runId &&
+              e.revision === t.revision &&
+              e.controlVersion === (t.controlVersion ?? 0),
+          ),
+      )
+    )
+      throw new Error("CONNECTION_TASKS_CHANGED");
+    // No await between validation and fencing this exact connection from scheduling.
+    session.disconnecting = true;
+    this.ready.delete(deviceId);
+    const receipts = tasks.map((t) =>
+      this.tasks.control(t.id, actor, "stop", undefined, {
+        requestKey: `disconnect:${deviceId}:${generation}:${t.id}`,
+        expectedRevision: t.revision,
+        expectedControlVersion: t.controlVersion ?? 0,
+      }),
+    );
+    this.store.audit(actor, "connection.disconnect.requested", deviceId);
+    // Do not replay an old execute/retry ahead of its stop after reconnecting.
+    for (const command of this.store.pending(deviceId))
+      if (
+        ["execute", "retry"].includes(command.type) &&
+        tasks.some(
+          (t) =>
+            t.id === command.taskId &&
+            t.runId === command.runId &&
+            (!command.revision || command.revision === t.revision),
+        )
+      )
+        this.store.ack(deviceId, command.id!);
+    const ids = new Set(receipts.map((r) => r.id));
+    for (const command of this.store.pending(deviceId))
+      if (
+        command.type === "stop" &&
+        ids.has(String(command.receiptId)) &&
+        socket.readyState === WebSocket.OPEN
+      )
+        socket.send(JSON.stringify({ ...command, generation }));
+    const operation = (async () => {
+      const unconfirmed = () =>
+        tasks
+          .filter((t) => {
+            const receipt = receipts.find((r) => r.taskId === t.id)!;
+            return (
+              this.store.get<Task>("task", t.id)?.controlReceipts?.[receipt.id]
+                ?.delivery !== "stopped"
+            );
+          })
+          .map((t) => t.id);
+      const deadline = Date.now() + 3000;
+      while (
+        unconfirmed().length &&
+        Date.now() < deadline &&
+        socket.readyState === WebSocket.OPEN &&
+        this.peers.get(deviceId) === socket
+      )
+        await new Promise((r) => setTimeout(r, 50));
+      // Never close or remove a replacement connection.
+      if (this.peers.get(deviceId) === socket) {
+        this.peers.delete(deviceId);
+        this.ready.delete(deviceId);
+        this.sessions.delete(deviceId);
+        this.preview.disconnected(deviceId);
+      }
+      const unknown = unconfirmed();
+      socket.close(4004, "disconnected by administrator");
+      const force = setTimeout(() => socket.terminate(), 1000);
+      force.unref();
+      socket.once("close", () => clearTimeout(force));
+      this.store.audit(
+        actor,
+        unknown.length
+          ? "connection.disconnected.stop_unconfirmed"
+          : "connection.disconnected",
+        deviceId,
+      );
+      this.changed();
+      return { disconnected: true, unconfirmedTaskIds: unknown };
+    })();
+    this.disconnects.set(key, operation);
+    void operation
+      .finally(() => {
+        // Keep a small in-memory idempotency window without retaining private content.
+        if (this.disconnects.size > 100)
+          this.disconnects.delete(this.disconnects.keys().next().value!);
+      })
+      .catch(() => {});
+    return operation;
+  }
   readonly artifactRequests = new Map<
     string,
     {
@@ -41,6 +178,16 @@ export class ClientConnections {
   readonly preview: PreviewRelay;
   readonly scheduler: Scheduler;
   readonly tasks: Tasks;
+  lifecycle: WorkspaceLifecycle;
+  invalidateTask(task: Task) {
+    this.preview.removeTask(task.id);
+    for (const [id, request] of this.artifactRequests)
+      if (request.runId === task.runId) {
+        clearTimeout(request.timer);
+        request.reject(new Error("TASK_DELETED"));
+        this.artifactRequests.delete(id);
+      }
+  }
   broadcastProjects() {
     const team = new ProjectTeam(this.store);
     for (const [deviceId, ws] of this.peers) {
@@ -61,6 +208,10 @@ export class ClientConnections {
               .map((task) => ({
                 ...task,
                 participants: taskParticipants(this.store, task),
+                canDelete: this.lifecycle.canDelete(
+                  { deviceId, valid: () => true },
+                  task,
+                ),
               })),
           }),
         );
@@ -71,6 +222,7 @@ export class ClientConnections {
     readonly changed: () => void,
     frameAncestors: () => string[] = () => [],
   ) {
+    this.lifecycle = new WorkspaceLifecycle(store);
     this.scheduler = new Scheduler(store);
     this.tasks = new Tasks(store);
     this.preview = new PreviewRelay(
@@ -92,9 +244,13 @@ export class ClientConnections {
     ws.send(JSON.stringify({ v: 1, type: "challenge", challenge }));
     ws.on("pong", () => {
       (ws as WebSocket & { alive?: boolean }).alive = true;
+      if (deviceId && this.peers.get(deviceId) === ws) {
+        const session = this.sessions.get(deviceId);
+        if (session) session.lastSeenAt = Date.now();
+      }
     });
     ws.on("error", () => {});
-    ws.on("message", (raw) => {
+    ws.on("message", async (raw) => {
       try {
         const data = frame(raw.toString());
         if (!authenticated) {
@@ -113,11 +269,18 @@ export class ClientConnections {
             throw new Error("AUTH_FAILED");
           deviceId = device.id;
           device.generation++;
+          device.lifecycleVersion = data.lifecycleVersion === 1 ? 1 : undefined;
           generation = device.generation;
           this.store.put("device", device.id, device);
           this.peers.get(device.id)?.close(4000, "superseded");
           this.ready.delete(device.id);
           this.peers.set(device.id, ws);
+          this.sessions.set(device.id, {
+            generation,
+            connectedAt: Date.now(),
+            lastSeenAt: Date.now(),
+            disconnecting: false,
+          });
           new ProjectTeam(this.store).profile(device.id, data.profile);
           authenticated = true;
           clearTimeout(timeout);
@@ -125,6 +288,7 @@ export class ClientConnections {
             JSON.stringify({
               v: 1,
               type: "authenticated",
+              identityId: deviceIdentity(this.store, device),
               generation,
               controlVersion: 1,
               continuationVersion: 1,
@@ -133,6 +297,13 @@ export class ClientConnections {
               workspaceVersion: 1,
               localSharingVersion: 1,
               taskListVersion: 1,
+              lifecycleVersion: 1,
+              deletions:
+                device.lifecycleVersion === 1
+                  ? this.store
+                      .pending(device.id)
+                      .filter((c) => c.type === "task.purge")
+                  : [],
             }),
           );
           return;
@@ -142,9 +313,14 @@ export class ClientConnections {
           !device ||
           device.revoked ||
           device.generation !== generation ||
-          data.generation !== generation
+          data.generation !== generation ||
+          this.peers.get(device.id) !== ws
         )
           throw new Error("STALE_CONNECTION");
+        const session = this.sessions.get(device.id);
+        if (session) session.lastSeenAt = Date.now();
+        if (session?.disconnecting && !["result", "ack"].includes(data.type))
+          return;
         if (data.type === "project.create") {
           const requestId = id(data.requestId);
           try {
@@ -192,7 +368,47 @@ export class ClientConnections {
             team = new ProjectTeam(this.store);
           try {
             let result: unknown;
+            const actor = {
+              deviceId: device.id,
+              valid: () =>
+                this.peers.get(device.id) === ws &&
+                this.store.get<Device>("device", device.id)?.generation ===
+                  generation,
+            };
             switch (data.operation) {
+              case "project.leave":
+                result = team.leave(
+                  device.id,
+                  id(input.projectId),
+                  input.membershipVersion,
+                );
+                break;
+              case "project.transfer-owner":
+                result = team.transfer(
+                  device.id,
+                  id(input.projectId),
+                  id(input.deviceId),
+                  input.membershipVersion,
+                );
+                break;
+              case "task.join":
+              case "task.leave":
+                result = this.lifecycle.membership(
+                  actor,
+                  id(input.taskId),
+                  data.operation === "task.join",
+                  input.membershipVersion,
+                );
+                break;
+              case "task.delete":
+                result = await this.lifecycle.deleteTask(
+                  actor,
+                  id(input.taskId),
+                  input,
+                );
+                this.flush();
+                this.changed();
+                break;
               case "profile":
                 result = team.profile(device.id, input);
                 break;
@@ -438,7 +654,8 @@ export class ClientConnections {
           this.ready.add(device.id);
           this.flush();
           this.broadcastProjects();
-        } else if (data.type === "ack") this.store.ack(device.id, id(data.id));
+        } else if (data.type === "ack")
+          this.lifecycle.acknowledge(device.id, id(data.id));
         else if (data.type === "result") {
           this.tasks.updateResult(device.id, generation, data);
           this.flush();
@@ -453,6 +670,7 @@ export class ClientConnections {
       if (deviceId && this.peers.get(deviceId) === ws) {
         this.peers.delete(deviceId);
         this.ready.delete(deviceId);
+        this.sessions.delete(deviceId);
         this.preview.disconnected(deviceId);
       }
     });
@@ -464,6 +682,8 @@ export class ClientConnections {
       const device = this.store.get<Device>("device", deviceId);
       if (socket?.readyState === WebSocket.OPEN && device)
         for (const command of this.store.pending(deviceId)) {
+          if (command.type === "task.purge" && device.lifecycleVersion !== 1)
+            continue;
           const task = command.task as Task | undefined;
           if (
             ["execute", "retry"].includes(command.type) &&

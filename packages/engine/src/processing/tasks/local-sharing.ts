@@ -15,6 +15,8 @@ export function shareLocalTask(
   const projectId = id(input.projectId),
     runId = id(input.runId);
   new ProjectTeam(store).require(deviceId, projectId);
+  if (store.get("project-lock", projectId))
+    throw new Error("WORKSPACE_CONFLICT");
   const device = store.get<Device>("device", deviceId);
   if (!device || device.revoked || device.generation !== generation)
     throw new Error("STALE_CONNECTION");
@@ -33,6 +35,8 @@ export function shareLocalTask(
   const taskId = `local-${createHash("sha256")
     .update(JSON.stringify([deviceId, runId]))
     .digest("hex")}`;
+  if (store.get("task-deletion", taskId))
+    throw new Error("SHARED_TASK_DELETED");
   return store.transaction(() => {
     let task = store.get<Task>("task", taskId);
     if (

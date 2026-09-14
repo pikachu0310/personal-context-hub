@@ -1051,3 +1051,16 @@ button {
   height: 56px;
   font-size: 20px;
 }
+
+.task-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.task-row > .task-link {
+  flex: 1;
+  min-width: 0;
+}
+.task-row > .icon-button {
+  flex: 0 0 26px;
+}

@@ -30,6 +30,7 @@ test("local task sharing recovers lost responses, creates one forum thread and r
   for (const device of ["owner", "other"]) {
     store.put("device", device, {
       id: device,
+      name: "Fixture device",
       revoked: false,
       generation: 1,
       codexConnected: true,
@@ -205,6 +206,18 @@ test("local task sharing recovers lost responses, creates one forum thread and r
   };
   shareLocalTask(store, "owner", 1, stale);
   assert.equal(store.get<Task>("task", mirror.id)?.state, "cancelled");
+  store.put("project-lock", "project", {});
+  assert.throws(
+    () => shareLocalTask(store, "owner", 1, { ...stale, sequence: 99 }),
+    /WORKSPACE_CONFLICT/,
+  );
+  store.remove("project-lock", "project");
+  store.put("task-deletion", mirrorId, {});
+  assert.throws(
+    () => shareLocalTask(store, "owner", 1, { ...stale, sequence: 99 }),
+    /SHARED_TASK_DELETED/,
+  );
+  store.remove("task-deletion", mirrorId);
   store.remove("project-member", "project:owner");
   assert.throws(
     () => shareLocalTask(store, "owner", 1, { ...stale, sequence: 99 }),

@@ -1,4 +1,11 @@
+import {
+  WorkspaceLifecycle,
+  type Deletion,
+} from "../../processing/projects/lifecycle.js";
+import { ProjectTeam } from "../../processing/projects/team.js";
 import { randomUUID } from "node:crypto";
+import { deviceIdentity } from "../../clients/identity.js";
+import type { Device } from "../../domain/models.js";
 import type { WorkspaceState, MessageView } from "@ido/common/contracts/api";
 import type {
   ConversationInput,
@@ -10,6 +17,8 @@ import type { InputRouter } from "../../processing/routing/input.js";
 import { Tasks } from "../../processing/tasks/service.js";
 import { Projects } from "../../processing/projects/service.js";
 export class Workspace {
+  lifecycle: WorkspaceLifecycle;
+  engineUrl: () => string = () => "";
   constructor(
     readonly store: Repository,
     readonly tasks: Tasks,
@@ -17,7 +26,9 @@ export class Workspace {
     readonly flush: () => void,
     readonly artifact: (taskId: string) => Promise<unknown>,
     readonly preview: (taskId: string, userId: string) => string,
-  ) {}
+  ) {
+    this.lifecycle = new WorkspaceLifecycle(store);
+  }
   private meetings(): WorkspaceState["meetings"] {
     const outputs = this.store.list<{
       id: string;
@@ -31,13 +42,23 @@ export class Workspace {
     return this.store
       .list<WorkspaceState["meetings"][number]>("meeting")
       .map((meeting) => {
-        const messages: MessageView[] = meeting.messages.map((message) => ({
-          ...message,
-          authorName:
-            message.authorName ??
-            this.store.conversationAuthor(message.authorId)?.name,
-          role: message.role ?? "user",
-        }));
+        const messages: MessageView[] = meeting.messages.map((message) => {
+          const device = message.authorId.startsWith("client-")
+            ? this.store.get<Device>("device", message.authorId.slice(7))
+            : undefined;
+          return {
+            ...message,
+            authorIdentityId: device
+              ? deviceIdentity(this.store, device)
+              : undefined,
+            authorName:
+              device?.profile?.name ??
+              device?.name ??
+              message.authorName ??
+              this.store.conversationAuthor(message.authorId)?.name,
+            role: message.role ?? "user",
+          };
+        });
         for (const output of outputs
           .filter((output) => output.meetingId === meeting.id)
           .slice(-100)) {
@@ -92,7 +113,25 @@ export class Workspace {
           this.store.list<WorkspaceState["projects"][number]>("project"),
         conversations: this.store.list("project-conversation"),
         meetings: this.meetings(),
-        tasks: this.store.list<WorkspaceState["tasks"][number]>("task"),
+        tasks: this.store
+          .list<WorkspaceState["tasks"][number]>("task")
+          .map((task) => ({
+            ...task,
+            canDelete: this.lifecycle.canDelete(
+              { user, valid: context.valid },
+              task,
+            ),
+          })),
+        deletionSync:
+          user.role === "admin"
+            ? {
+                pendingClients: new Set(
+                  this.store
+                    .list<Deletion>("task-deletion")
+                    .flatMap((d) => d.pendingDeviceIds),
+                ).size,
+              }
+            : undefined,
       } satisfies WorkspaceState;
     if (operation === "artifact") return this.artifact(id(input.taskId));
     if (
@@ -113,6 +152,34 @@ export class Workspace {
       return { url: this.preview(id(input.taskId), user.id) };
     if (user.role === "viewer") throw new Error("PERMISSION_DENIED");
     switch (operation) {
+      case "project/invite": {
+        if (context.pluginId !== "dashboard" || user.role !== "admin")
+          throw new Error("PERMISSION_DENIED");
+        const invite = new ProjectTeam(this.store).issueInvite(
+          id(input.projectId),
+        );
+        return { url: `${this.engineUrl()}/invite/${invite.token}` };
+      }
+      case "project/delete": {
+        if (context.pluginId !== "dashboard")
+          throw new Error("PERMISSION_DENIED");
+        const result = await this.lifecycle.deleteProject(
+          { user, valid: context.valid },
+          id(input.projectId),
+          input,
+        );
+        this.flush();
+        return result;
+      }
+      case "task/delete": {
+        const result = await this.lifecycle.deleteTask(
+          { user, valid: context.valid },
+          id(input.taskId),
+          input,
+        );
+        this.flush();
+        return result;
+      }
       case "conversation/control": {
         if (!this.router.ai.coordinated)
           throw new Error("COORDINATOR_UNAVAILABLE");
