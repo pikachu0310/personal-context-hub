@@ -1,1 +1,1 @@
-export * from "../../../common/src/runtime/codex/app-server.mjs";
+export * from "@ido/common/runtime/codex/app-server";

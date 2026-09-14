@@ -1,9 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type {
-  Command,
-  Project,
-  Task,
-} from "../../../../common/src/contracts/protocol.js";
+import type { Command, Project, Task } from "@ido/common/contracts/protocol";
 import type { Device } from "../../domain/models.js";
 import type { Repository } from "../../ports/repository.js";
 import {
@@ -12,7 +8,7 @@ import {
   requiresPolicySupport,
   type ClientControlReceipt,
   type WorkReceipt,
-} from "../../../../common/src/contracts/work.js";
+} from "@ido/common/contracts/work";
 
 type CreateTaskInput = Pick<
   Task,

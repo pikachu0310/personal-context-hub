@@ -4,7 +4,7 @@ import {
   frame,
   type Command,
   type Project,
-} from "../../../common/src/contracts/protocol.js";
+} from "@ido/common/contracts/protocol";
 
 import type { Client } from "../bootstrap/client.js";
 export async function connect(this: Client) {

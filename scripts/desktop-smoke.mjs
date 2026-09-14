@@ -115,7 +115,10 @@ try {
     ),
   );
   assert.match(native, /codex/i);
-  await page.getByText("実行と承認", { exact: true }).click();
+  await page
+    .locator(".mantine-AppShell-navbar")
+    .getByText("実行と承認", { exact: true })
+    .click();
   await page
     .getByRole("heading", { name: "フォーラム同期を確認", exact: true })
     .waitFor();

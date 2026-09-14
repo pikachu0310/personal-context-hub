@@ -8,9 +8,9 @@ import { PluginBroker } from "../src/adapters/plugins/broker.js";
 import { InputRouter } from "../src/processing/routing/input.js";
 import { Conversation } from "../src/processing/conversation.js";
 import { OpenAIModels } from "../src/adapters/openai/models.js";
-import { Credentials } from "../../common/src/runtime/credentials.js";
+import { Credentials } from "@ido/common/runtime/credentials";
 import { Tasks } from "../src/processing/tasks/service.js";
-import type { Task } from "../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import {
   ForumSync,
   type ForumRecord,

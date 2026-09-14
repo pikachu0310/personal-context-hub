@@ -3,13 +3,10 @@ import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import { endpoint } from "../../../../common/src/contracts/protocol.js";
-import { Credentials } from "../../../../common/src/runtime/credentials.js";
-import { HttpError } from "../../../../common/src/runtime/http.js";
-import {
-  npmRun,
-  workerEnvironment,
-} from "../../../../common/src/runtime/platform.js";
+import { endpoint } from "@ido/common/contracts/protocol";
+import { Credentials } from "@ido/common/runtime/credentials";
+import { HttpError } from "@ido/common/runtime/http";
+import { npmRun, workerEnvironment } from "@ido/common/runtime/platform";
 import { Store } from "../sqlite/store.js";
 export class Tunnels {
   child?: ChildProcess;

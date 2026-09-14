@@ -5,6 +5,7 @@
   "type": "module",
   "devDependencies": {
     "electron": "44.3.0",
-    "electron-builder": "26.15.3"
+    "electron-builder": "26.15.3",
+    "@ido/common": "0.2.0"
   }
 }

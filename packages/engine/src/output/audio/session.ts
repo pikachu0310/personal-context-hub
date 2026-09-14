@@ -4,7 +4,7 @@ import type {
   ConversationModeKind,
   InputContext,
   PluginOutput,
-} from "../../../../common/src/contracts/plugins.js";
+} from "@ido/common/contracts/plugins";
 import {
   createConversationModeController,
   createLiveConversationMode,

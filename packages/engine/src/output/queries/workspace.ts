@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type {
-  WorkspaceState,
-  MessageView,
-} from "../../../../common/src/contracts/api.js";
+import type { WorkspaceState, MessageView } from "@ido/common/contracts/api";
 import type {
   ConversationInput,
   InputContext,
-} from "../../../../common/src/contracts/plugins.js";
-import { id, text } from "../../../../common/src/contracts/protocol.js";
+} from "@ido/common/contracts/plugins";
+import { id, text } from "@ido/common/contracts/protocol";
 import type { Repository } from "../../ports/repository.js";
 import type { InputRouter } from "../../processing/routing/input.js";
 import { Tasks } from "../../processing/tasks/service.js";

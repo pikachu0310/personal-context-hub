@@ -12,10 +12,10 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { useState } from "react";
-import { Card } from "../../../ui/src/components/Card.js";
-import { Form } from "../../../ui/src/components/Form.js";
-import { Status } from "../../../ui/src/components/Status.js";
-import type { Action, ClientState, Invoke } from "../../../ui/src/types.js";
+import { Card } from "@ido/common-ui";
+import { Form } from "@ido/common-ui";
+import { Status } from "@ido/common-ui";
+import type { Action, ClientState, Invoke } from "@ido/common-ui";
 export function ClientRuns({
   state,
   action,

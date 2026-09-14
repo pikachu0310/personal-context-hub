@@ -1,4 +1,4 @@
-import type { InputContext } from "../../../../common/src/contracts/plugins.js";
+import type { InputContext } from "@ido/common/contracts/plugins";
 import type { Meeting } from "../../domain/models.js";
 export function publishMeeting(
   context: InputContext,

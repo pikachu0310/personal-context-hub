@@ -1,4 +1,4 @@
-import { endpoint } from "../../common/src/contracts/protocol.js";
+import { endpoint } from "@ido/common/contracts/protocol";
 export function parseJoinLink(value: string) {
   if (value.length > 4096) throw new Error("INVALID_JOIN_LINK");
   const url = new URL(value);

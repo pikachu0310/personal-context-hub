@@ -43,7 +43,7 @@ export async function checkBoundaries(root = resolve("packages")) {
     for (const specifier of imports) {
       const target = specifier.startsWith(".")
         ? relative(root, resolve(path, "..", specifier)).replaceAll("\\", "/")
-        : specifier;
+        : specifier.replace(/^@ido\/([^/]+)(?:\/|$)/, "$1/src/");
       const core =
         /^engine\/src\/(domain|ports|input|messages|processing|clients|output|management)\//.test(
           source,
@@ -53,9 +53,9 @@ export async function checkBoundaries(root = resolve("packages")) {
         (source.startsWith("engine/") && /^plugin-/.test(target)) ||
         (source.startsWith("plugin-") && /^(engine|client)\//.test(target)) ||
         (source.startsWith("common/") &&
-          specifier.startsWith(".") &&
+          (specifier.startsWith(".") || specifier.startsWith("@ido/")) &&
           !target.startsWith("common/")) ||
-        (source.startsWith("ui/") &&
+        (source.startsWith("common-ui/") &&
           /^(engine|client|plugin-)\//.test(target)) ||
         (core &&
           (/^engine\/src\/(adapters|bootstrap)\//.test(target) ||
@@ -64,8 +64,15 @@ export async function checkBoundaries(root = resolve("packages")) {
             )))
       )
         errors.push(`${source} -> ${target}`);
+      for (const name of ["common", "common-ui"])
+        if (
+          !source.startsWith(`${name}/`) &&
+          specifier.startsWith(".") &&
+          target.startsWith(`${name}/`)
+        )
+          errors.push(`${source}: import ${name} through @ido/${name} exports`);
     }
-    if (source.startsWith("ui/") && /\bfetch\s*\(/.test(contents))
+    if (source.startsWith("common-ui/") && /\bfetch\s*\(/.test(contents))
       errors.push(`${source}: UI must receive data and actions`);
   }
   if (errors.length)

@@ -6,7 +6,7 @@ on:
       - "packages/desktop/**"
       - "packages/client/**"
       - "packages/common/**"
-      - "packages/ui/**"
+      - "packages/common-ui/**"
       - "scripts/build-desktop.mjs"
       - "scripts/check-desktop-target.cjs"
       - "scripts/desktop-smoke.mjs"

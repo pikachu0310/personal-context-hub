@@ -1,4 +1,4 @@
-import type { PluginEvent } from "../../../common/src/contracts/plugins.js";
+import type { PluginEvent } from "@ido/common/contracts/plugins";
 interface Meeting {
   summary: string;
   messages: Array<{

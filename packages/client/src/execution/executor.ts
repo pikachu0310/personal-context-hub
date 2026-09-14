@@ -1,9 +1,5 @@
 import { join } from "node:path";
-import type {
-  Command,
-  Mapping,
-  Task,
-} from "../../../common/src/contracts/protocol.js";
+import type { Command, Mapping, Task } from "@ido/common/contracts/protocol";
 import { approve } from "../approvals/resolve.js";
 import { artifact } from "../artifacts/diff.js";
 import { AppServerCodex } from "../codex/app-server.mjs";
@@ -16,7 +12,7 @@ import {
   type ExecutionPolicy,
   type ClientControlReceipt,
   type ControlDelivery,
-} from "../../../common/src/contracts/work.js";
+} from "@ido/common/contracts/work";
 
 export interface WorkInstruction {
   id: string;

@@ -1,4 +1,4 @@
-import type { ConversationInput } from "../../../common/src/contracts/plugins.js";
+import type { ConversationInput } from "@ido/common/contracts/plugins";
 import { discordUserAllowed } from "./policy.js";
 export function normalizeInput(
   event: Record<string, unknown>,

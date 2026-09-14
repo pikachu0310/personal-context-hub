@@ -1,10 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  id,
-  text,
-  type User,
-} from "../../../../common/src/contracts/protocol.js";
-import { HttpError, send } from "../../../../common/src/runtime/http.js";
+import { id, text, type User } from "@ido/common/contracts/protocol";
+import { HttpError, send } from "@ido/common/runtime/http";
 import type { Engine } from "../../bootstrap/engine.js";
 import type { Device } from "../../domain/models.js";
 import type { Auth } from "./auth.js";

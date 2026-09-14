@@ -1,4 +1,4 @@
-import { endpoint } from "../../../common/src/contracts/protocol.js";
+import { endpoint } from "@ido/common/contracts/protocol";
 const downloads = [
   [
     "windowsDownloadUrl",

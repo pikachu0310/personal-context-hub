@@ -1,7 +1,7 @@
 import type {
   CoordinatorObservation,
   CoordinatorResponse,
-} from "../../../../common/src/contracts/coordinator.js";
+} from "@ido/common/contracts/coordinator";
 
 const ids = { type: "array", items: { type: "string" }, maxItems: 20 };
 export const coordinatorSchema = {

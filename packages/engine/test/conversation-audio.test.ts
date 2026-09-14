@@ -6,7 +6,7 @@ import type {
   ConversationInput,
   InputContext,
   PluginOutput,
-} from "../../common/src/contracts/plugins.js";
+} from "@ido/common/contracts/plugins";
 
 function event(overrides: Partial<ConversationInput> = {}): ConversationInput {
   return {

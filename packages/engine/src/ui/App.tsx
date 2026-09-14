@@ -1,9 +1,7 @@
 import { Alert, Button, Code, Group, Text } from "@mantine/core";
 import { useState } from "react";
-import { Card } from "../../../ui/src/components/Card.js";
-import { Form } from "../../../ui/src/components/Form.js";
-import { Shell } from "../../../ui/src/components/Shell.js";
-import "../../../ui/src/style.css";
+import { Card, Form, Shell } from "@ido/common-ui";
+import "@ido/common-ui/style.css";
 import { api } from "./api.js";
 import { Clients } from "./pages/Clients.js";
 import { Diagnostics } from "./pages/Diagnostics.js";

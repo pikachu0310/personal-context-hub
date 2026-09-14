@@ -8,7 +8,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { useState } from "react";
-import type { Project, Task } from "../../../common/src/contracts/protocol.js";
+import type { Project, Task } from "@ido/common/contracts/protocol";
 import { Card } from "../components/Card.js";
 import { Status } from "../components/Status.js";
 import type { Action } from "../types.js";

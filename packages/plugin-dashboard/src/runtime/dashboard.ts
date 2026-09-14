@@ -1,8 +1,8 @@
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HttpError, send } from "../../../common/src/runtime/http.js";
-import { pluginRuntime } from "../../../common/src/runtime/plugin.js";
+import { HttpError, send } from "@ido/common/runtime/http";
+import { pluginRuntime } from "@ido/common/runtime/plugin";
 import { route } from "../api/routes.js";
 import { dashboardManifest } from "../manifest.js";
 const server = createServer(

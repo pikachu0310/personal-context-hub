@@ -1,6 +1,6 @@
 import { hostname } from "node:os";
-import { endpoint } from "../../../common/src/contracts/protocol.js";
-import { hash } from "../../../common/src/runtime/platform.js";
+import { endpoint } from "@ido/common/contracts/protocol";
+import { hash } from "@ido/common/runtime/platform";
 
 import type { Client } from "../bootstrap/client.js";
 export async function pair(this: Client, engineUrl: string) {

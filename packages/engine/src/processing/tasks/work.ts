@@ -1,5 +1,5 @@
-import type { Task } from "../../../../common/src/contracts/protocol.js";
-import { normalizeExecutionPolicy } from "../../../../common/src/contracts/work.js";
+import type { Task } from "@ido/common/contracts/protocol";
+import { normalizeExecutionPolicy } from "@ido/common/contracts/work";
 import type { Repository } from "../../ports/repository.js";
 import type { WorkPort } from "../../ports/work.js";
 import { Tasks } from "./service.js";

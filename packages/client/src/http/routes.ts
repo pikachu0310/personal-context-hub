@@ -2,7 +2,7 @@ import { startLogin } from "../auth/login.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
-import { id, text } from "../../../common/src/contracts/protocol.js";
+import { id, text } from "@ido/common/contracts/protocol";
 import {
   asset,
   body,
@@ -10,12 +10,8 @@ import {
   HttpError,
   localGuard,
   send,
-} from "../../../common/src/runtime/http.js";
-import {
-  equal,
-  run,
-  workerEnvironment,
-} from "../../../common/src/runtime/platform.js";
+} from "@ido/common/runtime/http";
+import { equal, run, workerEnvironment } from "@ido/common/runtime/platform";
 import { codexBinary } from "../execution/executor.js";
 
 import type { Client } from "../bootstrap/client.js";

@@ -1,12 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Mapping } from "../../../common/src/contracts/protocol.js";
-import {
-  run,
-  workerEnvironment,
-} from "../../../common/src/runtime/platform.js";
-import { restrictExecutionPolicy } from "../../../common/src/contracts/work.js";
+import type { Mapping } from "@ido/common/contracts/protocol";
+import { run, workerEnvironment } from "@ido/common/runtime/platform";
+import { restrictExecutionPolicy } from "@ido/common/contracts/work";
 
 import { codexBinary } from "../codex/binary.js";
 import type { Executor, Run } from "../execution/executor.js";

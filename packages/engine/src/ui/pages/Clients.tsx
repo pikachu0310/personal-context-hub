@@ -1,7 +1,6 @@
 import { Alert, Button, Code, Group, Stack, Text } from "@mantine/core";
-import { Card } from "../../../../ui/src/components/Card.js";
-import { Status } from "../../../../ui/src/components/Status.js";
-import type { Action, AdminState, Invoke } from "../../../../ui/src/types.js";
+import { Card, Status } from "@ido/common-ui";
+import type { Action, AdminState, Invoke } from "@ido/common-ui";
 import { PairApproval } from "../PairApproval.js";
 export function Clients({
   state,

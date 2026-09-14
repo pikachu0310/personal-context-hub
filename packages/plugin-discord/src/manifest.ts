@@ -1,8 +1,8 @@
 import {
   PLUGIN_PROTOCOL,
   type PluginManifest,
-} from "../../common/src/contracts/plugins.js";
-import { RELEASE } from "../../common/src/contracts/protocol.js";
+} from "@ido/common/contracts/plugins";
+import { RELEASE } from "@ido/common/contracts/protocol";
 export interface PluginConfig {
   guildId: string;
   textChannelId: string;

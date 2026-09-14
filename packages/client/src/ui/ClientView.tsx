@@ -10,10 +10,8 @@ import {
   Text,
 } from "@mantine/core";
 import { useState } from "react";
-import { Card } from "../../../ui/src/components/Card.js";
-import { Form } from "../../../ui/src/components/Form.js";
-import { Status } from "../../../ui/src/components/Status.js";
-import type { Action, ClientState, Invoke } from "../../../ui/src/types.js";
+import { Card, Form, Status } from "@ido/common-ui";
+import type { Action, ClientState, Invoke } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
 import { ClientRuns } from "./ClientRuns.js";
 export function ClientView({

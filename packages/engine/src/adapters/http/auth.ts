@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
-import type { User } from "../../../../common/src/contracts/protocol.js";
-import { HttpError } from "../../../../common/src/runtime/http.js";
-import { equal, hash } from "../../../../common/src/runtime/platform.js";
+import type { User } from "@ido/common/contracts/protocol";
+import { HttpError } from "@ido/common/runtime/http";
+import { equal, hash } from "@ido/common/runtime/platform";
 import type { Engine } from "../../bootstrap/engine.js";
 export type Auth = { user: User; csrf: string; token: string };
 export function config(this: Engine) {

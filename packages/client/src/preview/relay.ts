@@ -1,6 +1,6 @@
 import { request } from "node:http";
 import { WebSocket } from "ws";
-import type { Command } from "../../../common/src/contracts/protocol.js";
+import type { Command } from "@ido/common/contracts/protocol";
 
 export class ClientPreview {
   registrations = new Map<string, { port: number; basePath: string }>();

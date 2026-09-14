@@ -1,6 +1,6 @@
 import OpenAI, { toFile } from "openai";
-import type { Task } from "../../../../common/src/contracts/protocol.js";
-import type { Credentials } from "../../../../common/src/runtime/credentials.js";
+import type { Task } from "@ido/common/contracts/protocol";
+import type { Credentials } from "@ido/common/runtime/credentials";
 import type { Meeting } from "../../domain/models.js";
 import { qualifyTranscriptionAudio } from "../../input/audio/signal.mjs";
 import type { Models } from "../../ports/models.js";

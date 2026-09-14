@@ -5,9 +5,9 @@ import type {
   PluginEvent,
   PluginFrame,
   PluginManifest,
-} from "../../../../common/src/contracts/plugins.js";
-import type { Credentials } from "../../../../common/src/runtime/credentials.js";
-import { npmRun, run } from "../../../../common/src/runtime/platform.js";
+} from "@ido/common/contracts/plugins";
+import type { Credentials } from "@ido/common/runtime/credentials";
+import { npmRun, run } from "@ido/common/runtime/platform";
 import type { Repository } from "../../ports/repository.js";
 import { PluginProcess } from "./process.js";
 export interface CatalogEntry {

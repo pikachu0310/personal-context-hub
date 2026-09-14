@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Client } from "../../client/src/bootstrap/client.js";
 import type { Run } from "../../client/src/execution/executor.js";
-import type { Task } from "../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import { Engine } from "../src/bootstrap/engine.js";
 async function until(check: () => boolean) {
   for (let n = 0; n < 100; n++) {

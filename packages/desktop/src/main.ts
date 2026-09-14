@@ -2,8 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "../../client/src/bootstrap/client.js";
-import { dataDirectory } from "../../common/src/runtime/platform.js";
-import { lifetime } from "../../common/src/runtime/lifecycle.js";
+import { dataDirectory } from "@ido/common/runtime/platform";
+import { lifetime } from "@ido/common/runtime/lifecycle";
 import { externalLink, localSender, parseJoinLink } from "./security.js";
 
 app.setName("IDO Agent");

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { stripVTControlCharacters } from "node:util";
-import { workerEnvironment } from "../../../common/src/runtime/platform.js";
+import { workerEnvironment } from "@ido/common/runtime/platform";
 import type { Client } from "../bootstrap/client.js";
 import { codexBinary } from "../execution/executor.js";
 

@@ -1,1 +1,1 @@
-export * from "../../../common/src/runtime/codex/thread.mjs";
+export * from "@ido/common/runtime/codex/thread";

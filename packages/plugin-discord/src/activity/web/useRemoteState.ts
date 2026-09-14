@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApiResult, WorkspaceState } from "../../../../ui/src/types.js";
+import type { ApiResult, WorkspaceState } from "@ido/common-ui";
 import { api } from "./api.js";
 export function useRemoteState() {
   const [state, setState] = useState<WorkspaceState>(),

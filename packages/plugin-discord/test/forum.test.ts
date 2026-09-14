@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ChannelType, type Client } from "discord.js";
-import type { Task } from "../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import {
   ForumSync,
   ForumCreateRejected,

@@ -11,8 +11,8 @@ import {
   HttpError,
   RateLimit,
   send,
-} from "../../../common/src/runtime/http.js";
-import type { Rpc } from "../../../common/src/runtime/rpc.js";
+} from "@ido/common/runtime/http";
+import type { Rpc } from "@ido/common/runtime/rpc";
 import { DiscordAuth } from "../auth/sessions.js";
 import { connectionPage } from "../onboarding/guide.js";
 export class DiscordWeb {

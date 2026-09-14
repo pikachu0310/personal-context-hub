@@ -1,6 +1,6 @@
 import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
-import { run } from "../../../common/src/runtime/platform.js";
+import { run } from "@ido/common/runtime/platform";
 
 import type { Executor } from "../execution/executor.js";
 export async function artifact(this: Executor, runId: string) {

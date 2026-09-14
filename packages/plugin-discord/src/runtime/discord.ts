@@ -1,10 +1,7 @@
 import { VoiceConnectionStatus } from "@discordjs/voice";
 import { randomUUID } from "node:crypto";
-import type {
-  PluginEvent,
-  PluginOutput,
-} from "../../../common/src/contracts/plugins.js";
-import { pluginRuntime } from "../../../common/src/runtime/plugin.js";
+import type { PluginEvent, PluginOutput } from "@ido/common/contracts/plugins";
+import { pluginRuntime } from "@ido/common/runtime/plugin";
 import { DiscordWeb } from "../activity/server.js";
 import { start } from "../input/connection.js";
 import { normalizeInput } from "../input/normalize.js";
@@ -15,7 +12,7 @@ import { renderPublication } from "../output/render.js";
 import { deliver } from "../output/transport.js";
 import { audioOutput } from "../output/audio.js";
 import { createDiscordState } from "./state.js";
-import type { Task } from "../../../common/src/contracts/protocol.js";
+import type { Task } from "@ido/common/contracts/protocol";
 import {
   ForumSync,
   forumKey,

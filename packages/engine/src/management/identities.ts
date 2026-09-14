@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { User } from "../../../common/src/contracts/protocol.js";
+import type { User } from "@ido/common/contracts/protocol";
 import type { Repository } from "../ports/repository.js";
 export class Identities {
   constructor(readonly store: Repository) {}

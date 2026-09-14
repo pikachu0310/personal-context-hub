@@ -1,4 +1,4 @@
-import type { Grant } from "../../../common/src/contracts/protocol.js";
+import type { Grant } from "@ido/common/contracts/protocol";
 export interface Device {
   id: string;
   name: string;

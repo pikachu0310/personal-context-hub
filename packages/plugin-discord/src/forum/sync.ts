@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { clean, type Task } from "../../../common/src/contracts/protocol.js";
+import { clean, type Task } from "@ido/common/contracts/protocol";
 
 export interface ForumBinding {
   guildId: string;
