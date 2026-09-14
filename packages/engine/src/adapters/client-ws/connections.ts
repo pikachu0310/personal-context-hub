@@ -28,6 +28,7 @@ import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
 import { taskSnapshot } from "./task-list.js";
 import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
+import { transcriptPage } from "../../processing/minutes/transcript.js";
 import { TaskBoard } from "../../processing/tasks/board.js";
 export class ClientConnections {
   readonly peers = new Map<string, WebSocket>();
@@ -500,6 +501,12 @@ export class ClientConnections {
               case "project.minutes.update":
                 result = team.updateMinutes(device.id, input);
                 break;
+              case "project.transcript": {
+                const projectId = id(input.projectId);
+                team.require(device.id, projectId);
+                result = transcriptPage(this.store, projectId, input);
+                break;
+              }
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
@@ -619,6 +626,7 @@ export class ClientConnections {
               ![
                 "project.snapshot",
                 "project.knowledge",
+                "project.transcript",
                 "task.knowledge",
                 "project.inspect-invite",
               ].includes(String(data.operation))

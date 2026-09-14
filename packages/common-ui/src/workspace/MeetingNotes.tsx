@@ -10,15 +10,21 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
-import { useState, type ReactNode } from "react";
-import type { MeetingView } from "@ido/common/contracts/api";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type {
+  MeetingView,
+  TranscriptPage,
+  TranscriptQuery,
+} from "@ido/common/contracts/api";
 
 export function MeetingNotes({
   meetings,
   document,
+  loadTranscript,
 }: {
   meetings: MeetingView[];
   document?: ReactNode;
+  loadTranscript?: (query: TranscriptQuery) => Promise<TranscriptPage>;
 }) {
   const [tab, setTab] = useState<string | null>(() =>
     document &&
@@ -29,7 +35,102 @@ export function MeetingNotes({
   );
   const [query, setQuery] = useState("");
   const [sources, setSources] = useState<string[]>([]);
+  const [sourceTopic, setSourceTopic] = useState<{
+    meetingId: string;
+    topicId: string;
+  }>();
   const [limit, setLimit] = useState(100);
+  const [page, setPage] = useState<TranscriptPage>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const requestVersion = useRef(0);
+  const pageKey = useRef("");
+  const revision = meetings
+    .map(
+      (m) =>
+        `${m.id}:${m.messageCount ?? m.messages.length}:${m.lastMessageAt ?? m.messages.at(-1)?.at}:${m.knowledge?.revision}`,
+    )
+    .join("|");
+  useEffect(() => {
+    if (!loadTranscript || tab !== "transcript") return;
+    const version = ++requestVersion.current;
+    const key = JSON.stringify([query, sourceTopic]);
+    const changed = pageKey.current !== key;
+    pageKey.current = key;
+    if (changed) setPage(undefined);
+    setLoading(true);
+    setError("");
+    const timer = setTimeout(
+      () => {
+        void loadTranscript({ query, ...sourceTopic })
+          .then((result) => {
+            if (requestVersion.current !== version) return;
+            setPage((previous) => {
+              if (
+                !changed &&
+                previous &&
+                previous.messages.length > 100 &&
+                result.total >= previous.messages.length
+              ) {
+                const retained = new Map(
+                  previous.messages.map((m) => [m.id, m]),
+                );
+                for (const message of result.messages)
+                  retained.set(message.id, message);
+                return {
+                  ...result,
+                  messages: [...retained.values()],
+                  next: previous.next,
+                };
+              }
+              return result;
+            });
+          })
+          .catch((e) => {
+            if (requestVersion.current === version)
+              setError((e as Error).message);
+          })
+          .finally(() => {
+            if (requestVersion.current === version) setLoading(false);
+          });
+      },
+      query ? 150 : 0,
+    );
+    return () => {
+      clearTimeout(timer);
+      requestVersion.current++;
+    };
+  }, [loadTranscript, tab, query, sourceTopic, revision, retry]);
+  const more = async () => {
+    if (!loadTranscript || !page?.next || loading) return;
+    const version = requestVersion.current;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await loadTranscript({
+        query,
+        ...sourceTopic,
+        before: page.next,
+      });
+      if (requestVersion.current === version)
+        setPage((previous) => ({
+          ...result,
+          messages: [
+            ...new Map(
+              [...(previous?.messages ?? []), ...result.messages].map((m) => [
+                m.id,
+                m,
+              ]),
+            ).values(),
+          ],
+        }));
+    } catch (e) {
+      if (requestVersion.current === version) setError((e as Error).message);
+    } finally {
+      if (requestVersion.current === version) setLoading(false);
+    }
+  };
   const terms = query
     .normalize("NFKC")
     .toLowerCase()
@@ -41,7 +142,7 @@ export function MeetingNotes({
   const ordered = meetings.toSorted(
     (a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0),
   );
-  const messages = ordered
+  const localMessages = ordered
     .flatMap((meeting) =>
       meeting.messages.map((message) => ({
         ...message,
@@ -56,6 +157,13 @@ export function MeetingNotes({
         matches(`${message.authorName ?? message.authorId} ${message.text}`),
     )
     .sort((a, b) => a.at - b.at);
+  const messages = loadTranscript
+    ? (page?.messages ?? []).toSorted(
+        (a, b) => a.at - b.at || a.id.localeCompare(b.id),
+      )
+    : localMessages.slice(-limit);
+  const total = loadTranscript ? (page?.total ?? 0) : localMessages.length;
+  const hasMore = loadTranscript ? !!page?.next : localMessages.length > limit;
   const topics = ordered
     .flatMap((meeting) =>
       (meeting.knowledge?.topics ?? []).map((topic) => ({ ...topic, meeting })),
@@ -70,10 +178,11 @@ export function MeetingNotes({
         ].join("\n"),
       ),
     );
-  const showSources = (ids: string[]) => {
-    setSources(ids);
+  const showSources = (topic: (typeof topics)[number]) => {
+    setSources(topic.sourceIds);
+    setSourceTopic({ meetingId: topic.meeting.id, topicId: topic.id });
     setQuery("");
-    setLimit(Math.max(100, ids.length));
+    setLimit(Math.max(100, topic.sourceIds.length));
     setTab("transcript");
   };
   return (
@@ -109,7 +218,10 @@ export function MeetingNotes({
               <Text c="dimmed">
                 {query
                   ? "一致する議題はありません。発言ログも検索できます。"
-                  : meetings.some((meeting) => meeting.messages.length)
+                  : meetings.some(
+                        (meeting) =>
+                          meeting.messageCount ?? meeting.messages.length,
+                      )
                     ? "発言を保存しています。議題がまとまると、ここに要点・決定事項・未決事項が表示されます。"
                     : "会話が始まると、発言ログと議事録がここに残ります。"}
               </Text>
@@ -166,7 +278,7 @@ export function MeetingNotes({
                   variant="light"
                   size="xs"
                   mt="sm"
-                  onClick={() => showSources(topic.sourceIds)}
+                  onClick={() => showSources(topic)}
                 >
                   元の発言を見る（{topic.sourceIds.length}件）
                 </Button>
@@ -185,7 +297,10 @@ export function MeetingNotes({
                   <Button
                     size="xs"
                     variant="subtle"
-                    onClick={() => setSources([])}
+                    onClick={() => {
+                      setSources([]);
+                      setSourceTopic(undefined);
+                    }}
                   >
                     すべての発言へ戻る
                   </Button>
@@ -193,23 +308,40 @@ export function MeetingNotes({
               </Alert>
             )}
             <Text size="sm" c="dimmed">
-              {messages.length}件の発言
-              {messages.length > limit ? `のうち直近${limit}件` : ""}
+              {total}件の発言
+              {total > messages.length ? `のうち直近${messages.length}件` : ""}
               。要約前の言葉を話者・時刻付きで保存しています。
             </Text>
-            {messages.length > limit && (
-              <Button variant="subtle" onClick={() => setLimit(limit + 100)}>
+            {error && (
+              <Alert color="red">
+                履歴を読み込めませんでした。
+                <Button variant="subtle" onClick={() => setRetry(retry + 1)}>
+                  再試行
+                </Button>
+              </Alert>
+            )}
+            {loading && !messages.length && (
+              <Text c="dimmed">発言を読み込み中…</Text>
+            )}
+            {hasMore && (
+              <Button
+                variant="subtle"
+                loading={loading}
+                onClick={() =>
+                  loadTranscript ? void more() : setLimit(limit + 100)
+                }
+              >
                 以前の発言をさらに表示
               </Button>
             )}
-            {!messages.length && (
+            {!messages.length && !loading && !error && (
               <Text c="dimmed">
                 {query
                   ? "一致する発言はありません。別の語句で検索してください。"
                   : "表示できる発言はまだありません。"}
               </Text>
             )}
-            {messages.slice(-limit).map((message) => (
+            {messages.map((message) => (
               <Paper
                 key={message.id}
                 id={`statement-${message.id}`}

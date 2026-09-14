@@ -12,9 +12,13 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { TaskFollowup } from "./TaskFollowup.js";
-import type { ProjectWorkspace } from "@ido/common/contracts/api";
+import type {
+  ProjectWorkspace,
+  TranscriptPage,
+  TranscriptQuery,
+} from "@ido/common/contracts/api";
 import { TaskDispatchNotice } from "./TaskDispatchNotice.js";
 import type { ClientState } from "@ido/common/contracts/api";
 import { api } from "./api.js";
@@ -38,6 +42,11 @@ export function ProjectView({
 }) {
   const [state, setState] = useState<ProjectWorkspace>(),
     [error, setError] = useState("");
+  const loadTranscript = useCallback(
+    (query: TranscriptQuery) =>
+      api<TranscriptPage>("project/transcript", { ...query, projectId }),
+    [projectId],
+  );
   useEffect(() => {
     let active = true;
     const refresh = async () => {
@@ -121,7 +130,13 @@ export function ProjectView({
               <details style={{ marginTop: 20 }}>
                 <summary>会議の文脈・元の発言を確認</summary>
                 <div style={{ marginTop: 16 }}>
-                  <MeetingNotes key={projectId} meetings={state.minutes} />
+                  <MeetingNotes
+                    key={projectId}
+                    meetings={state.minutes}
+                    loadTranscript={
+                      state.transcriptPaging ? loadTranscript : undefined
+                    }
+                  />
                 </div>
               </details>
             </Paper>
@@ -130,45 +145,59 @@ export function ProjectView({
               <MeetingNotes
                 key={projectId}
                 meetings={state.minutes}
+                loadTranscript={
+                  state.transcriptPaging ? loadTranscript : undefined
+                }
                 document={
                   <>
-                    {!state.minutes.length && (
+                    {!state.minutes.some(
+                      (m) =>
+                        (m.messageCount ?? m.messages.length) ||
+                        m.summary.trim(),
+                    ) && (
                       <Text c="dimmed">
                         会話が始まると議事録が表示されます。
                       </Text>
                     )}
-                    {state.minutes.map((m) => (
-                      <MinutesEditor
-                        key={m.id}
-                        meeting={m}
-                        projectId={projectId}
-                        projects={clientState.settings.projects.filter(
-                          (p) =>
-                            !clientState.allowedProjectIds ||
-                            clientState.allowedProjectIds.includes(p.id),
-                        )}
-                        canEdit={
-                          clientState.connected && state.canEditMinutes === true
-                        }
-                        openTask={openTask}
-                        dirtyChanged={dirtyChanged}
-                        saved={(meeting) =>
-                          setState(
-                            (current) =>
-                              current && {
-                                ...current,
-                                minutes: current.minutes.map((item) =>
-                                  item.id === meeting.id &&
-                                  (item.summaryRevision ?? 0) <=
-                                    (meeting.summaryRevision ?? 0)
-                                    ? meeting
-                                    : item,
-                                ),
-                              },
-                          )
-                        }
-                      />
-                    ))}
+                    {state.minutes
+                      .filter(
+                        (m) =>
+                          (m.messageCount ?? m.messages.length) ||
+                          m.summary.trim(),
+                      )
+                      .map((m) => (
+                        <MinutesEditor
+                          key={m.id}
+                          meeting={m}
+                          projectId={projectId}
+                          projects={clientState.settings.projects.filter(
+                            (p) =>
+                              !clientState.allowedProjectIds ||
+                              clientState.allowedProjectIds.includes(p.id),
+                          )}
+                          canEdit={
+                            clientState.connected &&
+                            state.canEditMinutes === true
+                          }
+                          openTask={openTask}
+                          dirtyChanged={dirtyChanged}
+                          saved={(meeting) =>
+                            setState(
+                              (current) =>
+                                current && {
+                                  ...current,
+                                  minutes: current.minutes.map((item) =>
+                                    item.id === meeting.id &&
+                                    (item.summaryRevision ?? 0) <=
+                                      (meeting.summaryRevision ?? 0)
+                                      ? meeting
+                                      : item,
+                                  ),
+                                },
+                            )
+                          }
+                        />
+                      ))}
                   </>
                 }
               />
