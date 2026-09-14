@@ -9,8 +9,8 @@ import { ProjectView } from "./ProjectView.js";
 import { ProjectMenu } from "./ProjectMenu.js";
 import { InviteDialog } from "./InviteDialog.js";
 import { Modal, Text, Button, Anchor } from "@mantine/core";
-import { Form, TaskMenu } from "@ido/common-ui";
-import { desktopBridge } from "./desktop.js";
+import { TaskMenu } from "@ido/common-ui";
+import { AddProjectForm } from "./ProjectForm.js";
 import { useEffect, useState } from "react";
 import { ClientView } from "./ClientView.js";
 import { ClientRuns } from "./ClientRuns.js";
@@ -561,6 +561,7 @@ export function App() {
         onClose={() => setSettingsProject(undefined)}
         title={`${state.settings.projects.find((p) => p.id === settingsProject)?.name ?? "プロジェクト"} · 接続・設定`}
         size="lg"
+        centered
         className="project-settings-modal"
       >
         {settingsProject && (
@@ -627,35 +628,19 @@ export function App() {
       </Modal>
       <Modal
         centered
+        size="lg"
+        className="project-settings-modal"
         opened={projectDialog !== undefined}
         onClose={() => setProjectDialog(undefined)}
         title={
           projectDialog ? "プロジェクトの保存先を選択" : "プロジェクトを追加"
         }
       >
-        <Text size="sm" mb="md">
-          コミット済みGitリポジトリ、または空フォルダを選択してください。空フォルダはGitで初期化します。実行を許可する前に保存先を設定します。
-        </Text>
-        <Form
+        <AddProjectForm
           key={projectDialog}
-          fields={[
-            ...(!projectDialog ? [{ key: "name", label: "名前" }] : []),
-            {
-              key: "directory",
-              label: "ディレクトリ",
-              pick: desktopBridge()?.pickDirectory,
-            },
-          ]}
-          submit={async (data) => {
-            await action(projectDialog ? "mappings" : "projects", {
-              ...data,
-              ...(projectDialog
-                ? { projectId: projectDialog, network: false, slots: 1 }
-                : {}),
-            });
-            setProjectDialog(undefined);
-          }}
-          label={projectDialog ? "保存先を設定" : "追加"}
+          projectId={projectDialog || undefined}
+          action={action}
+          saved={() => setProjectDialog(undefined)}
         />
       </Modal>
       <Modal

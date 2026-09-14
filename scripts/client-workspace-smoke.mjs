@@ -1,4 +1,4 @@
-﻿// Real Client routes and executor, synthetic Codex responses; no account login,
+// Real Client routes and executor, synthetic Codex responses; no account login,
 // remote Engine, Discord message, or model request is made by this smoke test.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -65,6 +65,10 @@ try {
   client.settings.mappings = [
     { projectId: "project", directory: repository, network: false, slots: 1 },
   ];
+  client.settings.profile = {
+    name: "Demo user",
+    context: "フォームのエラーは日本語で説明してください。",
+  };
   client.connected = true;
   client.controlSupported = true;
   client.allowedProjects.add("project");
@@ -138,6 +142,10 @@ try {
       return true;
     },
     async runStreamed(prompt, options) {
+      if (turn === 0) {
+        assert.match(prompt, /フォームのエラーは日本語で説明/);
+        assert.match(prompt, /既存のスレッドとの対応を維持/);
+      }
       return {
         events: (async function* () {
           const n = ++turn;
@@ -224,6 +232,15 @@ try {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     history: [],
+    sourceStatements: [
+      {
+        id: "source-1",
+        meetingId: "meeting",
+        sequence: 1,
+        speakerName: "Demo teammate",
+        text: "決定: 既存のスレッドとの対応を維持する。\n担当: Demo user",
+      },
+    ],
   };
   const value = {
     task,
@@ -289,10 +306,15 @@ try {
   );
   const originalAccess = configured.accessMode;
   for (const mode of ["auto", "manual"]) {
-    const response = page.waitForResponse((value) => value.url().endsWith("/api/progress-mode"));
+    const response = page.waitForResponse((value) =>
+      value.url().endsWith("/api/progress-mode"),
+    );
     await page.getByLabel("入力欄の進め方").selectOption(mode);
     assert.equal((await response).status(), 200);
-    assert.equal(configured.pendingProgressMode ?? configured.progressMode, mode);
+    assert.equal(
+      configured.pendingProgressMode ?? configured.progressMode,
+      mode,
+    );
   }
   assert.equal(configured.accessMode, originalAccess);
   const projectToggle = page.locator(
@@ -310,6 +332,71 @@ try {
   await groupToggle.click();
   assert.equal(await groupToggle.getAttribute("aria-expanded"), "false");
   await groupToggle.click();
+  assert.equal(
+    await page.locator("html").getAttribute("data-mantine-color-scheme"),
+    "light",
+  );
+  const inspector = page.getByRole("complementary", { name: "タスクの詳細" });
+  const conversation = await page.locator(".task-conversation").boundingBox();
+  const inspectorBox = await inspector.boundingBox();
+  assert.ok(inspectorBox.x >= conversation.x + conversation.width);
+  await inspector.getByText(repository, { exact: true }).waitFor();
+  const environmentResponse = await page.request.get(
+    `${client.origin}/api/task-environment?runId=run`,
+  );
+  const environment = await environmentResponse.json();
+  assert.equal(
+    environment.branch,
+    git("branch", "--show-current").toString().trim(),
+  );
+  assert.equal(environment.directory, repository);
+  assert.equal(environment.ownerName, "Demo user");
+  assert.ok(environment.deviceName);
+  git("checkout", "--detach");
+  const detached = await (
+    await page.request.get(`${client.origin}/api/task-environment?runId=run`)
+  ).json();
+  assert.equal(detached.branch, undefined);
+  assert.equal(detached.commit, git("rev-parse", "HEAD").toString().trim());
+  git("checkout", environment.branch);
+  await inspector
+    .getByRole("button", { name: "環境を更新", exact: true })
+    .click();
+  assert.equal(
+    (
+      await page.request.get(
+        `${client.origin}/api/task-environment?runId=missing`,
+      )
+    ).status(),
+    404,
+  );
+  await inspector.getByRole("tab", { name: "ソース", exact: true }).click();
+  await inspector
+    .getByRole("button", { name: "議事録 · Demo teammate", exact: true })
+    .click();
+  await inspector.getByText(/決定: 既存のスレッドとの対応を維持/).waitFor();
+  await inspector
+    .getByRole("button", { name: "Demo userのユーザー情報", exact: true })
+    .click();
+  await inspector
+    .getByText("フォームのエラーは日本語で説明してください。", { exact: true })
+    .waitFor();
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-sources.png",
+  });
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  await inspector.getByRole("tab", { name: "ソース", exact: true }).click();
+  await inspector
+    .getByRole("button", { name: "議事録 · Demo teammate", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "@ユーザー情報", exact: true })
+    .click();
+  await inspector
+    .getByText("フォームのエラーは日本語で説明してください。", { exact: true })
+    .waitFor();
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
   assert.equal(await page.locator(".avatar-overflow").innerText(), "+2");
   assert.ok((await page.locator(".task-avatars .bot-avatar").count()) > 0);
   const historical = page.getByRole("region", {
@@ -319,7 +406,7 @@ try {
   assert.equal(await historical.locator(".user-avatar").count(), 1);
   assert.equal(
     await historical.locator(".task-avatars").getAttribute("aria-label"),
-    "参加者: 参加者",
+    "参加者: Demo user",
   );
   await historical.locator(".task-link").click();
   await page
@@ -431,6 +518,9 @@ try {
     .click();
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.locator(".conversation-scroll").evaluate((element) => {
+    element.scrollTop = 0;
+  });
   await page.screenshot({
     path: ".ido-build/screenshots/workspace-manual.png",
   });
@@ -478,10 +568,14 @@ try {
     .getByRole("button", { name: "変更を確認", exact: true })
     .first()
     .click();
-  await page.getByRole("dialog").waitFor();
+  await page.getByRole("tabpanel", { name: "変更", exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 0);
   await page.getByText(/export const sync = true/).waitFor();
   assert.match(await page.locator(".diff-preview").innerText(), /sync = true/);
-  await page.keyboard.press("Escape");
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-changes.png",
+  });
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
   await page.getByLabel("タスクを検索").fill("Mac");
   await page
     .locator(".task-link")
@@ -559,6 +653,46 @@ try {
   assert.equal(localInput.shareProjectId, "project");
   assert.equal(localInput.accessMode, "full");
   await page.unroute("**/api/local-tasks/start");
+  // Retain access-mode labels and place sharing notices inside the right panel.
+  value.origin = "local";
+  value.accessMode = "full";
+  value.discordShare = {
+    engineUrl: "https://fixture.example.invalid",
+    deviceId: "fixture-device",
+    projectId: "project",
+    sequence: 1,
+    status: "pending",
+  };
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page
+    .getByRole("button", { name: "フルアクセス・承認なし", exact: true })
+    .waitFor();
+  await inspector.getByText("Discord共有", { exact: true }).waitFor();
+  await inspector
+    .getByText(
+      "Discordへの共有待ちです。同じチームへの接続後に再試行します。",
+      { exact: true },
+    )
+    .waitFor();
+  value.accessMode = "approval";
+  value.discordShare.status = "synced";
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page
+    .getByRole("button", { name: "許可を求める", exact: true })
+    .waitFor();
+  await inspector
+    .getByText(
+      "Discord共有用タスクをEngineに登録済みです。スレッド反映はBotの同期後に行われます。",
+      { exact: true },
+    )
+    .waitFor();
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-sharing-inspector.png",
+  });
+  delete value.origin;
+  delete value.accessMode;
+  delete value.discordShare;
+
   // The project workspace replaces the old global local-task/run navigation.
   assert.equal(
     await page
@@ -645,6 +779,16 @@ try {
   await page
     .getByRole("button", { name: "サイドバーを閉じる", exact: true })
     .click();
+  await page.getByRole("button", { name: "タスクの詳細", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "タスクの詳細", exact: true })
+    .waitFor();
+  await page.getByRole("tab", { name: "ソース", exact: true }).click();
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-mobile-panel.png",
+  });
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.screenshot({
     path: ".ido-build/screenshots/workspace-mobile.png",
   });
@@ -657,7 +801,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "Workspace smoke passed: Manual discussion -> execute, live instruction, command output, diff, search, stop, offline gating, reconnect, avatar upload/removal, centered modal and narrow layout.",
+    "Workspace smoke passed: white theme, right environment/sources/diff panels, actual branch and detached HEAD, profile context, mobile drawer, Manual discussion -> execute, live instruction, command output, diff, search, stop, offline gating, reconnect, avatar upload/removal, centered modal and narrow layout.",
   );
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];

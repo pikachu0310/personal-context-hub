@@ -9,6 +9,7 @@ import {
   localProgress,
 } from "../execution/local-tasks.js";
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import { realpath } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
 import { avatar, id, text } from "@ido/common/contracts/protocol";
@@ -20,7 +21,7 @@ import {
   localGuard,
   send,
 } from "@ido/common/runtime/http";
-import { equal } from "@ido/common/runtime/platform";
+import { equal, run } from "@ido/common/runtime/platform";
 
 import type { Client } from "../bootstrap/client.js";
 export async function route(
@@ -108,6 +109,27 @@ export async function route(
       entries: value.activity ?? [],
       dropped: value.activityDropped ?? 0,
       version: value.activityVersion ?? 0,
+    });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/task-environment") {
+    const value = this.executor.runs[id(url.searchParams.get("runId"))];
+    if (!value || this.executor.deletedTasks[value.task.id])
+      throw new HttpError(404, "RUN_NOT_FOUND");
+    const git = (args: string[]) =>
+      run("git", ["-C", value.directory, ...args], { timeout: 5000 })
+        .then((output) => output.trim())
+        .catch(() => undefined);
+    const [branch, commit] = await Promise.all([
+      git(["symbolic-ref", "--quiet", "--short", "HEAD"]),
+      git(["rev-parse", "--verify", "HEAD"]),
+    ]);
+    send(res, 200, {
+      directory: value.directory,
+      branch,
+      commit,
+      deviceName: hostname(),
+      ownerName: this.settings.profile?.name,
     });
     return;
   }
@@ -400,11 +422,13 @@ export async function route(
           .concat({
             projectId: project.id,
             directory,
-            network: false,
+            network: input.network === true,
+            progressMode: input.progressMode === "manual" ? "manual" : "auto",
             slots: 1,
           });
         delete this.settings.pendingProject;
         await this.save();
+        if (input.allow === true) this.allowedProjects.add(project.id);
         this.ready();
       } finally {
         this.projectCreationBusy = false;
@@ -433,13 +457,30 @@ export async function route(
           reasoningEffort: this.settings.mappings.find(
             (m) => m.projectId === projectId,
           )?.reasoningEffort,
-          progressMode: this.settings.mappings.find(
-            (m) => m.projectId === projectId,
-          )?.progressMode,
+          progressMode:
+            input.progressMode === "manual" || input.progressMode === "auto"
+              ? input.progressMode
+              : this.settings.mappings.find((m) => m.projectId === projectId)
+                  ?.progressMode,
+
           network: input.network === true,
           slots: Math.max(1, Math.min(8, Number(input.slots) || 1)),
         });
       await this.save();
+      if (input.allow === true) this.allowedProjects.add(projectId);
+      else if (input.allow === false) this.allowedProjects.delete(projectId);
+      if (typeof input.allow === "boolean")
+        this.settings.slots = Math.min(
+          8,
+          Math.max(
+            1,
+            this.executionMappings().reduce(
+              (total, mapping) => total + mapping.slots,
+              0,
+            ),
+          ),
+        );
+      this.ready();
       break;
     }
     case "/api/allow": {

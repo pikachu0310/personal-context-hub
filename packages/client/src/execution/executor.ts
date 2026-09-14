@@ -1,6 +1,9 @@
 import { purge } from "./purge.js";
 import { join } from "node:path";
-import type { ClientActivity } from "@ido/common/contracts/api";
+import type {
+  ClientActivity,
+  TaskContextSource,
+} from "@ido/common/contracts/api";
 import { executionError, recordActivity } from "./activity.js";
 import { waitForPlan, startPlannedWork } from "./planning.js";
 import type { Command, Mapping, Task } from "@ido/common/contracts/protocol";
@@ -30,6 +33,7 @@ export interface WorkInstruction {
 }
 
 export interface Run {
+  contextSources?: TaskContextSource[];
   model?: string;
   reasoningEffort?: string;
   agent?: AgentKind;
@@ -69,6 +73,8 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
+  contextProfile: () => { name: string; context: string } | undefined = () =>
+    undefined;
   createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
     new ClaudeRuntime(options);
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
@@ -221,6 +227,9 @@ export class Executor {
       const directory =
         previous?.directory ?? join(this.directory, "worktrees", task.runId);
       const value: Run = {
+        contextSources: previous?.contextSources?.filter(
+          (source) => source.kind !== "minutes",
+        ),
         agent: previous?.agent ?? local?.agent ?? "codex",
         model: previous ? previous.model : (local?.model ?? mapping.model),
         reasoningEffort: previous
