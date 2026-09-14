@@ -65,5 +65,6 @@ browser:
   - "packages/{common,common-ui,engine,client,plugin-dashboard}/src/**"
   - "packages/{engine,client,plugin-dashboard}/vite.config.*"
   - "scripts/ido*-browser-smoke.mjs"
+  - "scripts/ido-dashboard-smoke.mjs"
   - "scripts/client-workspace-smoke.mjs"
   - "examples/ido-preview/**"

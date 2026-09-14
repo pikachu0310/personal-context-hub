@@ -118,6 +118,8 @@ export class Tasks {
       )
         continue;
       receipt.delivery = incoming.delivery;
+      if (receipt.type === "stop" && receipt.delivery === "stopped")
+        this.repository.audit(deviceId, "task.stop.confirmed", task.id);
       this.repository.put(
         "task-control",
         receiptKey(receipt.authorId, task.id, receipt.requestKey),
@@ -148,6 +150,8 @@ export class Tasks {
       task.effectiveExecutionPolicy,
       data.effectiveExecutionPolicy,
     );
+    if (task.state !== next)
+      this.repository.audit(deviceId, `task.state.${String(next)}`, task.id);
     task.state = next as Task["state"];
     task.progress =
       typeof data.progress === "string"

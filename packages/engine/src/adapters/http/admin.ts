@@ -18,6 +18,7 @@ import {
 } from "@ido/common/runtime/platform";
 import type { Engine } from "../../bootstrap/engine.js";
 import type { Device } from "../../domain/models.js";
+import { dashboard } from "./dashboard.js";
 import { lifecycle } from "./lifecycle.js";
 import { members } from "./members.js";
 import { proxyPlugin } from "./plugin-proxy.js";
@@ -248,6 +249,7 @@ export async function route(
   }
   const auth = this.authenticate(req);
   const admin = auth.user.role === "admin";
+  if (await dashboard.call(this, req, res, url, auth)) return;
   if (req.method !== "GET") {
     if (url.pathname === "/api/admin/logout") {
       if (!equal(String(req.headers["x-csrf-token"] ?? ""), auth.csrf))

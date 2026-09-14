@@ -499,33 +499,40 @@ try {
   await page.getByLabel("パスワード").fill("demo-password-only");
   await page.getByRole("button", { name: "ログイン", exact: true }).click();
   await page.getByRole("heading", { name: "コネクト", exact: true }).waitFor();
-  await page.goto(engine.origin + "/dashboard/");
-  await page.getByText("プロジェクト", { exact: true }).first().click();
-  await page.getByLabel("プロジェクト名").fill("Demo project");
-  await page.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByRole("heading", { name: "Demo project" }).waitFor();
-  await page.getByText("会話", { exact: true }).first().click();
-  await page.getByRole("combobox", { name: "現在のプロジェクト" }).click();
-  await page.getByRole("option", { name: "Demo project" }).click();
-  assert.equal(await page.getByLabel("会議名").count(), 0);
-  await page.getByLabel("会話に追加").fill("ブラウザから発言を送ります");
-  await page.getByRole("button", { name: "会話を送信", exact: true }).click();
+  // Seed conversation through the retained compatibility API; the admin dashboard has no composer.
+  const session = await (
+    await page.request.get(engine.origin + "/api/admin/session")
+  ).json();
+  const workspacePost = async (operation, data) => {
+    const response = await page.request.post(
+      engine.origin + "/dashboard/api/" + operation,
+      { data, headers: { "x-csrf-token": session.csrf } },
+    );
+    assert.equal(response.status(), 200);
+    return response.json();
+  };
+  const project = await workspacePost("projects", { name: "Demo project" });
   const logText = "ブラウザから発言を送ります";
-  await page.getByText(logText, { exact: true }).waitFor();
+  await workspacePost("messages", {
+    projectId: project.id,
+    text: logText,
+    requestId: "fixture-first-message",
+  });
+  await page.waitForFunction(async () => {
+    const state = await (await fetch("/dashboard/api/state")).json();
+    return state.meetings.some((m) =>
+      m.messages.some((v) => v.text === "ブラウザから発言を送ります"),
+    );
+  });
   const meeting = engine.store
     .list("meeting")
-    .find((entry) =>
-      entry.messages.some((message) => message.text === logText),
-    );
-  assert.ok(meeting);
+    .find((m) => m.messages.some((v) => v.text === logText));
   await engine.conversation.coordinated.flush(meeting.id);
   assert.equal(observations.length, 1);
   assert.equal(observations[0].meetingId, meeting.id);
   assert.ok(
     observations[0].events.some(
-      (event) =>
-        event.type === "message" &&
-        event.source.text === "ブラウザから発言を送ります",
+      (e) => e.type === "message" && e.source.text === logText,
     ),
   );
   assert.equal(
@@ -540,22 +547,24 @@ try {
       Number(engine.store.get("config", "engine").minutesIdleMinutes) * 60000 -
       1,
   });
-  await page.getByLabel("会話に追加").fill("分割後の会話");
-  await page.getByRole("button", { name: "会話を送信", exact: true }).click();
-  await page.getByText("分割後の会話", { exact: true }).waitFor();
+  await workspacePost("messages", {
+    projectId: project.id,
+    text: "分割後の会話",
+    requestId: "fixture-next-message",
+  });
   assert.notEqual(
     engine.store.get("project-conversation", meeting.projectId).meetingId,
     meeting.id,
   );
-  await page.getByText("過去の議事録", { exact: true }).first().click();
-  await page.getByText("[demo] " + logText, { exact: true }).waitFor();
+  await page.goto(engine.origin + "/dashboard/");
+  await page.getByRole("heading", { name: "概要", exact: true }).waitFor();
   assert.equal(
     await page.getByRole("button", { name: "会話を送信" }).count(),
     0,
   );
-  await page.getByText("成果物", { exact: true }).first().click();
-  await page.getByText(/各タスクの実行結果/).waitFor();
-  await page.getByText("会話", { exact: true }).first().click();
+  assert.equal(await page.getByLabel("会話に追加").count(), 0);
+  await page.getByRole("button", { name: "生データ", exact: true }).click();
+  await page.getByText(logText, { exact: false }).waitFor();
   await page.screenshot({
     path: ".ido-build/screenshots/dashboard.png",
     fullPage: true,
@@ -666,7 +675,7 @@ try {
     .getByRole("button", { name: "ユーザー設定を開く", exact: true })
     .click();
   await clientPage
-    .getByLabel("アカウント名", { exact: true })
+    .getByRole("textbox", { name: /^アカウント名/ })
     .fill("Browser participant");
   await clientPage
     .getByLabel("個人コンテキスト（自己紹介・開発担当など）")
@@ -683,7 +692,7 @@ try {
     .getByRole("menuitem", { name: "プロジェクト名を編集", exact: true })
     .click();
   await clientPage
-    .getByLabel("プロジェクト名", { exact: true })
+    .getByRole("textbox", { name: /^プロジェクト名/ })
     .fill("Renamed project");
   await clientPage
     .getByRole("dialog")

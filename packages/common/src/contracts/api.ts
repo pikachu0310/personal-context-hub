@@ -205,3 +205,85 @@ export interface ApiResult {
   patch?: string;
   csrf?: string;
 }
+
+/** Administration projection: no credentials, local paths or raw worker output. */
+export interface DashboardTask {
+  id: string;
+  runId: string;
+  revision: number;
+  controlVersion: number;
+  projectId: string;
+  meetingId: string;
+  title: string;
+  state: Task["state"];
+  clientId?: string;
+  userId?: string;
+  createdAt: number;
+  updatedAt: number;
+  assignedAt?: number;
+  assignmentReason?: string;
+  waitReason?: string;
+  stop?: { delivery: string };
+}
+export interface DashboardConnection {
+  id: string;
+  name: string;
+  userId: string;
+  generation: number;
+  connected: boolean;
+  ready: boolean;
+  disconnecting: boolean;
+  connectedAt?: number;
+  lastSeenAt?: number;
+  slots: number;
+  projectIds: string[];
+}
+export interface DashboardState {
+  user: User;
+  updatedAt: number;
+  projects: Array<{
+    id: string;
+    name: string;
+    userIds: string[];
+    connectedUserIds: string[];
+    running: number;
+    waiting: number;
+    lastActivityAt?: number;
+  }>;
+  users: User[];
+  connections: DashboardConnection[];
+  tasks: DashboardTask[];
+  meetings: Array<{
+    id: string;
+    projectId?: string;
+    name: string;
+    startedAt?: number;
+    closedAt?: number;
+  }>;
+  counts: {
+    running: number;
+    waiting: number;
+    connectedUsers: number;
+    activeConversations: number;
+    projects: number;
+  };
+  activity: {
+    from: number;
+    to: number;
+    observedFrom: number;
+    total: number;
+    buckets: Array<{ at: number; count: number }>;
+  };
+}
+export interface DashboardRawPage {
+  items: Array<{
+    id: string;
+    at: number;
+    projectId?: string;
+    targetId: string;
+    text: string;
+  }>;
+  total: number;
+  offset: number;
+  limit: number;
+}
