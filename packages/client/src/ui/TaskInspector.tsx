@@ -58,6 +58,11 @@ export function TaskInspector({
   const compact = useMediaQuery("(max-width: 1150px)");
   const [opened, setOpened] = useState(false);
   const [desktopOpened, setDesktopOpened] = useState(true);
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    if (desktopOpened || reducedMotion) setCollapsed(!desktopOpened);
+  }, [desktopOpened, reducedMotion]);
   const [header, setHeader] = useState<HTMLElement | null>(null);
   const [attachments, setAttachments] = useState<TaskContextSource[]>([]);
   useEffect(() => {
@@ -217,6 +222,7 @@ export function TaskInspector({
           <Drawer
             opened={opened}
             onClose={() => setOpened(false)}
+            transitionProps={{ duration: reducedMotion ? 0 : 280 }}
             position="right"
             title="タスクの詳細"
             size="min(380px, 100vw)"
@@ -224,17 +230,28 @@ export function TaskInspector({
             {content}
           </Drawer>
         </>
-      ) : desktopOpened ? (
+      ) : (
         <Paper
           component="aside"
           withBorder
           radius="lg"
           className="task-inspector"
+          data-closed={!desktopOpened || undefined}
+          data-collapsed={(!desktopOpened && collapsed) || undefined}
+          aria-hidden={!desktopOpened || undefined}
+          inert={!desktopOpened}
+          onTransitionEnd={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              event.propertyName === "transform"
+            )
+              setCollapsed(!desktopOpened);
+          }}
           aria-label="タスクの詳細"
         >
           {content}
         </Paper>
-      ) : null}
+      )}
     </>
   );
 }
