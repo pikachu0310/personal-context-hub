@@ -96,7 +96,8 @@ export class MeetingKnowledgeStore {
       revision: (meeting.knowledge?.revision ?? 0) + 1,
       updatedAt: Date.now(),
     };
-    meeting.summary = renderMinutes(topics);
+    // Markdown is owned by MinutesDocument and the revision-checked editor.
+    // Topics are a derived index and must never overwrite that document.
     this.store.put("meeting", meeting.id, meeting);
     return true;
   }
@@ -125,9 +126,13 @@ export class MeetingKnowledgeStore {
         input.sourceIds.some((id) => typeof id !== "string" || id.length > 200))
     )
       throw new Error("INVALID_KNOWLEDGE_QUERY");
+    const documentOffset = input.documentOffset ?? 0;
     const offset = input.offset ?? 0,
       limit = input.limit ?? 20;
     if (
+      !Number.isSafeInteger(documentOffset) ||
+      documentOffset < 0 ||
+      (documentOffset > 0 && !input.meetingId) ||
       !Number.isSafeInteger(offset) ||
       offset < 0 ||
       !Number.isSafeInteger(limit) ||
@@ -151,6 +156,26 @@ export class MeetingKnowledgeStore {
       .filter(Boolean);
     const match = (text: string) =>
       terms.every((term) => normalized(text).includes(term));
+    const documents = input.sourceIds
+      ? []
+      : meetings
+          .filter((meeting) => !!meeting.summary && match(meeting.summary))
+          .sort((a, b) => (b.summaryUpdatedAt ?? 0) - (a.summaryUpdatedAt ?? 0))
+          .slice(0, 3)
+          .map((meeting) => {
+            const end = Math.min(meeting.summary.length, documentOffset + 4000);
+            return {
+              meetingId: meeting.id,
+              meetingName: meeting.name,
+              markdown: meeting.summary.slice(documentOffset, end),
+              revision: meeting.summaryRevision ?? 0,
+              updatedAt: meeting.summaryUpdatedAt,
+              offset: documentOffset,
+              ...(end < meeting.summary.length
+                ? { truncated: true, nextOffset: end }
+                : {}),
+            };
+          });
     const selected = input.sourceIds ? new Set(input.sourceIds) : undefined;
     const topics = meetings
       .flatMap((meeting) =>
@@ -219,6 +244,7 @@ export class MeetingKnowledgeStore {
     }
     return {
       projectId,
+      documents,
       topics: topics.map((topic) => ({
         ...topic,
         summary: topic.summary.slice(0, 1200),

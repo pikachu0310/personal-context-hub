@@ -189,6 +189,16 @@ async function fixture(t: TestContext) {
       legacy.push("update");
       throw new Error("LEGACY_UPDATE");
     };
+    engine.conversation.models.summarize = async (meeting) =>
+      [
+        meeting.summary,
+        ...meeting.messages.map(
+          (m) =>
+            `- ${engine.store.conversationAuthor(m.authorId)?.name}: ${m.text}`,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n");
     engine.conversation.models.transcribe = () => transcribe();
     engine.conversation.models.speak = async (text) => {
       speech.push(text);
@@ -313,8 +323,10 @@ test("InputRouter keeps raw statements separate from minutes and one main thread
     ),
     [["前提の一つ目"], ["前提の二つ目"]],
   );
+  await f.engine.conversation.document.refresh("meeting");
   const meeting = f.engine.store.get<any>("meeting", "meeting");
-  assert.equal(meeting.summary, "");
+  assert.equal(meeting.summary, "- 話者A: 前提の一つ目\n- 話者B: 前提の二つ目");
+  assert.equal(meeting.summaryRevision, 2);
   assert.deepEqual(
     meeting.messages.map((message: Message) => [
       message.authorName,

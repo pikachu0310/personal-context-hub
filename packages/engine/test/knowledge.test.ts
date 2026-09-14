@@ -113,7 +113,10 @@ test("topic minutes preserve source statements and corrections, survive restart,
   assert.equal(knowledge.apply("project", patch, allowed), true);
   let meeting = store.get<Meeting>("meeting", "meeting")!;
   const id = meeting.knowledge!.topics[0].id;
-  assert.match(meeting.summary, /未決: 検索速度/);
+  assert.equal(meeting.summary, "");
+  assert.deepEqual(meeting.knowledge!.topics[0].openQuestions, [
+    "検索速度の確認",
+  ]);
   const correction = {
     meetingId: "meeting",
     topics: [

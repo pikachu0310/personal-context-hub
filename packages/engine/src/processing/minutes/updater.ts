@@ -1,3 +1,4 @@
+import { MAX_MINUTES_LENGTH } from "@ido/common/contracts/api";
 import type { DiagnosticContext } from "../../domain/diagnostics.js";
 import type { Meeting, Message } from "../../domain/models.js";
 import { Messages } from "../../messages/store.js";
@@ -90,7 +91,8 @@ export class MinutesUpdater {
           )?.revision
       )
         throw new Error("WORKSPACE_CONFLICT");
-      latest.summary = meeting.summary;
+
+      if (message.stage === "analyzing") latest.summaryState = "updating";
       const index = latest.messages.findIndex((m) => m.id === messageId);
       if (index >= 0)
         latest.messages[index] = {
@@ -115,34 +117,54 @@ export class MinutesUpdater {
     try {
       message.stage = "analyzing";
       save();
-      const parsed = await this.models.update(
-        contextRevision === undefined
-          ? meeting
-          : {
-              ...meeting,
-              summary: "",
-              messages: meeting.messages
-                .filter((m) => (m as { role?: string }).role !== "assistant")
-                .map(({ id, authorId, text, at, stage }) => ({
-                  id,
-                  authorId,
-                  text,
-                  at,
-                  stage,
-                })),
-            },
-        messageId,
-      );
-      if (
-        !this.store.get("meeting", meetingId) ||
-        contextRevision !==
-          this.store.get<{ revision: number }>(
-            "project-context",
-            meeting.projectId ?? "",
-          )?.revision
-      )
-        throw new Error("WORKSPACE_CONFLICT");
-      meeting.summary = parsed.minutes;
+      let parsed: { minutes: string; task: string | null };
+      for (let attempt = 0; ; attempt++) {
+        const base = this.store.get<Meeting>("meeting", meetingId);
+        if (!base) throw new Error("MEETING_NOT_FOUND");
+        parsed = await this.models.update(
+          {
+            ...base,
+            summary:
+              base.summaryContextRevision === contextRevision
+                ? base.summary
+                : "",
+            messages:
+              contextRevision === undefined
+                ? base.messages
+                : base.messages.filter(
+                    (m) => (m as { role?: string }).role !== "assistant",
+                  ),
+          },
+          messageId,
+        );
+        const latest = this.store.get<Meeting>("meeting", meetingId);
+        if (
+          !latest ||
+          contextRevision !==
+            this.store.get<{ revision: number }>(
+              "project-context",
+              meeting.projectId ?? "",
+            )?.revision
+        )
+          throw new Error("WORKSPACE_CONFLICT");
+        if ((latest.summaryRevision ?? 0) !== (base.summaryRevision ?? 0)) {
+          if (attempt >= 4) throw new Error("MINUTES_CONFLICT");
+          continue;
+        }
+        if (
+          typeof parsed.minutes !== "string" ||
+          parsed.minutes.length > MAX_MINUTES_LENGTH
+        )
+          throw new Error("INVALID_MINUTES");
+        latest.summary = parsed.minutes;
+        latest.summaryContextRevision = contextRevision;
+        latest.summaryRevision = (latest.summaryRevision ?? 0) + 1;
+        latest.summaryUpdatedAt = Date.now();
+        latest.summaryState = "ready";
+        this.store.put("meeting", meetingId, latest);
+        meeting.summary = parsed.minutes;
+        break;
+      }
       const target =
         projectId === null ? undefined : (projectId ?? meeting.projectId);
       // Model output supplies task content only. Actor, project and grants come from trusted local records.
@@ -166,6 +188,13 @@ export class MinutesUpdater {
       }
       message.stage = "completed";
     } catch (error) {
+      if (message.stage === "analyzing") {
+        const latest = this.store.get<Meeting>("meeting", meetingId);
+        if (latest) {
+          latest.summaryState = "failed";
+          this.store.put("meeting", meetingId, latest);
+        }
+      }
       message.errorId = this.store.logError(error, {
         source: "meeting",
         ...diagnosticContext,

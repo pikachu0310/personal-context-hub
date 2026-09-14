@@ -46,12 +46,14 @@
     "pack:ido": "node scripts/pack-ido.mjs",
     "smoke:ido": "node scripts/ido-browser-smoke.mjs && node scripts/ido-dashboard-smoke.mjs && node scripts/ido-preview-browser-smoke.mjs && node scripts/client-workspace-smoke.mjs",
     "smoke:membership": "node scripts/client-membership-smoke.mjs",
+    "smoke:chat": "node scripts/client-chat-smoke.mjs",
     "smoke:workspace": "node scripts/client-workspace-smoke.mjs",
     "smoke:ido:pack": "node scripts/ido-pack-smoke.mjs",
     "lint": "eslint .",
     "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,mjs,css,html}\" \"packages/*/test/**/*.{ts,mjs}\" \"scripts/**/*.mjs\" \"docs/*.md\" \"*.{js,json,md}\" \".github/**/*.yml\"",
     "audit": "npm audit",
     "coordination:read": "node scripts/read-github-coordination.mjs",
-    "smoke:dashboard": "node scripts/ido-dashboard-smoke.mjs"
+    "smoke:dashboard": "node scripts/ido-dashboard-smoke.mjs",
+    "smoke:minutes": "node scripts/client-minutes-smoke.mjs"
   }
 }

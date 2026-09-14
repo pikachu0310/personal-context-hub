@@ -40,6 +40,7 @@ type StoredState = {
 type Batch = { id: string; events: CoordinatorEvent[] };
 export interface CoordinatedOptions {
   coordinator: CoordinatorFactory;
+  updateMinutes?: (meetingId: string) => Promise<void>;
   work: WorkPort;
   synthesize(text: string): Promise<string>;
   createLiveSession?: any;
@@ -379,6 +380,8 @@ class MeetingCoordinator {
       .map((meeting) => ({
         meetingId: meeting.id,
         name: meeting.name,
+        markdown: meeting.summary.slice(0, 1500),
+        summaryRevision: meeting.summaryRevision ?? 0,
         topics: (meeting.knowledge?.topics ?? []).slice(-12).map((topic) => ({
           ...topic,
           summary: topic.summary.slice(0, 900),
@@ -646,9 +649,8 @@ class MeetingCoordinator {
       pluginId: context.pluginId,
     });
     // Raw statements are already durable. Topic minutes are updated by the
-    // coordinator response; do not overwrite them with a transcript tail.
+    // coordinator response; MinutesDocument owns the editable Markdown.
     this.publish("transcript", event.meetingId);
-    this.publish("minutes", event.meetingId);
     const addressed =
       event.interaction === true ||
       event.command === "ask" ||
@@ -724,6 +726,7 @@ class MeetingCoordinator {
           candidates.map((task) => task.id),
         );
     }
+    this.updateMinutes(event.meetingId);
     await this.inbox.submit(
       [
         {
@@ -804,6 +807,21 @@ class MeetingCoordinator {
     await this.inbox.submit([event], { start: true });
   }
 
+  private updateMinutes(meetingId: string) {
+    void this.options
+      .updateMinutes?.(meetingId)
+      .then(() => {
+        if (!this.closed) this.publish("minutes", meetingId);
+      })
+      .catch((error) => {
+        if (!this.closed)
+          this.store.logError(error, {
+            source: "meeting",
+            operation: "minutes.generate",
+            meetingId,
+          });
+      });
+  }
   private async apply(
     value: {
       response: CoordinatorResponse;
@@ -843,9 +861,7 @@ class MeetingCoordinator {
         minutes.apply(this.meeting()?.projectId ?? "", update, knownSources)
       ) {
         this.publish("minutes", update.meetingId);
-        for (const topic of update.topics)
-          for (const id of topic.sourceIds)
-            this.messages.step(id, "minutes", "completed");
+        // The Markdown writer owns the minutes processing status.
       }
     }
     let automaticStarted = 0;
@@ -960,6 +976,10 @@ class MeetingCoordinator {
       );
       receipts.add(author.id);
     }
+    for (const meetingId of new Set(
+      sources.map((source) => source.meetingId ?? this.meetingId),
+    ))
+      this.updateMinutes(meetingId);
     for (const control of response.controls) {
       const selected = select(control.sourceIds);
       if (

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -90,6 +90,31 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   assert.equal(executions, 1);
   const value = client.executor.runs[runId];
   assert.equal(value.origin, "local");
+  const sourceInput = {
+    runId,
+    taskId: value.task.id,
+    sourceId: "notes",
+    kind: "minutes",
+    title: "Meeting notes",
+    text: "Use the agreed login form",
+  };
+  assert.equal((await post("task/sources", sourceInput, "wrong")).status, 403);
+  assert.equal(
+    (await post("task/sources", { ...sourceInput, taskId: "another" })).status,
+    404,
+  );
+  assert.equal((await post("task/sources", sourceInput)).status, 200);
+  assert.equal((await post("task/sources", sourceInput)).status, 200);
+  assert.equal(value.task.attachedSources?.length, 1);
+  assert.equal(executions, 1);
+  const persisted = JSON.parse(
+    await readFile(join(client.directory, "runs.json"), "utf8"),
+  );
+  assert.equal(
+    persisted.runs[runId].task.attachedSources[0].text,
+    sourceInput.text,
+  );
+
   assert.equal(value.model, "test-model");
   loggedIn = false;
   const expired = await post("local-tasks/start", {
@@ -213,6 +238,74 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   assert.equal(
     (await post("continue", { ...followup, requestKey: "stale" })).status,
     409,
+  );
+  resumed.state = "completed";
+  const auto = await post("local-tasks/start", {
+    ...input,
+    requestKey: "auto-access",
+    mode: "auto",
+    accessMode: "approval",
+  });
+  assert.equal(auto.status, 200);
+  const autoRun = client.executor.runs[(await auto.json()).runId];
+  assert.equal(autoRun.accessMode, "full");
+  assert.equal(autoRun.task.network, true);
+  assert.equal(autoRun.task.executionPolicy?.sandboxMode, undefined);
+  client.settings.projects = [
+    {
+      id: "project",
+      name: "Fixture",
+      remote: "https://example.invalid/project.git",
+    },
+  ];
+  client.settings.mappings = [
+    { projectId: "project", directory: repo, network: false, slots: 1 },
+  ];
+  assert.equal(
+    (
+      await post("progress-mode", {
+        projectId: "project",
+        mode: "auto",
+        accessMode: "approval",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(client.settings.mappings[0].accessMode, "full");
+  assert.equal(client.settings.mappings[0].network, true);
+  assert.equal(
+    (
+      await post("progress-mode", {
+        projectId: "project",
+        mode: "manual",
+        accessMode: "approval",
+      })
+    ).status,
+    200,
+  );
+  assert.equal(client.settings.mappings[0].accessMode, "approval");
+  assert.equal(autoRun.accessMode, "full");
+  autoRun.state = "completed";
+  client.settings.engineUrl = "https://team.example";
+  client.settings.deviceId = "fixture-device";
+  const shared = await post("local-tasks/start", {
+    ...input,
+    requestKey: "shared-local",
+    shareDiscord: true,
+    shareProjectId: "project",
+  });
+  assert.equal(shared.status, 200);
+  const sharedRun = client.executor.runs[(await shared.json()).runId];
+  assert.equal(sharedRun.origin, "local");
+  assert.equal(sharedRun.discordShare?.projectId, "project");
+  assert.equal(sharedRun.discordShare?.engineUrl, "https://team.example");
+  assert.equal(sharedRun.discordShare?.status, "pending");
+  await client.executor.save();
+  const restoredShare = new Executor(client.directory, () => {});
+  await restoredShare.load();
+  assert.equal(
+    restoredShare.runs[sharedRun.task.runId].discordShare?.deviceId,
+    "fixture-device",
   );
   assert.deepEqual(frames, []);
 });

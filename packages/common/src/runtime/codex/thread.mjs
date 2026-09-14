@@ -35,7 +35,9 @@ export class AppServerThread {
             approvalPolicy: options.approvalPolicy ?? "never",
             config: {
               web_search: options.webSearchMode ?? "disabled",
-              model_reasoning_effort: options.modelReasoningEffort ?? "low",
+              ...(options.modelReasoningEffort
+                ? { model_reasoning_effort: options.modelReasoningEffort }
+                : {}),
               ...(options.disableShellTool
                 ? {
                     "features.shell_tool": false,
@@ -97,7 +99,17 @@ export class AppServerThread {
     return { events: this.stream(input, turnOptions) };
   }
 
-  async *stream(input, { signal, outputSchema, collaborationMode } = {}) {
+  async *stream(
+    input,
+    {
+      signal,
+      outputSchema,
+      collaborationMode,
+      model = this.options.model,
+      reasoningEffort = this.options.reasoningEffort ??
+        this.options.modelReasoningEffort,
+    } = {},
+  ) {
     signal?.throwIfAborted();
     await this.prepare();
     if (
@@ -185,6 +197,19 @@ export class AppServerThread {
     };
     this.client.on("notification", onNotification);
     this.client.on("failure", onFailure);
+    if (this.options.onToolCall)
+      this.client.dynamicHandlers.set(this.id, (params) => {
+        signal?.throwIfAborted();
+        if (
+          this.ending ||
+          !this.activeTurnId ||
+          params.turnId !== this.activeTurnId ||
+          params.namespace ||
+          !this.options.dynamicTools?.some((tool) => tool.name === params.tool)
+        )
+          throw new Error("Tool call does not belong to this active turn");
+        return this.options.onToolCall(params);
+      });
     signal?.addEventListener("abort", abort, { once: true });
     try {
       signal?.throwIfAborted();
@@ -192,8 +217,8 @@ export class AppServerThread {
         threadId: this.id,
         input: inputItems(input),
         cwd: this.options.workingDirectory,
-        model: this.options.model,
-        effort: this.options.modelReasoningEffort ?? "low",
+        model,
+        effort: reasoningEffort ?? null,
         approvalPolicy: this.options.approvalPolicy ?? "never",
         sandboxPolicy: sandboxPolicy(this.options),
         ...(collaborationMode
@@ -201,8 +226,8 @@ export class AppServerThread {
               collaborationMode: {
                 mode: collaborationMode,
                 settings: {
-                  model: this.model,
-                  reasoning_effort: this.options.modelReasoningEffort ?? "low",
+                  model: model ?? this.model,
+                  reasoning_effort: reasoningEffort ?? null,
                   developer_instructions:
                     collaborationMode === "plan"
                       ? "相談・計画モードです。既存の権限制約を守って情報を読み取り、方針と質問を会話で示してください。ファイル編集・実装・外部への書き込みは行わないでください。実行開始はアプリの実行するボタンでのみ切り替わります。ユーザーへの質問は通常の文章で提示し、request_user_inputは使用しないでください。計画を提示したら、このターンを終了して返答を待ってください。"
@@ -231,6 +256,7 @@ export class AppServerThread {
         await this.interrupt().catch(() => {});
       this.client.off("notification", onNotification);
       this.client.off("failure", onFailure);
+      this.client.dynamicHandlers.delete(this.id);
       signal?.removeEventListener("abort", abort);
       this.starting = false;
       this.activeTurnId = null;

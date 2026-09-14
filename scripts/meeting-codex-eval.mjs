@@ -144,7 +144,7 @@ try {
     JSON.stringify({
       stage: "created",
       model,
-      effort: value.modelReasoningEffort,
+      effort: value.reasoningEffort,
       contextCalls: calls.length,
     }),
   );

@@ -16,14 +16,20 @@ test("Claude catalog initializes only the control channel and closes without sub
     assert.deepEqual(input.options.settingSources, []);
     return {
       supportedModels: async () => [
-        { value: "account-model", displayName: "Account model" },
+        {
+          value: "account-model",
+          displayName: "Account model",
+          supportedEffortLevels: ["high"],
+        },
       ],
       close: () => {
         closed = true;
       },
     };
   }) as any);
-  assert.deepEqual(models, [{ id: "account-model", name: "Account model" }]);
+  assert.deepEqual(models, [
+    { id: "account-model", name: "Account model", supportedEfforts: ["high"] },
+  ]);
   assert.equal(closed, true);
   for await (const _value of prompt!)
     assert.fail("Catalog must never submit a turn");

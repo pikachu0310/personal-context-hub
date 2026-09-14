@@ -66,6 +66,8 @@ export interface CoordinatorObservation {
   minutes?: Array<{
     meetingId: string;
     name: string;
+    markdown?: string;
+    summaryRevision?: number;
     topics: import("./knowledge.js").MeetingTopic[];
   }>;
   participants?: Array<{

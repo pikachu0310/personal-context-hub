@@ -311,9 +311,7 @@ export async function start(
         await joinChannel(channel as VoiceChannel);
       }
       emit({ type: "status", status: "connected" });
-    })().catch(() =>
-      emit({ type: "status", status: "startup-failed" }),
-    );
+    })().catch(() => emit({ type: "status", status: "startup-failed" }));
   });
   await state.client.login(text(state.config.botToken, 4000));
 }

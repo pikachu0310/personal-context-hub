@@ -1,4 +1,10 @@
-﻿// Real Client routes and executor, synthetic Codex responses; no account login,
+import {
+  verifyClientAlignment,
+  verifyProjectDrafts,
+  verifyChangesWidth,
+  verifyMobileChanges,
+} from "./client-layout-assertions.mjs";
+// Real Client routes and executor, synthetic Codex responses; no account login,
 // remote Engine, Discord message, or model request is made by this smoke test.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -14,7 +20,14 @@ const catalogAgents = [
   {
     agent: "codex",
     authenticated: true,
-    models: [{ id: "test-codex-model", name: "Test Codex" }],
+    models: [
+      {
+        id: "test-codex-model",
+        name: "Test Codex",
+        supportedEfforts: ["low", "high"],
+        defaultEffort: "low",
+      },
+    ],
   },
   {
     agent: "claude",
@@ -58,6 +71,10 @@ try {
   client.settings.mappings = [
     { projectId: "project", directory: repository, network: false, slots: 1 },
   ];
+  client.settings.profile = {
+    name: "Demo user",
+    context: "フォームのエラーは日本語で説明してください。",
+  };
   client.connected = true;
   client.controlSupported = true;
   client.allowedProjects.add("project");
@@ -131,6 +148,10 @@ try {
       return true;
     },
     async runStreamed(prompt, options) {
+      if (turn === 0) {
+        assert.match(prompt, /フォームのエラーは日本語で説明/);
+        assert.match(prompt, /既存のスレッドとの対応を維持/);
+      }
       return {
         events: (async function* () {
           const n = ++turn;
@@ -217,6 +238,15 @@ try {
     createdAt: Date.now(),
     updatedAt: Date.now(),
     history: [],
+    sourceStatements: [
+      {
+        id: "source-1",
+        meetingId: "meeting",
+        sequence: 1,
+        speakerName: "Demo teammate",
+        text: "決定: 既存のスレッドとの対応を維持する。\n担当: Demo user",
+      },
+    ],
   };
   const value = {
     task,
@@ -265,18 +295,333 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(client.origin);
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
-  assert.equal(await page.locator(".avatar-overflow").innerText(), "+2");
-  assert.ok((await page.locator(".task-avatars .bot-avatar").count()) > 0);
-  const historical = page.getByRole("region", {
-    name: "自分の以前の登録",
+  await page
+    .getByRole("button", { name: "入力欄のモデル", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Test Codex", exact: false }).click();
+  await page
+    .getByRole("slider", { name: "入力欄の推論エフォート" })
+    .press("End");
+  await page.waitForFunction(
+    () =>
+      !globalThis.document.querySelector('[aria-label="入力欄のモデル"]')
+        .disabled,
+  );
+  const configured = Object.values(client.executor.runs).find(
+    (run) => run.reasoningEffort === "high",
+  );
+  assert.equal(configured.model, "test-codex-model");
+  assert.equal(
+    await page.getByText("次の実行ターンから適用", { exact: true }).count(),
+    0,
+  );
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-model-effort.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  const originalAccess = configured.accessMode;
+  for (const mode of ["auto", "manual"]) {
+    const response = page.waitForResponse((value) =>
+      value.url().endsWith("/api/progress-mode"),
+    );
+    await page.getByRole("button", { name: "入力欄の進め方" }).click();
+    await page
+      .getByRole("menuitem", {
+        name: mode === "auto" ? "Auto" : "Manual",
+        exact: false,
+      })
+      .click();
+    assert.equal((await response).status(), 200);
+    assert.equal(
+      configured.pendingProgressMode ?? configured.progressMode,
+      mode,
+    );
+  }
+  assert.equal(configured.accessMode, originalAccess);
+  const projectToggle = page.locator(
+    '[data-project-id="project"] > .project-collapse > .collapse-heading > button',
+  );
+  await projectToggle.click();
+  assert.equal(await projectToggle.getAttribute("aria-expanded"), "false");
+  await page.reload();
+  assert.equal(await projectToggle.getAttribute("aria-expanded"), "false");
+  await projectToggle.click();
+  assert.equal(
+    await page.locator("html").getAttribute("data-mantine-color-scheme"),
+    "light",
+  );
+  const inspector = page.getByRole("complementary", { name: "タスクの詳細" });
+  await page.evaluate(() => globalThis.document.fonts.ready);
+  assert.ok(
+    await page.evaluate(() =>
+      globalThis.document.fonts.check('15px "Noto Sans JP Variable"', "議事録"),
+    ),
+  );
+  assert.ok((await page.locator(".tabler-icon").count()) > 10);
+  const panelToggle = page.getByRole("button", {
+    name: "タスクの詳細",
     exact: true,
   });
+  const samplePanelMotion = () =>
+    page.evaluate(async () => {
+      const chat = globalThis.document.querySelector(".task-conversation");
+      const panel = globalThis.document.querySelector(".task-inspector");
+      const widths = [chat.getBoundingClientRect().width];
+      const transforms = [globalThis.getComputedStyle(panel).transform];
+      globalThis.document.querySelector(".inspector-header-toggle").click();
+      const start = globalThis.performance.now();
+      await new Promise((resolve) => {
+        const frame = () => {
+          widths.push(chat.getBoundingClientRect().width);
+          transforms.push(globalThis.getComputedStyle(panel).transform);
+          if (globalThis.performance.now() - start >= 400) resolve();
+          else globalThis.requestAnimationFrame(frame);
+        };
+        globalThis.requestAnimationFrame(frame);
+      });
+      return { widths, transforms };
+    });
+  const closingMotion = await samplePanelMotion();
+  const closedWidth = closingMotion.widths.at(-1);
+  const openWidth = closingMotion.widths[0];
+  assert.ok(closedWidth - openWidth > 300);
+  assert.ok(
+    closingMotion.widths.some(
+      (width) => width > openWidth + 3 && width < closedWidth - 3,
+    ),
+  );
+  assert.ok(new Set(closingMotion.transforms).size > 2);
+  await inspector.waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".task-inspector").getAttribute("inert"), "");
+  assert.equal(await panelToggle.getAttribute("aria-expanded"), "false");
+  const openingMotion = await samplePanelMotion();
+  assert.ok(Math.abs(openingMotion.widths.at(-1) - openWidth) < 1);
+  assert.ok(
+    openingMotion.widths.some(
+      (width) => width > openWidth + 3 && width < closedWidth - 3,
+    ),
+  );
+  await inspector.waitFor();
+  await page.evaluate(async () => {
+    for (let index = 0; index < 4; index++) {
+      globalThis.document.querySelector(".inspector-header-toggle").click();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 45));
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 350));
+  });
+  assert.equal(await panelToggle.getAttribute("aria-expanded"), "true");
+  assert.ok(
+    Math.abs(
+      (await page.locator(".task-conversation").boundingBox()).width -
+        openWidth,
+    ) < 1,
+  );
+  assert.equal(await inspector.getAttribute("data-collapsed"), null);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await panelToggle.click();
+  await page.waitForFunction(() =>
+    globalThis.document
+      .querySelector(".task-inspector")
+      .hasAttribute("data-collapsed"),
+  );
+  assert.equal(
+    await page
+      .locator(".with-inspector")
+      .evaluate(
+        (element) => globalThis.getComputedStyle(element).transitionDuration,
+      ),
+    "0s",
+  );
+  assert.equal(
+    await page
+      .locator(".task-inspector")
+      .evaluate(
+        (element) => globalThis.getComputedStyle(element).transitionDuration,
+      ),
+    "0s",
+  );
+  await panelToggle.click();
+  await inspector.waitFor();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  const scrollLayout = await page
+    .locator(".with-inspector")
+    .evaluate((element) => ({
+      outer: globalThis.getComputedStyle(element).overflowY,
+      inner: globalThis.getComputedStyle(
+        element.querySelector(".conversation-scroll"),
+      ).overflowY,
+      right: element.getBoundingClientRect().right,
+      inspectorRight: element
+        .querySelector(".task-inspector")
+        .getBoundingClientRect().right,
+    }));
+  assert.equal(scrollLayout.outer, "auto");
+  assert.equal(scrollLayout.inner, "visible");
+  assert.ok(scrollLayout.right > scrollLayout.inspectorRight);
+  const conversation = await page.locator(".task-conversation").boundingBox();
+  const inspectorBox = await inspector.boundingBox();
+  assert.ok(inspectorBox.x >= conversation.x + conversation.width);
+  await inspector.getByText(repository, { exact: true }).waitFor();
+  const environmentResponse = await page.request.get(
+    `${client.origin}/api/task-environment?runId=run`,
+  );
+  const environment = await environmentResponse.json();
+  assert.equal(
+    environment.branch,
+    git("branch", "--show-current").toString().trim(),
+  );
+  assert.equal(environment.directory, repository);
+  assert.equal(environment.ownerName, "Demo user");
+  assert.ok(environment.deviceName);
+  git("checkout", "--detach");
+  const detached = await (
+    await page.request.get(`${client.origin}/api/task-environment?runId=run`)
+  ).json();
+  assert.equal(detached.branch, undefined);
+  assert.equal(detached.commit, git("rev-parse", "HEAD").toString().trim());
+  git("checkout", environment.branch);
+  await inspector
+    .getByRole("button", { name: "環境を更新", exact: true })
+    .click();
+  assert.equal(
+    (
+      await page.request.get(
+        `${client.origin}/api/task-environment?runId=missing`,
+      )
+    ).status(),
+    404,
+  );
+  await inspector.getByRole("tab", { name: "ソース", exact: true }).click();
+  await inspector
+    .getByRole("button", { name: "議事録 · Demo teammate", exact: true })
+    .click();
+  await inspector.getByText(/決定: 既存のスレッドとの対応を維持/).waitFor();
+  await inspector
+    .getByRole("button", { name: "Demo userのユーザー情報", exact: true })
+    .click();
+  await inspector
+    .getByText("フォームのエラーは日本語で説明してください。", { exact: true })
+    .waitFor();
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-sources.png",
+  });
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  await inspector.getByRole("tab", { name: "ソース", exact: true }).click();
+  await inspector
+    .getByRole("button", { name: "議事録 · Demo teammate", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "@ユーザー情報", exact: true })
+    .click();
+  await inspector
+    .getByText("フォームのエラーは日本語で説明してください。", { exact: true })
+    .waitFor();
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  await inspector
+    .getByRole("button", { name: "ソースを追加", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "共有コンテキスト", exact: true })
+    .click();
+  const sourceDialog = page.getByRole("dialog", {
+    name: "共有コンテキストを追加",
+    exact: true,
+  });
+  await sourceDialog.getByLabel(/^タイトル/).fill("UI追加資料");
+  await sourceDialog.getByLabel(/^内容/).fill("追加した資料の保存を確認");
+  await sourceDialog
+    .getByRole("button", { name: "追加する", exact: true })
+    .click();
+  await sourceDialog.waitFor({ state: "hidden" });
+  await inspector
+    .getByRole("button", { name: "UI追加資料", exact: true })
+    .click();
+  await inspector
+    .getByText("追加した資料の保存を確認", { exact: true })
+    .waitFor();
+  await page.reload();
+  await inspector
+    .getByRole("button", { name: "UI追加資料", exact: true })
+    .waitFor();
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  const schemeIs = (scheme) =>
+    page.waitForFunction(
+      (expected) =>
+        globalThis.document.documentElement.dataset.mantineColorScheme ===
+        expected,
+      scheme,
+    );
+  const lightCanvas = await page
+    .locator(".workspace-main")
+    .evaluate(
+      (element) => globalThis.getComputedStyle(element).backgroundColor,
+    );
+  await page.emulateMedia({ colorScheme: "dark" });
+  await schemeIs("dark");
+  const darkCanvas = await page
+    .locator(".workspace-main")
+    .evaluate(
+      (element) => globalThis.getComputedStyle(element).backgroundColor,
+    );
+  assert.notEqual(darkCanvas, lightCanvas);
+  await page.getByRole("button", { name: "ユーザー設定を開く" }).click();
+  await page.getByRole("dialog").getByText("ダーク", { exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("ido.color-scheme")),
+    "dark",
+  );
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.emulateMedia({ colorScheme: "light" });
+  assert.equal(
+    await page.locator("html").getAttribute("data-mantine-color-scheme"),
+    "dark",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await schemeIs("dark");
+  await verifyClientAlignment(page);
+  await page.screenshot({ path: ".ido-build/screenshots/workspace-dark.png" });
+  await page.getByRole("button", { name: "ユーザー設定を開く" }).click();
+  await page.getByRole("dialog").getByText("ライト", { exact: true }).click();
+  await schemeIs("light");
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("ido.color-scheme")),
+    "light",
+  );
+  await page.getByRole("dialog").getByText("システム", { exact: true }).click();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await schemeIs("dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await schemeIs("light");
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-appearance-settings.png",
+    animations: "disabled",
+  });
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  assert.equal(
+    await page
+      .locator('.task-row[data-task-id="task"] .task-indicator.running')
+      .count(),
+    1,
+  );
+  assert.equal(await page.locator(".avatar-overflow").innerText(), "+2");
+  assert.ok((await page.locator(".task-avatars .bot-avatar").count()) > 0);
+  const historical = page.locator('.task-row[data-task-id="historical-self"]');
+  await historical
+    .getByRole("img", { name: "未確認の結果", exact: true })
+    .waitFor();
   assert.equal(await historical.locator(".user-avatar").count(), 1);
   assert.equal(
     await historical.locator(".task-avatars").getAttribute("aria-label"),
-    "参加者: 参加者",
+    "参加者: Demo user",
   );
-  await historical.getByRole("button").click();
+  await historical.locator(".task-link").click();
+  await historical.locator(".task-indicator").waitFor({ state: "hidden" });
   await page
     .getByRole("heading", { name: "以前の自分のタスク", level: 2, exact: true })
     .waitFor();
@@ -288,8 +633,7 @@ try {
   );
   assert.equal(client.teamTasks.tasks[0].clientId, "old-device");
   await page
-    .getByRole("region", { name: "ほかのPC", exact: true })
-    .getByRole("button")
+    .locator('.task-row[data-task-id="remote-task"] .task-link')
     .click();
   await page
     .getByText("ルーティングのテストを実行中です。", { exact: true })
@@ -306,14 +650,86 @@ try {
     path: ".ido-build/screenshots/workspace-team-tasks.png",
   });
   await page
-    .getByRole("region", { name: "未割り当て", exact: true })
-    .getByRole("button")
+    .locator('.task-row[data-task-id="queued-task"] .task-link')
     .click();
   await page
     .getByText("実行先が決まると、このPCまたはほかのPCの一覧へ移動します。", {
       exact: true,
     })
     .waitFor();
+  await page.reload();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  assert.equal(await historical.locator(".task-indicator").count(), 0);
+  client.teamTasks.tasks[0].revision++;
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await historical
+    .getByRole("img", { name: "未確認の結果", exact: true })
+    .waitFor();
+  await historical.locator(".task-link").click();
+  await historical.locator(".task-indicator").waitFor({ state: "hidden" });
+  const voiceGroup = page.locator('.project-group[data-project-id="project"]');
+  const toolsGroup = page.locator('.project-group[data-project-id="tools"]');
+  for (const project of [voiceGroup, toolsGroup]) {
+    assert.equal(await project.locator(".project-tasks").count(), 1);
+    assert.equal(
+      await project.locator(".sidebar-caption, .shared-task-owner").count(),
+      0,
+    );
+  }
+  assert.equal(
+    await page
+      .locator('.task-row[data-task-id="queued-task"] .task-indicator')
+      .count(),
+    0,
+  );
+  const rowBox = await historical.boundingBox();
+  assert.ok(rowBox.height <= 38, `Task row too tall: ${rowBox.height}`);
+  const addProject = await page
+    .getByRole("button", { name: "プロジェクトを追加", exact: true })
+    .boundingBox();
+  const caption = await page.locator(".sidebar-caption > span").boundingBox();
+  assert.ok(
+    Math.abs(
+      addProject.y + addProject.height / 2 - caption.y - caption.height / 2,
+    ) < 2,
+  );
+  const addTask = await voiceGroup.locator(".project-compose").boundingBox();
+  const projectTitle = await voiceGroup
+    .locator(".project-collapse > .collapse-heading > .collapse-toggle > span")
+    .last()
+    .boundingBox();
+  assert.ok(
+    Math.abs(
+      addTask.y + addTask.height / 2 - projectTitle.y - projectTitle.height / 2,
+    ) < 2,
+  );
+  assert.equal(
+    await voiceGroup
+      .getByRole("button")
+      .filter({ hasText: "共有ルーティングを確認" })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await toolsGroup
+      .getByRole("button")
+      .filter({ hasText: "共有ルーティングを確認" })
+      .count(),
+    0,
+  );
+  assert.equal(
+    await voiceGroup
+      .getByRole("button")
+      .filter({ hasText: "未割り当ての依頼" })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await page
+      .locator('.project-list > section[aria-label="ほかのPC"]')
+      .count(),
+    0,
+  );
   client.connected = false;
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
@@ -321,8 +737,9 @@ try {
     .waitFor();
   assert.equal(
     await page
+      .locator('.project-group[data-project-id="project"]')
       .getByRole("region", { name: "ほかのPC", exact: true })
-      .getByRole("button")
+      .locator(".task-link")
       .count(),
     0,
   );
@@ -334,6 +751,9 @@ try {
     .click();
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.locator(".with-inspector").evaluate((element) => {
+    element.scrollTop = 0;
+  });
   await page.screenshot({
     path: ".ido-build/screenshots/workspace-manual.png",
   });
@@ -381,10 +801,16 @@ try {
     .getByRole("button", { name: "変更を確認", exact: true })
     .first()
     .click();
-  await page.getByRole("dialog").waitFor();
+  await page.getByRole("tabpanel", { name: "変更", exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 0);
   await page.getByText(/export const sync = true/).waitFor();
   assert.match(await page.locator(".diff-preview").innerText(), /sync = true/);
-  await page.keyboard.press("Escape");
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-changes.png",
+  });
+  await inspector.getByRole("tab", { name: "環境", exact: true }).click();
+  await verifyChangesWidth(page, inspector);
+  await verifyClientAlignment(page);
   await page.getByLabel("タスクを検索").fill("Mac");
   await page
     .locator(".task-link")
@@ -412,6 +838,58 @@ try {
     .click();
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
+  await page
+    .locator(
+      '.project-group[data-project-id="project"] .project-collapse > .collapse-heading',
+    )
+    .hover();
+  await page
+    .getByRole("button", { name: "discord-voiceの設定", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  await verifyProjectDrafts(page);
+  // Retain access-mode labels and place sharing notices inside the right panel.
+  value.origin = "local";
+  value.accessMode = "full";
+  value.discordShare = {
+    engineUrl: "https://fixture.example.invalid",
+    deviceId: "fixture-device",
+    projectId: "project",
+    sequence: 1,
+    status: "pending",
+  };
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page
+    .getByRole("button", { name: "実行権限", exact: true })
+    .filter({ hasText: "フルアクセス・承認なし" })
+    .waitFor();
+  await inspector.getByText("Discord共有", { exact: true }).waitFor();
+  await inspector
+    .getByText(
+      "Discordへの共有待ちです。同じチームへの接続後に再試行します。",
+      { exact: true },
+    )
+    .waitFor();
+  value.accessMode = "approval";
+  value.discordShare.status = "synced";
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page
+    .getByRole("button", { name: "実行権限", exact: true })
+    .filter({ hasText: "許可を求める" })
+    .waitFor();
+  await inspector
+    .getByText(
+      "Discord共有用タスクをEngineに登録済みです。スレッド反映はBotの同期後に行われます。",
+      { exact: true },
+    )
+    .waitFor();
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-sharing-inspector.png",
+  });
+  delete value.origin;
+  delete value.accessMode;
+  delete value.discordShare;
+
   // The project workspace replaces the old global local-task/run navigation.
   assert.equal(
     await page
@@ -498,6 +976,17 @@ try {
   await page
     .getByRole("button", { name: "サイドバーを閉じる", exact: true })
     .click();
+  await page.getByRole("button", { name: "タスクの詳細", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "タスクの詳細", exact: true })
+    .waitFor();
+  await verifyMobileChanges(page);
+  await page.getByRole("tab", { name: "ソース", exact: true }).click();
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-mobile-panel.png",
+  });
+  await page.keyboard.press("Escape");
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.screenshot({
     path: ".ido-build/screenshots/workspace-mobile.png",
   });
@@ -510,7 +999,7 @@ try {
   );
   assert.deepEqual(errors, []);
   console.log(
-    "Workspace smoke passed: Manual discussion -> execute, live instruction, command output, diff, search, stop, offline gating, reconnect, avatar upload/removal, centered modal and narrow layout.",
+    "Workspace smoke passed: light/dark/system appearance and localStorage persistence, compact unified task rows and unread result acknowledgements, right environment/sources/diff panels, actual branch and detached HEAD, profile context, mobile drawer, Manual discussion -> execute, live instruction, command output, diff, search, stop, offline gating, reconnect, avatar upload/removal, centered modal and narrow layout.",
   );
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];

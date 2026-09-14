@@ -7,6 +7,7 @@ import { restrictExecutionPolicy } from "@ido/common/contracts/work";
 
 import { codexBinary } from "../codex/binary.js";
 import { activityText, recordActivity, recordEvent } from "./activity.js";
+import { taskContextSources, contextPrompt } from "./task-context.js";
 import type { Executor, Run } from "../execution/executor.js";
 import {
   contextToolHandler,
@@ -14,6 +15,12 @@ import {
   meetingContextTools,
 } from "./knowledge.js";
 import { meetingModel } from "../agents/model-selection.js";
+import {
+  taskBoardTools,
+  taskBoardGuidelines,
+  callTaskBoard,
+  watchTaskBoard,
+} from "./task-board.mjs";
 export async function execute(
   this: Executor,
   value: Run,
@@ -22,15 +29,20 @@ export async function execute(
 ) {
   const repository = await realpath(mapping.directory);
   if (value.state === "cancelled") return;
+  const boardAvailable =
+    this.board.supported &&
+    value.origin !== "local" &&
+    value.agent !== "claude" &&
+    (!value.threadId || value.boardToolsEnabled);
+  const knowledgeAvailable =
+    value.origin !== "local" &&
+    value.agent !== "claude" &&
+    !!this.knowledge &&
+    (!value.threadId || value.knowledgeToolsEnabled);
   const createRuntime =
     value.agent === "claude" ? this.createClaude : this.createCodex;
   const codex = createRuntime({
-    experimentalApi:
-      value.progressMode === "manual" ||
-      (value.origin !== "local" && !!this.knowledge),
-    ...(value.origin !== "local" && this.knowledge
-      ? { onToolCall: contextToolHandler(this, value) }
-      : {}),
+    experimentalApi: true,
     codexPathOverride: codexBinary(),
     env: workerEnvironment(this.home),
     onApprovalRequest: (method: string, params: unknown) =>
@@ -58,36 +70,39 @@ export async function execute(
   } as any);
   const abort = new AbortController();
   const active = { thread: undefined as any, codex, abort };
+  const board = boardAvailable
+    ? this.board.forTask(value.task, abort.signal)
+    : undefined;
+  let stopBoardWatch = () => {};
   this.active.set(value.task.runId, active);
   try {
     if (
-      value.origin !== "local" &&
-      this.knowledge &&
+      knowledgeAvailable &&
       !value.model &&
       !value.threadId &&
       "request" in codex
     ) {
       const catalog = await codex.request("model/list", { limit: 100 });
-      Object.assign(
-        value,
-        meetingModel(
-          value.task.text,
-          value.task.kind,
-          (catalog.data ?? [])
-            .filter((item: any) => !item.hidden)
-            .map((item: any) => item.model),
-        ),
+      const selection = meetingModel(
+        value.task.text,
+        value.task.kind,
+        (catalog.data ?? [])
+          .filter((item: any) => !item.hidden)
+          .map((item: any) => item.model),
       );
+      value.model = selection.model;
+      value.reasoningEffort ??= selection.reasoningEffort;
       recordActivity(value, {
         kind: "status",
         title: "会議タスクのモデルを選択",
-        text: `${value.model} / ${value.modelReasoningEffort}`,
+        text: `${value.model} / ${value.reasoningEffort}`,
       });
     }
     recordActivity(value, {
       kind: "status",
       title: value.progressMode === "manual" ? "相談を開始" : "作業を開始",
-      text: `実行 ${value.task.revision}`,
+      event: "started",
+      requestAt: value.requestAt,
       status: "running",
     });
     await this.save();
@@ -109,27 +124,51 @@ export async function execute(
       value.task.effectiveExecutionPolicy,
       value.effectiveExecutionPolicy,
     );
+    const localAccess =
+      !policy.sandboxMode && policy.networkAccessEnabled !== false
+        ? value.accessMode
+        : undefined;
     const options = {
-      ...(value.origin !== "local" && this.knowledge
+      ...(board || knowledgeAvailable
         ? {
-            dynamicTools: meetingContextTools,
-            developerInstructions: meetingContextInstructions,
+            dynamicTools: [
+              ...(board ? taskBoardTools : []),
+              ...(knowledgeAvailable ? meetingContextTools : []),
+            ],
+            onToolCall: (params: any) =>
+              knowledgeAvailable &&
+              meetingContextTools.some((tool) => tool.name === params.tool)
+                ? contextToolHandler(this, value)(params)
+                : board
+                  ? callTaskBoard(board, params)
+                  : Promise.reject(new Error("Unknown task tool")),
           }
         : {}),
       model: value.model,
-      modelReasoningEffort: value.modelReasoningEffort,
+      reasoningEffort: value.reasoningEffort,
       workingDirectory: value.directory,
-      sandboxMode: policy.sandboxMode ?? "workspace-write",
-      requireWritableSandbox: policy.sandboxMode !== "read-only",
+      sandboxMode: localAccess
+        ? "danger-full-access"
+        : (policy.sandboxMode ?? "workspace-write"),
+      requireWritableSandbox:
+        !localAccess && policy.sandboxMode !== "read-only",
       networkAccessEnabled:
-        mapping.network &&
-        value.task.network &&
-        policy.networkAccessEnabled !== false,
-      approvalPolicy: "on-request",
+        !!localAccess ||
+        (mapping.network &&
+          value.task.network &&
+          policy.networkAccessEnabled !== false),
+      approvalPolicy:
+        localAccess === "full"
+          ? "never"
+          : localAccess === "approval"
+            ? "untrusted"
+            : "on-request",
       webSearchMode: "disabled",
     };
     value.effectiveExecutionPolicy = {
-      sandboxMode: options.sandboxMode,
+      sandboxMode: localAccess
+        ? undefined
+        : (policy.sandboxMode ?? "workspace-write"),
       networkAccessEnabled: options.networkAccessEnabled,
     };
     value.activeSpecRevision ??= value.task.specRevision ?? 1;
@@ -137,7 +176,17 @@ export async function execute(
     active.thread = value.threadId
       ? codex.resumeThread(value.threadId, options)
       : codex.startThread(options);
+    if (knowledgeAvailable) value.knowledgeToolsEnabled = true;
+    if (board) {
+      value.boardToolsEnabled = true;
+      stopBoardWatch = watchTaskBoard(board, active.thread);
+    }
     value.state = "running";
+    value.contextSources = taskContextSources(
+      value.task,
+      this.contextProfile(),
+      value.contextSources,
+    );
     await this.save();
     this.report(value);
     let prompt = [
@@ -148,12 +197,21 @@ export async function execute(
         ? "これは読み取り専用の調査です。ファイル変更・送信・公開・サービス操作などの外部変更は行わず、根拠と不明点を報告してください。"
         : "",
       value.task.text,
+      contextPrompt(value.contextSources),
+      board ? taskBoardGuidelines : "",
+      knowledgeAvailable ? meetingContextInstructions : "",
     ]
       .filter(Boolean)
       .join("\n\n");
     while (true) {
       abort.signal.throwIfAborted();
-      const planning = value.progressMode === "manual" && !value.planApproved;
+      if (value.pendingProgressMode) {
+        value.progressMode = value.pendingProgressMode;
+        value.pendingProgressMode = undefined;
+        if (value.progressMode === "manual") value.planApproved = false;
+      }
+      const progressMode = value.progressMode;
+      const planning = progressMode === "manual" && !value.planApproved;
       if (planning) value.plan = undefined;
       value.phase = planning ? "planning" : "executing";
       const discussion = (value.instructions ?? []).filter(
@@ -166,7 +224,9 @@ export async function execute(
       await this.save();
       const { events } = await active.thread.runStreamed(prompt, {
         signal: abort.signal,
-        ...(value.progressMode === "manual"
+        model: value.model,
+        reasoningEffort: value.reasoningEffort ?? null,
+        ...(progressMode === "manual"
           ? { collaborationMode: planning ? "plan" : "default" }
           : {}),
       });
@@ -182,12 +242,21 @@ export async function execute(
             if (item.delivery === "sending") {
               item.delivery = "accepted";
               value.activeSpecRevision = item.specRevision;
+              recordActivity(value, {
+                id: `instruction-start:${item.id}`,
+                kind: "status",
+                title: "作業を開始",
+                event: "started",
+                requestAt: item.sentAt,
+              });
               this.controlReceipt(value, item, "applied");
               recordActivity(value, {
                 id: `instruction:${item.id}`,
                 kind: "instruction",
                 title: "追加指示",
                 text: item.text,
+                sender: item.sender,
+                sentAt: item.sentAt,
                 status: "accepted",
               });
             }
@@ -253,6 +322,8 @@ export async function execute(
       break;
     }
   } finally {
+    stopBoardWatch();
+    abort.abort();
     for (const [id, request] of this.approvals)
       if (request.runId === value.task.runId) {
         clearTimeout(request.timer);

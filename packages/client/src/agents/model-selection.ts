@@ -27,7 +27,7 @@ export function meetingModel(
   if (!model) throw new Error("MEETING_MODEL_UNAVAILABLE");
   return {
     model,
-    modelReasoningEffort: deep
+    reasoningEffort: deep
       ? ("high" as const)
       : quick
         ? ("low" as const)
