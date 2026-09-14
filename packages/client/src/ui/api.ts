@@ -1,6 +1,17 @@
 import { browserApi } from "@ido/common/runtime/browser-api";
 const request = browserApi("/api/");
 const errors: Record<string, string> = {
+  CONTINUATION_UNSUPPORTED:
+    "Engineを更新すると、このタスクの続きを依頼できます。",
+  TASK_STILL_ACTIVE:
+    "タスクがすでに再開されています。最新の状態を確認してください。",
+  TASK_CONTROL_SUPERSEDED:
+    "タスクの実行版が変わっています。最新の状態を確認してください。",
+  INSTRUCTION_DELIVERY_UNCERTAIN:
+    "前の指示の実行結果が未確認です。先にその指示を確認してください。",
+  TASK_NOT_ASSIGNED:
+    "元の実行先がないため再開できません。新しいタスクとして依頼してください。",
+
   PROJECT_DIRECTORY_REQUIRED:
     "先にこのプロジェクトの保存先を設定してください。",
   PROJECT_OWNER_REQUIRED: "この操作はプロジェクトオーナーだけが行えます。",

@@ -483,6 +483,8 @@ try {
     path: ".ido-build/screenshots/client-project-settings.png",
     fullPage: true,
   });
+  assert.ok(await clientPage.getByRole("dialog").isVisible());
+  await clientPage.keyboard.press("Escape");
   await clientPage
     .getByRole("button", { name: "ユーザー設定を開く", exact: true })
     .click();

@@ -31,7 +31,6 @@ export function ProjectSettings({
   return (
     <div className="project-document">
       <Stack>
-        <Title order={2}>接続・設定</Title>
         <Text c="dimmed">このClientでのプロジェクト設定です。</Text>
         {!allowed && (
           <Alert color="yellow" title="このプロジェクトの実行許可はOFFです">

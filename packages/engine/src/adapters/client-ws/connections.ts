@@ -121,6 +121,7 @@ export class ClientConnections {
               type: "authenticated",
               generation,
               controlVersion: 1,
+              continuationVersion: 1,
               projectVersion: 1,
               projects: new ProjectTeam(this.store).projects(device.id),
               workspaceVersion: 1,
@@ -214,6 +215,32 @@ export class ClientConnections {
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
+              case "task.continue": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (!task.clientId) throw new Error("TASK_NOT_ASSIGNED");
+                team.require(task.clientId, task.projectId);
+                if (
+                  !Number.isSafeInteger(input.revision) ||
+                  Number(input.revision) < 1
+                )
+                  throw new Error("INVALID_REVISION");
+                result = this.tasks.control(
+                  task.id,
+                  `client-${device.id}`,
+                  "retry",
+                  undefined,
+                  {
+                    requestKey: `client:${device.id}:continue:${id(input.requestId)}`,
+                    continuation: text(input.text, 8000),
+                    expectedRevision: Number(input.revision),
+                  },
+                );
+                this.flush();
+                this.changed();
+                break;
+              }
               case "task.create": {
                 const projectId = id(input.projectId);
                 team.require(device.id, projectId);

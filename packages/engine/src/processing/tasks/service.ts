@@ -26,6 +26,8 @@ type CreateTaskInput = Pick<
     >
   >;
 export interface TaskControlOptions {
+  continuation?: string;
+  expectedRevision?: number;
   requestKey?: string;
   expectedControlVersion?: number;
   instructionResolution?: "retry" | "discard";
@@ -177,6 +179,21 @@ export class Tasks {
       const previous = this.repository.get<WorkReceipt>("task-control", key);
       if (previous) return previous;
       if (
+        options.expectedRevision !== undefined &&
+        options.expectedRevision !== task.revision
+      )
+        throw new Error("TASK_CONTROL_SUPERSEDED");
+      if (options.continuation !== undefined) {
+        if (type !== "retry" || !options.continuation.trim())
+          throw new Error("INSTRUCTION_REQUIRED");
+        if (
+          Object.values(task.controlReceipts ?? {}).some(
+            (r) => r.delivery === "uncertain",
+          )
+        )
+          throw new Error("INSTRUCTION_DELIVERY_UNCERTAIN");
+      }
+      if (
         options.expectedControlVersion !== undefined &&
         options.expectedControlVersion !== (task.controlVersion ?? 0)
       )
@@ -260,6 +277,11 @@ export class Tasks {
           resultSpecRevision: task.resultSpecRevision,
         });
         task.revision++;
+        if (options.continuation !== undefined) {
+          task.text += `\n\n追加依頼:\n${options.continuation}`;
+          task.specRevision++;
+          receipt.specRevision = task.specRevision;
+        }
         task.result = undefined;
         task.resultSpecRevision = undefined;
         task.state = "assigned";
@@ -279,6 +301,9 @@ export class Tasks {
         controlVersion: receipt.controlVersion,
         specRevision: receipt.specRevision,
         instructionResolution: options.instructionResolution,
+        ...(options.continuation !== undefined
+          ? { continuation: options.continuation }
+          : {}),
       });
       return persist();
     });

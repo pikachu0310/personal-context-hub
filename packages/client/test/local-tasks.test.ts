@@ -46,6 +46,7 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
     await client.close();
     await rm(directory, { recursive: true, force: true });
   });
+  t.mock.method(client, "checkAccount", async () => {});
   await client.start(0);
   const frames: unknown[] = [];
   client.emit = (frame) => {
@@ -181,5 +182,37 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   restored.report(restored.runs[runId]);
   assert.equal((await post("stop", { runId })).status, 200);
   assert.equal(value.state, "cancelled");
+  assert.deepEqual(frames, []);
+  value.state = "completed";
+  value.result = "Previous answer";
+  value.threadId = "saved-thread";
+  const previousDirectory = value.directory;
+  const followup = {
+    runId,
+    requestKey: "continue-one",
+    instruction: "Continue using that answer",
+    revision: 1,
+  };
+  assert.equal((await post("continue", followup, "invalid")).status, 403);
+  const [continued, repeated] = await Promise.all([
+    post("continue", followup),
+    post("continue", followup),
+  ]);
+  assert.equal(continued.status, 200);
+  assert.equal(repeated.status, 200);
+  const resumed = client.executor.runs[runId];
+  assert.equal(executions, 2);
+  assert.equal(resumed.task.revision, 2);
+  assert.equal(resumed.threadId, "saved-thread");
+  assert.equal(resumed.directory, previousDirectory);
+  assert.equal(resumed.task.history[0].result, "Previous answer");
+  assert.match(resumed.task.text, /Continue using that answer/);
+  assert.equal(resumed.model, "test-model");
+  assert.equal(resumed.progressMode, "manual");
+  assert.equal(resumed.task.executionPolicy?.sandboxMode, "read-only");
+  assert.equal(
+    (await post("continue", { ...followup, requestKey: "stale" })).status,
+    409,
+  );
   assert.deepEqual(frames, []);
 });

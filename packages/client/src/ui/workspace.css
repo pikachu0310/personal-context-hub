@@ -953,3 +953,22 @@ button {
   color: #a1a1aa;
   font-size: 13px;
 }
+
+.project-name > span {
+  flex: 1;
+  min-width: 0;
+}
+.project-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.project-actions .project-menu {
+  opacity: 1;
+}
+.project-settings-modal .project-document {
+  padding: 0;
+  overflow: visible;
+}
