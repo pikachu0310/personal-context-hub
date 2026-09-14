@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { checkBoundaries } from "../../../scripts/check-boundaries.mjs";
+import { checkBoundaries } from "../check-boundaries.mjs";
 test("build rejects adapter imports in use cases, plugin coupling and UI networking", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ido-boundaries-"));
   t.after(() => rm(root, { recursive: true, force: true }));

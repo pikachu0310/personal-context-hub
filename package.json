@@ -7,15 +7,17 @@
   "description": "IDO Engine, Client, Dashboard and Discord plugin workspace.",
   "devDependencies": {
     "@eslint/js": "^9.39.1",
-    "eslint": "^9.39.1",
-    "globals": "^16.5.0",
-    "prettier": "^3.6.2",
-    "typescript": "^5.9.3",
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "js-yaml": "^4.3.2",
+    "picomatch": "^4.0.7",
+    "playwright": "^1.63.0",
+    "prettier": "^3.6.2",
     "tsx": "^4.20.0",
-    "playwright": "^1.63.0"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=24 <25"
@@ -27,21 +29,22 @@
     "esbuild": "^0.28.1"
   },
   "scripts": {
-    "coordination:read": "node scripts/read-github-coordination.mjs",
-    "build:ido": "node scripts/build-ido.mjs",
-    "check:ido": "npm run build:common-ui && tsc -p tsconfig.ido.json --noEmit && tsc -p tsconfig.ui.json",
-    "test:ido": "npm run build:common-ui && node --import tsx --test packages/*/test/*.test.ts packages/*/test/*.test.mjs",
-    "verify:ido": "npm run check:ido && npm run build:ido && npm run test:ido",
+    "build": "node scripts/build-ido.mjs",
+    "check": "node scripts/verify-ido.mjs check",
+    "test": "node scripts/verify-ido.mjs test",
+    "verify": "npm run verify:ido && npm run lint && npm run audit",
+    "verify:ido": "node scripts/verify-ido.mjs",
+    "build:ido": "npm run build",
+    "check:ido": "npm run check",
+    "test:ido": "npm test",
+    "build:common": "npm run build --workspace @ido/common",
+    "build:common-ui": "npm run build --workspace @ido/common-ui",
     "pack:ido": "node scripts/pack-ido.mjs",
     "smoke:ido": "node scripts/ido-browser-smoke.mjs && node scripts/ido-preview-browser-smoke.mjs",
     "smoke:ido:pack": "node scripts/ido-pack-smoke.mjs",
-    "build": "npm run build:ido",
-    "check": "npm run check:ido",
-    "test": "npm run test:ido",
     "lint": "eslint .",
-    "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,mjs,css,html}\" \"packages/*/test/**/*.{ts,mjs}\" \"scripts/*.mjs\" \"docs/*.md\" \"*.{js,json,md}\" \".github/workflows/*.yml\"",
-    "verify": "npm run verify:ido && npm run lint && npm audit",
-    "build:common-ui": "npm run build --workspace @ido/common-ui",
-    "build:common": "npm run build --workspace @ido/common"
+    "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,mjs,css,html}\" \"packages/*/test/**/*.{ts,mjs}\" \"scripts/**/*.mjs\" \"docs/*.md\" \"*.{js,json,md}\" \".github/**/*.yml\"",
+    "audit": "npm audit",
+    "coordination:read": "node scripts/read-github-coordination.mjs"
   }
 }
