@@ -1,4 +1,4 @@
-import { MeetingNotes } from "@ido/common-ui";
+import { MinutesInspector } from "./MinutesInspector.js";
 import { Button, Text } from "@mantine/core";
 import { useCallback, useRef, useState, type ComponentProps } from "react";
 import type { MeetingView } from "@ido/common/contracts/api";
@@ -11,6 +11,7 @@ type Props = Omit<ComponentProps<typeof MinutesEditor>, "meeting"> & {
 
 export function MinutesList({ meetings, dirtyChanged, ...editor }: Props) {
   const [selectedId, select] = useState<string>();
+  const [pane, setPane] = useState("document");
   const [dirty, setDirty] = useState(false);
   const lastSelected = useRef<MeetingView>(undefined);
   const list = visibleMinutes(meetings);
@@ -28,28 +29,61 @@ export function MinutesList({ meetings, dirtyChanged, ...editor }: Props) {
   );
   if (selected && (selected.summary.trim() || dirty))
     return (
-      <section className="minutes-detail" aria-label="議事録の詳細">
-        <Button
-          variant="subtle"
-          size="xs"
-          autoFocus
-          onClick={() => {
-            if (dirty && !window.confirm("未保存の変更を破棄しますか？"))
-              return;
-            select(undefined);
-          }}
-        >
-          ← 議事録一覧に戻る
-        </Button>
-        <MinutesEditor meeting={selected} dirtyChanged={changed} {...editor} />
-        <details>
-          <summary>この議事録の議題・元の発言を確認</summary>
-          <MeetingNotes key={selected.id} meetings={[selected]} />
-        </details>
+      <section
+        className="minutes-detail"
+        aria-label="議事録の詳細"
+        data-pane={pane}
+      >
+        <div className="minutes-detail-toolbar">
+          <Button
+            variant="subtle"
+            size="xs"
+            autoFocus
+            onClick={() => {
+              if (dirty && !window.confirm("未保存の変更を破棄しますか？"))
+                return;
+              select(undefined);
+            }}
+          >
+            ← 議事録一覧に戻る
+          </Button>
+          <div
+            className="minutes-pane-switch"
+            role="group"
+            aria-label="議事録の表示切り替え"
+          >
+            <Button
+              size="compact-xs"
+              variant={pane === "document" ? "light" : "subtle"}
+              aria-pressed={pane === "document"}
+              onClick={() => setPane("document")}
+            >
+              本文
+            </Button>
+            <Button
+              size="compact-xs"
+              variant={pane === "context" ? "light" : "subtle"}
+              aria-pressed={pane === "context"}
+              onClick={() => setPane("context")}
+            >
+              詳細・発言
+            </Button>
+          </div>
+        </div>
+        <div className="minutes-reading-layout">
+          <div className="minutes-reader" tabIndex={0} aria-label="議事録本文">
+            <MinutesEditor
+              meeting={selected}
+              dirtyChanged={changed}
+              {...editor}
+            />
+          </div>
+          <MinutesInspector key={selected.id} meetings={[selected]} />
+        </div>
       </section>
     );
   return (
-    <section aria-label="議事録一覧">
+    <section className="minutes-list-section" aria-label="議事録一覧">
       <Text size="xs" c="dimmed" mb={6}>
         {list.length}件 · 新しい順
       </Text>
@@ -62,7 +96,10 @@ export function MinutesList({ meetings, dirtyChanged, ...editor }: Props) {
             <button
               type="button"
               className="minutes-list-row"
-              onClick={() => select(meeting.id)}
+              onClick={() => {
+                select(meeting.id);
+                setPane("document");
+              }}
             >
               <time className="minutes-list-date">
                 {meeting.startedAt !== undefined
