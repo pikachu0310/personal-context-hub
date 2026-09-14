@@ -138,7 +138,14 @@ else {
       const trusted = (url: string) =>
         !!client && localSender(url, client.origin);
       const open = (url: string) => {
-        if (externalLink(url, client?.pairing?.url, client?.loginUrl))
+        if (
+          externalLink(
+            url,
+            client?.pairing?.url,
+            client?.loginUrl,
+            client?.claudeLoginUrl,
+          )
+        )
           void shell.openExternal(url).catch(() => {});
       };
       window.webContents.on("will-navigate", (event, url) => {

@@ -15,6 +15,7 @@ import { atomic, json, secret } from "@ido/common/runtime/platform";
 import { connect } from "../connection/engine.js";
 import { control } from "../connection/control.js";
 import type { WorkReceipt } from "@ido/common/contracts/work";
+import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
 import { pair } from "../connection/pair.js";
 import { pollPair } from "../connection/poll.js";
 import { Executor } from "../execution/executor.js";
@@ -40,6 +41,9 @@ export class Client {
   generation = 0;
   connected = false;
   controlSupported = false;
+  teamTasksSupported = false;
+  teamTasks?: TeamTaskSnapshot;
+  teamTasksRequestedAt = 0;
   controlRequests = new Map<
     string,
     {
@@ -57,6 +61,8 @@ export class Client {
   status = "offline";
   login?: ChildProcess;
   loginStatus = "not checked";
+  claudeLoginStatus = "not checked";
+  claudeLoginUrl?: string;
   loginUrl?: string;
   suggestedEngine?: string;
   desktop?: { name: string; version: string; pid: number; platform: string };

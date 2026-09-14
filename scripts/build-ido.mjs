@@ -38,6 +38,7 @@ export async function buildPackages(names = runtimePackages) {
         "prism-media",
         "opusscript",
         "@openai/codex",
+        "@anthropic-ai/claude-agent-sdk",
       ],
     });
     for (const input of Object.keys(result.metafile.inputs)) {

@@ -887,3 +887,45 @@ button {
     border-color: #bbb;
   }
 }
+.shared-task-owner {
+  display: block;
+  color: #a1a1aa;
+  font-size: 11px;
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.local-task-form fieldset {
+  border: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.local-task-form label {
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+}
+.local-task-form input,
+.local-task-form textarea,
+.local-task-form select {
+  width: 100%;
+  padding: 12px;
+  color: #eee;
+  background: #282828;
+  border: 1px solid #444;
+  border-radius: 8px;
+  font: inherit;
+}
+.local-task-form .local-network {
+  display: flex;
+  align-items: center;
+}
+.local-task-form input[type="checkbox"] {
+  width: auto;
+}
+.local-task-form p {
+  color: #a1a1aa;
+  font-size: 13px;
+}

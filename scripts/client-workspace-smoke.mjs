@@ -47,6 +47,37 @@ try {
   ];
   client.connected = true;
   client.controlSupported = true;
+  client.settings.deviceId = "local-device";
+  client.teamTasksSupported = true;
+  client.teamTasks = {
+    updatedAt: Date.now(),
+    total: 2,
+    tasks: [
+      {
+        id: "remote-task",
+        runId: "remote-run",
+        revision: 1,
+        projectId: "project",
+        title: "共有ルーティングを確認",
+        state: "running",
+        clientId: "other-device",
+        ownerName: "Demo teammate",
+        deviceName: "Demo Mac",
+        deviceConnected: true,
+        progress: "ルーティングのテストを実行中です。",
+        updatedAt: Date.now(),
+      },
+      {
+        id: "queued-task",
+        runId: "queued-run",
+        revision: 1,
+        projectId: "project",
+        title: "未割り当ての依頼",
+        state: "queued",
+        updatedAt: Date.now(),
+      },
+    ],
+  };
   client.allow = true;
   const thread = {
     activeTurnId: null,
@@ -188,6 +219,52 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(client.origin);
   await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await page
+    .getByRole("region", { name: "ほかのPC", exact: true })
+    .getByRole("button")
+    .click();
+  await page
+    .getByText("ルーティングのテストを実行中です。", { exact: true })
+    .waitFor();
+  assert.equal(await page.getByLabel("エージェントへの追加指示").count(), 0);
+  assert.equal(
+    await page
+      .getByRole("button", { name: "タスクを停止", exact: true })
+      .count(),
+    0,
+  );
+  await mkdir(".ido-build/screenshots", { recursive: true });
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-team-tasks.png",
+  });
+  await page
+    .getByRole("region", { name: "未割り当て", exact: true })
+    .getByRole("button")
+    .click();
+  await page
+    .getByText("実行先が決まると、このPCまたはほかのPCの一覧へ移動します。", {
+      exact: true,
+    })
+    .waitFor();
+  client.connected = false;
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page
+    .getByText("ほかのPCの状態を見るには接続してください。", { exact: true })
+    .waitFor();
+  assert.equal(
+    await page
+      .getByRole("region", { name: "ほかのPC", exact: true })
+      .getByRole("button")
+      .count(),
+    0,
+  );
+  client.connected = true;
+  await page.getByRole("button", { name: "最新の状態に更新" }).click();
+  await page
+    .locator(".task-link")
+    .filter({ hasText: "Discordフォーラムの同期を整える" })
+    .click();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
     path: ".ido-build/screenshots/workspace-manual.png",
@@ -259,6 +336,112 @@ try {
     .click();
   await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
   await page.getByText("停止済み", { exact: true }).waitFor();
+  client.connected = false;
+  client.allow = false;
+  const localFrames = [];
+  client.emit = (frame) => localFrames.push(frame);
+  await page
+    .getByRole("button", { name: "新しいローカルタスク", exact: true })
+    .click();
+  await page.getByLabel("タイトル", { exact: true }).fill("ローカルの実験");
+  await page.route("**/api/agents/models", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        models: [{ id: "test-codex-model", name: "Test Codex" }],
+      }),
+    }),
+  );
+  await page
+    .getByRole("button", { name: "Codexのモデル一覧を取得・更新" })
+    .click();
+  await page
+    .getByRole("option", { name: "Test Codex" })
+    .waitFor({ state: "attached" });
+  await page
+    .getByLabel("使用するモデル", { exact: true })
+    .selectOption("test-codex-model");
+  await page
+    .getByLabel("Gitリポジトリのフォルダー", { exact: true })
+    .fill(repository);
+  await page
+    .getByLabel("依頼内容", { exact: true })
+    .fill("このPCで実験の方針を相談してから試してください");
+  await page.getByLabel("進め方", { exact: true }).selectOption("manual");
+  await page.getByRole("button", { name: "相談を開始", exact: true }).click();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await page.getByText("このアプリからの依頼", { exact: true }).waitFor();
+  await page
+    .locator(".model-label")
+    .filter({ hasText: "test-codex-model" })
+    .waitFor();
+  await page
+    .getByLabel("エージェントへの追加指示")
+    .fill("実験の前提も整理してください");
+  await page
+    .getByRole("button", { name: "追加指示を送信", exact: true })
+    .click();
+  await page
+    .getByText("実験の前提も整理してください", { exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await page.getByRole("button", { name: "実行する", exact: true }).click();
+  await page
+    .getByText("1 件のファイルを変更", { exact: true })
+    .first()
+    .waitFor();
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-local-experiment.png",
+  });
+  await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
+  await page.getByText("停止済み", { exact: true }).waitFor();
+  assert.deepEqual(localFrames, []);
+  // Provider selection uses the same app lifecycle without contacting Claude.
+  client.executor.createClaude = client.executor.createCodex;
+  await page
+    .getByRole("button", { name: "新しいローカルタスク", exact: true })
+    .click();
+  await page.getByLabel("エージェント", { exact: true }).selectOption("claude");
+  await page.getByLabel("使用するモデル", { exact: true }).selectOption("opus");
+  await page.getByLabel("エージェント", { exact: true }).selectOption("codex");
+  await page
+    .getByLabel("使用するモデル", { exact: true })
+    .selectOption("custom");
+  await page.getByLabel("モデルID", { exact: true }).fill("test-codex-model");
+  await page.getByLabel("エージェント", { exact: true }).selectOption("claude");
+  assert.equal(
+    await page.getByLabel("使用するモデル", { exact: true }).inputValue(),
+    "opus",
+  );
+  await page.getByLabel("タイトル", { exact: true }).fill("Claudeで実験");
+  await page
+    .getByLabel("Gitリポジトリのフォルダー", { exact: true })
+    .fill(repository);
+  await page
+    .getByLabel("依頼内容", { exact: true })
+    .fill("Claudeで方針を相談してください");
+  await page.getByLabel("進め方", { exact: true }).selectOption("manual");
+  await page
+    .getByRole("checkbox", { name: /Claudeのツールは操作ごとに承認/ })
+    .check();
+  await page.getByRole("button", { name: "相談を開始", exact: true }).click();
+  await page.getByRole("button", { name: "実行する", exact: true }).waitFor();
+  await page
+    .locator(".model-label")
+    .filter({ hasText: "Claude Code" })
+    .waitFor();
+  await page.screenshot({
+    path: ".ido-build/screenshots/workspace-claude.png",
+  });
+  assert.equal(
+    Object.values(client.executor.runs).find(
+      (run) => run.task.title === "Claudeで実験",
+    )?.agent,
+    "claude",
+  );
+  await page.getByRole("button", { name: "タスクを停止", exact: true }).click();
+  await page.getByText("停止済み", { exact: true }).waitFor();
+  assert.deepEqual(localFrames, []);
   await page.setViewportSize({ width: 430, height: 850 });
   await page
     .getByRole("button", { name: "サイドバーを閉じる", exact: true })
@@ -277,6 +460,20 @@ try {
   console.log(
     "Workspace smoke passed: Manual discussion -> execute, live instruction, command output, diff, search, stop and narrow layout.",
   );
+} catch (error) {
+  const page = browser?.contexts()[0]?.pages()[0];
+  if (page) {
+    await page
+      .screenshot({ path: ".ido-build/screenshots/workspace-failure.png" })
+      .catch(() => {});
+    console.error(
+      await page
+        .locator("main")
+        .innerText()
+        .catch(() => ""),
+    );
+  }
+  throw error;
 } finally {
   await browser?.close();
   await client.close();

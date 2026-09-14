@@ -16,7 +16,9 @@ export async function execute(
 ) {
   const repository = await realpath(mapping.directory);
   if (value.state === "cancelled") return;
-  const codex = this.createCodex({
+  const createRuntime =
+    value.agent === "claude" ? this.createClaude : this.createCodex;
+  const codex = createRuntime({
     experimentalApi: value.progressMode === "manual",
     codexPathOverride: codexBinary(),
     env: workerEnvironment(this.home),
@@ -73,6 +75,7 @@ export async function execute(
       value.effectiveExecutionPolicy,
     );
     const options = {
+      model: value.model,
       workingDirectory: value.directory,
       sandboxMode: policy.sandboxMode ?? "workspace-write",
       requireWritableSandbox: policy.sandboxMode !== "read-only",
