@@ -339,8 +339,14 @@ try {
   assert.equal(
     await page
       .getByRole("button", { name: "タスクを停止", exact: true })
+      .count(),
+    0,
+  );
+  assert.ok(await page.getByLabel("エージェントへの追加指示").isEnabled());
+  assert.ok(
+    await page
+      .getByRole("button", { name: "追加指示を送信", exact: true })
       .isDisabled(),
-    true,
   );
   await page.getByLabel("タスクを検索").fill("");
   await page

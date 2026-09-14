@@ -17,6 +17,7 @@ export async function connect(this: Client) {
   this.ws?.close();
   this.connected = false;
   this.controlSupported = false;
+  this.continuationSupported = false;
   this.projectCreationSupported = false;
   this.teamTasksSupported = false;
   this.teamTasks = undefined;
@@ -71,6 +72,7 @@ export async function connect(this: Client) {
       this.generation = Number(data.generation);
       this.connected = true;
       this.controlSupported = data.controlVersion === 1;
+      this.continuationSupported = data.continuationVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
       this.workspaceSupported = data.workspaceVersion === 1;
       this.teamTasksSupported = data.taskListVersion === 1;
@@ -184,6 +186,7 @@ export async function connect(this: Client) {
     if (this.ws !== ws) return;
     this.connected = false;
     this.controlSupported = false;
+    this.continuationSupported = false;
     this.projectCreationSupported = false;
     this.teamTasksSupported = false;
     this.teamTasks = undefined;

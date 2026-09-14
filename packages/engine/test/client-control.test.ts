@@ -146,6 +146,37 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
     before,
   );
   assert.equal(client.allow, true);
+  run.state = "completed";
+  run.result = "Previous answer";
+  run.threadId = "retained-thread";
+  client.executor.report(run);
+  await until(
+    () => engine.store.get<Task>("task", task.id)?.state === "completed",
+  );
+  const followup = {
+    runId: task.runId,
+    requestKey: "continue-one",
+    instruction: "Use the previous answer",
+    revision: 1,
+  };
+  const continued = await post("continue", followup);
+  assert.equal(continued.status, 200);
+  const repeated = await post("continue", followup);
+  assert.equal(repeated.status, 200);
+  assert.equal(
+    (await repeated.json()).receipt.id,
+    (await continued.json()).receipt.id,
+  );
+  await until(() => client.executor.runs[task.runId]?.task.revision === 2);
+  const resumed = client.executor.runs[task.runId];
+  assert.equal(resumed.threadId, "retained-thread");
+  assert.equal(resumed.directory, run.directory);
+  assert.equal(
+    engine.store.get<Task>("task", task.id)?.history[0].result,
+    "Previous answer",
+  );
+  assert.equal(engine.store.list<Task>("task").length, 1);
+  assert.match(resumed.task.text, /Use the previous answer/);
   const authoritative = engine.store.get<Task>("task", task.id)!;
   authoritative.clientId = "other-device";
   engine.store.put("task", task.id, authoritative);
@@ -164,6 +195,15 @@ test("desktop controls are authenticated, restricted to the owning device, idemp
   });
   assert.equal(deniedRole.status, 409);
   assert.equal((await deniedRole.json()).error, "CONTROL_REJECTED");
+  await assert.rejects(
+    client.workspaceRequest("task.continue", {
+      taskId: task.id,
+      requestId: "denied",
+      text: "Continue",
+      revision: 2,
+    }),
+    /PROJECT_INVITATION_REQUIRED/,
+  );
   assert.equal(engine.store.get<Device>("device", "device")?.revoked, false);
   await until(() => {
     client.emit({ v: 1, type: "tasks.list" });

@@ -137,11 +137,13 @@ try {
     .getByRole("heading", { name: "フォーラム同期を確認", exact: true })
     .waitFor();
   await page.getByText("テスト用の結果です。", { exact: true }).waitFor();
-  assert.ok(
+  assert.equal(
     await page
       .getByRole("button", { name: "タスクを停止", exact: true })
-      .isDisabled(),
+      .count(),
+    0,
   );
+  assert.ok(await page.getByLabel("エージェントへの追加指示").isEnabled());
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.evaluate(() => globalThis.scrollTo(0, 0));
   await page.screenshot({

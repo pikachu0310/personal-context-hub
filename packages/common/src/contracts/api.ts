@@ -122,6 +122,7 @@ export interface ClientState {
   teamTasksSupported?: boolean;
   teamTasks?: TeamTaskSnapshot;
   controlSupported?: boolean;
+  continuationSupported?: boolean;
   csrf: string;
   suggestedInvite?: { engineUrl: string; token: string };
   settings: {

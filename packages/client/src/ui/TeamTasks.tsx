@@ -1,3 +1,4 @@
+import { TaskFollowup } from "./TaskFollowup.js";
 import { TaskDispatchNotice } from "./TaskDispatchNotice.js";
 import type { ClientState } from "@ido/common/contracts/api";
 import type { TeamTaskSnapshot } from "@ido/common/contracts/api";
@@ -50,6 +51,7 @@ export function TeamTaskDetail({
             {task.revision}
           </p>
           {task.progress && <MessageText text={task.progress} />}
+          <TaskFollowup key={task.id} task={task} state={state} />
           <p>
             {local
               ? "このPCへのタスク到着を待っています。"

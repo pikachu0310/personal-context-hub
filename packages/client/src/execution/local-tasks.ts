@@ -161,3 +161,76 @@ export async function localInstruction(
   );
   return { accepted: true, source: "local" };
 }
+
+export async function continueLocalTask(
+  client: Client,
+  runId: string,
+  requestKey: string,
+  instruction: string,
+  revision: number,
+) {
+  const commandId = `local-continue-${createHash("sha256").update(`${runId}:${requestKey}`).digest("hex")}`;
+  const operation = client.processing
+    .catch(() => {})
+    .then(async () => {
+      const value = client.executor.runs[runId];
+      if (!value || value.origin !== "local" || !value.localMapping)
+        throw new HttpError(404, "LOCAL_TASK_NOT_FOUND");
+      if (client.executor.commands.includes(commandId))
+        return { accepted: true, source: "local" };
+      if (value.task.revision !== revision)
+        throw new HttpError(409, "TASK_CONTROL_SUPERSEDED");
+      if (
+        !["completed", "failed", "cancelled", "interrupted"].includes(
+          value.state,
+        )
+      )
+        throw new HttpError(409, "TASK_STILL_ACTIVE");
+      if (
+        value.instructions?.some((item) =>
+          ["sending", "uncertain"].includes(item.delivery),
+        )
+      )
+        throw new HttpError(409, "INSTRUCTION_DELIVERY_UNCERTAIN");
+      await client.executor.running.get(runId);
+      const task = structuredClone(value.task);
+      task.history.push({
+        revision: task.revision,
+        text: task.text,
+        result: value.result,
+        specRevision: task.specRevision,
+        resultSpecRevision: task.resultSpecRevision,
+      });
+      task.revision++;
+      task.specRevision = (task.specRevision ?? 1) + 1;
+      task.text += `\n\n追加依頼:\n${instruction}`;
+      task.state = "assigned";
+      task.result = undefined;
+      task.resultSpecRevision = undefined;
+      task.updatedAt = Date.now();
+      await client.executor.receive(
+        {
+          v: 1,
+          type: "retry",
+          id: commandId,
+          taskId: task.id,
+          runId,
+          task,
+          continuation: instruction,
+        },
+        [value.localMapping],
+        true,
+        client.settings.slots,
+        {
+          progressMode: value.progressMode ?? "auto",
+          agent: value.agent,
+          model: value.model,
+        },
+      );
+      if (client.executor.runs[runId].task.revision !== task.revision)
+        throw new HttpError(409, "LOCAL_SLOTS_FULL");
+      return { accepted: true, source: "local" };
+    });
+  client.processing = operation;
+  return operation;
+}
