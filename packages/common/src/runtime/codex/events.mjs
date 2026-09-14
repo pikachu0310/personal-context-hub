@@ -30,6 +30,13 @@ export function normalizeAppServerItem(item) {
         text: item.text,
         phase: item.phase,
       };
+    case "plan":
+      return {
+        id: item.id,
+        type: "agent_message",
+        text: item.text,
+        phase: "plan",
+      };
     case "commandExecution":
       return {
         id: item.id,

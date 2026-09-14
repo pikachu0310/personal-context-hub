@@ -5,6 +5,7 @@ import {
   Group,
   NumberInput,
   Paper,
+  SegmentedControl,
   Stack,
   Switch,
   Text,
@@ -13,7 +14,7 @@ import { useState } from "react";
 import { Card, Form, Status } from "@ido/common-ui";
 import type { Action, ClientState, Invoke } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
-import { ClientRuns } from "./ClientRuns.js";
+
 export function ClientView({
   page,
   state,
@@ -111,7 +112,7 @@ export function ClientView({
             description="repoの自動cloneは行いません。新しいworktreeはClient専用領域に作ります。"
           >
             {state.settings.mappings.map((m) => (
-              <Paper key={m.projectId} bg="gray.0" p="sm">
+              <Paper key={m.projectId} p="sm">
                 <Text size="sm">
                   {
                     state.settings.projects.find((p) => p.id === m.projectId)
@@ -154,7 +155,7 @@ export function ClientView({
             )}
           </Card>
           <Card
-            title="4. この接続で自動実行を許可"
+            title="4. この接続でタスクの実行を許可"
             description="許可したrepo・通信権限の範囲でタスクを受け取ります。権限の追加要求はローカル画面で承認します。"
           >
             <NumberInput
@@ -166,7 +167,7 @@ export function ClientView({
               w={180}
             />
             <Switch
-              label="タスクの自動実行を許可する"
+              label="このPCでタスクを受け取って実行する"
               checked={state.allow}
               onChange={(e) =>
                 invoke("allow", {
@@ -176,43 +177,25 @@ export function ClientView({
               }
             />
           </Card>
-        </>
-      ) : (
-        <>
           <Card
-            title="追加権限の承認"
-            description="操作内容を確認して、この実行に限って承認します。"
+            title="5. 新しいタスクの進め方"
+            description="実行権限とは別の設定です。受け取り済みのタスクには影響しません。"
           >
-            {!state.approvals.length && (
-              <Text c="dimmed">承認待ちはありません。</Text>
-            )}
-            {state.approvals.map((a) => (
-              <Paper p="md" withBorder key={a.id}>
-                <Text fw={600}>{a.method}</Text>
-                <Code block>{JSON.stringify(a.params, null, 2)}</Code>
-                <Group mt="sm">
-                  <Button
-                    onClick={() =>
-                      invoke("approval", { id: a.id, allow: true })
-                    }
-                  >
-                    この操作を許可
-                  </Button>
-                  <Button
-                    variant="default"
-                    onClick={() =>
-                      invoke("approval", { id: a.id, allow: false })
-                    }
-                  >
-                    拒否
-                  </Button>
-                </Group>
-              </Paper>
-            ))}
+            <SegmentedControl
+              aria-label="新しいタスクの進め方"
+              value={state.settings.progressMode ?? "auto"}
+              data={[
+                { label: "Auto", value: "auto" },
+                { label: "Manual · 会話する", value: "manual" },
+              ]}
+              onChange={(mode) => invoke("progress-mode", { mode })}
+            />
+            <Text size="sm" c="dimmed">
+              Autoは依頼に沿って進めます。Manualはまず相談・計画し、「実行する」を押したら作業に入ります。どちらも作業中に追加指示を送れます。
+            </Text>
           </Card>
-          <ClientRuns state={state} action={action} invoke={invoke} />
         </>
-      )}
+      ) : null}
     </Stack>
   );
 }

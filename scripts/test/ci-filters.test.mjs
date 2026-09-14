@@ -122,6 +122,10 @@ test("build configuration and dependencies invalidate all suites", () => {
 });
 
 test("smoke changes run the relevant smoke and build its prerequisites", () => {
+  assert.deepEqual(affected("scripts/client-workspace-smoke.mjs"), [
+    "tooling",
+    "browser",
+  ]);
   assert.deepEqual(affected("scripts/ido-pack-smoke.mjs"), ["tooling", "pack"]);
   assert.deepEqual(affected("scripts/ido-preview-browser-smoke.mjs"), [
     "tooling",

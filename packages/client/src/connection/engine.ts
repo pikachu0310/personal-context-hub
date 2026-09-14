@@ -1,5 +1,7 @@
 import { sign } from "node:crypto";
 import { WebSocket } from "ws";
+import { HttpError } from "@ido/common/runtime/http";
+import type { WorkReceipt } from "@ido/common/contracts/work";
 import {
   frame,
   type Command,
@@ -13,6 +15,7 @@ export async function connect(this: Client) {
   clearTimeout(this.reconnect);
   this.ws?.close();
   this.connected = false;
+  this.controlSupported = false;
   this.status = "connecting";
   const privateKey = await this.credentials.get("device.privateKey");
   if (!privateKey) {
@@ -56,6 +59,7 @@ export async function connect(this: Client) {
     if (data.type === "authenticated") {
       this.generation = Number(data.generation);
       this.connected = true;
+      this.controlSupported = data.controlVersion === 1;
       this.status = "connected";
       this.settings.projects = data.projects as Project[];
       void this.save();
@@ -69,6 +73,16 @@ export async function connect(this: Client) {
       return;
     }
     if (data.generation !== this.generation) return;
+    if (data.type === "work.control.result") {
+      const request = this.controlRequests.get(String(data.requestKey));
+      if (request) {
+        clearTimeout(request.timer);
+        this.controlRequests.delete(String(data.requestKey));
+        if (data.error) request.reject(new HttpError(409, String(data.error)));
+        else request.resolve(data.receipt as WorkReceipt);
+      }
+      return;
+    }
     if (data.type === "artifact.request") {
       const value = this.executor.runs[String(data.runId)];
       if (
@@ -119,6 +133,12 @@ export async function connect(this: Client) {
   ws.once("close", (code) => {
     if (this.ws !== ws) return;
     this.connected = false;
+    this.controlSupported = false;
+    for (const request of this.controlRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new HttpError(409, "CONTROL_DELIVERY_UNKNOWN"));
+    }
+    this.controlRequests.clear();
     this.status = code === 4003 ? "revoked or permission changed" : "offline";
     this.preview.close();
     if (!this.stopping && code !== 4003)

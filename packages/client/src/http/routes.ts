@@ -1,4 +1,5 @@
 import { startLogin } from "../auth/login.js";
+import { activityText } from "../execution/activity.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse } from "node:http";
@@ -37,6 +38,7 @@ export async function route(
       csrf: this.csrf,
       settings: this.settings,
       connected: this.connected,
+      controlSupported: this.controlSupported,
       status: this.status,
       allow: this.allow,
       loginStatus: this.loginStatus,
@@ -46,10 +48,29 @@ export async function route(
       pairing: this.pairing
         ? { url: this.pairing.url, fingerprint: this.pairing.fingerprint }
         : null,
-      runs: Object.values(this.executor.runs),
-      approvals: [...this.executor.approvals].map(
-        ([id, { method, params }]) => ({ id, method, params }),
+      runs: Object.values(this.executor.runs).map(
+        ({
+          activity,
+          activityDropped,
+          instructions,
+          pendingInstructions,
+          controlReceipts,
+          ...value
+        }) => value,
       ),
+      approvals: [...this.executor.approvals].map(
+        ([id, { runId, method, params }]) => ({ id, runId, method, params }),
+      ),
+    });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/api/activity") {
+    const value = this.executor.runs[id(url.searchParams.get("runId"))];
+    if (!value) throw new HttpError(404, "RUN_NOT_FOUND");
+    send(res, 200, {
+      entries: value.activity ?? [],
+      dropped: value.activityDropped ?? 0,
+      version: value.activityVersion ?? 0,
     });
     return;
   }
@@ -137,6 +158,45 @@ export async function route(
         this.settings.slots,
       );
       break;
+    }
+    case "/api/progress-mode":
+      if (!["auto", "manual"].includes(String(input.mode)))
+        throw new HttpError(400, "INVALID_PROGRESS_MODE");
+      this.settings.progressMode = input.mode as "auto" | "manual";
+      this.executor.progressMode = this.settings.progressMode;
+      await this.save();
+      break;
+    case "/api/execute-plan": {
+      if (!this.allow || !this.connected)
+        throw new HttpError(409, "EXECUTION_NOT_ALLOWED");
+      const value = this.executor.runs[id(input.runId)];
+      if (
+        !value ||
+        !this.settings.mappings.some(
+          (mapping) =>
+            mapping.projectId === value.task.projectId &&
+            (!value.task.network || mapping.network),
+        )
+      )
+        throw new HttpError(409, "MAPPING_REQUIRED");
+      await this.executor.startPlannedWork(value.task.runId);
+      break;
+    }
+    case "/api/instruction": {
+      const receipt = await this.control(
+        id(input.runId),
+        id(input.requestKey),
+        text(input.instruction, 8000),
+      );
+      send(res, 200, { ok: true, receipt });
+      return;
+    }
+    case "/api/diff": {
+      const value = this.executor.runs[id(input.runId)];
+      if (!value) throw new HttpError(404, "RUN_NOT_FOUND");
+      const artifact = await this.executor.artifact(value.task.runId);
+      send(res, 200, { patch: activityText(artifact.patch, 256000) });
+      return;
     }
     case "/api/preview": {
       const value = this.executor.runs[id(input.runId)];

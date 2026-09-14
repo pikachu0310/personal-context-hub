@@ -13,6 +13,8 @@ import { Credentials } from "@ido/common/runtime/credentials";
 import { HttpError, send } from "@ido/common/runtime/http";
 import { atomic, json, secret } from "@ido/common/runtime/platform";
 import { connect } from "../connection/engine.js";
+import { control } from "../connection/control.js";
+import type { WorkReceipt } from "@ido/common/contracts/work";
 import { pair } from "../connection/pair.js";
 import { pollPair } from "../connection/poll.js";
 import { Executor } from "../execution/executor.js";
@@ -20,6 +22,7 @@ import { route } from "../http/routes.js";
 import { ClientPreview } from "../preview/relay.js";
 
 interface Settings {
+  progressMode?: "auto" | "manual";
   engineUrl?: string;
   deviceId?: string;
   publicKey?: string;
@@ -36,6 +39,15 @@ export class Client {
   origin = "";
   generation = 0;
   connected = false;
+  controlSupported = false;
+  controlRequests = new Map<
+    string,
+    {
+      resolve: (receipt: WorkReceipt) => void;
+      reject: (error: Error) => void;
+      timer: NodeJS.Timeout;
+    }
+  >();
   allow = false;
   stopping = false;
   ws?: WebSocket;
@@ -72,6 +84,8 @@ export class Client {
       this.settings,
     );
     await this.executor.load();
+    this.executor.progressMode =
+      this.settings.progressMode === "manual" ? "manual" : "auto";
     if (!this.settings.publicKey) {
       const keys = generateKeyPairSync("ed25519");
       this.settings.publicKey = keys.publicKey
@@ -116,6 +130,7 @@ export class Client {
     });
   }
   readonly connect = connect.bind(this);
+  readonly control = control.bind(this);
   readonly pair = pair.bind(this);
   readonly pollPair = pollPair.bind(this);
   readonly route = route.bind(this);
@@ -125,6 +140,11 @@ export class Client {
     clearTimeout(this.pairTimer);
     this.login?.kill();
     this.ws?.close();
+    for (const request of this.controlRequests.values()) {
+      clearTimeout(request.timer);
+      request.reject(new HttpError(409, "CONTROL_DELIVERY_UNKNOWN"));
+    }
+    this.controlRequests.clear();
     this.preview.close();
     await this.executor.close();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));

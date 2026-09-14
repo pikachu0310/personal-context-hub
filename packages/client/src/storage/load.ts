@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { json } from "@ido/common/runtime/platform";
 
 import type { Executor, Run } from "../execution/executor.js";
+import { recordActivity } from "../execution/activity.js";
 export async function load(this: Executor) {
   await mkdir(this.home, { recursive: true, mode: 0o700 });
   const saved = await json<{ runs: Record<string, Run>; commands: string[] }>(
@@ -39,6 +40,15 @@ export async function load(this: Executor) {
       value.state = "interrupted";
       value.progress =
         "Client restarted. Explicit retry is required; the worktree is preserved.";
+      for (const entry of value.activity ?? [])
+        if (["running", "in_progress"].includes(entry.status ?? ""))
+          entry.status = "interrupted";
+      recordActivity(value, {
+        kind: "status",
+        title: "アプリ再起動により中断",
+        text: "作業フォルダーと履歴は保持しています。再実行には明示的な操作が必要です。",
+        status: "interrupted",
+      });
     }
   }
   await this.save();
