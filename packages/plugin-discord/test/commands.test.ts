@@ -1,12 +1,15 @@
-import test from "node:test";
-import assert from "node:assert/strict";
 import {
   ChannelType,
   MessageFlags,
   type ChatInputCommandInteraction,
   type Guild,
 } from "discord.js";
-import { registerVoiceCommands, voiceCommandHandler } from "../src/commands.js";
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  registerVoiceCommands,
+  voiceCommandHandler,
+} from "../src/commands/voice.js";
 function interaction(
   command = "join",
   channelId: string | null = "voice",

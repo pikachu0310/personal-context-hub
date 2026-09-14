@@ -1,0 +1,14 @@
+{
+  "name": "@ido/plugin-dashboard",
+  "version": "0.2.0",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "main": "dist/index.js"
+}

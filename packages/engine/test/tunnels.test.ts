@@ -1,12 +1,12 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Store } from "../src/store.js";
-import { Credentials } from "../../common/src/credentials.js";
-import { Tunnels } from "../src/tunnels.js";
+import { Credentials } from "../../common/src/runtime/credentials.js";
+import { Store } from "../src/adapters/sqlite/store.js";
+import { Tunnels } from "../src/adapters/tunnels/manager.js";
 
 async function until(check: () => boolean) {
   for (let n = 0; n < 150; n++) {

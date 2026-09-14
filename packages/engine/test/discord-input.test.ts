@@ -1,15 +1,21 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, type Meeting } from "../src/store.js";
-import { Conversation } from "../src/ai.js";
-import { DiscordInput, taskControl } from "../src/discord-input.js";
-import { Credentials } from "../../common/src/credentials.js";
-import { normalizeDiscordPolicy } from "../../common/src/discord-policy.js";
-import type { Task } from "../../common/src/protocol.js";
+import test from "node:test";
 import OpenAI from "openai";
+import type { Task } from "../../common/src/contracts/protocol.js";
+import { Credentials } from "../../common/src/runtime/credentials.js";
+import { normalizeInput } from "../../plugin-discord/src/input/normalize.js";
+import { normalizeDiscordPolicy } from "../../plugin-discord/src/input/policy.js";
+import { renderPublication } from "../../plugin-discord/src/output/render.js";
+import { OpenAIModels } from "../src/adapters/openai/models.js";
+import { Store, type Meeting } from "../src/adapters/sqlite/store.js";
+import { Identities } from "../src/management/identities.js";
+import { Conversation } from "../src/processing/conversation.js";
+import { taskControl } from "../src/processing/routing/control.js";
+import { InputRouter } from "../src/processing/routing/input.js";
+import { Tasks } from "../src/processing/tasks/service.js";
 
 async function fixture(t: any) {
   const dir = await mkdtemp(join(tmpdir(), "ido-discord-input-"));
@@ -32,7 +38,10 @@ async function fixture(t: any) {
     summary: "",
     messages: [],
   });
-  const ai = new Conversation(store, new Credentials(dir, "test", "file"));
+  const ai = new Conversation(
+    store,
+    new OpenAIModels(new Credentials(dir, "test", "file")),
+  );
   let transcriptions = 0,
     answers = 0,
     speech = 0;
@@ -48,7 +57,7 @@ async function fixture(t: any) {
     speech++;
     return "synthetic-audio";
   };
-  ai.api = async () =>
+  (ai.models as OpenAIModels).api = async () =>
     ({
       responses: {
         create: async () => ({
@@ -64,7 +73,56 @@ async function fixture(t: any) {
     deliver: (...args: any[]) => output.push(["deliver", ...args]),
     commandResult: (...args: any[]) => output.push(["command", ...args]),
   };
-  const input = new DiscordInput(store, ai, plugin as any, () => {});
+  const identities = new Identities(store);
+  for (const subject of ["100", "200"]) {
+    store.put("participant", `discord-${subject}`, {
+      id: `discord-${subject}`,
+      name: `Discord ${subject}`,
+      role: "member",
+    });
+    store.put("external-participant", `discord:${subject}`, {
+      actorId: `discord-${subject}`,
+    });
+  }
+  const router = new InputRouter(store, ai, () => {});
+  const input = {
+    handle: async (event: Record<string, unknown>) => {
+      const config = store.get<Record<string, string>>("config", "discord")!;
+      const value = normalizeInput(event, config, plugin.voiceChannelId);
+      if (!value) return;
+      const generation = plugin.voiceGeneration;
+      const actor = identities.resolve("discord", value.subject!)!;
+      return router.handle(value, {
+        pluginId: "discord",
+        actor,
+        valid: () =>
+          generation === plugin.voiceGeneration &&
+          !!normalizeInput(
+            event,
+            store.get<Record<string, string>>("config", "discord")!,
+            plugin.voiceChannelId,
+          ),
+        deliver: async (output) => {
+          if (output.replyTo?.interaction)
+            plugin.commandResult(output.eventId, output.content, output.file);
+          else
+            plugin.deliver(
+              output.replyTo?.channelId,
+              output.content ?? "",
+              output.audio,
+              output.replyTo?.speechEpoch,
+            );
+        },
+        publish: (event) =>
+          plugin.publish(
+            event.type,
+            event.meetingId,
+            config.textChannelId,
+            renderPublication(event),
+          ),
+      });
+    },
+  };
   const event = {
     guildId: "1",
     channelId: "3",
@@ -74,7 +132,7 @@ async function fixture(t: any) {
     speechEpoch: 1,
   };
   const task = (name = "Implement feature") =>
-    store.createTask({
+    new Tasks(store).createTask({
       projectId: "project",
       meetingId: "meeting",
       authorId: "discord-100",
@@ -116,13 +174,21 @@ test("transcription quota failure is linked to a durable diagnostic, not leaked 
   assert.equal(entry.error.code, "insufficient_quota");
   assert.equal(entry.eventId, f.event.eventId);
   assert.equal(entry.error.requestId, "req_audio123");
-  assert.equal(f.store.get<any>("input", f.event.eventId).stage, "failed");
-  assert.deepEqual(f.store.get<any>("input", f.event.eventId).errorIds, [
-    entry.id,
-  ]);
+  assert.equal(
+    f.store.get<any>("input", "discord:" + f.event.eventId).stage,
+    "failed",
+  );
+  assert.deepEqual(
+    f.store.get<any>("input", "discord:" + f.event.eventId).errorIds,
+    [entry.id],
+  );
   assert.ok(JSON.stringify(f.output).includes(entry.id));
   assert.ok(!JSON.stringify(f.output).includes("secret"));
   assert.ok(!JSON.stringify(f.output).includes("req_audio123"));
+  const message = f.store.list<any>("message")[0];
+  assert.equal(message.steps.transcription.state, "failed");
+  assert.equal(message.steps.transcription.errorId, entry.id);
+  assert.equal(message.steps.minutes.state, "skipped");
 });
 
 test("missing meeting produces configuration diagnostics", async (t) => {
@@ -135,8 +201,8 @@ test("missing meeting produces configuration diagnostics", async (t) => {
 
 test("minutes failures are no longer swallowed and later inputs can recover", async (t) => {
   const f = await fixture(t);
-  const originalApi = f.ai.api;
-  f.ai.api = async () => {
+  const originalApi = (f.ai.models as OpenAIModels).api;
+  (f.ai.models as OpenAIModels).api = async () => {
     throw new Error("OPENAI_KEY_REQUIRED");
   };
   await f.input.handle(f.event);
@@ -147,9 +213,12 @@ test("minutes failures are no longer swallowed and later inputs can recover", as
   assert.equal(message.errorId, entry.id);
   assert.equal(message.stage, "failed");
   assert.ok(JSON.stringify(f.output).includes(entry.id));
-  f.ai.api = originalApi;
+  (f.ai.models as OpenAIModels).api = originalApi;
   await f.input.handle({ ...f.event, eventId: "recovery" });
-  assert.equal(f.store.get<any>("input", "recovery").stage, "completed");
+  assert.equal(
+    f.store.get<any>("input", "discord:" + "recovery").stage,
+    "completed",
+  );
 });
 
 test("answer and speech failures leave minutes intact and mark partial input", async (t) => {
@@ -170,10 +239,14 @@ test("answer and speech failures leave minutes intact and mark partial input", a
       f.store.get<Meeting>("meeting", "meeting")!.messages[0].stage,
       "completed",
     );
-    assert.equal(f.store.get<any>("input", f.event.eventId).stage, "partial");
-    assert.deepEqual(f.store.get<any>("input", f.event.eventId).errorIds, [
-      entry.id,
-    ]);
+    assert.equal(
+      f.store.get<any>("input", "discord:" + f.event.eventId).stage,
+      "partial",
+    );
+    assert.deepEqual(
+      f.store.get<any>("input", "discord:" + f.event.eventId).errorIds,
+      [entry.id],
+    );
   }
 });
 
@@ -248,7 +321,11 @@ test("permission changes while STT is running discard the transcript before anal
   });
   resolve("ignored");
   await running;
-  assert.equal(f.store.get<Meeting>("meeting", "meeting")!.messages.length, 0);
+  assert.equal(
+    f.store.get<Meeting>("meeting", "meeting")!.messages.filter((m) => m.text)
+      .length,
+    0,
+  );
   assert.equal(f.output.length, 0);
 });
 
@@ -257,10 +334,14 @@ test("simple invocation acknowledges without answer API; questions answer indepe
   f.ai.transcribe = async () => "井戸Bot、聞こえていますか？";
   await f.input.handle(f.event);
   assert.equal(f.counts().answers, 0);
+  assert.equal(
+    f.store.list<any>("message")[0].replyText,
+    "はい、聞こえています。",
+  );
   assert.ok(f.output.some((o) => o[2] === "はい、聞こえています。"));
   assert.ok(f.output.some((o) => o[3] === "synthetic-audio" && o[4] === 1));
   let complete!: () => void;
-  f.ai.api = async () =>
+  (f.ai.models as OpenAIModels).api = async () =>
     ({
       responses: {
         create: () =>
@@ -290,7 +371,7 @@ test("live transcription updates before slow minutes and preserves simultaneous 
   const f = await fixture(t);
   let release!: () => void;
   let calls = 0;
-  f.ai.api = async () =>
+  (f.ai.models as OpenAIModels).api = async () =>
     ({
       responses: {
         create: async () => {
@@ -391,10 +472,10 @@ test("ambiguous tasks require an ID; viewer cannot control; controls cannot cros
   await f.input.handle({ ...stop, eventId: "stop-id", taskId: first.id });
   assert.equal(f.store.get<Task>("task", first.id)!.state, "cancelled");
   const viewer = f.store.createUser("viewer", "test-password-long", "viewer");
-  f.store.put("discord-user", "100", { userId: viewer.id });
+  f.store.put("external-identity", "discord:100", { userId: viewer.id });
   await f.input.handle({ ...stop, eventId: "denied", taskId: second.id });
   assert.equal(f.store.get<Task>("task", second.id)!.state, "queued");
-  f.store.remove("discord-user", "100");
+  f.store.remove("external-identity", "discord:100");
   second.meetingId = "other";
   f.store.put("task", second.id, second);
   await f.input.handle({
@@ -436,12 +517,16 @@ test("leave and rejoin of the same channel invalidates an in-flight transcriptio
   resolve("井戸Bot、古い質問");
   await running;
   assert.equal(f.output.length, 0);
-  assert.equal(f.store.get<Meeting>("meeting", "meeting")!.messages.length, 0);
+  assert.equal(
+    f.store.get<Meeting>("meeting", "meeting")!.messages.filter((m) => m.text)
+      .length,
+    0,
+  );
 });
 
 test("unlinked speakers can create extracted tasks, but revocation during analysis prevents execution", async (t) => {
   const f = await fixture(t);
-  f.ai.api = async () =>
+  (f.ai.models as OpenAIModels).api = async () =>
     ({
       responses: {
         create: async () => ({
@@ -461,7 +546,7 @@ test("unlinked speakers can create extracted tasks, but revocation during analys
   assert.equal(f.store.list<Task>("task").length, 1);
   assert.equal(f.store.list<Task>("task")[0].authorId, "discord-100");
   let resolve!: (v: any) => void;
-  f.ai.api = async () =>
+  (f.ai.models as OpenAIModels).api = async () =>
     ({
       responses: {
         create: () =>
@@ -507,4 +592,38 @@ test("ask stays read-only even when its question contains a control phrase", asy
   });
   assert.equal(f.store.get<Task>("task", task.id)!.state, "queued");
   assert.equal(f.counts().answers, 1);
+});
+
+test("minutes preserve acceptance order when later speech transcribes first", async (t) => {
+  const f = await fixture(t);
+  const transcriptions: Array<(text: string) => void> = [];
+  f.ai.transcribe = () =>
+    new Promise((resolve) => {
+      transcriptions.push(resolve);
+    });
+  const analyzed: string[] = [];
+  f.ai.models.update = async (meeting, messageId) => {
+    analyzed.push(
+      meeting.messages.find((message) => message.id === messageId)!.text,
+    );
+    return { minutes: analyzed.join(" / "), task: null };
+  };
+  const first = f.input.handle({ ...f.event, eventId: "audio-first" });
+  const second = f.input.handle({ ...f.event, eventId: "audio-second" });
+  assert.equal(
+    f.store.list<any>("message")[0].steps.transcription.state,
+    "running",
+  );
+  transcriptions[1]("second");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(analyzed, []);
+  transcriptions[0]("first");
+  await Promise.all([first, second]);
+  assert.deepEqual(analyzed, ["first", "second"]);
+  const meeting = f.store.get<Meeting>("meeting", "meeting")!;
+  assert.equal(meeting.summary, "first / second");
+  assert.deepEqual(
+    meeting.messages.map((message) => message.text),
+    ["first", "second"],
+  );
 });

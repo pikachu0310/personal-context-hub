@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseBotInvocation } from "../src/invocation.mjs";
+import { parseBotInvocation } from "../src/processing/immediate/invocation.mjs";
 
 test("vocatives tolerate fillers, greetings, repetition and bounded ASR aliases", () => {
   for (const text of [

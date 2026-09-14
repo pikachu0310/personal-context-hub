@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 await mkdir(".ido-build/tarballs", { recursive: true });
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const packages = [];
-for (const name of ["engine", "client", "plugin-discord"]) {
+for (const name of ["engine", "client", "plugin-discord", "plugin-dashboard"]) {
   const result = JSON.parse(
     execFileSync(
       npm,
@@ -40,10 +40,7 @@ for (const name of ["engine", "client", "plugin-discord"]) {
   }
   if (!result.files.some((f) => f.path === "dist/index.js"))
     throw new Error(`Build missing for ${name}`);
-  if (
-    name !== "plugin-discord" &&
-    !result.files.some((f) => f.path === "dist/ui/index.html")
-  )
+  if (!result.files.some((f) => f.path === "dist/ui/index.html"))
     throw new Error(`Bundled UI missing for ${name}`);
   if (
     name === "engine" &&

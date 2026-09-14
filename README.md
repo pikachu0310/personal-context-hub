@@ -1,6 +1,6 @@
 # IDO
 
-Self-hosted Engine, local Codex Clients, and an optional Discord plugin. Node.js 24 is required.
+Self-hosted Engine, local Codex Clients, a bundled Dashboard plugin, and an optional Discord plugin. Node.js 24 is required.
 
 ## Local development
 
@@ -22,21 +22,22 @@ Start a Client in another terminal:
 node packages/client/dist/cli.js start
 ```
 
-The Engine dashboard is at `http://127.0.0.1:4310`; the Client dashboard is at `http://127.0.0.1:4320`. Use separate `IDO_DATA_DIR` values to override their respective storage directories. Secrets default to owner-only `secrets.json` files in those directories. Runtime data is not moved by source-tree reorganization.
+Engine administration is at `http://127.0.0.1:4310/admin`, the business Dashboard at `http://127.0.0.1:4310/dashboard/`; the Client dashboard is at `http://127.0.0.1:4320`. Use separate `IDO_DATA_DIR` values to override their respective storage directories. Secrets default to owner-only `secrets.json` files in those directories. Runtime data is not moved by source-tree reorganization.
 
 See [setup and architecture](docs/ido-engine-client.md) for administrator initialization, Discord installation, `/join` and `/leave`, Client pairing, single-host ngrok publishing, and preview restrictions.
 
 ## Current layout
 
-- `packages/engine`: dashboard server, conversation processing, task allocation and preview relay.
+- `packages/engine`: message storage, conversation/task processing, generic plugin host, Client connections, and bundled React/Mantine administration UI.
 - `packages/client`: local Codex app-server adapter, repositories, worktrees and execution.
 - `packages/plugin-discord`: Bot, voice commands and Activity integration.
-- `packages/common`: shared protocols, policy and local storage.
-- `packages/dashboard`: React/Mantine UI bundled into Engine and Client distributions.
+- `packages/plugin-dashboard`: independent Dashboard process, business HTTP API and React/Mantine web UI.
+- `packages/common`: public communication contracts and low-level runtime utilities.
+- `packages/ui`: Mantine components and business views receiving data/actions from their owner.
 - `scripts`: current build, package, browser validation and repository coordination tools.
 - `examples/ido-preview`: compatible preview application.
 
-All current runtime source dependencies are inside `packages/`. The build checks this boundary. npm workspaces exclude the legacy archive.
+All current runtime source dependencies are inside `packages/`. The build checks package and layer dependencies. See [package architecture](docs/packages-architecture.md) for contracts and data migration. npm workspaces exclude the legacy archive.
 
 ## Verification and packaging
 

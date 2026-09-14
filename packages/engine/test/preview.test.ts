@@ -1,21 +1,22 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
 import { WebSocket, WebSocketServer } from "ws";
-import { Engine } from "../src/index.js";
-import { PreviewRelay } from "../src/preview.js";
-import { ClientPreview } from "../../client/src/preview.js";
+import { ClientPreview } from "../../client/src/preview/relay.js";
+import { PreviewRelay } from "../src/adapters/client-ws/preview.js";
+import { Engine } from "../src/bootstrap/engine.js";
+import { Tasks } from "../src/processing/tasks/service.js";
 test("registered previews relay HTTP, forms and WebSockets without management credentials; stale versions fail closed", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-preview-")),
     engine = new Engine({ directory, port: 0, previewPort: 0 }),
     store = engine.store;
   const user = store.createUser("member", "test-password-long", "member");
   store.put("project", "project", { id: "project", name: "Demo" });
-  const task = store.createTask({
+  const task = new Tasks(store).createTask({
     projectId: "project",
     meetingId: "meeting",
     authorId: user.id,
@@ -106,10 +107,10 @@ test("registered previews relay HTTP, forms and WebSockets without management cr
   const message = await once(ws, "message");
   assert.equal(String(message[0]), "hello");
   ws.close();
-  assert.equal((await fetch(origin + "/api/state")).status, 401);
+  assert.equal((await fetch(origin + "/api/admin/state")).status, 401);
   assert.equal(
     (
-      await fetch(origin + "/api/state", {
+      await fetch(origin + "/api/admin/state", {
         headers: { Origin: "null", Cookie: "ido_session=must-not-forward" },
       })
     ).status,

@@ -4,7 +4,7 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "IDO Engine, Client and Discord plugin workspace.",
+  "description": "IDO Engine, Client, Dashboard and Discord plugin workspace.",
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "eslint": "^9.39.1",
@@ -29,7 +29,7 @@
   "scripts": {
     "coordination:read": "node scripts/read-github-coordination.mjs",
     "build:ido": "node scripts/build-ido.mjs",
-    "check:ido": "tsc -p tsconfig.ido.json --noEmit && tsc -p packages/dashboard/tsconfig.json",
+    "check:ido": "tsc -p tsconfig.ido.json --noEmit && tsc -p tsconfig.ui.json",
     "test:ido": "node --import tsx --test packages/*/test/*.test.ts packages/*/test/*.test.mjs",
     "verify:ido": "npm run check:ido && npm run build:ido && npm run test:ido",
     "pack:ido": "node scripts/pack-ido.mjs",
@@ -39,7 +39,7 @@
     "check": "npm run check:ido",
     "test": "npm run test:ido",
     "lint": "eslint .",
-    "format:check": "prettier --check \"packages/*/src/**/*.{ts,mjs}\" \"packages/*/test/**/*.{ts,mjs}\" \"scripts/*.mjs\" \"docs/*.md\" \"*.{js,json,md}\" \".github/workflows/*.yml\"",
+    "format:check": "prettier --check \"packages/*/src/**/*.{ts,tsx,mjs,css,html}\" \"packages/*/test/**/*.{ts,mjs}\" \"scripts/*.mjs\" \"docs/*.md\" \"*.{js,json,md}\" \".github/workflows/*.yml\"",
     "verify": "npm run verify:ido && npm run lint && npm audit"
   }
 }

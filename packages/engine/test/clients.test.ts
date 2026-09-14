@@ -1,12 +1,12 @@
-import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Engine } from "../src/index.js";
-import { Client } from "../../client/src/index.js";
-import type { Run } from "../../client/src/executor.js";
-import type { Task } from "../../common/src/protocol.js";
+import { join } from "node:path";
+import test from "node:test";
+import { Client } from "../../client/src/bootstrap/client.js";
+import type { Run } from "../../client/src/execution/executor.js";
+import type { Task } from "../../common/src/contracts/protocol.js";
+import { Engine } from "../src/bootstrap/engine.js";
 async function until(check: () => boolean) {
   for (let n = 0; n < 100; n++) {
     if (check()) return;
@@ -68,7 +68,7 @@ test("two outbound Clients receive separate tasks; duplicate delivery does not s
   }
   await until(() => e.ready.size === 2);
   const tasks = ["one", "two"].map((requestId) =>
-    e.store.createTask({
+    e.tasks.createTask({
       projectId: "project",
       meetingId: "meeting",
       authorId: user.id,
