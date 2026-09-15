@@ -15,6 +15,20 @@ export interface Diagnostic extends DiagnosticContext {
 }
 
 const reasons: Record<string, string> = {
+  PLUGIN_DELIVERY_FAILED: "プラグインへのイベント配信に失敗しました。",
+  PLUGIN_REQUEST_FAILED: "プラグイン内でイベントの処理に失敗しました。",
+  PLUGIN_TIMEOUT: "プラグインの処理が制限時間内に完了しませんでした。",
+  PLUGIN_STOPPED: "処理中にプラグインが停止しました。",
+  PLUGIN_NOT_RUNNING: "配信先のプラグインが起動していません。",
+  DISCORD_MISSING_ACCESS: "Discordの配信先チャンネルにアクセスできません。",
+  DISCORD_MISSING_PERMISSIONS:
+    "Discordの配信先でBotの送信・編集権限が不足しています。",
+  DISCORD_UNKNOWN_CHANNEL: "Discordの配信先チャンネルが見つかりません。",
+  DISCORD_CANNOT_EDIT_MESSAGE:
+    "保存されたDiscordメッセージをこのBotで編集できません。",
+  DISCORD_INVALID_MESSAGE:
+    "Discordが配信用メッセージの形式を受け付けませんでした。",
+  DISCORD_RATE_LIMITED: "Discordの配信がレート制限に達しました。",
   COORDINATOR_CLOSED: "会議の会話処理は終了しています。",
   COORDINATOR_BUSY: "この会議の会話処理は実行中です。",
   COORDINATOR_ALREADY_OPEN: "この会議の会話処理は既に開かれています。",
