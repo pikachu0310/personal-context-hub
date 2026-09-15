@@ -245,3 +245,31 @@ test("transcript headers remain visible with long logs and line breaks in projec
   assert.match(content, /現在のプロジェクト: 開発 @everyone/);
   assert.ok(content.length < 1900);
 });
+
+test("Discord publication errors preserve safe actionable codes across RPC", async () => {
+  for (const [code, expected] of [
+    [50013, "DISCORD_MISSING_PERMISSIONS"],
+    [50001, "DISCORD_MISSING_ACCESS"],
+    [10003, "DISCORD_UNKNOWN_CHANNEL"],
+    [50005, "DISCORD_CANNOT_EDIT_MESSAGE"],
+    [50035, "DISCORD_INVALID_MESSAGE"],
+    ["ECONNRESET", "ECONNRESET"],
+  ] as const) {
+    const publisher = new Publications(
+      async () => {
+        throw Object.assign(new Error("private message and credential"), {
+          code,
+        });
+      },
+      () => {},
+    );
+    await assert.rejects(
+      publisher.update("key", "channel", "text"),
+      (error: Error) => {
+        assert.equal(error.message, expected);
+        assert.doesNotMatch(error.message, /private|credential/);
+        return true;
+      },
+    );
+  }
+});

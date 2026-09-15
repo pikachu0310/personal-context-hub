@@ -38,6 +38,30 @@ export class Publications {
         const message = await channel.send(payload);
         this.ids.set(key, message.id);
         await this.saved(key, message.id);
+      })
+      .catch((error: unknown) => {
+        // RPC accepts symbolic errors only. Never forward Discord payloads,
+        // which may contain message text or request credentials.
+        const code = (error as { code?: unknown } | null)?.code;
+        const codes: Record<string, string> = {
+          "10003": "DISCORD_UNKNOWN_CHANNEL",
+          "50001": "DISCORD_MISSING_ACCESS",
+          "50013": "DISCORD_MISSING_PERMISSIONS",
+          "50005": "DISCORD_CANNOT_EDIT_MESSAGE",
+          "50035": "DISCORD_INVALID_MESSAGE",
+          "429": "DISCORD_RATE_LIMITED",
+          ECONNRESET: "ECONNRESET",
+          ECONNREFUSED: "ECONNREFUSED",
+          ENOTFOUND: "ENOTFOUND",
+          ETIMEDOUT: "ETIMEDOUT",
+          UND_ERR_CONNECT_TIMEOUT: "UND_ERR_CONNECT_TIMEOUT",
+        };
+        if (
+          (typeof code === "string" || typeof code === "number") &&
+          Object.hasOwn(codes, code)
+        )
+          throw new Error(codes[String(code)]);
+        throw error;
       });
     this.queues.set(key, next);
     void next
