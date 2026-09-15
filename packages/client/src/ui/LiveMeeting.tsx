@@ -128,7 +128,7 @@ export function LiveMeeting({
             label: `${m.name} · ${new Date(m.lastMessageAt ?? m.startedAt ?? 0).toLocaleString("ja-JP")}`,
           }))}
           placeholder="まだ会話がありません"
-          style={{ flex: 1, maxWidth: 520 }}
+          style={{ flex: "1 1 280px", maxWidth: 520, minWidth: 0 }}
         />
         <Text size="xs" c="dimmed">
           会話順に表示 · 最新位置では新着に追従します
