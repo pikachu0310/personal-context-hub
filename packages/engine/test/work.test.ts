@@ -538,3 +538,39 @@ test("one response registers all priorities before dispatch and releases exactly
   assert.equal(store.get<Task>("task", low.id)?.state, "queued");
   assert.equal(store.get<Task>("task", high.id)?.state, "assigned");
 });
+
+test("scheduler caps older eight-slot grants at four and dispatches the fifth only after a slot is free", async (t) => {
+  const { store, work, request, device } = await fixture(t);
+  const worker = device("worker", 1);
+  worker.slots = 8;
+  worker.grants[0].slots = 8;
+  store.put("device", worker.id, worker);
+  for (let index = 0; index < 5; index++)
+    work.submit({
+      ...request,
+      requestKey: `capacity-${index}`,
+      title: `Research ${index}`,
+    });
+  const scheduler = new Scheduler(store);
+  const schedule = () => scheduler.schedule(new Set([worker.id]));
+  schedule();
+  assert.equal(
+    store.list<Task>("task").filter((task) => task.state === "assigned").length,
+    4,
+  );
+  const waiting = store
+    .list<Task>("task")
+    .find((task) => task.state === "queued")!;
+  schedule();
+  assert.equal(store.get<Task>("task", waiting.id)?.state, "queued");
+  const finished = store
+    .list<Task>("task")
+    .find((task) => task.state === "assigned")!;
+  store.put("task", finished.id, { ...finished, state: "completed" });
+  schedule();
+  assert.equal(store.get<Task>("task", waiting.id)?.state, "assigned");
+  assert.equal(
+    store.list<Task>("task").filter((task) => task.state === "assigned").length,
+    4,
+  );
+});

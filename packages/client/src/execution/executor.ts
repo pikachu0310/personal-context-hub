@@ -1,3 +1,4 @@
+import { executionSlots } from "@ido/common/contracts/work";
 import { purge } from "./purge.js";
 import { join } from "node:path";
 import { realpath } from "node:fs/promises";
@@ -236,9 +237,11 @@ export class Executor {
       if (
         !allow ||
         !mapping ||
-        (occupied.length >= slots && !ownsSlot) ||
+        (occupied.length >= executionSlots(slots, 1) && !ownsSlot) ||
         (occupied.filter((r) => r.task.projectId === task.projectId).length >=
-          mapping.slots &&
+          (mapping.workspaceMode === "project"
+            ? 1
+            : executionSlots(mapping.slots, 1)) &&
           !ownsSlot)
       )
         return;

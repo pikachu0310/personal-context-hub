@@ -1,5 +1,8 @@
 import { taskResultParts, type ResultProgress } from "./task-results.js";
-import type { MinutesTaskResult } from "@ido/common/contracts/work";
+import type {
+  MinutesTaskContext,
+  MinutesTaskResult,
+} from "@ido/common/contracts/work";
 import { createHash } from "node:crypto";
 import {
   MAX_MINUTES_LENGTH,
@@ -14,18 +17,39 @@ export type MinutesGenerator = (
   meeting: Meeting,
   taskLinks: string[],
   taskResults: MinutesTaskResult[],
+  tasks: MinutesTaskContext[],
 ) => Promise<string>;
 type Progress = {
   contextRevision?: number;
   meetingId: string;
   sources: Record<string, string>;
   taskLinks?: string[];
+  taskContextFingerprint?: string;
   results?: Record<string, ResultProgress>;
 };
 const fingerprint = (message: Meeting["messages"][number]) =>
   createHash("sha256")
     .update(JSON.stringify([message.authorId, message.text]))
     .digest("hex");
+
+function minutesTaskContexts(tasks: Task[]): MinutesTaskContext[] {
+  return tasks.map((task) => ({
+    taskId: task.id,
+    title: task.title ?? task.text.slice(0, 90),
+    link: taskMarkdown(
+      { projectId: task.projectId, taskId: task.id },
+      task.title ?? task.text.slice(0, 90),
+    ),
+    text: task.text.slice(0, 2000),
+    state: task.state,
+    sourceIds:
+      task.sourceIds?.slice(0, 20) ?? (task.requestId ? [task.requestId] : []),
+    runId: task.runId,
+    revision: task.revision,
+  }));
+}
+const contextFingerprint = (tasks: MinutesTaskContext[]) =>
+  createHash("sha256").update(JSON.stringify(tasks)).digest("hex");
 
 /** One writer per meeting. Generation never submits work or changes task state. */
 export class MinutesDocument {
@@ -93,6 +117,8 @@ export class MinutesDocument {
             (task) =>
               task.projectId === projectId && task.meetingId === meetingId,
           );
+        const tasks = minutesTaskContexts(meetingTasks);
+        const taskContextFingerprint = contextFingerprint(tasks);
         const resultParts = taskResultParts(meetingTasks, progress.results);
         const taskLinks = meetingTasks.map((task) =>
           taskMarkdown(
@@ -103,6 +129,8 @@ export class MinutesDocument {
         if (
           !messages.length &&
           !resultParts.length &&
+          (progress.taskContextFingerprint ?? contextFingerprint([])) ===
+            taskContextFingerprint &&
           JSON.stringify(progress.taskLinks ?? []) === JSON.stringify(taskLinks)
         ) {
           meeting.summaryState = "ready";
@@ -127,20 +155,21 @@ export class MinutesDocument {
           },
           taskLinks,
           resultParts.map((part) => part.value),
+          tasks,
         );
         const latest = current();
         if (!latest) return;
-        const currentParts = taskResultParts(
-          this.store
-            .list<Task>("task")
-            .filter(
-              (task) =>
-                task.projectId === projectId && task.meetingId === meetingId,
-            ),
-          progress.results,
-        );
+        const currentTasks = this.store
+          .list<Task>("task")
+          .filter(
+            (task) =>
+              task.projectId === projectId && task.meetingId === meetingId,
+          );
+        const currentParts = taskResultParts(currentTasks, progress.results);
         if (
           (latest.summaryRevision ?? 0) !== revision ||
+          contextFingerprint(minutesTaskContexts(currentTasks)) !==
+            taskContextFingerprint ||
           JSON.stringify(
             currentParts.map(({ key, progress }) => ({ key, progress })),
           ) !==
@@ -190,6 +219,7 @@ export class MinutesDocument {
           }
         }
         progress.taskLinks = taskLinks;
+        progress.taskContextFingerprint = taskContextFingerprint;
         progress.results = Object.assign(Object.create(null), progress.results);
         for (const part of resultParts)
           progress.results![part.key] = part.progress;

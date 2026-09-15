@@ -1,3 +1,4 @@
+import { MAX_EXECUTION_SLOTS } from "@ido/common/contracts/work";
 import { Button, Group, NumberInput, Select, Text } from "@mantine/core";
 import { useState } from "react";
 import { type Action, type ClientState } from "@ido/common-ui";
@@ -23,7 +24,9 @@ export function ProjectSettings({
     (m) => m.projectId === projectId,
   );
   const [directory, setDirectory] = useState(mapping?.directory ?? ""),
-    [slots, setSlots] = useState<number | string>(mapping?.slots ?? 1),
+    [slots, setSlots] = useState<number | string>(
+      mapping?.slots ?? MAX_EXECUTION_SLOTS,
+    ),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const allowed = state.allowedProjectIds?.includes(projectId) ?? false;
@@ -52,7 +55,7 @@ export function ProjectSettings({
               void update("mappings", {
                 directory,
                 network: mapping?.network ?? false,
-                slots: mapping?.slots ?? 1,
+                slots: mapping?.slots ?? MAX_EXECUTION_SLOTS,
               });
             }}
           >
@@ -105,13 +108,15 @@ export function ProjectSettings({
         </ProjectField>
         <ProjectField
           label="同時実行枠"
-          help="このプロジェクトで同時に実行するタスク数（1〜8）です。保存先を設定してから変更できます。"
+          help="このプロジェクトで同時に実行するタスク数（1〜4、初期値4）です。保存先を設定してから変更できます。"
         >
           <Group gap="xs" wrap="nowrap">
             <NumberInput
               aria-label="同時実行枠"
               min={1}
-              max={mapping?.workspaceMode === "project" ? 1 : 8}
+              max={
+                mapping?.workspaceMode === "project" ? 1 : MAX_EXECUTION_SLOTS
+              }
               disabled={mapping?.workspaceMode === "project"}
               value={mapping?.workspaceMode === "project" ? 1 : slots}
               onChange={setSlots}
