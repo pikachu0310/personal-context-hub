@@ -225,6 +225,7 @@ try {
   await client.executor.save();
   const result = {
     clientUrl: client.origin,
+    exhibitUrl: `${client.origin}/?previewRun=${encodeURIComponent(task.runId)}&exhibit=1`,
     directory: root,
     artifact: join(run.directory, "index.html"),
     taskId: task.id,

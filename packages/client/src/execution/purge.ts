@@ -2,6 +2,7 @@ import { readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Executor } from "./executor.js";
+import { removeArtifactVersions } from "../preview/artifact-versions.js";
 
 /** Only IDO's managed model logs are removed. Git worktrees are preserved. */
 async function removeThreadLogs(directory: string, threadIds: string[]) {
@@ -92,6 +93,7 @@ export async function purge(this: Executor, taskId: string) {
     await this.running.get(run.task.runId);
     await this.steering.get(run.task.runId);
     this.planWaiters.delete(run.task.runId);
+    await removeArtifactVersions(this.directory, run.task.runId);
     delete this.runs[run.task.runId];
   }
   await this.save();

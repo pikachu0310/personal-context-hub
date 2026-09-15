@@ -51,8 +51,12 @@ export function App() {
     window.addEventListener("beforeunload", leave);
     return () => window.removeEventListener("beforeunload", leave);
   }, []);
-  const [page, setPage] = useState<"overview" | "runs">();
-  const [selected, select] = useState<string>();
+  const [page, setPage] = useState<"overview" | "runs" | undefined>(() =>
+    new URL(location.href).searchParams.has("previewRun") ? "runs" : undefined,
+  );
+  const [selected, select] = useState<string | undefined>(
+    () => new URL(location.href).searchParams.get("previewRun") ?? undefined,
+  );
   const [selectedShared, selectShared] = useState<string>();
   const [query, search] = useState("");
   const [sidebar, showSidebar] = useState(true);

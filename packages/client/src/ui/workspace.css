@@ -46,6 +46,76 @@
   border-radius: 8px;
   background: white;
 }
+.artifact-comparison {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+.artifact-comparison[data-comparing] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.artifact-version {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.artifact-version[hidden] {
+  display: none;
+}
+.artifact-exhibit-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.2rem;
+  border-left: 4px solid var(--workspace-focus);
+  background: var(--workspace-info-bg);
+  border-radius: 0 8px 8px 0;
+}
+.artifact-exhibit-steps {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+.artifact-progress {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  background: var(--workspace-info-bg);
+  color: var(--workspace-text);
+}
+.artifact-progress-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--workspace-success);
+}
+.artifact-progress[data-running] .artifact-progress-dot {
+  background: var(--workspace-focus);
+  animation: artifact-pulse 1.5s ease-in-out infinite;
+}
+@keyframes artifact-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-progress[data-running] .artifact-progress-dot {
+    animation: none;
+  }
+}
+@media (max-width: 900px) {
+  .artifact-comparison[data-comparing] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .artifact-select {
   flex: 1;
   min-width: 160px;

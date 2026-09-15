@@ -1,5 +1,9 @@
 import { attachTaskSource } from "@ido/common/contracts/protocol";
 import {
+  readArtifactVersion,
+  saveArtifactVersion,
+} from "../preview/artifact-versions.js";
+import {
   artifactPolicy,
   listArtifacts,
   readArtifact,
@@ -158,7 +162,10 @@ export async function route(
       throw new HttpError(404, "RUN_NOT_FOUND");
     const path = url.searchParams.get("path");
     if (url.pathname === "/api/artifact-document") {
-      const artifact = await readArtifact(value.directory, path ?? "");
+      const version = url.searchParams.get("version");
+      const artifact = version
+        ? await readArtifactVersion(this.directory, value.task.runId, version)
+        : await readArtifact(value.directory, path ?? "");
       res.setHeader("Content-Security-Policy", artifactPolicy);
       res.setHeader("Cache-Control", "no-store");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -166,13 +173,19 @@ export async function route(
       res.end(artifact.html);
       return;
     }
-    send(
-      res,
-      200,
-      path === null
-        ? { artifacts: await listArtifacts(value.directory) }
-        : await readArtifact(value.directory, path),
-    );
+    if (path === null)
+      send(res, 200, { artifacts: await listArtifacts(value.directory) });
+    else {
+      const artifact = await readArtifact(value.directory, path);
+      send(res, 200, {
+        ...artifact,
+        ...(await saveArtifactVersion(
+          this.directory,
+          value.task.runId,
+          artifact,
+        )),
+      });
+    }
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/local-tasks/progress") {

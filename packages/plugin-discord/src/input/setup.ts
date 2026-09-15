@@ -93,7 +93,11 @@ export async function inspectSetup(
     .filter((channel) => channel.type !== ChannelType.GuildForum)
     .map(({ id, name }) => ({ id, name }));
   const forums = eligible
-    .filter((channel) => channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildText)
+    .filter(
+      (channel) =>
+        channel.type === ChannelType.GuildForum ||
+        channel.type === ChannelType.GuildText,
+    )
     .map(({ id, name }) => ({ id, name }));
   if (
     config.issueForumChannelId &&

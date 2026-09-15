@@ -296,6 +296,8 @@ export function ClientRuns({
               version={`${current.state}:${current.task.revision}`}
               canFollowup={Boolean(canSend)}
               onFollowup={(text) => submit(text)}
+              running={running}
+              executionLabel={stateLabel(current.state)}
             />
             <RequestMessage
               sender={displaySender(
