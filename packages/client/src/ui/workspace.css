@@ -1638,7 +1638,6 @@ button {
   border-radius: 50%;
   background: var(--workspace-focus);
 }
-.project-menu,
 .task-row > .icon-button {
   opacity: 0;
   pointer-events: none;

@@ -607,10 +607,13 @@ try {
   await clientPage
     .getByRole("button", { name: "プロジェクトを追加", exact: true })
     .click();
-  await clientPage.getByLabel("名前").fill("Client project");
+  await clientPage.getByLabel("名前", { exact: true }).fill("Client project");
   const newRepo = join(directory, "client-project");
   await mkdir(newRepo);
-  await clientPage.getByLabel("ディレクトリ").fill(newRepo);
+  await clientPage.getByLabel("保存先", { exact: true }).fill(newRepo);
+  await clientPage
+    .getByRole("switch", { name: "タスクの実行許可", exact: true })
+    .press("Space");
   await clientPage.screenshot({
     path: ".ido-build/screenshots/client-create-project.png",
     fullPage: true,
@@ -637,30 +640,33 @@ try {
   );
   await clientPage
     .getByRole("button", { name: "Client projectの設定", exact: true })
+    .focus();
+  await clientPage
+    .getByRole("button", { name: "Client projectの設定", exact: true })
     .click();
   await clientPage
     .getByRole("menuitem", { name: "接続・設定", exact: true })
     .click();
   await clientPage
-    .getByRole("heading", { name: "タスクの実行許可", exact: true })
+    .getByRole("switch", { name: "タスクの実行許可", exact: true })
     .waitFor();
-  await clientPage.getByText("Manual · 会話する", { exact: true }).click();
+  await clientPage.getByText("Manual", { exact: true }).click();
   await clientPage.waitForFunction(async () => {
     const state = await (await fetch("/api/state")).json();
     return state.settings.mappings.some((m) => m.progressMode === "manual");
   });
   // This switch is controlled by a server refresh, so wait for that update.
   await clientPage
-    .getByLabel("このプロジェクトのタスクを受け取って実行する")
-    .click();
+    .getByRole("switch", { name: "タスクの実行許可", exact: true })
+    .press("Space");
   await clientPage.locator('input[role="switch"]:checked').waitFor();
   await clientPage.waitForFunction(async () => {
     const state = await (await fetch("/api/state")).json();
     return state.allowedProjectIds.length === 1;
   });
   await clientPage
-    .getByLabel("このプロジェクトのタスクを受け取って実行する")
-    .click();
+    .getByRole("switch", { name: "タスクの実行許可", exact: true })
+    .press("Space");
   await clientPage.waitForFunction(async () => {
     const state = await (await fetch("/api/state")).json();
     return state.allowedProjectIds.length === 0;
@@ -702,7 +708,7 @@ try {
     .getByRole("button", { name: "Renamed projectの設定", exact: true })
     .waitFor();
   await clientPage
-    .getByRole("button", { name: "議事録", exact: true })
+    .getByRole("button", { name: "会議・議事録", exact: true })
     .last()
     .click();
   await clientPage.getByText("詳細を見る", { exact: true }).click();
