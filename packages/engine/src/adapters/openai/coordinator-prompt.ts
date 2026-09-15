@@ -4,8 +4,15 @@ import type {
   CoordinatorResponse,
 } from "@ido/common/contracts/coordinator";
 
-const ids = { type: "array", items: { type: "string" }, maxItems: 20 };
-const shortList = { type: "array", items: { type: "string" }, maxItems: 8 };
+// Match parser bounds so a schema-valid response does not fail on empty or
+// oversized text after generation. Whitespace-only text remains parser-rejected.
+const boundedText = (maxLength: number) => ({
+  type: "string",
+  minLength: 1,
+  maxLength,
+});
+const ids = { type: "array", items: boundedText(200), maxItems: 20 };
+const shortList = { type: "array", items: boundedText(1000), maxItems: 8 };
 const evaluationSchema = {
   anyOf: [
     { type: "null" },
@@ -48,7 +55,7 @@ const evaluationSchema = {
                 additionalProperties: false,
                 required: ["reason", "sourceIds"],
                 properties: {
-                  reason: { type: "string", maxLength: 300 },
+                  reason: boundedText(300),
                   sourceIds: ids,
                 },
               },
@@ -67,7 +74,7 @@ const evaluationSchema = {
           type: "string",
           enum: ["requested", "proposal", "opportunity"],
         },
-        reason: { type: "string", maxLength: 600 },
+        reason: boundedText(600),
         sourceIds: ids,
       },
     },
@@ -93,7 +100,7 @@ export const coordinatorSchema = {
         additionalProperties: false,
         required: ["taskId", "revision", "expectedVersion", "evaluation"],
         properties: {
-          taskId: { type: "string" },
+          taskId: boundedText(200),
           revision: { type: "integer", minimum: 1 },
           expectedVersion: { type: "integer", minimum: 0 },
           evaluation: evaluationSchema,
@@ -108,13 +115,13 @@ export const coordinatorSchema = {
           additionalProperties: false,
           required: ["candidateId", "revision", "action", "text"],
           properties: {
-            candidateId: { type: "string" },
+            candidateId: boundedText(200),
             revision: { type: "integer", minimum: 0 },
             action: {
               type: "string",
               enum: ["continue", "stop", "replace", "discard"],
             },
-            text: { type: ["string", "null"], maxLength: 2000 },
+            text: { ...boundedText(2000), type: ["string", "null"] },
           },
         },
       ],
@@ -127,7 +134,7 @@ export const coordinatorSchema = {
         additionalProperties: false,
         required: ["meetingId", "topics"],
         properties: {
-          meetingId: { type: "string" },
+          meetingId: boundedText(200),
           topics: {
             type: "array",
             maxItems: 8,
@@ -143,9 +150,9 @@ export const coordinatorSchema = {
                 "sourceIds",
               ],
               properties: {
-                id: { type: ["string", "null"] },
-                title: { type: "string" },
-                summary: { type: "string" },
+                id: { ...boundedText(200), type: ["string", "null"] },
+                title: boundedText(150),
+                summary: boundedText(1800),
                 decisions: shortList,
                 openQuestions: shortList,
                 sourceIds: { ...ids, minItems: 1 },
@@ -169,7 +176,7 @@ export const coordinatorSchema = {
             "resultTaskIds",
           ],
           properties: {
-            text: { type: "string" },
+            text: boundedText(16000),
             delivery: { type: "string", enum: ["notify", "record_only"] },
             resultTaskIds: ids,
             reason: {
@@ -196,7 +203,7 @@ export const coordinatorSchema = {
         ],
         properties: {
           evaluation: evaluationSchema,
-          title: { type: "string" },
+          title: boundedText(500),
           kind: {
             type: "string",
             enum: ["research", "implementation", "test", "benchmark"],
@@ -205,7 +212,7 @@ export const coordinatorSchema = {
           acceptanceCriteria: {
             type: "array",
             maxItems: 8,
-            items: { type: "string" },
+            items: boundedText(1000),
           },
         },
       },
@@ -219,7 +226,7 @@ export const coordinatorSchema = {
         required: ["type", "taskId", "sourceIds"],
         properties: {
           type: { type: "string", enum: ["stop", "instruction"] },
-          taskId: { type: "string" },
+          taskId: boundedText(200),
           sourceIds: { ...ids, minItems: 1 },
         },
       },

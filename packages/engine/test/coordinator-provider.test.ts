@@ -463,3 +463,33 @@ test("mixed playback review and message batches retain independent topic process
   assert.match(request.input, /通常messageは通常どおり処理/);
   assert.match(request.input, /議題の更新は発話・タスク作成とは独立/);
 });
+
+test("request schema matches parser bounds for meeting text and source IDs", async (t) => {
+  const f = fixture();
+  t.after(() => f.factory.close());
+  const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+  await runtime.run(observation());
+  const properties = f.calls[0].request.text.format.schema.properties;
+  const topic = properties.minutes.items.properties.topics.items.properties;
+  const reply = properties.reply.anyOf.find(
+    (item: any) => item.type === "object",
+  ).properties;
+  const task = properties.tasks.items.properties;
+  for (const [field, maximum] of [
+    [topic.id, 200],
+    [topic.title, 150],
+    [topic.summary, 1800],
+    [topic.decisions.items, 1000],
+    [topic.openQuestions.items, 1000],
+    [topic.sourceIds.items, 200],
+    [reply.text, 16000],
+    [reply.sourceIds.items, 200],
+    [task.title, 500],
+    [task.acceptanceCriteria.items, 1000],
+    [properties.controls.items.properties.taskId, 200],
+  ] as const) {
+    assert.equal(field.minLength, 1);
+    assert.equal(field.maxLength, maximum);
+  }
+  assert.deepEqual(topic.id.type, ["string", "null"]);
+});
