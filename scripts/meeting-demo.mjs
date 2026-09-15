@@ -181,6 +181,14 @@ try {
       query,
       returned: result.messages.length,
     });
+    console.log(
+      JSON.stringify({
+        stage: "meeting-context-read",
+        revision: task.revision,
+        returned: result.messages.length,
+        documents: result.documents?.length ?? 0,
+      }),
+    );
     return result;
   };
   await client.connect();
