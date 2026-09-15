@@ -109,7 +109,17 @@ export function createOpenAICoordinatorFactory(
                       type: "json_schema",
                       name: "meeting_coordinator",
                       strict: true,
-                      schema: coordinatorSchema,
+                      schema: {
+                        ...coordinatorSchema,
+                        properties: {
+                          ...coordinatorSchema.properties,
+                          speech: value.events.some(
+                            (event) => event.type === "speech_review",
+                          )
+                            ? coordinatorSchema.properties.speech
+                            : { type: "null" },
+                        },
+                      },
                     },
                   },
                   max_output_tokens: 16000,

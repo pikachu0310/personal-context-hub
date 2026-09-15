@@ -21,6 +21,10 @@ export interface CatalogEntry {
 export class Plugins {
   readonly processes = new Map<string, PluginProcess>();
   readonly busy = new Set<string>();
+  private readonly publications = new Map<
+    string,
+    { next?: PluginEvent; generation: number }
+  >();
   constructor(
     readonly directory: string,
     readonly store: Repository,
@@ -295,13 +299,51 @@ export class Plugins {
               ...event,
               data: { ...(event.data as Record<string, unknown>), projectName },
             };
-      void plugin.request("event", { event: enriched }).catch(() =>
-        this.store.logError(new Error("PLUGIN_DELIVERY_FAILED"), {
-          source: "plugin",
+      const report = (error: unknown) =>
+        this.store.logError(error, {
+          source: `plugin:${id}`,
           operation: "event.deliver",
+          eventId: event.type,
           meetingId: event.meetingId,
-        }),
-      );
+        });
+      if (event.type === "tasks") {
+        void plugin.request("event", { event: enriched }).catch(report);
+        continue;
+      }
+      // Transcript/minutes events are complete snapshots. Keep one request in
+      // flight and only the newest pending snapshot, rather than filling the
+      // plugin's Discord edit queue until the RPC deadline expires.
+      const key = JSON.stringify([id, event.type, event.meetingId]);
+      const pending = this.publications.get(key);
+      if (pending && pending.generation === plugin.generation) {
+        pending.next = enriched;
+        continue;
+      }
+      const delivery = {
+        next: enriched as PluginEvent | undefined,
+        generation: plugin.generation,
+      };
+      this.publications.set(key, delivery);
+      void (async () => {
+        try {
+          while (
+            delivery.next &&
+            plugin.running &&
+            plugin.generation === delivery.generation
+          ) {
+            const next = delivery.next;
+            delivery.next = undefined;
+            try {
+              await plugin.request("event", { event: next });
+            } catch (error) {
+              report(error);
+            }
+          }
+        } finally {
+          if (this.publications.get(key) === delivery)
+            this.publications.delete(key);
+        }
+      })();
     }
   }
   async close() {
