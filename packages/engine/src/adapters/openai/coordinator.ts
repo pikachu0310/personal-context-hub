@@ -114,7 +114,10 @@ export function createOpenAICoordinatorFactory(
                   },
                   max_output_tokens: 16000,
                 },
-                { signal: turnSignal, maxRetries: 0, timeout: 60_000 },
+                // This request has no tools or remote conversation state.
+                // One SDK retry can recover a transient transport failure;
+                // exhausted failures still stop at the inbox uncertainty guard.
+                { signal: turnSignal, maxRetries: 1, timeout: 60_000 },
               );
               turnSignal.throwIfAborted();
               if (response.status !== "completed")
@@ -143,6 +146,7 @@ export function createOpenAICoordinatorFactory(
                 ),
                 {
                   status: detail.status,
+                  providerErrorType: detail.type,
                   requestID: detail.requestId,
                   param: detail.parameter,
                   cause: detail.cause ? { code: detail.cause } : undefined,

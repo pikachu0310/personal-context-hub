@@ -140,5 +140,18 @@ export function describeError(value: unknown) {
                     : status
                       ? "OpenAI APIがリクエストを受け付けませんでした。"
                       : "処理に失敗しました。処理段階と関連IDを確認してください。";
-  return { type, code, cause, status, requestId, parameter, reason };
+  const providerErrorType =
+    typeof e.providerErrorType === "string" && types.has(e.providerErrorType)
+      ? e.providerErrorType
+      : undefined;
+  return {
+    type,
+    code,
+    cause,
+    status,
+    requestId,
+    parameter,
+    reason,
+    providerErrorType,
+  };
 }
