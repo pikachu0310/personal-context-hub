@@ -1,3 +1,5 @@
+import { evaluation } from "./priority-fixture.js";
+import { taskPriority } from "../src/processing/tasks/priority.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -28,10 +30,38 @@ test("scheduler preserves requested provider/model/mode and waits for an authent
     reasoningEffort: "high",
     progressMode: "manual",
   });
+  task.priority = taskPriority(
+    evaluation([], {
+      intent: "proposal",
+      immediacy: 3,
+      certainty: 3,
+      importance: 3,
+      specificity: 3,
+    }),
+    task.kind,
+    { batchId: "low", version: 1, runRevision: 1 },
+  );
+  store.put("task", task.id, task);
+  const urgent = new Tasks(store).createTask({
+    projectId: "p",
+    meetingId: "m",
+    authorId: "user",
+    requestId: "urgent",
+    text: "Urgent",
+    network: false,
+    agent: "claude",
+    model: "sonnet",
+    progressMode: "manual",
+    priority: taskPriority(evaluation(), undefined, {
+      batchId: "high",
+      version: 1,
+      runRevision: 1,
+    }),
+  });
   const device = {
     id: "pc",
     codexConnected: true,
-    slots: 2,
+    slots: 1,
     grants: [{ projectId: "p", network: true, slots: 2 }],
     profile: { name: "PC", claudeConnected: true },
     lastAssigned: 0,
@@ -48,6 +78,13 @@ test("scheduler preserves requested provider/model/mode and waits for an authent
   device.grants[0].agents = ["claude"];
   device.codexConnected = false;
   save();
+  scheduler.schedule(new Set([device.id]));
+  assert.equal(store.get<Task>("task", urgent.id)?.state, "assigned");
+  assert.equal(store.get<Task>("task", task.id)?.state, "queued");
+  store.put("task", urgent.id, {
+    ...store.get<Task>("task", urgent.id)!,
+    state: "completed",
+  });
   scheduler.schedule(new Set([device.id]));
   const assigned = store.get<Task>("task", task.id)!;
   assert.equal(assigned.clientId, device.id);

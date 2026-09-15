@@ -850,6 +850,7 @@ export function ClientRuns({
           <EnvironmentRow label="優先度">
             <TaskPriority
               priority={
+                remote?.detail.task.priority ??
                 state.projectTasks?.find((task) => task.id === current.task.id)
                   ?.priority ??
                 state.teamTasks?.tasks.find(
