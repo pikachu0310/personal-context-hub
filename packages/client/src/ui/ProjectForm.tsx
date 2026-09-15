@@ -19,6 +19,8 @@ export const projectHelp = {
   allow:
     "このPCで新しいタスクの実行を許可します。設定はClientの再起動後も保持します。実行には接続とエージェントの連携が必要です。Offにしても実行中のタスクは停止しません。",
   mode: "新しいタスクに適用します。Autoは依頼に沿って進めます。Manualはまず相談・計画し、「実行する」を押すと作業を開始します。受け取り済みのタスクは変更しません。",
+  workspace:
+    "別フォルダーではタスクごとにGit worktreeを作ります。直接編集では保存先をそのまま使うため、同じ場所を開いたUnityにも反映できます。直接編集の同時実行は1件です。変更前に実行許可をOffにしてください。",
   network:
     "サンドボックス内で実行するタスクの通信設定です。「許可を求める」「フルアクセス」では、この設定に関わらず通信可能です。受信タスクの明示的な通信禁止は優先します。",
 };
@@ -113,6 +115,30 @@ export function ProjectMode({
     />
   );
 }
+export function ProjectWorkspaceMode({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled?: boolean;
+  onChange: (value: "worktree" | "project") => void;
+}) {
+  return (
+    <SegmentedControl
+      size="sm"
+      fullWidth
+      aria-label="作業場所"
+      value={value}
+      disabled={disabled}
+      data={[
+        { label: "別フォルダー", value: "worktree" },
+        { label: "保存先を直接編集", value: "project" },
+      ]}
+      onChange={(mode) => onChange(mode as "worktree" | "project")}
+    />
+  );
+}
 export function ProjectDirectory({
   value,
   onChange,
@@ -170,7 +196,10 @@ export function AddProjectForm({
     [directory, setDirectory] = useState(""),
     [allow, setAllow] = useState(true),
     [network, setNetwork] = useState(true),
-    [mode, setMode] = useState("auto");
+    [mode, setMode] = useState("auto"),
+    [workspaceMode, setWorkspaceMode] = useState<"worktree" | "project">(
+      "worktree",
+    );
   return (
     <div className="project-add-form">
       <Form
@@ -184,6 +213,7 @@ export function AddProjectForm({
             allow,
             network,
             progressMode: mode,
+            workspaceMode,
             slots: 1,
           });
           saved();
@@ -213,6 +243,17 @@ export function AddProjectForm({
           role="group"
           aria-label="タスク実行と通信"
         >
+          <ProjectField label="作業場所" help={projectHelp.workspace}>
+            <ProjectWorkspaceMode
+              value={workspaceMode}
+              onChange={setWorkspaceMode}
+            />
+            {workspaceMode === "project" && (
+              <Text size="sm" c="dimmed">
+                保存先を直接変更します。Unityを動かすPCのClientで設定してください。
+              </Text>
+            )}
+          </ProjectField>
           <ProjectField label="タスクの実行許可" help={projectHelp.allow}>
             <ProjectToggle
               label="タスクの実行許可"

@@ -1,6 +1,7 @@
 import { SharedTaskDetail } from "./TeamTasks.js";
 import { MinutesInspector } from "./MinutesInspector.js";
 import { MinutesList } from "./MinutesList.js";
+import { LiveMeeting } from "./LiveMeeting.js";
 import { MeetingInput } from "./MeetingInput.js";
 import type { TaskReference } from "@ido/common/contracts/api";
 import {
@@ -115,7 +116,7 @@ export function ProjectView({
         <Stack gap="sm">
           {error && <Alert color="red">{error}</Alert>}
           <Group justify="space-between">
-            <Title order={2}>議事録</Title>
+            <Title order={2}>会議・議事録</Title>
             <Group gap="xs">
               <Text c="dimmed" size="sm">
                 {state.project.name}
@@ -156,38 +157,52 @@ export function ProjectView({
               />
             )}
           </Modal>
-          <>
-            <MinutesList
-              key={projectId}
-              meetings={state.minutes}
-              loadTranscript={
-                state.transcriptPaging ? loadTranscript : undefined
-              }
-              projectId={projectId}
-              projects={clientState.settings.projects.filter(
-                (p) =>
-                  !clientState.allowedProjectIds ||
-                  clientState.allowedProjectIds.includes(p.id),
-              )}
-              canEdit={clientState.connected && state.canEditMinutes === true}
-              openTask={openTask}
-              dirtyChanged={dirtyChanged}
-              saved={(meeting) =>
-                setState(
-                  (current) =>
-                    current && {
-                      ...current,
-                      minutes: current.minutes.map((item) =>
-                        item.id === meeting.id &&
-                        (item.summaryRevision ?? 0) <=
-                          (meeting.summaryRevision ?? 0)
-                          ? meeting
-                          : item,
-                      ),
-                    },
-                )
-              }
-            />
+          <Tabs defaultValue="live" keepMounted>
+            <Tabs.List mb="md">
+              <Tabs.Tab value="live">ライブ会議</Tabs.Tab>
+              <Tabs.Tab value="minutes">議事録</Tabs.Tab>
+            </Tabs.List>
+            <Tabs.Panel value="live">
+              <LiveMeeting
+                workspace={state}
+                client={clientState}
+                openTask={openTask}
+                openSettings={openSettings}
+              />
+            </Tabs.Panel>
+            <Tabs.Panel value="minutes">
+              <MinutesList
+                key={projectId}
+                meetings={state.minutes}
+                loadTranscript={
+                  state.transcriptPaging ? loadTranscript : undefined
+                }
+                projectId={projectId}
+                projects={clientState.settings.projects.filter(
+                  (p) =>
+                    !clientState.allowedProjectIds ||
+                    clientState.allowedProjectIds.includes(p.id),
+                )}
+                canEdit={clientState.connected && state.canEditMinutes === true}
+                openTask={openTask}
+                dirtyChanged={dirtyChanged}
+                saved={(meeting) =>
+                  setState(
+                    (current) =>
+                      current && {
+                        ...current,
+                        minutes: current.minutes.map((item) =>
+                          item.id === meeting.id &&
+                          (item.summaryRevision ?? 0) <=
+                            (meeting.summaryRevision ?? 0)
+                            ? meeting
+                            : item,
+                        ),
+                      },
+                  )
+                }
+              />
+            </Tabs.Panel>
             <Modal
               opened={projectDetails}
               onClose={() => setProjectDetails(false)}
@@ -274,7 +289,7 @@ export function ProjectView({
                 </Tabs.Panel>
               </Tabs>
             </Modal>
-          </>
+          </Tabs>
         </Stack>
       </div>
     </div>

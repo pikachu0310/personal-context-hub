@@ -51,7 +51,10 @@ export async function artifact(this: Executor, runId: string) {
   }
   return {
     patch: patch.slice(0, 256000),
-    branch: `ido/${runId}`,
+    branch:
+      value.workspaceMode === "project"
+        ? await run("git", ["-C", value.directory, "branch", "--show-current"])
+        : `ido/${runId}`,
     revision: value.task.revision,
   };
 }

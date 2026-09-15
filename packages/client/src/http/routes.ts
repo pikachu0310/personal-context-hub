@@ -573,6 +573,8 @@ export async function route(
             directory,
             network: input.network === true,
             progressMode: input.progressMode === "manual" ? "manual" : "auto",
+            workspaceMode:
+              input.workspaceMode === "project" ? "project" : "worktree",
             slots: 1,
           });
         delete this.settings.pendingProject;
@@ -590,6 +592,13 @@ export async function route(
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       if (!this.settings.projects.some((p) => p.id === projectId))
         throw new HttpError(400, "UNKNOWN_PROJECT");
+      const oldMapping = this.settings.mappings.find(
+        (m) => m.projectId === projectId,
+      );
+      const workspaceMode =
+        input.workspaceMode ?? oldMapping?.workspaceMode ?? "worktree";
+      if (workspaceMode !== "project" && workspaceMode !== "worktree")
+        throw new HttpError(400, "INVALID_WORKSPACE_MODE");
       const directory = await projectDirectory(text(input.directory, 4000));
       if (this.projectBusy(projectId))
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
@@ -615,7 +624,11 @@ export async function route(
                   ?.progressMode,
 
           network: input.network === true,
-          slots: Math.max(1, Math.min(8, Number(input.slots) || 1)),
+          workspaceMode,
+          slots:
+            workspaceMode === "project"
+              ? 1
+              : Math.max(1, Math.min(8, Number(input.slots) || 1)),
         });
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
@@ -646,10 +659,10 @@ export async function route(
       const previousSlots = mapping.slots;
       const previousTotal = this.settings.slots;
       const previouslyAllowed = this.allowedProjects.has(projectId);
-      mapping.slots = Math.max(
-        1,
-        Math.min(8, Number(input.slots) || mapping.slots),
-      );
+      mapping.slots =
+        mapping.workspaceMode === "project"
+          ? 1
+          : Math.max(1, Math.min(8, Number(input.slots) || mapping.slots));
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
       this.settings.slots = Math.min(

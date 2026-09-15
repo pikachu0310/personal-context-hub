@@ -1,5 +1,6 @@
 import { purge } from "./purge.js";
 import { join } from "node:path";
+import { realpath } from "node:fs/promises";
 import type {
   ClientActivity,
   TaskContextSource,
@@ -40,6 +41,7 @@ export interface WorkInstruction extends RequestMessage {
 }
 
 export interface Run {
+  workspaceMode?: "worktree" | "project";
   detailSync?: {
     engineUrl: string;
     deviceId: string;
@@ -260,8 +262,32 @@ export class Executor {
         this.report(previous);
         return;
       }
+      // Persist the choice on the run: changing project settings must not move
+      // a resumed task into a different checkout.
+      const workspaceMode = previous
+        ? (previous.workspaceMode ?? "worktree")
+        : (mapping.workspaceMode ?? "worktree");
       const directory =
-        previous?.directory ?? join(this.directory, "worktrees", task.runId);
+        previous?.directory ??
+        (workspaceMode === "project"
+          ? await realpath(mapping.directory)
+          : join(this.directory, "worktrees", task.runId));
+      if (workspaceMode === "project") {
+        const canonical = await realpath(directory);
+        for (const run of Object.values(this.runs)) {
+          if (
+            run.task.runId === task.runId ||
+            (!["assigned", "running", "interrupted"].includes(run.state) &&
+              !this.active.has(run.task.runId))
+          )
+            continue;
+          if (
+            (await realpath(run.directory).catch(() => run.directory)) ===
+            canonical
+          )
+            return;
+        }
+      }
       task.attachedSources = [
         ...new Map(
           [
@@ -310,6 +336,7 @@ export class Executor {
         activityVersion: previous?.activityVersion,
         task: structuredClone(task),
         requestAt: previous ? command.sentAt : task.createdAt,
+        workspaceMode,
         directory,
         threadId: previous?.threadId,
         boardToolsEnabled: previous?.boardToolsEnabled,

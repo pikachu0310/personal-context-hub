@@ -6,6 +6,7 @@ import {
   ProjectDirectory,
   ProjectField,
   ProjectMode,
+  ProjectWorkspaceMode,
   ProjectToggle,
   projectHelp,
 } from "./ProjectForm.js";
@@ -81,6 +82,27 @@ export function ProjectSettings({
         </ProjectField>
       </div>
       <div className="project-form-group" role="group" aria-label="タスク実行">
+        <ProjectField label="作業場所" help={projectHelp.workspace}>
+          <ProjectWorkspaceMode
+            value={mapping?.workspaceMode ?? "worktree"}
+            disabled={!mapping || busy || allowed}
+            onChange={(workspaceMode) =>
+              void update("mappings", {
+                directory: mapping!.directory,
+                network: mapping!.network,
+                slots: mapping!.slots,
+                workspaceMode,
+              })
+            }
+          />
+          <Text size="sm" c="dimmed" mt="xs">
+            {allowed
+              ? "変更するにはタスクの実行許可をOffにしてください。"
+              : mapping?.workspaceMode === "project"
+                ? "保存先を直接変更します。Unityを開いているPCのClientで設定してください。"
+                : "タスクごとに別の作業フォルダーを作ります。"}
+          </Text>
+        </ProjectField>
         <ProjectField
           label="同時実行枠"
           help="このプロジェクトで同時に実行するタスク数（1〜8）です。保存先を設定してから変更できます。"
@@ -89,8 +111,9 @@ export function ProjectSettings({
             <NumberInput
               aria-label="同時実行枠"
               min={1}
-              max={8}
-              value={slots}
+              max={mapping?.workspaceMode === "project" ? 1 : 8}
+              disabled={mapping?.workspaceMode === "project"}
+              value={mapping?.workspaceMode === "project" ? 1 : slots}
               onChange={setSlots}
               style={{ flex: 1 }}
             />

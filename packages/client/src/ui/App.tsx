@@ -395,7 +395,7 @@ export function App() {
                       }}
                     >
                       <Icon name="file" size={15} />
-                      <span>議事録</span>
+                      <span>会議・議事録</span>
                     </button>
                   )}
                   {Object.hasOwn(taskDrafts, id) && (
