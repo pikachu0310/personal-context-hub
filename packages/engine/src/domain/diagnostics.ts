@@ -98,10 +98,20 @@ export function describeError(value: unknown) {
   const known = (v: unknown) =>
     typeof v === "string" && Object.hasOwn(reasons, v) ? v : undefined;
   const code = known(e.code) ?? known(e.type) ?? known(e.message);
-  const cause =
-    e.cause && typeof e.cause === "object"
-      ? known((e.cause as Record<string, unknown>).code)
-      : undefined;
+  // SDK -> fetch TypeError -> socket error. Inspect bounded causes without
+  // persisting raw messages, hostnames, stacks or cyclic error objects.
+  let cause: string | undefined;
+  let nested = e.cause;
+  for (
+    let depth = 0;
+    depth < 5 && nested && typeof nested === "object";
+    depth++
+  ) {
+    const detail = nested as Record<string, unknown>;
+    cause = known(detail.code);
+    if (cause) break;
+    nested = detail.cause;
+  }
   const constructorName =
     value instanceof Error ? value.constructor.name : undefined;
   const type =
@@ -135,27 +145,30 @@ export function describeError(value: unknown) {
     ].includes(e.param)
       ? e.param
       : undefined;
-  const reason = code
-    ? reasons[code]
-    : cause
-      ? reasons[cause]
-      : type === "APIConnectionTimeoutError"
-        ? "OpenAI APIとの通信がタイムアウトしました。"
-        : type === "APIConnectionError"
-          ? "OpenAI APIに接続できませんでした。ネットワークを確認してください。"
-          : type === "SyntaxError"
-            ? "応答データを解析できませんでした。"
-            : status === 401
-              ? "OpenAI APIの認証に失敗しました。"
-              : status === 403
-                ? "OpenAI APIへのアクセスが拒否されました。"
-                : status === 429
-                  ? "OpenAI APIのレート制限または利用枠に達しました。"
-                  : status && status >= 500
-                    ? "OpenAI API側でエラーが発生しました。"
-                    : status
-                      ? "OpenAI APIがリクエストを受け付けませんでした。"
-                      : "処理に失敗しました。処理段階と関連IDを確認してください。";
+  const reason =
+    code === "invalid_value" && parameter === "file"
+      ? "音声ファイルが受け付けられませんでした。音声の長さ・WAVヘッダー・データサイズを確認してください。"
+      : code
+        ? reasons[code]
+        : cause
+          ? reasons[cause]
+          : type === "APIConnectionTimeoutError"
+            ? "OpenAI APIとの通信がタイムアウトしました。"
+            : type === "APIConnectionError"
+              ? "OpenAI APIに接続できませんでした。ネットワークを確認してください。"
+              : type === "SyntaxError"
+                ? "応答データを解析できませんでした。"
+                : status === 401
+                  ? "OpenAI APIの認証に失敗しました。"
+                  : status === 403
+                    ? "OpenAI APIへのアクセスが拒否されました。"
+                    : status === 429
+                      ? "OpenAI APIのレート制限または利用枠に達しました。"
+                      : status && status >= 500
+                        ? "OpenAI API側でエラーが発生しました。"
+                        : status
+                          ? "OpenAI APIがリクエストを受け付けませんでした。"
+                          : "処理に失敗しました。処理段階と関連IDを確認してください。";
   const providerErrorType =
     typeof e.providerErrorType === "string" && types.has(e.providerErrorType)
       ? e.providerErrorType

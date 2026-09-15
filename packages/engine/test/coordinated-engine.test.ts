@@ -2745,3 +2745,57 @@ test("a result requiring notification is not suppressed by a resolved sibling in
     1,
   );
 });
+
+test("failed STT retains capture timing without storing audio and later speech can recover", async (t) => {
+  const f = await fixture(t);
+  const capture = {
+    sessionId: "session",
+    utteranceId: "failed-turn",
+    segmentIndex: 0,
+    startedAt: 1000,
+    endedAt: 1200,
+    final: true,
+    complete: true,
+  };
+  f.transcribe(async () => {
+    throw new Error("ETIMEDOUT");
+  });
+  await f.engine.input.handle(
+    {
+      eventId: "failed-audio",
+      meetingId: "meeting",
+      projectId: "project",
+      audio: audio(),
+      capture,
+    },
+    f.context().value,
+  );
+  const failed = f
+    .messages()
+    .find((m) => m.inputId === "fixture:failed-audio")!;
+  assert.equal(failed.stage, "failed");
+  assert.equal(failed.origin, "audio");
+  assert.deepEqual(failed.capture, capture);
+  assert.equal(failed.text, "");
+  assert.equal("audio" in failed, false);
+  assert.equal(f.tasks().length, 0);
+  f.transcribe(async () => "接続が復旧しました。");
+  await f.engine.input.handle(
+    {
+      eventId: "recovered-audio",
+      meetingId: "meeting",
+      projectId: "project",
+      audio: audio(),
+      capture: {
+        ...capture,
+        utteranceId: "recovered-turn",
+        startedAt: 2000,
+        endedAt: 2200,
+      },
+    },
+    f.context().value,
+  );
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.ok(f.messages().some((m) => m.text === "接続が復旧しました。"));
+});

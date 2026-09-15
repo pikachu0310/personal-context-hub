@@ -8,6 +8,8 @@ export function qualifyTranscriptionAudio(wav) {
     !Buffer.isBuffer(wav) ||
     wav.length < 44 ||
     wav.toString("ascii", 0, 4) !== "RIFF" ||
+    wav.toString("ascii", 8, 16) !== "WAVEfmt " ||
+    wav.readUInt32LE(16) !== 16 ||
     wav.toString("ascii", 36, 40) !== "data"
   )
     throw new Error("INVALID_PCM_WAV");
@@ -17,10 +19,19 @@ export function qualifyTranscriptionAudio(wav) {
     wav.readUInt16LE(20) !== 1 ||
     wav.readUInt16LE(34) !== 16 ||
     !rate ||
-    !channels
+    !channels ||
+    wav.readUInt32LE(4) !== wav.length - 8 ||
+    wav.readUInt32LE(40) !== wav.length - 44 ||
+    wav.readUInt16LE(32) !== channels * 2 ||
+    wav.readUInt32LE(28) !== rate * channels * 2 ||
+    (wav.length - 44) % (channels * 2) !== 0
   )
     throw new Error("INVALID_PCM_WAV");
   const pcm = wav.subarray(44);
+  // The provider rejects an otherwise valid 80 ms WAV as invalid_value/file.
+  // Signal activity and total file duration are separate constraints.
+  if (pcm.length * 1000 < rate * channels * 2 * 100)
+    return { accepted: false, activeMs: 0 };
   const frameBytes = Math.max(
     channels * 2,
     Math.floor(rate * 0.02) * channels * 2,

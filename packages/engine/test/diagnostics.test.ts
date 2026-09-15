@@ -94,3 +94,25 @@ test("diagnostics survive restart, keep the latest 500 and return the newest 100
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("nested fetch failures retain only the safe socket cause and terminate on cycles", () => {
+  const socket = Object.assign(new Error("private host and credentials"), {
+    code: "UND_ERR_CONNECT_TIMEOUT",
+  });
+  const error = new OpenAI.APIConnectionError({
+    cause: new TypeError("fetch failed", { cause: socket }),
+  });
+  const detail = describeError(error);
+  assert.equal(detail.cause, "UND_ERR_CONNECT_TIMEOUT");
+  assert.match(detail.reason, /タイムアウト/);
+  assert.doesNotMatch(JSON.stringify(detail), /private|credentials/);
+  const cycle: any = { code: "secret" };
+  cycle.cause = cycle;
+  assert.equal(describeError({ cause: cycle }).cause, undefined);
+  const file = describeError({
+    code: "invalid_value",
+    param: "file",
+    status: 400,
+  });
+  assert.match(file.reason, /音声の長さ/);
+});
