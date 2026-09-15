@@ -82,8 +82,9 @@ try {
   const page = await app.firstWindow();
   await page
     .locator('.project-group[data-project-id="p"]')
-    .getByRole("button", { name: "議事録", exact: true })
+    .getByRole("button", { name: "会議・議事録", exact: true })
     .click();
+  await page.getByRole("tab", { name: "議事録", exact: true }).click();
   await page.locator(".minutes-list-row").click();
   await page.getByRole("link", { name: "2案を比較" }).click();
   await page
