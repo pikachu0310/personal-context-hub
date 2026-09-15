@@ -54,7 +54,7 @@ try {
   await page.goto(client.origin);
   await page
     .locator('.project-group[data-project-id="p"]')
-    .getByRole("button", { name: "議事録", exact: true })
+    .getByRole("button", { name: "会議・議事録", exact: true })
     .click();
   await page
     .locator(".minutes-list-row")
