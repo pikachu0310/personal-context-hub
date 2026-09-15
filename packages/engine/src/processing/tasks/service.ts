@@ -1,5 +1,6 @@
 import {
   addParticipant,
+  botDirectedControl,
   seedParticipants,
   participantId,
   taskParticipants,
@@ -16,7 +17,7 @@ import {
   type WorkReceipt,
 } from "@ido/common/contracts/work";
 
-type CreateTaskInput = Pick<
+type CreateTaskInput = { sourcePluginId?: string } & Pick<
   Task,
   "projectId" | "meetingId" | "authorId" | "text" | "requestId" | "network"
 > &
@@ -24,6 +25,10 @@ type CreateTaskInput = Pick<
     Pick<
       Task,
       | "createdByBot"
+      | "agent"
+      | "model"
+      | "reasoningEffort"
+      | "progressMode"
       | "trigger"
       | "title"
       | "kind"
@@ -34,6 +39,7 @@ type CreateTaskInput = Pick<
     >
   >;
 export interface TaskControlOptions {
+  sourcePluginId?: string;
   continuation?: string;
   expectedRevision?: number;
   requestKey?: string;
@@ -64,8 +70,13 @@ export class Tasks {
           throw new Error("REQUEST_MEETING_MISMATCH");
         return task;
       }
+      const { sourcePluginId, ...taskInput } = input;
       const task: Task = {
-        ...structuredClone(input),
+        ...structuredClone(taskInput),
+        participantPolicy:
+          input.createdByBot === true && sourcePluginId === "discord"
+            ? "execution"
+            : undefined,
         executionPolicy: normalizeExecutionPolicy(input.executionPolicy),
         network:
           input.network === true &&
@@ -230,6 +241,7 @@ export class Tasks {
       task.specRevision ??= 1;
       if (type === "steer") task.specRevision++;
       const receipt: WorkReceipt = {
+        sourcePluginId: options.sourcePluginId,
         id: randomUUID(),
         taskId,
         authorId: actor,
@@ -242,13 +254,17 @@ export class Tasks {
       };
       task.controlReceipts ??= {};
       task.controlReceipts[receipt.id] = receipt;
-      addParticipant(this.repository, task, actor);
+      const botDirected = botDirectedControl(task, options.sourcePluginId);
+      if (!botDirected) addParticipant(this.repository, task, actor);
+      // Keep the actual actor in receipts, audit and request keys. Only the
+      // client-facing sender represents the bot directing Discord work.
       const sender = taskParticipants(this.repository, task, true).find(
-        (person) => person.id === participantId(actor),
+        (person) =>
+          person.id === (botDirected ? "idobot" : participantId(actor)),
       );
       const sentAt = Date.now();
       const persist = () => {
-        addParticipant(this.repository, task, actor);
+        if (!botDirected) addParticipant(this.repository, task, actor);
         task.updatedAt = Date.now();
         this.repository.put("task", task.id, task);
         this.repository.put("task-control", key, receipt);

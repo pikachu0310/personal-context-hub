@@ -1,7 +1,8 @@
 import type { ClientState } from "@ido/common/contracts/api";
+import { isUnrestrictedAccess } from "@ido/common/contracts/work";
 export function taskReadiness(
   state: ClientState,
-  task: { projectId: string; network?: boolean },
+  task: { projectId: string; network?: boolean; agent?: "codex" | "claude" },
 ) {
   const mapping = state.settings.mappings.find(
     (m) => m.projectId === task.projectId,
@@ -16,7 +17,18 @@ export function taskReadiness(
       reason: "directory",
       text: "このClientで、このプロジェクトの保存先が未設定です。",
     };
-  if (state.loginStatus !== "authenticated")
+  const agent =
+    task.agent ??
+    (state.loginStatus !== "authenticated" &&
+    state.claudeLoginStatus === "authenticated"
+      ? "claude"
+      : "codex");
+  if (agent === "claude" && state.claudeLoginStatus !== "authenticated")
+    return {
+      reason: "claude",
+      text: "このClientはClaude未連携です。ユーザー設定でClaudeにログインしてください。",
+    };
+  if (agent === "codex" && state.loginStatus !== "authenticated")
     return {
       reason: "codex",
       text: "このClientはCodex未連携のため、タスクを受け取れません。ユーザー設定でCodexにログインしてください。",
@@ -26,7 +38,16 @@ export function taskReadiness(
       reason: "permission",
       text: "このClientでは、このプロジェクトの実行許可がOFFです。保存先を設定しただけではタスクは始まりません。「接続・設定」で実行を許可してください。",
     };
-  if (task.network && !mapping.network)
+  if (agent === "claude" && mapping.accessMode === "sandbox")
+    return {
+      reason: "permission",
+      text: "Claudeはこのサンドボックスに対応していません。接続・設定で承認を求めるかフルアクセスを選んでください。",
+    };
+  if (
+    task.network &&
+    !mapping.network &&
+    !isUnrestrictedAccess(mapping.accessMode)
+  )
     return {
       reason: "network",
       text: "このタスクには通信が必要ですが、このClientではプロジェクトの通信許可がOFFです。",

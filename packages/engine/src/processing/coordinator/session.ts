@@ -4,9 +4,10 @@ import type {
   ConversationMode,
   CoordinatorEvent,
   CoordinatorObservation,
-  CoordinatorResponse,
   CoordinatorSource,
   CoordinatorFactory,
+  SpeechReview,
+  SpeechDecision,
 } from "@ido/common/contracts/coordinator";
 import type {
   ConversationInput,
@@ -29,6 +30,13 @@ import type { Task } from "@ido/common/contracts/protocol";
 import { CoordinatorInbox } from "./inbox.mjs";
 import { MeetingKnowledgeStore } from "../minutes/knowledge.js";
 import { duplicateWork } from "./duplicates.js";
+import { describeError } from "../../domain/diagnostics.js";
+import {
+  CoordinatorTraces,
+  sourceRejection,
+  type ModelValue,
+  type TaskApplication,
+} from "./traces.js";
 
 type Route = { event: ConversationInput; context: InputContext };
 type StoredState = {
@@ -64,6 +72,10 @@ class MeetingCoordinator {
   lastRoute?: Route;
   modeRevision: number;
   closed = false;
+  private speechReviews = new Map<
+    string,
+    (decision?: SpeechDecision | null) => void
+  >();
   constructor(
     readonly store: Repository,
     readonly meetingId: string,
@@ -77,6 +89,7 @@ class MeetingCoordinator {
       mode: saved?.mode ?? options.mode ?? "text-speech",
       createLiveSession: options.createLiveSession,
       synthesize: options.synthesize,
+      reviewSpeech: (review, signal) => this.reviewSpeech(review, signal),
       currentResults: () =>
         this.projectTasks().flatMap((task) => {
           const result = options.work.getResult(task.id);
@@ -106,6 +119,7 @@ class MeetingCoordinator {
         return {
           run: async (observation: CoordinatorObservation, runOptions: any) => {
             const modeRevision = this.modeRevision;
+            const audioRevision = this.audio.turns.revision;
             const controlVersions = Object.fromEntries(
               this.projectTasks().map((task) => [
                 task.id,
@@ -113,13 +127,24 @@ class MeetingCoordinator {
               ]),
             );
             return {
-              response: await runtime.run(observation, runOptions),
+              response: await new CoordinatorTraces(this.store).model(
+                this.inbox.snapshot().active!.id,
+                "run",
+                observation,
+                () => runtime.run(observation, runOptions),
+              ),
               modeRevision,
+              audioRevision,
               controlVersions,
             };
           },
           steer: (observation: CoordinatorObservation) =>
-            runtime.steer(observation),
+            new CoordinatorTraces(this.store).model(
+              this.inbox.snapshot().active!.id,
+              "steer",
+              observation,
+              () => runtime.steer(observation),
+            ),
           interrupt: () => runtime.interrupt(),
           close: () => runtime.close(),
         };
@@ -134,6 +159,27 @@ class MeetingCoordinator {
       void this.inbox.flush();
     }, options.observationIntervalMs ?? 12_000);
     this.timer.unref();
+  }
+
+  private reviewSpeech(
+    review: SpeechReview,
+    signal: AbortSignal,
+  ): Promise<SpeechDecision | null | undefined> {
+    if (this.closed || signal.aborted) return Promise.resolve(undefined);
+    const id = `speech-review:${review.candidateId}:${review.revision}`;
+    return new Promise((resolve) => {
+      const settle = (decision?: SpeechDecision | null) => {
+        signal.removeEventListener("abort", aborted);
+        this.speechReviews.delete(id);
+        resolve(decision);
+      };
+      const aborted = () => settle();
+      signal.addEventListener("abort", aborted, { once: true });
+      this.speechReviews.set(id, settle);
+      void this.inbox
+        .submit([{ id, type: "speech_review", review }], { urgent: true })
+        .catch(() => settle());
+    });
   }
 
   meeting(meetingId = this.meetingId) {
@@ -156,11 +202,22 @@ class MeetingCoordinator {
       );
   }
   save(inbox: unknown = this.inbox.snapshot()) {
+    const savedInbox = structuredClone(inbox) as any;
+    if (savedInbox) {
+      const durable = (events: CoordinatorEvent[] = []) =>
+        events.filter((event) => event.type !== "speech_review");
+      savedInbox.pending = durable(savedInbox.pending);
+      if (savedInbox.active) {
+        savedInbox.active.events = durable(savedInbox.active.events);
+        savedInbox.active.steering = durable(savedInbox.active.steering);
+        if (!savedInbox.active.events.length) savedInbox.active = undefined;
+      }
+    }
     this.store.put("coordinator", this.meetingId, {
       version: 1,
       mode: this.audio.mode,
       modeRevision: this.modeRevision,
-      inbox,
+      inbox: savedInbox,
       completed: [...this.completed].slice(-200),
     });
   }
@@ -286,6 +343,7 @@ class MeetingCoordinator {
       const continuation =
         parsed.action === "steer" && target.state === "completed";
       const result = this.options.work.control({
+        sourcePluginId: this.routes.get(source.id)?.context.pluginId,
         taskId: target.id,
         authorId: source.authorId,
         type:
@@ -380,6 +438,8 @@ class MeetingCoordinator {
       .map((meeting) => ({
         meetingId: meeting.id,
         name: meeting.name,
+        markdown: meeting.summary.slice(0, 1500),
+        summaryRevision: meeting.summaryRevision ?? 0,
         topics: (meeting.knowledge?.topics ?? []).slice(-12).map((topic) => ({
           ...topic,
           summary: topic.summary.slice(0, 900),
@@ -532,20 +592,22 @@ class MeetingCoordinator {
     if (saved.parts[capture.segmentIndex]) return false;
     if (capture.segmentIndex < 0 || capture.segmentIndex > 200)
       throw new Error("UTTERANCE_TOO_LONG");
-    const message = this.messages.record(
-      event.meetingId,
-      context.actor.id,
-      content,
-      messageId,
-    ).message;
-    message.capture = capture;
-    message.origin = "audio";
-    message.at = capture.startedAt;
-    message.stage = "assembling";
-    this.store.put("message", message.id, message);
+    let message: Message | undefined;
+    if (content.trim()) {
+      message = this.messages.record(
+        event.meetingId,
+        context.actor.id,
+        content,
+        messageId,
+      ).message;
+      message.capture = capture;
+      message.origin = "audio";
+      message.at = capture.startedAt;
+      message.stage = "assembling";
+      this.store.put("message", message.id, message);
+    }
     saved.parts[capture.segmentIndex] = {
-      id: message.id,
-      text: content,
+      ...(message ? { id: message.id, text: content } : {}),
       complete: capture.complete !== false,
       at: capture.startedAt,
     };
@@ -558,23 +620,10 @@ class MeetingCoordinator {
       (_, index) => saved.parts[index],
     );
     if (parts.some((part) => !part)) return true;
-    const text = parts.map((part) => part.text).join("\n");
-    if (!text.trim()) {
-      for (const part of parts) {
-        this.messages.stage(part.id, "ignored");
-        this.messages.step(part.id, "transcription", "skipped");
-        const message = this.store.get<Message>("message", part.id);
-        const input =
-          message?.inputId &&
-          this.store.get<Record<string, unknown>>("input", message.inputId);
-        if (input && message?.inputId)
-          this.store.put("input", message.inputId, {
-            ...input,
-            stage: "ignored",
-          });
-      }
+    const recognized = parts.filter((part) => part.id && part.text?.trim());
+    const text = recognized.map((part) => part.text).join("\n");
+    if (!recognized.length) {
       this.store.remove("speech-assembly", key);
-      this.publish("transcript", event.meetingId);
       return false;
     }
     // Intermediate pieces are not complete utterances. Only the final marker
@@ -585,20 +634,20 @@ class MeetingCoordinator {
       eventId: `utterance-${stableId(key)}`,
       capture: {
         ...capture,
-        startedAt: parts[0].at,
+        startedAt: recognized[0].at,
         segmentIndex: 0,
         complete,
       },
     };
-    for (const part of parts) this.messages.stage(part.id, "queued");
+    for (const part of recognized) this.messages.stage(part.id, "queued");
     const accepted = await this.accept(
       merged,
       context,
       complete
         ? text
         : `【不完全な発話。実行指示には使用しない】\n${text.slice(-12_000)}`,
-      parts[0].id,
-      parts.map((part) => part.id),
+      recognized[0].id,
+      recognized.map((part) => part.id),
     );
     this.store.remove("speech-assembly", key);
     return accepted;
@@ -632,9 +681,9 @@ class MeetingCoordinator {
     record.origin = event.audio ? "audio" : "text";
     record.inputId ??= inputId;
     record.command = event.command;
-    record.capture = event.capture;
+    if (!partIds) record.capture = event.capture;
     record.complete = event.capture?.complete !== false;
-    record.at = event.capture?.startedAt ?? record.at;
+    record.at = record.capture?.startedAt ?? record.at;
     record.stage = "queued";
     record.steps = {
       ...record.steps,
@@ -648,7 +697,7 @@ class MeetingCoordinator {
       pluginId: context.pluginId,
     });
     // Raw statements are already durable. Topic minutes are updated by the
-    // coordinator response; do not overwrite them with a transcript tail.
+    // coordinator response; MinutesDocument owns the editable Markdown.
     this.publish("transcript", event.meetingId);
     const addressed =
       event.interaction === true ||
@@ -683,6 +732,7 @@ class MeetingCoordinator {
     // speech is interpreted only by the main model through sourced proposals.
     if (event.command === "task" && canWork && this.active(route)) {
       const task = this.options.work.submit({
+        sourcePluginId: context.pluginId,
         requestKey: inputId,
         meetingId: event.meetingId,
         projectId: event.projectId!,
@@ -820,14 +870,7 @@ class MeetingCoordinator {
           });
       });
   }
-  private async apply(
-    value: {
-      response: CoordinatorResponse;
-      modeRevision: number;
-      controlVersions: Record<string, number>;
-    },
-    batch: Batch,
-  ) {
+  private async apply(value: ModelValue, batch: Batch) {
     if (
       this.completed.has(batch.id) ||
       this.closed ||
@@ -835,10 +878,105 @@ class MeetingCoordinator {
     )
       return;
     this.requireRoutes(batch.events);
-    const response = value.response;
+    const response = { ...value.response };
+    const speechEvents = batch.events.filter(
+      (event) => event.type === "speech_review",
+    );
+    for (const event of speechEvents) {
+      const decision = response.speech;
+      this.speechReviews.get(event.id)?.(
+        value.modeRevision === this.modeRevision &&
+          decision?.candidateId === event.review.candidateId &&
+          decision.revision === event.review.revision
+          ? decision
+          : undefined,
+      );
+    }
     const sources = batch.events.flatMap((event) =>
       event.type === "message" ? [event.source] : [],
     );
+    const allowed = new Set(sources.map((source) => source.id));
+    const application: TaskApplication = this.store.get(
+      "coordinator-trace",
+      `application:${batch.id}`,
+    ) ?? {
+      id: `application:${batch.id}`,
+      kind: "application",
+      batchId: batch.id,
+      meetingId: this.meetingId,
+      projectId: this.meeting()?.projectId,
+      at: Date.now(),
+      sourceIds: [...allowed],
+      initialResponse: value.response,
+      rejections: response.tasks.flatMap((task, index) => {
+        const reason = sourceRejection(task, allowed);
+        return reason ? [{ index, task, reason }] : [];
+      }),
+      decisions: [],
+    };
+    const saveApplication = () =>
+      this.store.put("coordinator-trace", application.id, application);
+    saveApplication();
+    if (application.rejections.length) {
+      if (
+        !application.repair &&
+        sources.some(
+          (source) =>
+            this.permitted(source) &&
+            !source.handled &&
+            !source.contextOnly &&
+            source.complete !== false &&
+            (source.workAllowed || source.researchAllowed),
+        )
+      ) {
+        const runtime = await this.inbox.runtime();
+        if (
+          this.closed ||
+          this.store.get("project-lock", this.meeting()?.projectId ?? "")
+        )
+          return;
+        const observation = this.observation(batch.events);
+        observation.taskValidation = {
+          allowedSourceIds: [...allowed],
+          rejectedTasks: application.rejections,
+        };
+        // Persist before sending; a restart or unknown delivery must never
+        // turn a single correction into an unbounded sequence of model calls.
+        application.repair = { status: "sending" };
+        saveApplication();
+        try {
+          const corrected = await runtime.run(observation, {
+            signal: this.inbox.controller.signal,
+          });
+          application.repair = { status: "completed", value: corrected };
+        } catch (error) {
+          application.repair = {
+            status: "failed",
+            error: describeError(error),
+          };
+          this.store.logError(error, {
+            source: "conversation",
+            operation: "coordinator.task-correction",
+            meetingId: this.meetingId,
+            eventId: batch.id,
+            level: "warning",
+          });
+        }
+        saveApplication();
+      }
+      // Keep valid original proposals, and accept only tasks from correction.
+      // Reply, controls and minutes retain their original validation versions.
+      response.tasks = [
+        ...response.tasks.filter((task) => !sourceRejection(task, allowed)),
+        ...(application.repair?.value?.response.tasks ?? []),
+      ];
+    }
+    if (
+      this.closed ||
+      this.store.get("project-lock", this.meeting()?.projectId ?? "")
+    )
+      return;
+    this.requireRoutes(batch.events);
     const select = (ids: string[]) =>
       ids
         .map((id) => sources.find((source) => source.id === id))
@@ -859,26 +997,35 @@ class MeetingCoordinator {
         minutes.apply(this.meeting()?.projectId ?? "", update, knownSources)
       ) {
         this.publish("minutes", update.meetingId);
-        for (const topic of update.topics)
-          for (const id of topic.sourceIds)
-            this.messages.step(id, "minutes", "completed");
+        // The Markdown writer owns the minutes processing status.
       }
     }
     let automaticStarted = 0;
     const receipts = new Set<string>();
     for (const [index, task] of response.tasks.entries()) {
+      const decision = (reason: string, taskId?: string) => {
+        application.decisions = application.decisions.filter(
+          (item) => item.index !== index,
+        );
+        application.decisions.push({ index, task, reason, taskId });
+        saveApplication();
+      };
       const selected = select(task.sourceIds);
-      if (
-        !selected.length ||
-        selected.length !== task.sourceIds.length ||
-        !selected.every(
-          (source) =>
-            this.active(this.routes.get(source.id)) &&
-            source.complete !== false &&
-            !source.handled,
-        )
-      )
+      const rejection =
+        sourceRejection(task, allowed) ??
+        (selected.some((source) => !this.active(this.routes.get(source.id)))
+          ? "inactive_source"
+          : selected.some((source) => source.complete === false)
+            ? "incomplete_source"
+            : selected.some((source) => source.handled)
+              ? "already_handled"
+              : selected.some((source) => source.contextOnly)
+                ? "context_only_source"
+                : undefined);
+      if (rejection) {
+        decision(rejection);
         continue;
+      }
       const research = task.kind === "research";
       const eligible = selected.filter(
         (source) =>
@@ -897,21 +1044,38 @@ class MeetingCoordinator {
       const author =
         requested ??
         eligible.findLast((source) => proactiveOpportunity(source.text));
-      if (!author || selected.some((source) => deferredDelegation(source.text)))
+      if (
+        !author ||
+        selected.some((source) => deferredDelegation(source.text))
+      ) {
+        decision(
+          !eligible.length
+            ? "permission_denied"
+            : selected.some((source) => deferredDelegation(source.text))
+              ? "deferred"
+              : "no_current_intent",
+        );
         continue;
+      }
       if (
         !author.projectId ||
         !selected.every((source) => source.projectId === author.projectId)
-      )
+      ) {
+        decision("project_mismatch");
         continue;
+      }
       const existingTasks = this.projectTasks();
-      const duplicate = duplicateWork(
-        existingTasks,
-        task.title,
-        task.sourceIds,
-        automatic,
-      );
+      const requestKey = `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`;
+      const previous = this.options.work.getReceipt({
+        requestKey,
+        authorId: author.authorId,
+        projectId: author.projectId,
+      });
+      const duplicate = previous
+        ? undefined
+        : duplicateWork(existingTasks, task.title, automatic);
       if (duplicate) {
+        decision("duplicate_task", duplicate.id);
         if (author.requestReply) {
           await this.receipt(
             author,
@@ -924,6 +1088,7 @@ class MeetingCoordinator {
         continue;
       }
       if (
+        !previous &&
         automatic &&
         (automaticStarted >= 1 ||
           existingTasks.filter(
@@ -938,35 +1103,50 @@ class MeetingCoordinator {
               existing.trigger === "proactive" &&
               Date.now() - existing.createdAt < 45_000,
           ))
-      )
+      ) {
+        decision("proactive_limit");
         continue;
-      const created = this.options.work.submit({
-        requestKey: `coordinator:${this.meetingId}:${stableId(task.sourceIds.slice().sort().join(","))}:${index}`,
-        meetingId: author.meetingId ?? this.meetingId,
-        projectId: author.projectId,
-        authorId: author.authorId,
-        title: task.title,
-        request: [
-          `担当範囲: ${task.title}`,
-          ...task.acceptanceCriteria.map(
-            (criterion) => `完了条件: ${criterion}`,
-          ),
-          "利用者の元発言:",
-          ...selected.map((source) => source.text),
-        ].join("\n"),
-        kind: task.kind,
-        trigger: automatic ? "proactive" : "requested",
-        sourceStatements: selected.map((source) => ({
-          id: source.id,
-          meetingId: source.meetingId ?? this.meetingId,
-          authorId: source.authorId,
-          speakerName: source.authorName,
-          startedAt: source.at,
-          text: source.text,
-        })),
-        sourceIds: task.sourceIds,
-        executionPolicy: research ? { sandboxMode: "read-only" } : undefined,
-      });
+      }
+      decision("submitting");
+      let created: Task;
+      try {
+        created =
+          previous ??
+          this.options.work.submit({
+            sourcePluginId: this.routes.get(author.id)?.context.pluginId,
+            requestKey,
+            meetingId: author.meetingId ?? this.meetingId,
+            projectId: author.projectId,
+            authorId: author.authorId,
+            title: task.title,
+            request: [
+              `担当範囲: ${task.title}`,
+              ...task.acceptanceCriteria.map(
+                (criterion) => `完了条件: ${criterion}`,
+              ),
+              "利用者の元発言:",
+              ...selected.map((source) => source.text),
+            ].join("\n"),
+            kind: task.kind,
+            trigger: automatic ? "proactive" : "requested",
+            sourceStatements: selected.map((source) => ({
+              id: source.id,
+              meetingId: source.meetingId ?? this.meetingId,
+              authorId: source.authorId,
+              speakerName: source.authorName,
+              startedAt: source.at,
+              text: source.text,
+            })),
+            sourceIds: task.sourceIds,
+            executionPolicy: research
+              ? { sandboxMode: "read-only" }
+              : undefined,
+          });
+      } catch (error) {
+        decision("submission_failed");
+        throw error;
+      }
+      decision("accepted", created.id);
       if (automatic) automaticStarted++;
       await this.receipt(
         author,
@@ -974,7 +1154,7 @@ class MeetingCoordinator {
         `${automatic ? "会議の確認を進めるため、" : ""}タスク「${created.title ?? task.title}」を受け付けました。${created.state === "queued" ? "実行先の空き・許可を待っています。" : "進捗は同じタスクで確認できます。"}`,
         [created.id],
       );
-      receipts.add(author.id);
+      for (const source of selected) receipts.add(source.id);
     }
     for (const meetingId of new Set(
       sources.map((source) => source.meetingId ?? this.meetingId),
@@ -1018,22 +1198,33 @@ class MeetingCoordinator {
       );
       receipts.add(author.id);
     }
+    const unresolvedCorrection =
+      application.rejections.length > 0 &&
+      (!application.repair?.value?.response.tasks.length ||
+        application.decisions.some(
+          (item) => !["accepted", "duplicate_task"].includes(item.reason),
+        ));
     for (const source of sources) {
       if (
-        source.requestReply &&
+        (source.requestReply || explicitDelegation(source.text)) &&
         !source.handled &&
-        !receipts.has(source.id) &&
-        (response.tasks.some((task) => task.sourceIds.includes(source.id)) ||
+        (!receipts.has(source.id) || unresolvedCorrection) &&
+        (application.rejections.length > 0 ||
+          response.tasks.some((task) => task.sourceIds.includes(source.id)) ||
           response.controls.some((control) =>
             control.sourceIds.includes(source.id),
           ))
-      )
+      ) {
         await this.receipt(
           source,
           `not-applied:${batch.id}:${source.id}`,
-          "この発言からはタスクを開始・変更していません。対象と、今進める具体的な作業を教えてください。",
+          receipts.has(source.id)
+            ? "一部のタスク案を今回の依頼と対応づけられず、登録できませんでした。未登録の作業について、対象と今進める内容を教えてください。"
+            : "この発言からはタスクを開始・変更していません。対象と、今進める具体的な作業を教えてください。",
           [],
         );
+        receipts.add(source.id);
+      }
     }
     const answer = response.reply;
     let replyApplied = false;
@@ -1128,6 +1319,7 @@ class MeetingCoordinator {
         }
         if (
           !output.audioRequested &&
+          !speechEvents.length &&
           value.modeRevision === this.modeRevision &&
           (resultEvent || selected.some((source) => source.origin === "audio"))
         ) {
@@ -1137,6 +1329,8 @@ class MeetingCoordinator {
             .reply(
               {
                 text: answer.text,
+                contextRevision: value.audioRevision,
+                replyTo: route?.event.replyTo,
                 sourceIds: answer.sourceIds,
                 reason:
                   resultEvent || this.audio.mode === "live"
@@ -1180,12 +1374,15 @@ class MeetingCoordinator {
       }
     }
     this.completed.add(batch.id);
+    application.completedAt = Date.now();
+    saveApplication();
     this.save();
     this.publish("transcript");
   }
   async close() {
     this.closed = true;
     clearInterval(this.timer);
+    for (const settle of this.speechReviews.values()) settle();
     await this.inbox.close();
     await this.audio.close();
     this.save();

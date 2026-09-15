@@ -17,6 +17,16 @@ export interface MeetingKnowledge {
 
 export interface MinutesUpdate {
   meetingId: string;
+  documents?: Array<{
+    meetingId: string;
+    meetingName: string;
+    markdown: string;
+    revision: number;
+    updatedAt?: number;
+    offset: number;
+    nextOffset?: number;
+    truncated?: boolean;
+  }>;
   topics: Array<Omit<MeetingTopic, "id" | "updatedAt"> & { id: string | null }>;
 }
 
@@ -26,16 +36,19 @@ export interface KnowledgeQuery {
   sourceIds?: string[];
   offset?: number;
   limit?: number;
+  documentOffset?: number;
 }
 
 export interface KnowledgePage {
   projectId: string;
   documents?: Array<{
     meetingId: string;
-    name: string;
-    revision: number;
-    updatedAt: number;
+    meetingName: string;
     markdown: string;
+    revision: number;
+    updatedAt?: number;
+    offset: number;
+    nextOffset?: number;
     truncated?: boolean;
   }>;
   topics: Array<

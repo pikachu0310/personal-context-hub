@@ -1,12 +1,7 @@
-import {
-  Button,
-  Group,
-  NumberInput,
-  SegmentedControl,
-  Text,
-} from "@mantine/core";
+import { Button, Group, NumberInput, Select, Text } from "@mantine/core";
 import { useState } from "react";
 import { type Action, type ClientState } from "@ido/common-ui";
+import { accessOptions, accessHelp, projectAccessHelp } from "./access-mode.js";
 import {
   ProjectDirectory,
   ProjectField,
@@ -102,9 +97,7 @@ export function ProjectSettings({
             <Button
               variant="default"
               disabled={!mapping || busy}
-              onClick={() =>
-                void update("allow", { allow: allowed, slots: Number(slots) })
-              }
+              onClick={() => void update("allow", { slots: Number(slots) })}
             >
               保存
             </Button>
@@ -133,7 +126,6 @@ export function ProjectSettings({
             onChange={(mode) =>
               void update("progress-mode", {
                 mode,
-                accessMode: mode === "auto" ? "full" : "approval",
               })
             }
           />
@@ -141,45 +133,22 @@ export function ProjectSettings({
       </div>
       <details className="project-advanced">
         <summary>詳細設定</summary>
-        <ProjectField
-          label="タスクの権限"
-          help="新しいタスクに適用します。フルアクセスはOSサンドボックスと承認なしでPCのファイル操作・通信が可能です。Manualの「許可を求める」では承認要求を表示します。受信タスクの明示的な制限は優先します。"
-        >
-          {(mapping?.progressMode ?? "auto") === "manual" ? (
-            <SegmentedControl
-              size="sm"
-              fullWidth
-              aria-label="新しいタスクの権限"
-              disabled={!mapping || busy}
-              value={mapping?.accessMode ?? "approval"}
-              data={[
-                { label: "許可を求める", value: "approval" },
-                { label: "フルアクセス", value: "full" },
-              ]}
-              onChange={(accessMode) =>
-                void update("progress-mode", { mode: "manual", accessMode })
-              }
-            />
-          ) : (
-            <Button
-              variant="default"
-              disabled={!mapping || busy}
-              onClick={() =>
-                void update("progress-mode", {
-                  mode: "auto",
-                  accessMode: "full",
-                })
-              }
-            >
-              フルアクセスを適用
-            </Button>
-          )}
-        </ProjectField>
-        {!mapping?.accessMode && (
-          <Text size="sm" c="dimmed">
-            タスクの権限は未適用です。
+        <ProjectField label="タスクの権限" help={projectAccessHelp}>
+          <Select
+            size="sm"
+            aria-label="新しいタスクの権限"
+            disabled={!mapping || busy}
+            value={mapping?.accessMode ?? "sandbox"}
+            data={accessOptions}
+            allowDeselect={false}
+            onChange={(accessMode) => {
+              if (accessMode) void update("access-mode", { accessMode });
+            }}
+          />
+          <Text size="sm" c="dimmed" mt="xs">
+            {accessHelp[mapping?.accessMode ?? "sandbox"]}
           </Text>
-        )}
+        </ProjectField>
       </details>
       {error && (
         <Text size="sm" c="red" role="alert">

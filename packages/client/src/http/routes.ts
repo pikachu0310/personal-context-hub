@@ -30,6 +30,7 @@ import {
 import { equal, run } from "@ido/common/runtime/platform";
 
 import type { Client } from "../bootstrap/client.js";
+import { isAccessMode } from "@ido/common/contracts/work";
 export async function route(
   this: Client,
   req: IncomingMessage,
@@ -69,6 +70,7 @@ export async function route(
       controlSupported: this.controlSupported,
       continuationSupported: this.continuationSupported,
       projectCreationSupported: this.projectCreationSupported,
+      taskDetailSupported: this.details.supported,
       teamTasksSupported: this.teamTasksSupported,
       teamTasks: this.connected ? this.teamTasks : undefined,
       status: this.status,
@@ -89,7 +91,8 @@ export async function route(
         .filter(
           (r) =>
             !this.executor.deletedTasks[r.task.id] &&
-            this.settings.projects.some((p) => p.id === r.task.projectId),
+            ((r.origin === "local" && !r.discordShare) ||
+              this.settings.projects.some((p) => p.id === r.task.projectId)),
         )
         .map(
           ({
@@ -98,6 +101,8 @@ export async function route(
             instructions,
             pendingInstructions,
             controlReceipts,
+            detailSync,
+            detailResources,
             ...value
           }) => value,
         ),
@@ -181,6 +186,24 @@ export async function route(
     throw new HttpError(403, "CSRF_REQUIRED");
   const input = await body(req);
   switch (url.pathname) {
+    case "/api/task/detail": {
+      send(
+        res,
+        200,
+        await this.details.read(id(input.taskId), id(input.projectId)),
+      );
+      return;
+    }
+    case "/api/task/detail-refresh": {
+      send(
+        res,
+        200,
+        await this.workspaceRequest("task.detail.refresh", {
+          taskId: id(input.taskId),
+        }),
+      );
+      return;
+    }
     case "/api/task/sources": {
       const runId = input.runId ? id(input.runId) : undefined;
       const value = runId ? this.executor.runs[runId] : undefined;
@@ -219,7 +242,12 @@ export async function route(
         ("task" in value && this.executor.deletedTasks[value.task.id])
       )
         throw new HttpError(404, "RUN_NOT_FOUND");
-      const agent = "task" in value ? (value.agent ?? "codex") : "codex";
+      const agent =
+        "task" in value
+          ? (value.agent ?? "codex")
+          : (input.agent ?? value.agent ?? "codex");
+      if (agent !== "codex" && agent !== "claude")
+        throw new HttpError(400, "INVALID_AGENT");
       if (!input.read) {
         const available = (await this.agentCatalog()).find(
           (entry) => entry.agent === agent && entry.authenticated,
@@ -237,11 +265,13 @@ export async function route(
         )
           throw new HttpError(400, "EFFORT_UNAVAILABLE");
         value.model = model.id;
+        if (!("task" in value)) value.agent = agent;
         value.reasoningEffort = effort;
         if ("task" in value) await this.executor.save();
         else await this.save();
       }
       send(res, 200, {
+        agent: value.agent ?? "codex",
         model: value.model,
         reasoningEffort: value.reasoningEffort,
         progressMode:
@@ -355,7 +385,25 @@ export async function route(
     case "/api/project/knowledge":
     case "/api/project/transcript":
     case "/api/project/task":
+    case "/api/project/control":
+    case "/api/task/conversation":
+    case "/api/project/conversation":
     case "/api/project/continue": {
+      if (url.pathname === "/api/project/task") {
+        const mapping = this.settings.mappings.find(
+          (m) => m.projectId === input.projectId,
+        );
+        if (mapping) {
+          if (!this.taskOptionsSupported)
+            throw new HttpError(409, "TASK_OPTIONS_UNSUPPORTED");
+          Object.assign(input, {
+            agent: mapping.agent ?? "codex",
+            model: mapping.model,
+            reasoningEffort: mapping.reasoningEffort,
+            progressMode: mapping.progressMode ?? "auto",
+          });
+        }
+      }
       if (
         url.pathname === "/api/project/continue" &&
         !this.continuationSupported
@@ -373,6 +421,9 @@ export async function route(
         "/api/project/transcript": "project.transcript",
         "/api/project/minutes/update": "project.minutes.update",
         "/api/project/task": "task.create",
+        "/api/project/control": "task.control",
+        "/api/task/conversation": "task.conversation",
+        "/api/project/conversation": "project.conversation",
         "/api/project/continue": "task.continue",
       };
       const result = await this.workspaceRequest(
@@ -402,17 +453,18 @@ export async function route(
     case "/api/project/join": {
       if (input.engineUrl !== this.settings.engineUrl)
         throw new HttpError(409, "INVITATION_ENGINE_MISMATCH");
-      if (this.allow || this.executor.active.size)
-        throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       const token = text(input.token, 200);
-      await this.workspaceRequest("project.inspect-invite", { token });
-      const directory = await projectDirectory(text(input.directory, 4000));
-      if (this.allow || this.executor.active.size)
+      const invited = await this.workspaceRequest<{ id: string }>(
+        "project.inspect-invite",
+        { token },
+      );
+      if (this.projectBusy(invited.id))
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
+      const directory = await projectDirectory(text(input.directory, 4000));
       const project = await this.workspaceRequest<
         import("@ido/common/contracts/protocol").Project
       >("project.join", { token });
-      if (this.allow || this.executor.active.size)
+      if (this.projectBusy(project.id))
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       this.settings.mappings = this.settings.mappings
         .filter((m) => m.projectId !== project.id)
@@ -429,8 +481,6 @@ export async function route(
       try {
         if (!this.connected || !this.projectCreationSupported)
           throw new HttpError(409, "PROJECT_CONNECTION_REQUIRED");
-        if (this.allow || this.executor.active.size)
-          throw new HttpError(409, "PAUSE_BEFORE_EDITING");
         const name = text(input.name, 100);
         if (
           this.settings.projects.some(
@@ -452,8 +502,6 @@ export async function route(
         )
           throw new HttpError(409, "FINISH_PENDING_PROJECT_FIRST");
         const directory = await projectDirectory(path);
-        if (this.allow || this.executor.active.size)
-          throw new HttpError(409, "PAUSE_BEFORE_EDITING");
         this.settings.pendingProject ??= {
           requestId: randomUUID(),
           name,
@@ -483,8 +531,6 @@ export async function route(
           }
           throw error;
         }
-        if (this.allow || this.executor.active.size)
-          throw new HttpError(409, "PAUSE_BEFORE_EDITING");
         if (!this.settings.projects.some((p) => p.id === project.id))
           this.settings.projects.push(project);
         this.settings.mappings = this.settings.mappings
@@ -497,8 +543,8 @@ export async function route(
             slots: 1,
           });
         delete this.settings.pendingProject;
-        await this.save();
         if (input.allow === true) this.allowedProjects.add(project.id);
+        await this.save();
         this.ready();
       } finally {
         this.projectCreationBusy = false;
@@ -519,6 +565,8 @@ export async function route(
         .concat({
           projectId,
           directory,
+          agent: this.settings.mappings.find((m) => m.projectId === projectId)
+            ?.agent,
           accessMode: this.settings.mappings.find(
             (m) => m.projectId === projectId,
           )?.accessMode,
@@ -536,7 +584,6 @@ export async function route(
           network: input.network === true,
           slots: Math.max(1, Math.min(8, Number(input.slots) || 1)),
         });
-      await this.save();
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
       if (typeof input.allow === "boolean")
@@ -550,22 +597,28 @@ export async function route(
             ),
           ),
         );
+      await this.save();
       this.ready();
       break;
     }
     case "/api/allow": {
+      if (input.allow !== undefined && typeof input.allow !== "boolean")
+        throw new HttpError(400, "INVALID_EXECUTION_ALLOW");
       const projectId = id(input.projectId);
       const mapping = this.settings.mappings.find(
         (m) => m.projectId === projectId,
       );
       if (!mapping || !this.settings.projects.some((p) => p.id === projectId))
         throw new HttpError(409, "PROJECT_DIRECTORY_REQUIRED");
+      const previousSlots = mapping.slots;
+      const previousTotal = this.settings.slots;
+      const previouslyAllowed = this.allowedProjects.has(projectId);
       mapping.slots = Math.max(
         1,
         Math.min(8, Number(input.slots) || mapping.slots),
       );
       if (input.allow === true) this.allowedProjects.add(projectId);
-      else this.allowedProjects.delete(projectId);
+      else if (input.allow === false) this.allowedProjects.delete(projectId);
       this.settings.slots = Math.min(
         8,
         Math.max(
@@ -573,7 +626,16 @@ export async function route(
           this.executionMappings().reduce((total, m) => total + m.slots, 0),
         ),
       );
-      await this.save();
+      try {
+        await this.save();
+      } catch (error) {
+        mapping.slots = previousSlots;
+        this.settings.slots = previousTotal;
+        if (previouslyAllowed) this.allowedProjects.add(projectId);
+        else this.allowedProjects.delete(projectId);
+        mapping.executionAllowed = previouslyAllowed;
+        throw error;
+      }
       this.ready();
       break;
     }
@@ -608,13 +670,66 @@ export async function route(
       );
       break;
     }
+    case "/api/access-mode":
     case "/api/progress-mode": {
-      if (!["auto", "manual"].includes(String(input.mode)))
+      const changeProgress = url.pathname === "/api/progress-mode";
+      if (changeProgress && !["auto", "manual"].includes(String(input.mode)))
         throw new HttpError(400, "INVALID_PROGRESS_MODE");
+      if (
+        (!changeProgress || input.accessMode !== undefined) &&
+        !isAccessMode(input.accessMode)
+      )
+        throw new HttpError(400, "INVALID_ACCESS_MODE");
       if (input.runId) {
         const value = this.executor.runs[id(input.runId)];
         if (!value || this.executor.deletedTasks[value.task.id])
           throw new HttpError(404, "RUN_NOT_FOUND");
+        if (!changeProgress) {
+          if (!isAccessMode(input.accessMode))
+            throw new HttpError(400, "INVALID_ACCESS_MODE");
+          if (
+            this.executor.active.has(value.task.runId) ||
+            ["assigned", "running"].includes(value.state)
+          )
+            throw new HttpError(409, "STOP_BEFORE_ACCESS_CHANGE");
+          if (value.agent === "claude" && input.accessMode === "sandbox")
+            throw new HttpError(400, "CLAUDE_SANDBOX_UNSUPPORTED");
+          const previousAccess = structuredClone({
+            accessMode: value.accessMode,
+            effectiveExecutionPolicy: value.effectiveExecutionPolicy,
+            task: value.task,
+            localMapping: value.localMapping,
+          });
+          if (value.origin !== "local") {
+            await this.workspaceRequest("task.access-reset", {
+              taskId: value.task.id,
+              revision: value.task.revision,
+            });
+            if (
+              this.executor.runs[value.task.runId] !== value ||
+              this.executor.active.has(value.task.runId) ||
+              ["assigned", "running"].includes(value.state)
+            )
+              throw new HttpError(409, "STOP_BEFORE_ACCESS_CHANGE");
+          } else {
+            value.task.executionPolicy = undefined;
+            if (input.accessMode !== "sandbox") {
+              if (value.localMapping) value.localMapping.network = true;
+              value.task.network = true;
+            }
+          }
+          value.effectiveExecutionPolicy = undefined;
+          value.task.effectiveExecutionPolicy = value.task.executionPolicy;
+          value.accessMode =
+            input.accessMode as import("@ido/common/contracts/work").AccessMode;
+          try {
+            await this.executor.save();
+          } catch (error) {
+            Object.assign(value, previousAccess);
+            throw error;
+          }
+          break;
+        }
         const mode = input.mode as "auto" | "manual";
         if (this.executor.active.has(value.task.runId)) {
           value.pendingProgressMode =
@@ -634,20 +749,20 @@ export async function route(
         (m) => m.projectId === projectId,
       );
       if (!mapping) throw new HttpError(409, "PROJECT_DIRECTORY_REQUIRED");
-      if (
-        input.accessMode !== undefined &&
-        !["full", "approval"].includes(String(input.accessMode))
-      )
-        throw new HttpError(400, "INVALID_ACCESS_MODE");
-      mapping.progressMode = input.mode as "auto" | "manual";
-      if (input.accessMode !== undefined) {
-        mapping.accessMode =
-          input.mode === "auto"
-            ? "full"
-            : (input.accessMode as "full" | "approval");
-        mapping.network = true;
+      const previous = {
+        progressMode: mapping.progressMode,
+        accessMode: mapping.accessMode,
+      };
+      if (changeProgress)
+        mapping.progressMode = input.mode as "auto" | "manual";
+      if (isAccessMode(input.accessMode)) mapping.accessMode = input.accessMode;
+      try {
+        await this.save();
+      } catch (error) {
+        Object.assign(mapping, previous);
+        throw error;
       }
-      await this.save();
+      if (this.connected) this.ready();
       break;
     }
     case "/api/execute-plan": {
@@ -660,7 +775,7 @@ export async function route(
         throw new HttpError(409, "EXECUTION_NOT_ALLOWED");
       if (
         !value ||
-        !this.settings.mappings.some(
+        !this.executionMappings().some(
           (mapping) =>
             mapping.projectId === value.task.projectId &&
             this.allowedProjects.has(mapping.projectId) &&

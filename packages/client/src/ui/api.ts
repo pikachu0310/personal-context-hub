@@ -2,6 +2,13 @@ import { lifecycleError } from "@ido/common-ui";
 import { browserApi } from "@ido/common/runtime/browser-api";
 const request = browserApi("/api/");
 const errors: Record<string, string> = {
+  TASK_OPTIONS_UNSUPPORTED:
+    "依頼のモデルと進め方を引き継ぐにはEngineの更新が必要です。",
+  STOP_BEFORE_ACCESS_CHANGE:
+    "実行停止を確認してから権限を変更してください。変更後に追加指示で同じタスクを再開できます。",
+  CLAUDE_SANDBOX_UNSUPPORTED:
+    "ClaudeではOSサンドボックスを利用できません。Codexを選ぶか、実行権限を変更してください。",
+  INVALID_ACCESS_MODE: "実行権限を選び直してください。",
   MINUTES_CONFLICT:
     "議事録が更新されました。入力を保持しています。最新版を確認して再度保存してください。",
   INVALID_MINUTES: "議事録は100,000文字以内で入力してください。",

@@ -137,6 +137,10 @@ test("Live keeps per-user PCM separate, records attributed STT, and owns direct 
     capture: event().capture,
   });
   await manager.reply({ text: "direct", reason: "direct" });
+  await manager.handleMedia(
+    event({ activity: "end", silenceMs: 1000 }),
+    firstContext,
+  );
   await manager.reply({ text: "verified result", reason: "backend" });
   assert.deepEqual(
     provider.inputs.map(([subject]) => subject),
@@ -297,4 +301,306 @@ test("speech waits for accepted STT after the human audio stream ends", async ()
   await speaking;
   assert.equal(outputs.filter((output) => output.kind === "audio").length, 1);
   await manager.close();
+});
+
+async function waitFor(check: () => boolean) {
+  for (let i = 0; i < 150; i++) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.fail("audio state was not reached");
+}
+function heldPlayback(outputs: PluginOutput[]) {
+  const ctx = context(outputs);
+  const pending = new Map<
+    string,
+    { resolve(): void; reject(error: Error): void }
+  >();
+  ctx.deliver = async (output) => {
+    outputs.push(output);
+    if (output.kind === "audio")
+      await new Promise<void>((resolve, reject) => {
+        pending.set(output.candidateId!, { resolve, reject });
+      });
+    if (output.kind === "audio-stop") {
+      pending
+        .get(output.candidateId!)
+        ?.reject(new Error("AUDIO_PLAYBACK_INTERRUPTED"));
+      pending.delete(output.candidateId!);
+    }
+  };
+  return {
+    ctx,
+    finish: () => {
+      for (const item of pending.values()) item.resolve();
+      pending.clear();
+    },
+  };
+}
+
+test("backchannel STT preserves encoded playback; interruption rewrites only after final STT", async (t) => {
+  const outputs: PluginOutput[] = [],
+    synth: string[] = [],
+    reviews: any[] = [];
+  const held = heldPlayback(outputs);
+  const manager = new ConversationAudio({
+    synthesize: async (text) => {
+      synth.push(text);
+      return "opus";
+    },
+    recordAssistant() {},
+    onDelegation() {},
+    reviewSpeech: async (review) => {
+      reviews.push(review);
+      return {
+        candidateId: review.candidateId,
+        revision: review.revision,
+        action: review.state === "interrupted" ? "replace" : "continue",
+        text: review.state === "interrupted" ? "新しい質問と必要な要点" : null,
+      };
+    },
+  });
+  t.after(async () => {
+    held.finish();
+    await manager.close();
+  });
+  await manager.handleMedia(event({ audio: "wav" }), held.ctx);
+  const initial = manager.reply({
+    text: "元の長い回答",
+    sourceIds: ["question"],
+  });
+  await waitFor(() => outputs.some((output) => output.kind === "audio"));
+  await manager.handleMedia(event({ activity: "start" }), held.ctx);
+  manager.observeMessage({
+    id: "backchannel",
+    authorId: "discord:100",
+    meetingId: "meeting",
+    text: "うん",
+    at: 2000,
+  });
+  await manager.handleMedia(
+    event({ activity: "end", silenceMs: 1000 }),
+    held.ctx,
+  );
+  await waitFor(() => reviews.length === 1);
+  assert.equal(
+    outputs.filter((output) => output.kind === "audio-stop").length,
+    0,
+  );
+  assert.deepEqual(synth, ["元の長い回答"]);
+  const long = event({ capture: { ...event().capture!, utteranceId: "long" } });
+  await manager.handleMedia({ ...long, activity: "start" }, held.ctx);
+  await manager.handleMedia({ ...long, activity: "interrupt" }, held.ctx);
+  manager.transcription(long, held.ctx, true);
+  await manager.handleMedia(
+    { ...long, activity: "end", silenceMs: 1000 },
+    held.ctx,
+  );
+  await initial;
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(reviews.length, 1);
+  manager.observeMessage({
+    id: "new-question",
+    authorId: "discord:100",
+    meetingId: "meeting",
+    text: "別の点を教えて",
+    at: 3000,
+  });
+  manager.transcription(long, held.ctx, false);
+  await waitFor(
+    () => outputs.filter((output) => output.kind === "audio").length === 2,
+  );
+  assert.deepEqual(synth, ["元の長い回答", "新しい質問と必要な要点"]);
+  // A normal model reply covering that same revision must not duplicate speech.
+  await manager.reply({ text: "同じ質問への別回答", reason: "direct" });
+  assert.equal(synth.length, 2);
+});
+
+test("end arriving before final segment registration cannot release speech early", async (t) => {
+  const outputs: PluginOutput[] = [];
+  const manager = new ConversationAudio({
+    synthesize: async () => "opus",
+    recordAssistant() {},
+    onDelegation() {},
+  });
+  t.after(() => manager.close());
+  const ctx = context(outputs);
+  await manager.handleMedia(event({ activity: "start" }), ctx);
+  await manager.handleMedia(
+    event({
+      activity: "end",
+      silenceMs: 1000,
+      capture: { ...event().capture!, segmentIndex: 1 },
+    }),
+    ctx,
+  );
+  const reply = manager.reply({ text: "final segment待ち" });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(outputs.filter((output) => output.kind === "audio").length, 0);
+  manager.transcription(event({ eventId: "utterance:segment:0" }), ctx, false);
+  await reply;
+  assert.equal(outputs.filter((output) => output.kind === "audio").length, 1);
+});
+
+test("Live interruption closes the old provider, accepts new input and fences every late callback", async (t) => {
+  const outputs: PluginOutput[] = [],
+    providers: Array<ReturnType<typeof fakeLive>> = [],
+    callbacks: any[] = [],
+    records: any[] = [];
+  const manager = new ConversationAudio({
+    mode: "live",
+    createLiveSession: async (options) => {
+      const provider = fakeLive();
+      providers.push(provider);
+      callbacks.push(options);
+      return provider.live;
+    },
+    synthesize: async () => {
+      throw new Error("unexpected TTS");
+    },
+    recordAssistant: (record) => {
+      records.push(record);
+    },
+    onDelegation() {},
+    reviewSpeech: async (review) => ({
+      candidateId: review.candidateId,
+      revision: review.revision,
+      action: "replace",
+      text: "短い再回答",
+    }),
+  });
+  t.after(() => manager.close());
+  const ctx = context(outputs);
+  await manager.handleMedia(event({ audioFrame: frame }), ctx);
+  callbacks[0].output.append(Buffer.alloc(960));
+  callbacks[0].onAssistantTranscript({ text: "生成した元の回答" });
+  await manager.handleMedia(event({ activity: "start" }), ctx);
+  const before = outputs.filter(
+    (output) => output.kind === "audio-frame",
+  ).length;
+  callbacks[0].output.append(Buffer.alloc(960));
+  assert.equal(
+    outputs.filter((output) => output.kind === "audio-frame").length,
+    before + 1,
+  );
+  await manager.handleMedia(event({ activity: "interrupt" }), ctx);
+  assert.equal(providers[0].live.ready, false);
+  const stoppedCount = outputs.length,
+    recordCount = records.length;
+  callbacks[0].output.append(Buffer.alloc(960));
+  callbacks[0].output.clear();
+  callbacks[0].onAssistantTranscript({ text: "late" });
+  assert.equal(outputs.length, stoppedCount);
+  assert.equal(records.length, recordCount);
+  await manager.handleMedia(
+    event({ audioFrame: { ...frame, sequence: 1 } }),
+    ctx,
+  );
+  assert.equal(providers[1].inputs.length, 1);
+  callbacks[1].output.append(Buffer.alloc(960));
+  assert.equal(
+    outputs.filter((output) => output.kind === "audio-frame").length,
+    before + 1,
+  );
+  manager.observeMessage({
+    id: "new",
+    meetingId: "meeting",
+    authorId: "discord:100",
+    text: "追加の質問",
+    at: 3000,
+  });
+  await manager.handleMedia(event({ activity: "end", silenceMs: 1000 }), ctx);
+  await waitFor(() =>
+    providers.some((provider) => provider.comments.includes("短い再回答")),
+  );
+  assert.equal(providers[1].live.ready, false);
+  assert.deepEqual(providers.at(-1)!.comments, ["短い再回答"]);
+  assert.equal(providers.at(-1)!.statements.at(-1).text, "追加の質問");
+});
+
+test("a late model answer is reviewed against newer context before synthesis can play", async (t) => {
+  const outputs: PluginOutput[] = [],
+    reviews: any[] = [];
+  let resolveReview!: (decision: any) => void;
+  const manager = new ConversationAudio({
+    synthesize: async () => "opus",
+    recordAssistant() {},
+    onDelegation() {},
+    reviewSpeech: (review) => {
+      reviews.push(review);
+      return new Promise((resolve) => {
+        resolveReview = resolve;
+      });
+    },
+  });
+  t.after(() => manager.close());
+  await manager.handleMedia(event({ audio: "wav" }), context(outputs));
+  const previous = manager.turns.revision;
+  manager.observeMessage({
+    id: "correction",
+    authorId: "human",
+    meetingId: "meeting",
+    text: "もう解決した",
+    at: 1,
+  });
+  const reply = manager.reply({ text: "古い回答", contextRevision: previous });
+  await waitFor(() => reviews.length === 1);
+  assert.equal(outputs.filter((output) => output.kind === "audio").length, 0);
+  assert.equal(reviews[0].conversation.at(-1).text, "もう解決した");
+  resolveReview({ ...reviews[0], action: "discard", text: null });
+  await reply;
+  assert.equal(outputs.filter((output) => output.kind === "audio").length, 0);
+});
+
+test("media extensions reject invalid silence and retain explicit interrupt events", () => {
+  validateMediaInput(event({ activity: "interrupt" }));
+  validateMediaInput(event({ activity: "end", silenceMs: 1000 }));
+  for (const invalid of [
+    event({ activity: "end", silenceMs: -1 }),
+    event({ activity: "end", silenceMs: 1001 }),
+    event({ activity: "end", silenceMs: NaN }),
+    event({ activity: "start", silenceMs: 1000 }),
+    event({ activity: "interrupt", text: "authority" }),
+  ])
+    assert.throws(() => validateMediaInput(invalid));
+});
+
+test("explicit quiet fences an older model result and late STT from its old epoch", async (t) => {
+  const outputs: PluginOutput[] = [];
+  const manager = new ConversationAudio({
+    synthesize: async () => "opus",
+    recordAssistant() {},
+    onDelegation() {},
+  });
+  t.after(() => manager.close());
+  const ctx = context(outputs);
+  await manager.handleMedia(event({ audio: "wav" }), ctx);
+  const revision = manager.turns.revision;
+  await manager.handleMedia(
+    event({
+      activity: "quiet",
+      replyTo: { ...event().replyTo, speechEpoch: 2 },
+    }),
+    ctx,
+  );
+  await manager.reply({ text: "停止前の回答", contextRevision: revision });
+  manager.observeMessage({
+    id: "late-stt",
+    meetingId: "meeting",
+    authorId: "human",
+    text: "停止前の質問",
+    at: 1,
+  });
+  await manager.reply({
+    text: "遅着した文字起こしへの回答",
+    contextRevision: manager.turns.revision,
+    replyTo: event().replyTo,
+  });
+  assert.equal(outputs.filter((output) => output.kind === "audio").length, 0);
+  await manager.reply({
+    text: "新しい質問への回答",
+    contextRevision: manager.turns.revision,
+    replyTo: { ...event().replyTo, speechEpoch: 2 },
+  });
+  assert.equal(outputs.filter((output) => output.kind === "audio").length, 1);
 });

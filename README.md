@@ -8,6 +8,8 @@ Generated standalone HTML prototypes can be opened directly in a task. Try the r
 
 ## Local development
 
+See [app, Engine and Discord wiring](docs/agent-wiring.md) for local task creation, project discussions, task controls, provider selection and update guidance.
+
 ```sh
 npm ci
 npm run build

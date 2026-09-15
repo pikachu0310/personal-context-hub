@@ -28,7 +28,25 @@ export interface CoordinatorSource {
   contextOnly?: boolean;
 }
 
+export interface SpeechReview {
+  candidateId: string;
+  revision: number;
+  state: "queued" | "playing" | "interrupted";
+  text: string;
+  sourceIds: string[];
+  targets: Array<{ text: string; resultId?: string; runRevision?: number }>;
+  provider: "text-speech" | "live";
+  conversation: Array<{ id: string; authorId: string; text: string }>;
+}
+export interface SpeechDecision {
+  candidateId: string;
+  revision: number;
+  action: "continue" | "stop" | "replace" | "discard";
+  text: string | null;
+}
+
 export type CoordinatorEvent =
+  | { id: string; type: "speech_review"; review: SpeechReview }
   | {
       id: string;
       type: "message";
@@ -63,9 +81,20 @@ export interface CoordinatorTask {
 }
 
 export interface CoordinatorObservation {
+  // Engine validation feedback for one bounded correction of task proposals.
+  taskValidation?: {
+    allowedSourceIds: string[];
+    rejectedTasks: Array<{
+      index: number;
+      task: CoordinatorResponse["tasks"][number];
+      reason: string;
+    }>;
+  };
   minutes?: Array<{
     meetingId: string;
     name: string;
+    markdown?: string;
+    summaryRevision?: number;
     topics: import("./knowledge.js").MeetingTopic[];
   }>;
   participants?: Array<{
@@ -84,6 +113,7 @@ export interface CoordinatorObservation {
 }
 
 export interface CoordinatorResponse {
+  speech?: SpeechDecision | null;
   minutes?: import("./knowledge.js").MinutesUpdate[];
   reply: null | {
     text: string;

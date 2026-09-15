@@ -11,6 +11,8 @@ import { emptyDraftState, projectDrafts } from "./project-drafts.js";
 import { ProfileSettings } from "./ProfileSettings.js";
 import { TaskAvatars, UserAvatar } from "./TaskAvatars.js";
 import { ProjectTaskDraft } from "./ProjectTaskDraft.js";
+import { NewLocalTask } from "./NewLocalTask.js";
+import { TaskConversation } from "./TaskConversation.js";
 import { ProjectSettings } from "./ProjectSettings.js";
 import { ProjectView } from "./ProjectView.js";
 import { ProjectMenu } from "./ProjectMenu.js";
@@ -57,6 +59,8 @@ export function App() {
   const [projectDialog, setProjectDialog] = useState<string | undefined>();
   const [profileDialog, showProfile] = useState(false);
   const [settingsProject, setSettingsProject] = useState<string>();
+  const [localDraft, setLocalDraft] = useState<string>();
+  const [discussionProject, setDiscussionProject] = useState<string>();
   const [draftState, dispatchDraft] = useReducer(
     projectDrafts,
     emptyDraftState,
@@ -274,7 +278,9 @@ export function App() {
         }}
       >
         <div className="sidebar-brand">
-          <span className="brand-symbol">i</span>
+          <span className="brand-symbol">
+            <Icon name="bot" size={20} />
+          </span>
           <strong>IDO Agent</strong>
           <button
             className="icon-button"
@@ -285,6 +291,10 @@ export function App() {
           </button>
         </div>
         <nav className="sidebar-nav" aria-label="メインメニュー">
+          <button onClick={() => setLocalDraft("")}>
+            <Icon name="plus" />
+            このPCで新しいタスク
+          </button>
           <button
             className={`${currentPage === "overview" ? "nav-active" : ""} ${!state.connected ? "connection-required" : ""}`}
             onClick={() => {
@@ -351,6 +361,8 @@ export function App() {
                           deviceId={state.settings.deviceId}
                           action={action}
                           newTask={() => openNewTask(id)}
+                          localTask={() => setLocalDraft(id)}
+                          discussion={() => setDiscussionProject(id)}
                           canCreate={projectConnected}
                           mapping={() => setSettingsProject(id)}
                         />
@@ -585,6 +597,52 @@ export function App() {
           saved={() => setProjectDialog(undefined)}
         />
       </Modal>
+      <Modal
+        opened={localDraft !== undefined}
+        onClose={() => setLocalDraft(undefined)}
+        title="このPCでタスクを開始"
+        size="xl"
+        centered
+      >
+        {localDraft !== undefined && (
+          <NewLocalTask
+            key={localDraft}
+            action={action}
+            mode="auto"
+            projects={state.settings.projects}
+            initialProjectId={localDraft || undefined}
+            initialDirectory={
+              state.settings.mappings.find((m) => m.projectId === localDraft)
+                ?.directory
+            }
+            started={(runId) => {
+              setLocalDraft(undefined);
+              setProjectView(undefined);
+              selectShared(undefined);
+              select(runId);
+              setPage("runs");
+            }}
+          />
+        )}
+      </Modal>
+      <Modal
+        opened={!!discussionProject}
+        onClose={() => setDiscussionProject(undefined)}
+        title="プロジェクトの相談・共有"
+        size="xl"
+      >
+        {discussionProject && (
+          <TaskConversation
+            key={discussionProject}
+            projectId={discussionProject}
+            connected={
+              state.connected &&
+              state.settings.projects.some((p) => p.id === discussionProject)
+            }
+            taskify
+          />
+        )}
+      </Modal>
       <main className="workspace-main">
         <header className="workspace-header">
           <button
@@ -655,6 +713,10 @@ export function App() {
           <ProjectTaskDraft
             key={projectView.projectId}
             projectId={projectView.projectId}
+            mapping={state.settings.mappings.find(
+              (mapping) => mapping.projectId === projectView.projectId,
+            )}
+            action={action}
             draft={taskDrafts[projectView.projectId]}
             sendingText={(sentText) =>
               dispatchDraft({

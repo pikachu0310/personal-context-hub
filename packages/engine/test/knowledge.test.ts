@@ -97,7 +97,8 @@ test("topic minutes preserve source statements and corrections, survive restart,
     store.put("message", statement.id, statement);
   const knowledge = new MeetingKnowledgeStore(store);
   const edited = store.get<Meeting>("meeting", "meeting")!;
-  edited.summary = "# 人が編集した議事録\n検索速度の計測予算は担当者が確認する。";
+  edited.summary =
+    "# 人が編集した議事録\n検索速度の計測予算は担当者が確認する。";
   edited.summaryRevision = 7;
   edited.summaryUpdatedAt = 10;
   store.put("meeting", "meeting", edited);
@@ -118,9 +119,11 @@ test("topic minutes preserve source statements and corrections, survive restart,
   assert.equal(knowledge.apply("project", patch, allowed), true);
   let meeting = store.get<Meeting>("meeting", "meeting")!;
   const id = meeting.knowledge!.topics[0].id;
-  assert.equal(meeting.summary, edited.summary);
+  assert.equal(meeting.summary, "# 人が編集した議事録\n検索速度の計測予算は担当者が確認する。");
   assert.equal(meeting.summaryRevision, 7);
-  assert.deepEqual(meeting.knowledge!.topics[0].openQuestions, ["検索速度の確認"]);
+  assert.deepEqual(meeting.knowledge!.topics[0].openQuestions, [
+    "検索速度の確認",
+  ]);
   const correction = {
     meetingId: "meeting",
     topics: [

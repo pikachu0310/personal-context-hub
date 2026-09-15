@@ -249,7 +249,12 @@ test("delete checks creator/owner/admin and confirmation, revalidates after asyn
     runId: task.runId,
     task,
   });
+  store.put("coordinator-trace", "task-trace", {
+    projectId: f.project.id,
+    observation: task.text,
+  });
   await lifecycle.deleteTask(actor("a"), task.id, version(task));
+  assert.equal(store.get("coordinator-trace", "task-trace"), undefined);
   assert.equal(store.get("task", task.id), undefined);
   assert.throws(() => create(), /TASK_DELETED/);
   assert.equal(
@@ -401,6 +406,12 @@ test("project deletion cascades only owned resources and preserves unrelated pro
     parts: { 0: { text: "project-private audio" } },
   });
   const other = f.projects.create("Other", "other");
+  store.put("coordinator-trace", "owned-trace", {
+    projectId: project.id,
+    meetingId: f.meetingId,
+    observation: "project-private trace",
+  });
+  store.put("coordinator-trace", "other-trace", { projectId: other.id });
   await assert.rejects(
     lifecycle.deleteProject(actor("a"), project.id, {
       name: project.name,
@@ -442,6 +453,8 @@ test("project deletion cascades only owned resources and preserves unrelated pro
   assert.equal(store.get("project", project.id), undefined);
   assert.ok(store.get("project", other.id));
   assert.ok(!JSON.stringify(store.entries()).includes("project-private audio"));
+  assert.equal(store.get("coordinator-trace", "owned-trace"), undefined);
+  assert.ok(store.get("coordinator-trace", "other-trace"));
   assert.throws(
     () => f.projects.create(project.name, "create-project"),
     /PROJECT_DELETED/,
@@ -487,4 +500,166 @@ test("deletion invalidates saved AI sessions even when coordination is disabled"
   assert.equal(saved.inbox.active, undefined);
   assert.deepEqual(saved.inbox.pending, []);
   assert.ok(!JSON.stringify(saved).includes("private"));
+});
+
+test("admin force deletion accepts every task state, preserves validation, and fences late results", async (t) => {
+  const f = await fixture(t);
+  const admin = { user: f.admin, valid: () => true };
+  for (const [index, state] of (
+    [
+      "queued",
+      "assigned",
+      "running",
+      "interrupted",
+      "completed",
+      "failed",
+      "cancelled",
+    ] as const
+  ).entries()) {
+    const task = f.create(`force-${state}`);
+    task.state = state;
+    if (index % 2) task.clientId = "a";
+    task.controlReceipts = {
+      stop: { id: "stop", type: "stop", delivery: "uncertain" } as any,
+    };
+    f.store.put("task", task.id, task);
+    const input = { ...f.version(task), force: true };
+    await assert.rejects(
+      f.lifecycle.deleteTask(admin, task.id, f.version(task)),
+      /TASK_ACTIVE/,
+    );
+    for (const actor of [
+      f.actor("a"),
+      { user: f.user, valid: () => true },
+      { user: f.admin, valid: () => false },
+    ])
+      await assert.rejects(
+        f.lifecycle.deleteTask(actor, task.id, input),
+        /PERMISSION_DENIED/,
+      );
+    await assert.rejects(
+      f.lifecycle.deleteTask(admin, task.id, { ...input, confirm: false }),
+      /DELETE_CONFIRMATION_REQUIRED/,
+    );
+    for (const field of [
+      "revision",
+      "controlVersion",
+      "membershipVersion",
+    ] as const)
+      await assert.rejects(
+        f.lifecycle.deleteTask(admin, task.id, { ...input, [field]: 999 }),
+        /WORKSPACE_CONFLICT/,
+      );
+    const result = await f.lifecycle.deleteTask(admin, task.id, input);
+    assert.equal(result.pendingClients, 3);
+    assert.equal(f.store.get("task", task.id), undefined);
+    assert.equal(
+      f.tasks.updateResult("a", 1, {
+        v: 1,
+        type: "result",
+        taskId: task.id,
+        runId: task.runId,
+        revision: task.revision,
+        state: "completed",
+      }),
+      false,
+    );
+    assert.throws(() => f.store.put("task", task.id, task), /RESOURCE_DELETED/);
+    for (const deviceId of ["a", "b", "c"])
+      assert.ok(
+        f.store
+          .pending(deviceId)
+          .some(
+            (command) =>
+              command.type === "task.purge" && command.taskId === task.id,
+          ),
+      );
+  }
+});
+
+test("forced deletion revalidates versions and authorization after reset and retains the project lock", async (t) => {
+  const f = await fixture(t);
+  for (const change of ["revision", "authorization"] as const) {
+    const task = f.create(`race-${change}`);
+    let valid = true;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lifecycle = new WorkspaceLifecycle(f.store, async () => gate);
+    const pending = lifecycle.deleteTask(
+      { user: f.admin, valid: () => valid },
+      task.id,
+      { ...f.version(task), force: true },
+    );
+    assert.throws(() => f.create(`locked-${change}`), /WORKSPACE_CONFLICT/);
+    await assert.rejects(
+      lifecycle.deleteTask({ user: f.admin, valid: () => true }, task.id, {
+        ...f.version(task),
+        force: true,
+      }),
+      /WORKSPACE_CONFLICT/,
+    );
+    if (change === "revision") {
+      task.revision++;
+      f.store.put("task", task.id, task);
+    } else valid = false;
+    release();
+    await assert.rejects(
+      pending,
+      change === "revision" ? /WORKSPACE_CONFLICT/ : /PERMISSION_DENIED/,
+    );
+    assert.ok(f.store.get("task", task.id));
+    assert.equal(f.store.get("project-lock", task.projectId), undefined);
+  }
+});
+
+test("forced project deletion purges mixed active tasks but still protects default and project version", async (t) => {
+  const f = await fixture(t);
+  const admin = { user: f.admin, valid: () => true };
+  const tasks = (
+    ["queued", "assigned", "running", "interrupted", "completed"] as const
+  ).map((state) => {
+    const task = f.create(`project-force-${state}`);
+    task.state = state;
+    task.clientId = "a";
+    task.controlReceipts = {
+      stop: { id: "stop", type: "stop", delivery: "uncertain" } as any,
+    };
+    f.store.put("task", task.id, task);
+    return task;
+  });
+  const input = {
+    name: f.project.name,
+    membershipVersion: 0,
+    confirm: true,
+    force: true,
+  };
+  await assert.rejects(
+    f.lifecycle.deleteProject(admin, "default", input),
+    /DEFAULT_PROJECT_DELETE_FORBIDDEN/,
+  );
+  await assert.rejects(
+    f.lifecycle.deleteProject(admin, f.project.id, { ...input, force: false }),
+    /PROJECT_TASKS_ACTIVE/,
+  );
+  await assert.rejects(
+    f.lifecycle.deleteProject(admin, f.project.id, {
+      ...input,
+      membershipVersion: 999,
+    }),
+    /WORKSPACE_CONFLICT/,
+  );
+  await assert.rejects(
+    f.lifecycle.deleteProject(admin, f.project.id, { ...input, name: "wrong" }),
+    /DELETE_CONFIRMATION_REQUIRED/,
+  );
+  await f.lifecycle.deleteProject(admin, f.project.id, input);
+  assert.equal(f.store.get("project", f.project.id), undefined);
+  assert.ok(f.store.get("project", "default"));
+  for (const task of tasks) {
+    assert.equal(f.store.get("task", task.id), undefined);
+    assert.ok(f.store.get("task-deletion", task.id));
+    assert.throws(() => f.store.put("task", task.id, task), /RESOURCE_DELETED/);
+  }
 });

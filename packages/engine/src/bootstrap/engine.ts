@@ -228,6 +228,8 @@ export class Engine {
     );
     this.connections.lifecycle = lifecycle;
     this.workspace.lifecycle = lifecycle;
+    this.workspace.conversationBindings = () =>
+      this.plugins.conversationBindings();
     this.workspace.engineUrl = () => this.config().engineUrl ?? this.origin;
     this.tunnels = new Tunnels(options.directory, this.store, this.credentials);
     this.server.on("upgrade", (req, socket, head) => {

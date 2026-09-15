@@ -212,7 +212,7 @@ export function MeetingNotes({
         <Tabs.Panel value="minutes" pt="md">
           <Stack>
             <Text size="sm" c="dimmed">
-              会話に合わせて自動更新します。各議題から元の発言を確認できます。
+              発言から自動整理した議題です。議事録本文への手動編集とは別に更新します。各議題から元の発言を確認できます。
             </Text>
             {!topics.length && (
               <Text c="dimmed">

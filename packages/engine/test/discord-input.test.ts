@@ -11,6 +11,7 @@ import { normalizeDiscordPolicy } from "../../plugin-discord/src/input/policy.js
 import { renderPublication } from "../../plugin-discord/src/output/render.js";
 import { OpenAIModels } from "../src/adapters/openai/models.js";
 import { Store, type Meeting } from "../src/adapters/sqlite/store.js";
+import type { Message } from "../src/domain/models.js";
 import { Identities } from "../src/management/identities.js";
 import { Conversation } from "../src/processing/conversation.js";
 import { taskControl } from "../src/processing/routing/control.js";
@@ -152,6 +153,103 @@ async function fixture(t: any) {
     counts: () => ({ transcriptions, answers, speech }),
   };
 }
+
+test("blank STT results remove placeholders and retain ignored input deduplication", async (t) => {
+  const f = await fixture(t);
+  const historical = f.ai.record("meeting", "discord-100", "").message;
+  historical.stage = "ignored";
+  f.store.put("message", historical.id, historical);
+  const results = ["", " ", "　", "\t", "\r\n", " \t　\n"];
+  let calls = 0;
+  f.ai.transcribe = async () => results[calls++];
+  f.ai.models.update = async () =>
+    assert.fail("Empty results must not update minutes");
+  for (let i = 0; i < results.length; i++) {
+    const event = { ...f.event, eventId: `blank-${i}` };
+    await f.input.handle(event);
+    await f.input.handle(event);
+    assert.equal(calls, i + 1);
+    const input = f.store.get<any>("input", `discord:${event.eventId}`);
+    assert.equal(input.stage, "ignored");
+    assert.equal(input.messageId, undefined);
+    assert.deepEqual(f.store.list("message"), [historical]);
+    assert.deepEqual(f.store.get<Meeting>("meeting", "meeting")!.messages, [
+      historical,
+    ]);
+  }
+  assert.deepEqual(f.store.list("task"), []);
+  assert.equal(f.counts().answers, 0);
+  assert.equal(f.counts().speech, 0);
+  assert.deepEqual(f.store.diagnostics(), []);
+  assert.ok(
+    f.output.every(
+      (output) => output[0] === "publish" && output[1] === "transcript",
+    ),
+  );
+});
+
+test("transcripts hide pending placeholders while later speech publishes and minutes wait", async (t) => {
+  const f = await fixture(t);
+  let resolve!: (text: string) => void;
+  f.ai.transcribe = () =>
+    new Promise((done) => {
+      resolve = done;
+    });
+  const first = f.input.handle(f.event);
+  const second = f.input.handle({
+    ...f.event,
+    eventId: "later-text",
+    audio: undefined,
+    channelId: "2",
+    userId: "200",
+    text: "残す発言",
+  });
+  const transcript = () =>
+    f.output.filter((output) => output[1] === "transcript").at(-1)![4];
+  const whilePending = transcript();
+  assert.equal(
+    f.store.list<Message>("message").filter((message) => !message.text).length,
+    1,
+  );
+  resolve("　\n");
+  await Promise.all([first, second]);
+  assert.doesNotMatch(whilePending, /Discord 100/);
+  assert.match(whilePending, /Discord 200: 残す発言/);
+  assert.doesNotMatch(transcript(), /Discord 100/);
+  assert.match(transcript(), /Discord 200: 残す発言/);
+  assert.deepEqual(
+    f.store.list<Message>("message").map((message) => message.text),
+    ["残す発言"],
+  );
+});
+
+test("a blank result after voice invalidation removes its placeholder without publishing", async (t) => {
+  const f = await fixture(t);
+  let resolve!: (text: string) => void;
+  f.ai.transcribe = () =>
+    new Promise((done) => {
+      resolve = done;
+    });
+  const running = f.input.handle(f.event);
+  f.plugin.voiceGeneration++;
+  resolve(" \t");
+  await running;
+  assert.deepEqual(f.store.list("message"), []);
+  const input = f.store.get<any>("input", `discord:${f.event.eventId}`);
+  assert.equal(input.stage, "ignored");
+  assert.equal(input.messageId, undefined);
+  assert.deepEqual(f.output, []);
+});
+
+test("short STT statements retain their exact text", async (t) => {
+  const f = await fixture(t);
+  f.ai.transcribe = async () => " はい　\n";
+  await f.input.handle(f.event);
+  const messages = f.store.list<Message>("message");
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].text, " はい　\n");
+  assert.equal(messages[0].steps?.transcription?.state, "completed");
+});
 
 test("transcription quota failure is linked to a durable diagnostic, not leaked to Discord", async (t) => {
   const f = await fixture(t);
@@ -554,6 +652,8 @@ test("unlinked speakers can create extracted tasks, but revocation during analys
   });
   assert.equal(f.store.list<Task>("task").length, 1);
   assert.equal(f.store.list<Task>("task")[0].authorId, "discord-100");
+  assert.equal(f.store.list<Task>("task")[0].participantPolicy, "execution");
+  assert.deepEqual(f.store.list<Task>("task")[0].memberStates, {});
   let resolve!: (v: any) => void;
   (f.ai.models as OpenAIModels).api = async () =>
     ({

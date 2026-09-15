@@ -1,4 +1,9 @@
-import type { ExecutionPolicy, WorkReceipt, WorkSource } from "./work.js";
+import type {
+  AccessMode,
+  ExecutionPolicy,
+  WorkReceipt,
+  WorkSource,
+} from "./work.js";
 
 export const VERSION = 1;
 export const RELEASE = "0.2.0";
@@ -20,6 +25,8 @@ export interface RequestMessage {
   sentAt?: number;
 }
 export interface ClientProfile {
+  claudeConnected?: boolean;
+  taskOptionsVersion?: number;
   avatar?: string;
   name: string;
   context: string;
@@ -34,14 +41,17 @@ export interface Project {
   remote: string;
 }
 export interface Grant {
+  agents?: Array<"codex" | "claude">;
   projectId: string;
   network: boolean;
   slots: number;
 }
 export interface Mapping extends Grant {
+  agent?: "codex" | "claude";
+  executionAllowed?: boolean;
   model?: string;
   reasoningEffort?: string;
-  accessMode?: "full" | "approval";
+  accessMode?: AccessMode;
   progressMode?: "auto" | "manual";
   directory: string;
   previewCommand?: string[];
@@ -61,11 +71,18 @@ export interface AttachedTaskSource {
   text: string;
 }
 export interface Task {
+  agent?: "codex" | "claude";
+  model?: string;
+  reasoningEffort?: string;
+  progressMode?: "auto" | "manual";
   trigger?: "requested" | "proactive";
   initialText?: string;
   queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;
   attachedSources?: AttachedTaskSource[];
   localMirror?: { deviceId: string; runId: string; sequence: number };
+  // New Discord bot tasks separate execution membership from source authors.
+  // Absence preserves the participant behavior of existing tasks.
+  participantPolicy?: "execution";
   memberStates?: Record<string, boolean>;
   membershipVersion?: number;
   canDelete?: boolean;

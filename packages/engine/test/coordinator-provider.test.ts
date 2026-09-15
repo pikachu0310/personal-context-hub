@@ -100,6 +100,25 @@ test("coordinator uses only Responses API and the current Engine API key, with c
   }
 });
 
+test("each prompt distinguishes current source IDs from historical and event IDs, including correction feedback", () => {
+  const input = observation("event-id");
+  if (input.events[0].type === "message")
+    input.events[0].source.id = "message-id";
+  input.taskValidation = {
+    allowedSourceIds: ["message-id"],
+    rejectedTasks: [],
+  };
+  for (const initial of [false, true]) {
+    const prompt = coordinatorPrompt(input, { initial });
+    const data = JSON.parse(prompt.split("\n").at(-1)!);
+    assert.deepEqual(data.currentMessageSourceIds, ["message-id"]);
+    assert.deepEqual(data.referenceOnly, ["context", "minutes", "activeTasks"]);
+    assert.deepEqual(data.taskValidation, input.taskValidation);
+    assert.match(prompt, /IDだけを機械的に置換しない/);
+    assert.match(prompt, /今日の天気を調べて/);
+  }
+});
+
 test("missing API key rejects before sending and recovers when configured", async (t) => {
   const f = fixture();
   t.after(() => f.factory.close());
@@ -249,4 +268,31 @@ test("response parsing defaults empty lists but rejects malformed task authority
     coordinatorPrompt({ ...observation(), mode: "live" }, { initial: true }),
     /Liveが音声会話を担当/,
   );
+});
+
+test("speech decisions require a matching-shaped candidate, revision and bounded replacement", () => {
+  assert.equal(parseCoordinatorResponse('{"reply":null}').speech, undefined);
+  const speech = {
+    candidateId: "candidate",
+    revision: 3,
+    action: "replace",
+    text: "短い回答",
+  };
+  assert.deepEqual(
+    parseCoordinatorResponse(JSON.stringify({ speech })).speech,
+    speech,
+  );
+  for (const invalid of [
+    { ...speech, revision: -1 },
+    { ...speech, revision: 1.5 },
+    { ...speech, candidateId: "" },
+    { ...speech, action: "replay" },
+    { ...speech, text: "x".repeat(2001) },
+    { ...speech, text: "" },
+    { ...speech, action: "continue" },
+  ])
+    assert.throws(
+      () => parseCoordinatorResponse(JSON.stringify({ speech: invalid })),
+      /INVALID_COORDINATOR_RESPONSE/,
+    );
 });

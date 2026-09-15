@@ -230,7 +230,7 @@ try {
   const button = page.getByRole("button", { name: "試す", exact: true });
   assert.equal(
     await button.evaluate(
-      (element) => getComputedStyle(element).backgroundColor,
+      (element) => globalThis.getComputedStyle(element).backgroundColor,
     ),
     "rgb(0, 128, 0)",
   );
@@ -263,7 +263,7 @@ try {
   await page.reload();
   assert.equal(
     await button.evaluate(
-      (element) => getComputedStyle(element).backgroundColor,
+      (element) => globalThis.getComputedStyle(element).backgroundColor,
     ),
     "rgb(0, 0, 255)",
   );

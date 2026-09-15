@@ -51,15 +51,15 @@ test("meeting model selection stays in the available budget tier and adjusts eff
   const catalog = ["gpt-5.6-sol", "gpt-5.3-codex-spark", "gpt-6-astra"];
   assert.deepEqual(meetingModel("APIの引数を調べる", "research", catalog), {
     model: "gpt-5.3-codex-spark",
-    modelReasoningEffort: "low",
+    reasoningEffort: "low",
   });
   assert.deepEqual(
     meetingModel("ボタンのモックを作る", "implementation", catalog),
-    { model: "gpt-5.6-sol", modelReasoningEffort: "medium" },
+    { model: "gpt-5.6-sol", reasoningEffort: "medium" },
   );
   assert.deepEqual(
     meetingModel("複数サービスの移行を設計する", "implementation", catalog),
-    { model: "gpt-5.6-sol", modelReasoningEffort: "high" },
+    { model: "gpt-5.6-sol", reasoningEffort: "high" },
   );
   assert.equal(
     meetingModel("APIを調べる", "research", ["gpt-5.6-sol"]).model,

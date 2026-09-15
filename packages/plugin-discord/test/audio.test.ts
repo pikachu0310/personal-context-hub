@@ -183,7 +183,7 @@ function outputFixture() {
   };
   return { state, player, output, resources, message };
 }
-test("encoded audio RPC waits for playback and human activity interrupts without blocking stop", async () => {
+test("encoded audio RPC survives a backchannel and confirmed activity interrupts without blocking stop", async () => {
   const { output, resources, message } = outputFixture();
   let settled = false;
   const playing = output.deliver(message).finally(() => {
@@ -193,6 +193,9 @@ test("encoded audio RPC waits for playback and human activity interrupts without
   await until(() => resources.length === 1);
   assert.equal(settled, false);
   output.speakerStart("speaker");
+  await new Promise(setImmediate);
+  assert.equal(settled, false);
+  output.speakerInterrupt();
   await expected;
   output.speakerEnd("speaker");
   output.invalidate();
@@ -244,6 +247,74 @@ test("Live PCM framing validates size, converts 24k mono to Discord stereo, and 
         audio: Buffer.alloc(9602).toString("base64"),
       }),
     /INVALID_AUDIO_FRAME/,
+  );
+  output.invalidate();
+});
+
+test("capture emits one interrupt at the PCM boundary and credits only measured end silence", () => {
+  const events: any[] = [];
+  let now = 0,
+    interruptions = 0;
+  const capture = new VoiceCapture(source, (event) => events.push(event), {
+    now: () => now,
+    onInterrupt: () => interruptions++,
+  });
+  const pcm = Buffer.alloc(3840);
+  for (let i = 0; i < pcm.length; i += 2)
+    pcm.writeInt16LE(Math.round(1500 * Math.sin(i / 17)), i);
+  for (let i = 0; i < 59; i++) {
+    now += 20;
+    capture.push(pcm);
+  }
+  assert.equal(interruptions, 0);
+  now += 20;
+  capture.push(pcm);
+  assert.equal(interruptions, 1);
+  now += 20;
+  capture.push(pcm);
+  now += 1000;
+  capture.finish();
+  const interrupt = events.filter((event) => event.activity === "interrupt");
+  assert.equal(interrupt.length, 1);
+  assert.equal(interrupt[0].capture.utteranceId, capture.utteranceId);
+  assert.equal(events.at(-1).silenceMs, 1000);
+});
+
+test("a delayed encoded candidate from before a human turn cannot begin afterward", async () => {
+  const { output, resources, state, message } = outputFixture();
+  const oldRevision = state.playbackRevision ?? 0;
+  output.speakerStart("human");
+  const delayed = assert.rejects(
+    output.deliver({ ...message, playbackRevision: oldRevision }),
+    /AUDIO_PLAYBACK_DISCARDED/,
+  );
+  output.speakerEnd("human", 1000);
+  await delayed;
+  assert.equal(resources.length, 0);
+  output.invalidate();
+});
+
+test("Live continues the current stream during a backchannel but never starts another", async () => {
+  const { output, resources, message } = outputFixture();
+  const frame = {
+    ...message,
+    kind: "audio-frame",
+    audioFormat: "pcm16-24000-mono",
+    audioSequence: 0,
+    audio: Buffer.alloc(960).toString("base64"),
+  };
+  await output.deliver(frame);
+  output.speakerStart("human");
+  await output.deliver({ ...frame, audioSequence: 1 });
+  await output.deliver({ ...frame, candidateId: "other" });
+  assert.equal(resources.length, 1);
+  output.speakerInterrupt();
+  output.speakerEnd("human", 1000);
+  await output.deliver({ ...frame, audioSequence: 2 });
+  assert.equal(
+    resources.length,
+    1,
+    "stopped candidate cannot return after silence",
   );
   output.invalidate();
 });

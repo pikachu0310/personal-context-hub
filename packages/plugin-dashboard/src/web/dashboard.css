@@ -99,7 +99,13 @@ body {
   max-width: 280px;
   text-align: left;
 }
+.row-link .mantine-Button-inner,
 .row-link .mantine-Button-label {
+  height: auto;
+}
+.row-link .mantine-Button-label {
+  /* Preserve the full line box: cap-height trimming clips Japanese glyphs. */
+  text-box-trim: none;
   white-space: normal;
   display: block;
   overflow-wrap: anywhere;
@@ -110,6 +116,9 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.selectable-row {
+  cursor: pointer;
 }
 .numeric {
   font-variant-numeric: tabular-nums;

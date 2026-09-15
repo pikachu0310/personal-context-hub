@@ -1,3 +1,15 @@
+export type AccessMode = "sandbox" | "approval" | "full";
+
+export function isAccessMode(value: unknown): value is AccessMode {
+  return value === "sandbox" || value === "approval" || value === "full";
+}
+
+export function isUnrestrictedAccess(
+  value: unknown,
+): value is "approval" | "full" {
+  return value === "approval" || value === "full";
+}
+
 // Serializable restrictions shared by Engine and Client. These values narrow
 // an executor's local grant; they never supply identity, credentials or consent.
 export interface ExecutionPolicy {
@@ -17,6 +29,7 @@ export interface WorkSource {
 export type ControlDelivery =
   "pending" | "queued" | "applied" | "stopped" | "uncertain" | "rejected";
 export interface WorkReceipt {
+  sourcePluginId?: string;
   id: string;
   taskId: string;
   authorId: string;

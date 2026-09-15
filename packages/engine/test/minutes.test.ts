@@ -182,3 +182,71 @@ test("reset and shutdown fence an in-flight generation", async (t) => {
   await second;
   assert.equal(meeting().summary, "Original");
 });
+
+test("topic updates and Markdown edits coexist during generation and context search reads the latest document", async (t) => {
+  const { store, meeting, edit } = await fixture(t);
+  const { MeetingKnowledgeStore } =
+    await import("../src/processing/minutes/knowledge.js");
+  const knowledge = new MeetingKnowledgeStore(store);
+  let release!: (text: string) => void;
+  let calls = 0;
+  const document = new MinutesDocument(store, async (m) => {
+    if (++calls === 1)
+      return new Promise<string>((resolve) => {
+        release = resolve;
+      });
+    return m.summary + "\n\n自動追記";
+  });
+  const pending = document.refresh("m");
+  edit(
+    "# 手動編集\n\n[参照](ido://projects/p/tasks/t)\n" + "本文".repeat(2300),
+  );
+  const revision = meeting().summaryRevision;
+  assert.equal(
+    knowledge.apply(
+      "p",
+      {
+        meetingId: "m",
+        topics: [
+          {
+            id: null,
+            title: "議題",
+            summary: "決定事項の整理",
+            decisions: ["決定事項"],
+            openQuestions: [],
+            sourceIds: ["one"],
+          },
+        ],
+      },
+      new Set(["one"]),
+    ),
+    true,
+  );
+  assert.equal(meeting().summaryRevision, revision);
+  assert.match(meeting().summary, /^# 手動編集/);
+  release("obsolete generation");
+  await pending;
+  assert.equal(calls, 2);
+  assert.equal(meeting().summaryRevision, 2);
+  assert.equal(meeting().knowledge!.topics.length, 1);
+  const result = knowledge.search("p", { query: "手動編集" });
+  assert.equal(result.documents!.length, 1);
+  assert.equal(result.documents![0].revision, 2);
+  assert.match(result.documents![0].markdown, /ido:\/\/projects\/p\/tasks\/t/);
+  assert.equal(result.documents![0].nextOffset, 4000);
+  const tail = knowledge.search("p", {
+    meetingId: "m",
+    documentOffset: result.documents![0].nextOffset,
+  });
+  assert.equal(
+    result.documents![0].markdown + tail.documents![0].markdown,
+    meeting().summary,
+  );
+  assert.throws(
+    () => knowledge.search("p", { documentOffset: 4000 }),
+    /INVALID_KNOWLEDGE_QUERY/,
+  );
+  edit("", 2);
+  assert.deepEqual(knowledge.search("p", {}).documents, []);
+  assert.equal(meeting().knowledge!.topics.length, 1);
+});

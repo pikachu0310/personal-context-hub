@@ -142,6 +142,8 @@ export class ProjectTeam {
       context:
         typeof value?.context === "string" ? value.context.slice(0, 8000) : "",
       codexConnected: value?.codexConnected === true,
+      claudeConnected: value?.claudeConnected === true,
+      taskOptionsVersion: value?.taskOptionsVersion === 1 ? 1 : undefined,
     };
     device.profile = profile;
     device.name = profile.name;

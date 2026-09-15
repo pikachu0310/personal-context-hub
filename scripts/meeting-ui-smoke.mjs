@@ -7,6 +7,8 @@ import { chromium } from "playwright";
 import { Client } from "../packages/client/dist/index.js";
 const directory = await mkdtemp(join(tmpdir(), "ido-meeting-ui-"));
 const client = new Client(directory);
+client.credentials.backend = "file";
+client.checkAccount = async () => {};
 const now = Date.now();
 const project = { id: "project", name: "検索画面の検討", remote: "" };
 const messages = [
@@ -49,7 +51,7 @@ const minutes = [
     name: "今日の打ち合わせ",
     projectId: "project",
     startedAt: now - 600000,
-    summary: "",
+    summary: "# 編集済み議事録\n\n手動で追記した検討事項。",
     messages,
     knowledge: {
       revision: 1,
@@ -134,6 +136,8 @@ try {
   page.setDefaultTimeout(10000);
   await page.goto(client.origin);
   await page.getByRole("button", { name: "議事録", exact: true }).click();
+  await page.getByRole("heading", { name: "編集済み議事録" }).waitFor();
+  await page.getByText("議題・元の発言を確認", { exact: true }).click();
   await page.getByRole("heading", { name: "検索画面の絞り込み方式" }).waitFor();
   await page.getByText("更新中", { exact: true }).waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
@@ -166,8 +170,10 @@ try {
   assert.equal(await page.locator('[id^="statement-"]').count(), 1);
   await page.getByLabel("議事録・発言を検索").fill("");
   await page.getByRole("tab", { name: "議題別の議事録" }).click();
+  await page
+    .getByRole("button", { name: "サイドバーを閉じる", exact: true })
+    .click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "議事録", exact: true }).click();
   await page.locator(".agent-workspace.sidebar-hidden").waitFor();
   await page.screenshot({
     path: ".ido-build/screenshots/meeting-minutes-mobile.png",
@@ -175,7 +181,9 @@ try {
   });
   assert.equal(
     await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
+      () =>
+        globalThis.document.documentElement.scrollWidth <=
+        globalThis.innerWidth,
     ),
     true,
   );

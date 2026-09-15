@@ -1,18 +1,15 @@
 import { Alert, Button, Select, Stack, Text, TextInput } from "@mantine/core";
 import { useState } from "react";
+import { ForumRecovery } from "./ForumRecovery.js";
 import {
   Form,
   SecretInput,
   type Action,
   type PluginState,
 } from "@ido/common-ui";
-// Installer distribution is managed by developers, outside the admin form.
-const downloadUrlFields = new Set([
-  "windowsDownloadUrl",
-  "macArmDownloadUrl",
-  "macIntelDownloadUrl",
-]);
 const errors: Record<string, string> = {
+  DISCORD_FORUM_PERMISSION_REQUIRED:
+    "issueフォーラムのIDと権限を確認してください。閲覧・メッセージ送信・スレッド内送信・履歴閲覧・ファイル添付が必要です。",
   DISCORD_TOKEN_REQUIRED: "Botトークンを入力してください。",
   DISCORD_TOKEN_INVALID: "Botトークンを確認してください。",
   DISCORD_GUILD_REQUIRED: "Guild IDを入力してください。",
@@ -51,7 +48,7 @@ export function DiscordSetup({
   const inspect = async (selected = "") => {
     const result = (await action("plugins/setup", {
       pluginId: plugin.id,
-      config: { ...basic, textChannelId: selected },
+      config: { ...plugin.config, ...basic, textChannelId: selected },
     })) as unknown as {
       appId: string;
       channels: Array<{ id: string; name: string }>;
@@ -156,13 +153,13 @@ export function DiscordSetup({
         </Text>
       )}
       {error && <Alert color="red">{error}</Alert>}
+      <ForumRecovery action={action} />
       <details>
         <summary>詳細設定（任意）</summary>
         <Form
           initial={Object.fromEntries(
             Object.entries(plugin.config).filter(
               ([key]) =>
-                !downloadUrlFields.has(key) &&
                 ![
                   "botToken",
                   "guildId",
@@ -177,7 +174,6 @@ export function DiscordSetup({
           fields={(plugin.manifest?.fields ?? [])
             .filter(
               (f) =>
-                !downloadUrlFields.has(f.key) &&
                 !["botToken", "guildId", "textChannelId", "appId"].includes(
                   f.key,
                 ),

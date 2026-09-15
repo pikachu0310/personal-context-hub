@@ -23,6 +23,7 @@ import type { AgentKind } from "../agents/types.js";
 import { ClaudeRuntime } from "../agents/claude.js";
 import {
   normalizeExecutionPolicy,
+  type AccessMode,
   restrictExecutionPolicy,
   type ExecutionPolicy,
   type ClientControlReceipt,
@@ -39,12 +40,28 @@ export interface WorkInstruction extends RequestMessage {
 }
 
 export interface Run {
+  detailSync?: {
+    engineUrl: string;
+    deviceId: string;
+    sequence: number;
+    resourceKey?: string;
+  };
+  detailResources?: Pick<
+    import("@ido/common/contracts/api").TaskDetailSnapshot,
+    | "environment"
+    | "environmentAt"
+    | "environmentError"
+    | "patch"
+    | "patchAt"
+    | "patchError"
+  >;
   requestAt?: number;
   contextSources?: TaskContextSource[];
   boardToolsEnabled?: boolean;
   meetingToolsEnabled?: boolean;
   model?: string;
   modelReasoningEffort?: "low" | "medium" | "high";
+  knowledgeToolsEnabled?: boolean;
   reasoningEffort?: string;
   agent?: AgentKind;
   origin?: "local";
@@ -59,7 +76,7 @@ export interface Run {
     status?: "pending" | "synced" | "error";
     error?: string;
   };
-  accessMode?: "full" | "approval";
+  accessMode?: AccessMode;
   progressMode?: "auto" | "manual";
   pendingProgressMode?: "auto" | "manual";
   phase?: "planning" | "awaiting-plan" | "executing";
@@ -83,12 +100,14 @@ export interface Run {
 }
 export { codexBinary } from "../codex/binary.js";
 export class Executor {
+  onSaved: () => void = () => {};
   knowledge?: (
     task: Task,
     input: import("@ido/common/contracts/knowledge").KnowledgeQuery,
   ) => Promise<import("@ido/common/contracts/knowledge").KnowledgePage>;
   contextProfile: () => { name: string; context: string } | undefined = () =>
     undefined;
+  sharedTask?: (value: Run) => Promise<Task | undefined>;
   readonly board: TaskBoardConnection;
   createClaude = (options: ConstructorParameters<typeof ClaudeRuntime>[0]) =>
     new ClaudeRuntime(options);
@@ -154,7 +173,7 @@ export class Executor {
     slots: number,
     local?: {
       discordShare?: Run["discordShare"];
-      accessMode?: "full" | "approval";
+      accessMode?: AccessMode;
       progressMode: "auto" | "manual";
       agent?: AgentKind;
       model?: string;
@@ -252,16 +271,26 @@ export class Executor {
         ).values(),
       ];
       const value: Run = {
+        detailSync: previous?.detailSync,
+        detailResources: previous?.detailResources,
         contextSources: previous?.contextSources?.filter(
           (source) => source.kind !== "minutes",
         ),
-        agent: previous?.agent ?? local?.agent ?? "codex",
-        model: previous ? previous.model : (local?.model ?? mapping.model),
+        agent: previous?.agent ?? local?.agent ?? task.agent ?? "codex",
+        model: previous
+          ? previous.model
+          : (local?.model ??
+            task.model ??
+            (task.agent && task.agent !== (mapping.agent ?? "codex")
+              ? undefined
+              : mapping.model)),
         reasoningEffort: previous
           ? previous.reasoningEffort
           : local
             ? local.reasoningEffort
-            : mapping.reasoningEffort,
+            : task.agent || task.model
+              ? task.reasoningEffort
+              : mapping.reasoningEffort,
         modelReasoningEffort: previous?.modelReasoningEffort,
         meetingToolsEnabled: previous?.meetingToolsEnabled,
         origin: local ? "local" : undefined,
@@ -274,6 +303,7 @@ export class Executor {
           previous?.pendingProgressMode ??
           previous?.progressMode ??
           local?.progressMode ??
+          task.progressMode ??
           mapping.progressMode ??
           "auto",
         activity: structuredClone(previous?.activity ?? []),
@@ -284,6 +314,7 @@ export class Executor {
         directory,
         threadId: previous?.threadId,
         boardToolsEnabled: previous?.boardToolsEnabled,
+        knowledgeToolsEnabled: previous?.knowledgeToolsEnabled,
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],
         instructions: structuredClone(previous?.instructions ?? []),

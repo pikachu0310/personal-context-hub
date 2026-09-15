@@ -26,7 +26,6 @@ export function sameOutcome(left: string, right: string) {
 export function duplicateWork(
   tasks: Task[],
   title: string,
-  sourceIds: string[],
   automatic: boolean,
   now = Date.now(),
 ) {
@@ -36,9 +35,11 @@ export function duplicateWork(
     );
     if (!active && (!automatic || now - task.updatedAt > 5 * 60_000))
       return false;
-    return (
-      sourceIds.some((id) => task.sourceIds?.includes(id)) ||
-      sameOutcome(task.title ?? task.text, title)
-    );
+    // A source can request several different outcomes. Shared evidence alone
+    // is not a duplicate. Explicit requests also must not be discarded by
+    // character similarity (e.g. 明日の天気 vs 今日の天気).
+    return automatic
+      ? sameOutcome(task.title ?? task.text, title)
+      : key(task.title ?? task.text) === key(title);
   });
 }

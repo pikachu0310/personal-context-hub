@@ -2,9 +2,12 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   query,
+  createSdkMcpServer,
+  tool,
   type Query,
   type Options,
 } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import type { AgentRuntimeOptions, AgentThreadOptions } from "./types.js";
 import { claudeToolAllowed, claudeTools } from "./claude-policy.js";
 
@@ -75,6 +78,43 @@ class ClaudeThread {
     try {
       while (true) {
         turn.signal.throwIfAborted();
+        const sharedTools = this.options.dynamicTools ?? [];
+        const sharedName = (name: string) =>
+          sharedTools.some((def) => name === `mcp__ido__${def.name}`);
+        const sharedServer =
+          sharedTools.length && this.options.onToolCall
+            ? createSdkMcpServer({
+                name: "ido",
+                tools: sharedTools.map((def) => {
+                  const schema = z.fromJSONSchema(
+                    def.inputSchema as Parameters<typeof z.fromJSONSchema>[0],
+                  ) as z.ZodObject;
+                  return tool(
+                    def.name,
+                    def.description,
+                    schema.shape,
+                    async (args) => {
+                      turn.signal.throwIfAborted();
+                      const result = await this.options.onToolCall!({
+                        tool: def.name,
+                        arguments: args,
+                        callId: randomUUID(),
+                        threadId: this.id,
+                        turnId: this.activeTurnId ?? undefined,
+                      });
+                      return {
+                        content: [
+                          {
+                            type: "text" as const,
+                            text: JSON.stringify(result),
+                          },
+                        ],
+                      };
+                    },
+                  );
+                }),
+              })
+            : undefined;
         const options: Options = {
           model: turn.model ?? this.options.model,
           effort: (turn.reasoningEffort ??
@@ -83,7 +123,7 @@ class ClaudeThread {
           env: this.runtime.config.env,
           resume: this.id,
           settingSources: [],
-          mcpServers: {},
+          mcpServers: sharedServer ? { ido: sharedServer } : {},
           strictMcpConfig: true,
           plugins: [],
           tools: claudeTools.filter(
@@ -113,6 +153,8 @@ class ClaudeThread {
                 hooks: [
                   async (event) => {
                     if (event.hook_event_name !== "PreToolUse") return {};
+                    if (sharedName(event.tool_name) && !turn.signal.aborted)
+                      return {};
                     const input = event.tool_input as Record<string, unknown>;
                     const allowed =
                       input &&
@@ -137,6 +179,8 @@ class ClaudeThread {
             ],
           },
           canUseTool: async (tool, input) => {
+            if (sharedName(tool) && !turn.signal.aborted)
+              return { behavior: "allow", updatedInput: input };
             if (
               !turn.signal.aborted &&
               (await claudeToolAllowed(tool, input, this.options, planning))

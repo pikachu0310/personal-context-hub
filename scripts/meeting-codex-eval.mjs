@@ -151,7 +151,7 @@ try {
       stage: "created",
       legacyContext: legacy,
       model,
-      effort: value.modelReasoningEffort,
+      effort: value.reasoningEffort,
       contextCalls: calls.length,
     }),
   );

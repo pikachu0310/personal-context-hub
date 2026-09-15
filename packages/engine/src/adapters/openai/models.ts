@@ -48,6 +48,7 @@ export class OpenAIModels implements Models {
     ).audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "alloy",
+      speed: 2,
       input: text.slice(0, 500),
       response_format: "opus",
       speed: this.speech.speed ?? 1,

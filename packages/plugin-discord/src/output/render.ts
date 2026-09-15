@@ -1,6 +1,8 @@
 import type { PluginEvent } from "@ido/common/contracts/plugins";
 import type { MeetingKnowledge } from "@ido/common/contracts/knowledge";
 interface Meeting {
+  projectId?: string;
+  projectName?: string;
   knowledge?: MeetingKnowledge;
   summary: string;
   messages: Array<{
@@ -44,13 +46,15 @@ export function renderPublication(event: PluginEvent) {
   }
   return (
     "🎙 ライブ文字起こし（直近の発言）\n" +
+    `現在のプロジェクト: ${(meeting.projectName ?? meeting.projectId ?? "未設定").replace(/[\r\n]/g, " ").slice(0, 100)}\n\n` +
     meeting.messages
+      .filter((message) => message.text.trim())
       .slice(-12)
       .map(
         (m) =>
           `${new Date(m.at).toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo" })} ${m.authorName ?? m.authorId}: ${m.text}`,
       )
       .join("\n")
-      .slice(-1750)
+      .slice(-1700)
   );
 }

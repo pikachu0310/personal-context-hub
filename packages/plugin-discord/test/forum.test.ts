@@ -172,6 +172,94 @@ function fixture() {
     },
   };
 }
+
+test("canonical conversation delivery resumes partial posts without duplicates and recovery verifies ownership", async () => {
+  let saved: ForumRecord[] | undefined;
+  const sent = new Set<string>();
+  let fail = true,
+    updates = 0;
+  const sync = new ForumSync(
+    binding,
+    {
+      create: async () => "thread",
+      find: async () => "thread",
+      update: async () => {
+        updates++;
+      },
+      verify: async (threadId) => threadId === "thread",
+      findPost: async (_threadId, marker) => sent.has(marker),
+      post: async (_threadId, marker) => {
+        assert.ok(saved?.some((record) => record.pendingPost === marker));
+        assert.equal(sent.has(marker), false);
+        sent.add(marker);
+        if (fail) {
+          fail = false;
+          throw new Error("TIMEOUT_AFTER_SEND");
+        }
+      },
+    },
+    async () => saved,
+    async (records) => {
+      saved = structuredClone(records);
+    },
+  );
+  const item = {
+    ...task(),
+    boardPosts: [
+      { id: 1, body: "x".repeat(4000), author: "Member" },
+      {
+        id: 2,
+        body: "Native Discord message",
+        author: "Discord Member",
+        external: true,
+      },
+    ],
+  };
+  await assert.rejects(sync.sync([item]));
+  assert.equal(sync.status().length, 1);
+  await sync.sync([item]);
+  await sync.sync([item]);
+  assert.equal(sent.size, 3);
+  assert.equal(sync.postCursors().task, 2);
+  assert.equal(saved?.[0].error, undefined);
+  await assert.rejects(
+    sync.recover("task", "unrelated-thread"),
+    /STARTER_MISMATCH/,
+  );
+  assert.equal(updates, 0);
+  await sync.recover("task", "thread");
+  assert.equal(updates, 1);
+});
+test("inspection detects deleted unchanged threads and explicit recreation restores them", async () => {
+  let saved: ForumRecord[] | undefined,
+    exists = true,
+    creates = 0;
+  const sync = new ForumSync(
+    binding,
+    {
+      find: async () => undefined,
+      create: async () => {
+        exists = true;
+        return `thread-${++creates}`;
+      },
+      update: async () => {},
+      verify: async () => exists,
+    },
+    async () => saved,
+    async (records) => {
+      saved = structuredClone(records);
+    },
+  );
+  await sync.sync([task("completed")]);
+  exists = false;
+  assert.equal((await sync.inspect())[0].error, "FORUM_THREAD_NOT_AVAILABLE");
+  assert.equal(creates, 1);
+  await sync.recover("task", undefined, true);
+  await sync.sync([task("completed")]);
+  assert.equal(creates, 2);
+  assert.deepEqual(await sync.inspect(), []);
+});
+
 test("forum serializes concurrent events, restores mapping and edits one starter", async () => {
   const f = fixture(),
     sync = f.make();
@@ -277,7 +365,9 @@ test("forum input requires mapped task, current guild, participant policy and ex
     ),
     undefined,
   );
-  assert.equal(forumCommand("stopボタンを追加して"), "steer");
+  assert.equal(forumCommand("stopボタンを追加して"), "context");
+  assert.equal(forumCommand("指示: stopボタンを追加して"), "steer");
+  assert.equal(forumCommand("再開: 続けて"), "steer");
 });
 test("onboarding uses explicit download URLs, escaped HTML and prefill-only deep link", () => {
   const html = connectionPage("https://engine.example.com", {

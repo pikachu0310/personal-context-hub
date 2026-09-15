@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/bootstrap/engine.js";
 import { Client } from "../../client/src/bootstrap/client.js";
+import { TaskBoard } from "../src/processing/tasks/board.js";
 import type { Task } from "@ido/common/contracts/protocol";
 import type { Run } from "../../client/src/execution/executor.js";
 
@@ -104,6 +105,28 @@ test("different Clients discuss engine tasks over authenticated board connection
   assert.equal(clientA.executor.board.supported, true);
   const aPort = clientA.executor.board.forTask(a, new AbortController().signal);
   const bPort = clientB.executor.board.forTask(b, new AbortController().signal);
+  assert.deepEqual(
+    await bPort.read({ query: "", limit: null, taskId: null }),
+    await bPort.read({}),
+  );
+  await assert.rejects(
+    bPort.read({ limit: 20 }),
+    /INVALID_BOARD_LIMIT: limit.*1 to 10/,
+  );
+  await assert.rejects(
+    bPort.read({ query: 123 }),
+    /INVALID_BOARD_QUERY: query/,
+  );
+  await assert.rejects(
+    bPort.read({ offset: -1 }),
+    /INVALID_BOARD_OFFSET: offset/,
+  );
+  // Unexpected storage failures must not expose internal details to callers.
+  const read = t.mock.method(TaskBoard.prototype, "read", () => {
+    throw new Error("private storage failure");
+  });
+  await assert.rejects(bPort.read({}), { message: "BOARD_REQUEST_REJECTED" });
+  read.mock.restore();
   const first = (await aPort.post(
     { body: "共通APIについて相談" },
     "first",
@@ -148,6 +171,108 @@ test("different Clients discuss engine tasks over authenticated board connection
     ((await bPort.read({ query: "共通API" })) as any).threads.length,
     1,
   );
+  const count = engine.store.list("task").length;
+  const discussionInput = {
+    projectId: "project",
+    text: "Question without an issue",
+    requestId: "human-question",
+  };
+  await clientA.workspaceRequest("project.conversation", discussionInput);
+  await clientA.workspaceRequest("project.conversation", discussionInput);
+  const shared = await clientB.workspaceRequest<any>("project.conversation", {
+    projectId: "project",
+  });
+  assert.equal(shared.posts.length, 1);
+  assert.equal(shared.posts[0].body, discussionInput.text);
+  assert.equal(engine.store.list("task").length, count);
+  clientA.agentCatalog = async () => [
+    {
+      agent: "claude",
+      authenticated: true,
+      models: [{ id: "sonnet", name: "Sonnet", supportedEfforts: ["high"] }],
+    },
+  ];
+  const post = async (path: string, input: unknown) => {
+    const response = await fetch(`${clientA.origin}/api/${path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-csrf-token": clientA.csrf,
+      },
+      body: JSON.stringify(input),
+    });
+    assert.equal(response.status, 200, await response.clone().text());
+    return response.json();
+  };
+  await post("model-settings", {
+    projectId: "project",
+    agent: "claude",
+    model: "sonnet",
+    reasoningEffort: "high",
+  });
+  await post("progress-mode", { projectId: "project", mode: "manual" });
+  const created = await post("project/task", {
+    projectId: "project",
+    text: "Explicit discussion task",
+    requestId: "taskify",
+  });
+  assert.equal(created.agent, "claude");
+  assert.equal(created.model, "sonnet");
+  assert.equal(created.reasoningEffort, "high");
+  assert.equal(created.progressMode, "manual");
+  assert.equal(created.state, "queued");
+  await post("project/control", {
+    taskId: created.id,
+    revision: created.revision,
+    operation: "stop",
+    requestId: "stop-taskify",
+  });
+  assert.equal(engine.store.get<Task>("task", created.id)?.state, "cancelled");
+  await bPort.post({ scope: "project", body: "Agent reply" }, "project-reply");
+  assert.equal(
+    (
+      await clientA.workspaceRequest<any>("project.conversation", {
+        projectId: "project",
+      })
+    ).posts.length,
+    2,
+  );
+  await clientB.workspaceRequest("task.conversation", {
+    taskId: a.id,
+    text: "Human follow-up conversation",
+    requestId: "human-task",
+  });
+  assert.equal(
+    ((await aPort.read({ taskId: a.id })) as any).posts.at(-1).authorKind,
+    "human",
+  );
+  await assert.rejects(
+    clientB.workspaceRequest("project.conversation", { projectId: "foreign" }),
+  );
+  await assert.rejects(
+    clientB.workspaceRequest("task.access-reset", {
+      taskId: a.id,
+      revision: a.revision,
+    }),
+  );
+  const policy = { sandboxMode: "read-only" as const };
+  engine.store.put("task", a.id, {
+    ...a,
+    state: "failed",
+    executionPolicy: policy,
+    effectiveExecutionPolicy: { ...policy, networkAccessEnabled: false },
+  });
+  await clientA.workspaceRequest("task.access-reset", {
+    taskId: a.id,
+    revision: a.revision,
+  });
+  assert.deepEqual(
+    engine.store.get<Task>("task", a.id)?.effectiveExecutionPolicy,
+    policy,
+  );
   engine.store.remove("project-member", `project:${a.clientId}`);
   await assert.rejects(aPort.read({}), /REJECTED/);
+  await assert.rejects(
+    clientA.workspaceRequest("project.conversation", discussionInput),
+  );
 });

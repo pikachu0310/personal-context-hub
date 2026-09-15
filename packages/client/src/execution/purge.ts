@@ -83,14 +83,14 @@ export async function purge(this: Executor, taskId: string) {
   await this.save();
   for (const run of runs) {
     this.active.get(run.task.runId)?.abort.abort();
-    await this.running.get(run.task.runId);
-    await this.steering.get(run.task.runId);
     for (const [id, approval] of this.approvals)
       if (approval.runId === run.task.runId) {
         clearTimeout(approval.timer);
         approval.resolve({ decision: "decline" });
         this.approvals.delete(id);
       }
+    await this.running.get(run.task.runId);
+    await this.steering.get(run.task.runId);
     this.planWaiters.delete(run.task.runId);
     delete this.runs[run.task.runId];
   }

@@ -38,6 +38,33 @@ export function forumTransport(
     return channel;
   };
   return {
+    async verify(id, marker) {
+      const channel = await thread(id);
+      const starter = await channel.fetchStarterMessage();
+      return (
+        !!starter &&
+        starter.author.id === client.user?.id &&
+        starter.content.startsWith(`${marker}\n`)
+      );
+    },
+    async findPost(id, marker) {
+      const channel = await thread(id);
+      const messages = await channel.messages.fetch({ limit: 100 });
+      return messages.some(
+        (message) =>
+          message.author.id === client.user?.id &&
+          message.content.startsWith(marker + "\n"),
+      );
+    },
+    async post(id, marker, content) {
+      const channel = await thread(id);
+      if (!valid()) throw new Error("FORUM_CONFIG_CHANGED");
+      if (channel.archived && !channel.locked) await channel.setArchived(false);
+      await channel.send({
+        content: `${marker}\n${content}`,
+        allowedMentions: { parse: [] },
+      });
+    },
     async find(marker) {
       const channel = await forum();
       const active = await channel.threads.fetchActive();

@@ -7,18 +7,26 @@ export function ModelControls({
   runId,
   projectId,
   agent = "codex",
+  onBusyChange,
 }: {
   runId?: string;
   projectId?: string;
   agent?: string;
+  onBusyChange?: (busy: boolean) => void;
 }) {
-  const [models, setModels] = useState<AgentCatalogEntry["models"]>([]);
+  const [catalog, setCatalog] = useState<AgentCatalogEntry[]>([]);
   const [selection, setSelection] = useState<{
+    agent?: string;
     model?: string;
     reasoningEffort?: string;
     progressMode?: "auto" | "manual";
   }>({});
   const [busy, setBusy] = useState(false);
+  const selectedAgent = projectId ? (selection.agent ?? agent) : agent;
+  const models =
+    catalog.find(
+      (entry) => entry.agent === selectedAgent && entry.authenticated,
+    )?.models ?? [];
   const [error, setError] = useState("");
   useEffect(() => {
     let disposed = false;
@@ -33,11 +41,7 @@ export function ModelControls({
           }),
         ]);
         if (!disposed) {
-          setModels(
-            catalog.agents.find(
-              (entry) => entry.agent === agent && entry.authenticated,
-            )?.models ?? [],
-          );
+          setCatalog(catalog.agents);
           setSelection(settings);
           setError("");
         }
@@ -55,14 +59,20 @@ export function ModelControls({
       window.removeEventListener("focus", refresh);
     };
   }, [runId, projectId, agent]);
-  async function save(model: string, reasoningEffort?: string) {
+  async function save(
+    model: string,
+    reasoningEffort?: string,
+    provider = selectedAgent,
+  ) {
     setBusy(true);
+    onBusyChange?.(true);
     try {
       const result = await api<typeof selection>("model-settings", {
         runId,
         projectId,
         model,
         reasoningEffort,
+        agent: provider,
       });
       setSelection(result);
       setError("");
@@ -72,6 +82,7 @@ export function ModelControls({
       );
     } finally {
       setBusy(false);
+      onBusyChange?.(false);
     }
   }
   return (
@@ -94,6 +105,7 @@ export function ModelControls({
           onChange={async (value) => {
             const mode = value as "auto" | "manual";
             setBusy(true);
+            onBusyChange?.(true);
             try {
               await api("progress-mode", { projectId, mode });
               setSelection((previous) => ({ ...previous, progressMode: mode }));
@@ -102,7 +114,26 @@ export function ModelControls({
               setError("進め方を保存できませんでした。");
             } finally {
               setBusy(false);
+              onBusyChange?.(false);
             }
+          }}
+        />
+      )}
+      {projectId && (
+        <ComposerDropdown
+          label="エージェント"
+          value={selectedAgent}
+          disabled={busy}
+          options={catalog
+            .filter((entry) => entry.authenticated)
+            .map((entry) => ({
+              value: entry.agent,
+              label: entry.agent === "claude" ? "Claude" : "Codex",
+            }))}
+          onChange={(provider) => {
+            const model = catalog.find((entry) => entry.agent === provider)
+              ?.models[0];
+            if (model) void save(model.id, undefined, provider);
           }}
         />
       )}

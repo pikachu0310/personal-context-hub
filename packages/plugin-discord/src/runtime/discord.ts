@@ -9,7 +9,7 @@ import { normalizeInput } from "../input/normalize.js";
 import { normalizeDiscordPolicy } from "../input/policy.js";
 import { discordManifest } from "../manifest.js";
 import { Publications } from "../output/publications.js";
-import { renderPublication } from "../output/render.js";
+import { ConversationPublications } from "../output/conversation.js";
 import { deliver } from "../output/transport.js";
 import { audioOutput } from "../output/audio.js";
 import { createDiscordState } from "./state.js";
@@ -25,13 +25,54 @@ import { connectionLink, validateDownloads } from "../onboarding/guide.js";
 const state = createDiscordState();
 let forumTimer: NodeJS.Timeout | undefined;
 let forumBusy = false;
+function makeForum(projectId: string) {
+  const binding = { ...state.config, projectId } as unknown as ForumBinding;
+  const key = forumKey(binding);
+  const valid = () =>
+    state.forums?.get(projectId) === forum &&
+    state.config.guildId === binding.guildId &&
+    state.config.issueForumChannelId === binding.issueForumChannelId;
+  const forum: ForumSync = new ForumSync(
+    binding,
+    forumTransport(state.client!, binding, valid),
+    () =>
+      runtime.rpc.request<ForumRecord[] | undefined>("storage.get", { key }),
+    (records) =>
+      runtime.rpc
+        .request("storage.put", { key, value: records })
+        .then(() => {}),
+    valid,
+  );
+  state.forums!.set(projectId, forum);
+  return forum;
+}
 async function refreshForum() {
-  const forum = state.forum;
-  if (!forum || forumBusy || !state.client?.isReady()) return;
+  if (!state.forums || forumBusy || !state.client?.isReady()) return;
+  const forums = state.forums;
   forumBusy = true;
   try {
-    const tasks = await runtime.rpc.request<Task[]>("tasks.snapshot", {});
-    if (state.forum === forum) await forum.sync(tasks);
+    const boardAfter = Object.assign(
+      {},
+      ...[...forums.values()].map((forum) => forum.postCursors()),
+    );
+    const tasks = await runtime.rpc.request<
+      import("../forum/sync.js").ForumTask[]
+    >("tasks.snapshot", { boardAfter });
+    if (state.forums !== forums) return;
+    let failed = false;
+    for (const projectId of new Set([
+      state.config.projectId,
+      ...tasks.map((task) => task.projectId),
+    ])) {
+      if (!projectId || state.forums !== forums) continue;
+      const forum = forums.get(projectId) ?? makeForum(projectId);
+      try {
+        await forum.sync(tasks);
+      } catch {
+        failed = true;
+      }
+    }
+    if (failed) throw new Error("FORUM_SYNC_INCOMPLETE");
   } catch {
     runtime.emit("status", { status: "forum-sync-error" });
   } finally {
@@ -40,6 +81,12 @@ async function refreshForum() {
 }
 function configureForum() {
   clearInterval(forumTimer);
+  const compatible =
+    state.forum &&
+    state.forum.binding.guildId === state.config.guildId &&
+    state.forum.binding.issueForumChannelId ===
+      state.config.issueForumChannelId;
+  if (!compatible) state.forums = new Map();
   state.forum = undefined;
   if (
     !state.config.issueForumChannelId ||
@@ -47,38 +94,47 @@ function configureForum() {
     !state.config.projectId
   )
     return;
-  const binding = { ...state.config } as unknown as ForumBinding;
-  const key = forumKey(binding);
-  const forum: ForumSync = new ForumSync(
-    binding,
-    forumTransport(state.client, binding, () => state.forum === forum),
-    () =>
-      runtime.rpc.request<ForumRecord[] | undefined>("storage.get", { key }),
-    async (records) => {
-      await runtime.rpc.request("storage.put", { key, value: records });
-    },
-    () => state.forum === forum,
-  );
-  state.forum = forum;
+  state.forum =
+    state.forums!.get(state.config.projectId) ??
+    makeForum(state.config.projectId);
   forumTimer = setInterval(() => void refreshForum(), 10000);
   void refreshForum();
 }
-state.projectCommand = async (subject, projectId) => {
-  if (projectId && projectId !== state.config.projectId) {
-    const project = await runtime.rpc.request<
-      import("@ido/common/contracts/protocol").Project
-    >("projects.select", { subject, projectId });
-    state.config.projectId = project.id;
-    state.speechEpoch++;
-    audioOutput(state).invalidate();
-    for (const request of state.pending.values()) {
-      clearTimeout(request.timer);
-      request.reject();
+let projectSwitch = Promise.resolve();
+state.projectCommand = (subject, selection) => {
+  if (!selection) return runtime.rpc.request("projects.list", { subject });
+  const next = projectSwitch.then(async () => {
+    if (selection) {
+      const project = await runtime.rpc.request<
+        import("@ido/common/contracts/protocol").Project
+      >("projects.select", { subject, projectId: selection });
+      if (project.id !== state.config.projectId) {
+        state.config.projectId = project.id;
+        state.speechEpoch++;
+        audioOutput(state).invalidate();
+        for (const request of state.pending.values()) {
+          clearTimeout(request.timer);
+          request.reject();
+        }
+        state.pending.clear();
+        configureForum();
+      }
+      await state
+        .refreshTranscript?.()
+        .catch(() =>
+          runtime.emit("status", { status: "transcript-refresh-error" }),
+        );
     }
-    state.pending.clear();
-    configureForum();
-  }
-  return runtime.rpc.request("projects.list", { subject });
+    return runtime.rpc.request<{
+      projects: import("@ido/common/contracts/protocol").Project[];
+      projectId: string;
+    }>("projects.list", { subject });
+  });
+  projectSwitch = next.then(
+    () => {},
+    () => {},
+  );
+  return next;
 };
 state.connectionGuide = async () => {
   const { origin } = await runtime.rpc.request<{ origin: string }>(
@@ -93,6 +149,12 @@ const publications = new Publications(
     await runtime.rpc.request("storage.put", { key, value: { messageId } });
   },
 );
+const conversationPublications = new ConversationPublications(
+  state,
+  () => runtime.rpc,
+  publications,
+);
+state.refreshTranscript = () => conversationPublications.refresh();
 state.player.on("error", () => emit({ type: "status", status: "audio-error" }));
 let pendingFrames = 0;
 let lastInputAt: number | undefined;
@@ -101,12 +163,25 @@ const emit = (data: Record<string, unknown>) => {
   if (data.type === "input") {
     const input = normalizeInput(
       data,
-      state.config,
+      (() => {
+        const forum = [...(state.forums?.values() ?? [])].find((f) =>
+          f.taskForThread(String(data.channelId)),
+        );
+        return forum
+          ? {
+              ...state.config,
+              projectId: forum.binding.projectId,
+              meetingId: "",
+            }
+          : state.config;
+      })(),
       state.voice?.state.status === VoiceConnectionStatus.Ready
         ? (state.voice.joinConfig.channelId ?? undefined)
         : undefined,
       state.audioSessionId,
-      state.forum?.taskForThread(String(data.channelId)),
+      [...(state.forums?.values() ?? [])]
+        .find((f) => f.taskForThread(String(data.channelId)))
+        ?.taskForThread(String(data.channelId)),
     );
     if (input) {
       lastInputAt = Date.now();
@@ -153,6 +228,30 @@ const runtime = pluginRuntime(
         },
       };
     }
+    if (operation === "forum.status") {
+      await refreshForum();
+      const errors = [];
+      for (const forum of state.forums?.values() ?? []) {
+        errors.push(
+          ...(await forum.inspect()).map((record) => ({
+            ...record,
+            projectId: forum.binding.projectId,
+          })),
+        );
+      }
+      return { errors };
+    }
+    if (operation === "forum.recover") {
+      const forum = state.forums?.get(String(input.projectId));
+      if (!forum) throw new Error("FORUM_PROJECT_NOT_FOUND");
+      await forum.recover(
+        String(input.taskId),
+        input.threadId ? String(input.threadId) : undefined,
+        input.recreate === true,
+      );
+      await refreshForum();
+      return { ok: true };
+    }
     if (operation === "configure") {
       const next = {
         ...state.config,
@@ -160,7 +259,7 @@ const runtime = pluginRuntime(
       };
       normalizeDiscordPolicy(next);
       validateDownloads(next);
-      state.forum = undefined;
+      if (next.issueForumChannelId && next.botToken) await inspectSetup(next);
       const reconnect = [
         "guildId",
         "textChannelId",
@@ -193,6 +292,11 @@ const runtime = pluginRuntime(
         await start(state, emit, next);
       }
       configureForum();
+      await state
+        .refreshTranscript?.()
+        .catch(() =>
+          runtime.emit("status", { status: "transcript-refresh-error" }),
+        );
       return { ok: true };
     }
     if (operation === "start") {
@@ -245,36 +349,14 @@ const runtime = pluginRuntime(
         !["transcript", "minutes"].includes(event.type)
       )
         return { ok: true };
-      const epoch = state.speechEpoch;
-      const channelId = state.config.textChannelId;
-      const key = `${event.type}-${event.meetingId}-${state.config.textChannelId}`;
-      const saved = await runtime.rpc.request<
-        { messageId?: string } | undefined
-      >("storage.get", { key });
-      if (
-        epoch !== state.speechEpoch ||
-        channelId !== state.config.textChannelId ||
-        (event.data as { projectId?: string }).projectId !==
-          state.config.projectId
-      )
-        return { ok: true };
-      await publications.update(
-        key,
-        state.config.textChannelId,
-        renderPublication(event),
-        saved?.messageId,
-        () =>
-          epoch === state.speechEpoch &&
-          channelId === state.config.textChannelId &&
-          (event.data as { projectId?: string }).projectId ===
-            state.config.projectId,
-      );
+      await conversationPublications.publish(event);
       return { ok: true };
     }
     throw new Error("UNKNOWN_OPERATION");
   },
   async () => {
     clearInterval(forumTimer);
+    state.forums = undefined;
     state.forum = undefined;
     for (const request of state.pending.values()) {
       clearTimeout(request.timer);

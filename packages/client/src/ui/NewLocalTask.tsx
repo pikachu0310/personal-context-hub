@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { Action } from "@ido/common-ui";
 import { desktopBridge } from "./desktop.js";
 import type { AgentCatalogEntry } from "@ido/common/contracts/api";
+import type { AccessMode } from "@ido/common/contracts/work";
+import { accessHelp, accessOptions } from "./access-mode.js";
 
 export function NewLocalTask({
   action,
@@ -22,14 +24,15 @@ export function NewLocalTask({
 }) {
   const [directory, setDirectory] = useState(initialDirectory ?? "");
   const [detailsOpen, setDetailsOpen] = useState(!initialDirectory);
-  const [shareDiscord, setShareDiscord] = useState(true);
+  const [shareDiscord, setShareDiscord] = useState(projects.length > 0);
   const [shareProjectId, setShareProjectId] = useState(
     initialProjectId ?? projects[0]?.id ?? "",
   );
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [progressMode, setMode] = useState(mode);
-  const [accessMode, setAccessMode] = useState("approval");
+  const [accessMode, setAccessMode] = useState<AccessMode>("sandbox");
+  const [network, setNetwork] = useState(false);
   const [requestedAgent, setAgent] = useState("");
   const [effort, setEffort] = useState("");
   const [models, setModels] = useState<Record<string, string>>({});
@@ -95,6 +98,7 @@ export function NewLocalTask({
       loadingModels ||
       !agent ||
       !model ||
+      (agent === "claude" && accessMode === "sandbox") ||
       !text.trim() ||
       !directory.trim() ||
       (shareDiscord && !shareProjectId)
@@ -115,7 +119,8 @@ export function NewLocalTask({
       title,
       text,
       mode: progressMode,
-      accessMode: progressMode === "auto" ? "full" : accessMode,
+      accessMode,
+      network: accessMode === "sandbox" ? network : undefined,
     };
     const fingerprint = JSON.stringify(input);
     if (request.current?.fingerprint !== fingerprint)
@@ -219,6 +224,11 @@ export function NewLocalTask({
             />
           )}
         </div>
+        {shareDiscord && (
+          <p className="muted">
+            共有先の参加者は、会話・実行ログ・差分・実行環境・ソースを閲覧できます。
+          </p>
+        )}
       </details>
       <div className="composer-dock">
         <form
@@ -260,19 +270,13 @@ export function NewLocalTask({
             />
             <ComposerDropdown
               label="実行権限"
-              value={progressMode === "auto" ? "full" : accessMode}
+              value={accessMode}
               disabled={busy}
-              options={
-                progressMode === "auto"
-                  ? [{ value: "full", label: "フルアクセス（Auto）" }]
-                  : [
-                      { value: "approval", label: "許可を求める" },
-                      { value: "full", label: "フルアクセス" },
-                    ]
-              }
-              onChange={(value) => {
-                if (progressMode === "manual") setAccessMode(value);
-              }}
+              options={accessOptions.map((option) => ({
+                ...option,
+                disabled: agent === "claude" && option.value === "sandbox",
+              }))}
+              onChange={(value) => setAccessMode(value as AccessMode)}
             />
             <span className="composer-spacer" />
             <ComposerDropdown
@@ -312,6 +316,7 @@ export function NewLocalTask({
                 !loadingModels &&
                 !!agent &&
                 !!model &&
+                !(agent === "claude" && accessMode === "sandbox") &&
                 !!directory.trim() &&
                 (!shareDiscord || !!shareProjectId)
               }
@@ -322,7 +327,29 @@ export function NewLocalTask({
           </div>
         </form>
         <p className="composer-footnote">
-          Enterで送信 · Shift + Enterで改行<span>行動ログはこのPCに保存</span>
+          {agent === "claude" && accessMode === "sandbox"
+            ? "ClaudeではOSサンドボックスを利用できません。許可を求める／フルアクセスを選ぶか、Codexへ切り替えてください。"
+            : accessMode === "sandbox"
+              ? "作業フォルダー内のサンドボックスで実行します。追加の権限要求は画面で承認します。"
+              : accessHelp[accessMode]}
+        </p>
+        {accessMode === "sandbox" && (
+          <label className="composer-footnote">
+            <input
+              type="checkbox"
+              aria-label="サンドボックスのインターネット通信"
+              checked={network}
+              disabled={busy || agent === "claude"}
+              onChange={(event) => setNetwork(event.currentTarget.checked)}
+            />
+            インターネット通信を許可
+          </label>
+        )}
+        <p className="composer-footnote">
+          Enterで送信 · Shift + Enterで改行
+          <span>
+            {shareDiscord ? "履歴は共有先にも保存" : "行動ログはこのPCに保存"}
+          </span>
         </p>
         {(modelError || !available.length) && (
           <div role="status">

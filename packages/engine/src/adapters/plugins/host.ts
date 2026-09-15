@@ -1,3 +1,5 @@
+import { Projects } from "../../processing/projects/service.js";
+import type { ConversationBinding } from "@ido/common/contracts/api";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -70,8 +72,26 @@ export class Plugins {
         (entry.builtin ? { version: entry.version, builtin: true } : undefined),
       status: this.get(entry.id).status,
       busy: this.busy.has(entry.id),
-      config: this.store.get("config", entry.id) ?? {},
+      config: this.store.get<Record<string, string>>("config", entry.id) ?? {},
     }));
+  }
+  conversationBindings(): ConversationBinding[] {
+    return this.state().flatMap((plugin) => {
+      if (!plugin.manifest?.capabilities.includes("project-conversation"))
+        return [];
+      const projectId = plugin.config.projectId || "default";
+      const project = this.store.get<{ name: string }>("project", projectId);
+      return project
+        ? [
+            {
+              pluginId: plugin.id,
+              title: plugin.manifest.title,
+              projectId,
+              projectName: project.name,
+            },
+          ]
+        : [];
+    });
   }
   async inspect(id: string) {
     const plugin = this.get(id);
@@ -127,7 +147,7 @@ export class Plugins {
     for (const key of ["meetingId", "projectId"])
       if (typeof values[key] === "string") config[key] = values[key];
     if (manifest.capabilities.includes("project-conversation")) {
-      config.projectId ||= "default";
+      config.projectId = new Projects(this.store).conversationProject(config);
       delete config.meetingId;
     }
     const probe = new PluginProcess(
@@ -173,7 +193,7 @@ export class Plugins {
     const manifest = await plugin.launch(this.entry(id));
     const config = { ...this.store.get<Record<string, string>>("config", id) };
     if (manifest.capabilities.includes("project-conversation")) {
-      config.projectId ||= "default";
+      config.projectId = new Projects(this.store).conversationProject(config);
       delete config.meetingId;
       this.store.put("config", id, config);
     }
@@ -265,7 +285,17 @@ export class Plugins {
           : config?.meetingId && config.meetingId !== event.meetingId)
       )
         continue;
-      void plugin.request("event", { event }).catch(() =>
+      const projectName = eventProjectId
+        ? this.store.get<{ name: string }>("project", eventProjectId)?.name
+        : undefined;
+      const enriched =
+        event.type === "tasks"
+          ? event
+          : {
+              ...event,
+              data: { ...(event.data as Record<string, unknown>), projectName },
+            };
+      void plugin.request("event", { event: enriched }).catch(() =>
         this.store.logError(new Error("PLUGIN_DELIVERY_FAILED"), {
           source: "plugin",
           operation: "event.deliver",

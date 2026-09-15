@@ -13,6 +13,15 @@ import type { Workspace } from "../../output/queries/workspace.js";
 import type { Repository } from "../../ports/repository.js";
 import type { InputRouter } from "../../processing/routing/input.js";
 import type { Plugins } from "./host.js";
+import {
+  forumProjects,
+  boundForumTask,
+} from "../../processing/tasks/forum-binding.js";
+import {
+  TaskBoard,
+  projectDiscussion,
+  type BoardThread,
+} from "../../processing/tasks/board.js";
 export class PluginBroker {
   readonly contexts: Contexts;
   readonly identities: Identities;
@@ -72,9 +81,58 @@ export class PluginBroker {
         !config.projectId
       )
         throw new Error("PERMISSION_DENIED");
+      const projects = forumProjects(this.store, pluginId, config, true);
       return this.store
         .list<Task>("task")
-        .filter((task) => task.projectId === config.projectId);
+        .filter((task) => projects.includes(task.projectId))
+        .concat(projects.map(projectDiscussion))
+        .map((task) => ({
+          ...task,
+          discussion: task.id === projectDiscussion(task.projectId).id,
+          boardPosts: (
+            this.store.get<BoardThread>("task-board", task.id)?.posts ?? []
+          )
+            .filter(
+              (post) =>
+                post.id >
+                (Number(
+                  (input.boardAfter as Record<string, unknown> | undefined)?.[
+                    task.id
+                  ],
+                ) || 0),
+            )
+            .slice(0, 20)
+            .map((post) => {
+              const author = this.store.get<Task>("task", post.authorTaskId);
+              const device = author?.clientId
+                ? this.store.get<import("../../domain/models.js").Device>(
+                    "device",
+                    author.clientId,
+                  )
+                : undefined;
+              return {
+                id: post.id,
+                body: post.body,
+                author:
+                  post.authorName ??
+                  `${device?.profile?.name ?? device?.name ?? "Agent"} · ${author?.agent ?? "codex"}`,
+                external: post.external,
+              };
+            }),
+        }));
+    }
+    if (operation === "projects.current") {
+      if (!plugin.manifest?.capabilities.includes("project-conversation"))
+        throw new Error("PERMISSION_DENIED");
+      const config =
+        this.store.get<Record<string, string>>("config", pluginId) ?? {};
+      const projects = new Projects(this.store);
+      const projectId = projects.project(config.projectId || DEFAULT_PROJECT);
+      const conversation = projects.current(projectId);
+      return {
+        project: this.store.get("project", projectId),
+        meeting: this.store.get("meeting", conversation.meetingId),
+      };
     }
     if (operation === "projects.list" || operation === "projects.select") {
       if (!plugin.manifest?.capabilities.includes("project-conversation"))
@@ -89,9 +147,13 @@ export class PluginBroker {
           projects: this.store.list("project"),
           projectId: config.projectId || DEFAULT_PROJECT,
         };
-      const projectId = new Projects(this.store).project(
-        text(input.projectId, 100),
+      const selected = new Projects(this.store).selectByNameOrId(
+        input.projectId,
       );
+      const projectId = selected.id;
+      if (projectId === (config.projectId || DEFAULT_PROJECT)) return selected;
+      forumProjects(this.store, pluginId, config, true);
+      forumProjects(this.store, pluginId, { ...config, projectId }, true);
       this.store.put("config", pluginId, {
         ...config,
         projectId,
@@ -182,12 +244,26 @@ export class PluginBroker {
               `${pluginId}:${event.capture.sessionId}:${event.capture.utteranceId}`,
             )
           : undefined;
+        const forumTask =
+          config && ["steer", "stop", "context"].includes(event.command ?? "")
+            ? boundForumTask(
+                this.store,
+                pluginId,
+                config,
+                event.taskId,
+                (event.replyTo as { channelId?: string } | undefined)
+                  ?.channelId,
+              )
+            : undefined;
         if (
           !config ||
           (projectRouting
             ? event.projectId &&
               event.projectId !==
-                (pinned?.projectId ?? config.projectId ?? DEFAULT_PROJECT)
+                (forumTask?.projectId ??
+                  pinned?.projectId ??
+                  config.projectId ??
+                  DEFAULT_PROJECT)
             : config.meetingId !== event.meetingId ||
               config.projectId !== event.projectId)
         )
@@ -196,7 +272,11 @@ export class PluginBroker {
           event = {
             ...event,
             meetingId: "",
-            projectId: pinned?.projectId ?? config.projectId ?? DEFAULT_PROJECT,
+            projectId:
+              forumTask?.projectId ??
+              pinned?.projectId ??
+              config.projectId ??
+              DEFAULT_PROJECT,
           };
         const selectedRevision = config.projectRevision;
         if (
@@ -214,6 +294,38 @@ export class PluginBroker {
           text(event.subject, 100),
         );
         if (!actor) throw new Error("PERMISSION_DENIED");
+        if (
+          forumTask &&
+          actor.role !== "viewer" &&
+          ["steer", "context"].includes(event.command ?? "") &&
+          event.text?.trim()
+        ) {
+          new TaskBoard(this.store).post(
+            forumTask,
+            { body: event.text },
+            `discord:${event.eventId}`,
+            actor.name,
+          );
+          if (event.command === "context") return { ok: true };
+          if (forumTask.id === projectDiscussion(forumTask.projectId).id)
+            throw new Error("DISCUSSION_IS_NOT_A_TASK");
+          if (/^再開[:：]/.test(event.text)) {
+            const receipt = this.workspace.tasks.control(
+              forumTask.id,
+              actor.id,
+              "retry",
+              undefined,
+              {
+                requestKey: `discord:${event.eventId}`,
+                expectedRevision: forumTask.revision,
+                continuation: event.text.replace(/^再開[:：]\s*/, ""),
+              },
+            );
+            this.workspace.flush();
+            return receipt;
+          }
+          event.text = event.text.replace(/^(?:指示|追加指示)[:：]\s*/, "");
+        }
         const generation = plugin.generation,
           revision = plugin.revision;
         context = {
@@ -227,12 +339,15 @@ export class PluginBroker {
           deliver: async (output) => {
             if (
               context.valid() &&
-              this.store.get<Record<string, string>>("config", pluginId)
-                ?.projectRevision === selectedRevision &&
-              (!projectRouting ||
-                event.projectId ===
-                  (this.store.get<Record<string, string>>("config", pluginId)
-                    ?.projectId ?? DEFAULT_PROJECT))
+              (forumTask ||
+                (this.store.get<Record<string, string>>("config", pluginId)
+                  ?.projectRevision === selectedRevision &&
+                  (!projectRouting ||
+                    event.projectId ===
+                      (this.store.get<Record<string, string>>(
+                        "config",
+                        pluginId,
+                      )?.projectId ?? DEFAULT_PROJECT))))
             )
               await plugin.request("output", { output });
           },
@@ -300,8 +415,19 @@ export function validateMediaInput(event: ConversationInput) {
     )
       throw new Error("INVALID_MEDIA_INPUT");
   }
-  if (event.activity && !["start", "end", "quiet"].includes(event.activity))
+  if (
+    event.activity &&
+    !["start", "end", "quiet", "interrupt"].includes(event.activity)
+  )
     throw new Error("INVALID_AUDIO_ACTIVITY");
+  if (
+    event.silenceMs !== undefined &&
+    (event.activity !== "end" ||
+      !Number.isFinite(event.silenceMs) ||
+      event.silenceMs < 0 ||
+      event.silenceMs > 1000)
+  )
+    throw new Error("INVALID_AUDIO_SILENCE");
   if (event.audioFrame) {
     const frame = event.audioFrame;
     if (
