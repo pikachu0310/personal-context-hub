@@ -1,4 +1,4 @@
-import { id, text, type User } from "@ido/common/contracts/protocol";
+import { id, text, type User, type Task } from "@ido/common/contracts/protocol";
 import type { InputContext, PluginOutput } from "@ido/common/contracts/plugins";
 import type { Device, Message } from "../../domain/models.js";
 import type { Repository } from "../../ports/repository.js";
@@ -19,6 +19,7 @@ type Session = {
   requests: Set<string>;
   pending: number;
   nextId: number;
+  startedAt: number;
 };
 
 /** Browser input uses the same meeting router as installed transports. */
@@ -34,7 +35,13 @@ export class ClientMeetingInput {
     const key = `${deviceId}:${projectId}`;
     let session = this.sessions.get(key);
     if (!session) {
-      session = { entries: [], requests: new Set(), pending: 0, nextId: 1 };
+      session = {
+        entries: [],
+        requests: new Set(),
+        pending: 0,
+        nextId: 1,
+        startedAt: Date.now(),
+      };
       this.sessions.set(key, session);
     }
     return session;
@@ -76,6 +83,23 @@ export class ClientMeetingInput {
           input.audioReplies === true ? { ...entry, audio } : entry,
         ),
       pending: session.pending,
+      tasks: this.store
+        .list<Task>("task")
+        .filter(
+          (task) =>
+            task.projectId === projectId &&
+            Math.max(task.createdAt, task.updatedAt ?? 0) >= session.startedAt,
+        )
+        .sort(
+          (a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
+        )
+        .slice(0, 6)
+        .map((task) => ({
+          taskId: task.id,
+          projectId,
+          title: (task.title || task.text).slice(0, 180),
+          state: task.state,
+        })),
     });
     if (operation === "project.meeting.read") return view();
     if (!valid()) throw new Error("PERMISSION_DENIED");

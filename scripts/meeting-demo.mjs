@@ -57,13 +57,16 @@ if (!resume) {
 }
 const api = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 0 });
 let requests = 0;
+const requestLimit = Number(process.env.IDO_DEMO_REQUEST_LIMIT ?? 0);
+if (!Number.isSafeInteger(requestLimit) || requestLimit < 0)
+  throw new Error("INVALID_DEMO_REQUEST_LIMIT");
 const factory = createOpenAICoordinatorFactory(
   { credentials: { get: async () => process.env.OPENAI_API_KEY } },
   {
     createClient: () => ({
       responses: {
         create: async (...args) => {
-          if (++requests > 10)
+          if (requestLimit > 0 && ++requests > requestLimit)
             throw new Error("EVALUATION_REQUEST_BUDGET_EXCEEDED");
           return api.responses.create(...args);
         },
@@ -77,7 +80,7 @@ const engine = new Engine({
   previewPort: Number(process.env.IDO_DEMO_PREVIEW_PORT ?? 4341),
   uiDirectory: resolve("packages/engine/dist/ui"),
   dashboardEntry: resolve("packages/plugin-dashboard/dist/index.js"),
-  conversation: { coordinator: factory, observationIntervalMs: 60_000 },
+  conversation: { coordinator: factory, observationIntervalMs: 12_000 },
   speech: { transcriptionModel: process.env.IDO_EVAL_TRANSCRIPTION_MODEL },
 });
 engine.credentials.get = async (name) =>
