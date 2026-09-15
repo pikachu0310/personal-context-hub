@@ -57,6 +57,7 @@ export function MeetingInput({
   const connection = useRef(connected);
   connection.current = connected;
   const inFlight = useRef(false);
+  const sendGeneration = useRef(0);
   const request = useRef<
     { key: string; text?: string; audio?: string } | undefined
   >(undefined);
@@ -84,25 +85,31 @@ export function MeetingInput({
   useEffect(() => {
     if (!connected) return;
     let active = true;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {
+      const generation = sendGeneration.current;
       try {
+        // Do not let a pre-send snapshot replace the accepted input response.
+        if (inFlight.current) return;
         const value = await api<MeetingResponse>("project/meeting-read", {
           projectId,
           audioReplies,
         });
-        if (active) {
+        if (active && generation === sendGeneration.current) {
           update(value);
           setPollError("");
         }
       } catch (cause) {
-        if (active) setPollError((cause as Error).message);
+        if (active && generation === sendGeneration.current)
+          setPollError((cause as Error).message);
+      } finally {
+        if (active) timeout = setTimeout(() => void refresh(), 2000);
       }
     };
     void refresh();
-    const interval = setInterval(() => void refresh(), 2000);
     return () => {
       active = false;
-      clearInterval(interval);
+      clearTimeout(timeout);
     };
   }, [projectId, connected, audioReplies]);
 
@@ -125,6 +132,7 @@ export function MeetingInput({
       return;
     }
     inFlight.current = true;
+    sendGeneration.current += 1;
     if (
       request.current?.text !== content.text ||
       request.current?.audio !== content.audio ||
