@@ -149,6 +149,9 @@ export class InputRouter {
           const recorded = this.ai.record(config.meetingId, actor.id, "");
           acceptedId = recorded.message.id;
           recorded.message.inputId = eventId;
+          // Keep timing even when STT fails; never persist the audio payload.
+          recorded.message.capture = event.capture;
+          recorded.message.origin = "audio";
           recorded.message.stage = "transcribing";
           this.store.put("message", acceptedId, recorded.message);
           this.ai.messages.step(acceptedId, "transcription", "running");
@@ -373,7 +376,9 @@ export class InputRouter {
       const errorId = failure(
         error,
         operation,
-        operation === "audio.transcribe" ? this.ai.models.transcriptionModel : undefined,
+        operation === "audio.transcribe"
+          ? this.ai.models.transcriptionModel
+          : undefined,
       );
       if (operation === "audio.transcribe") {
         const { message } = this.ai.messages.record(

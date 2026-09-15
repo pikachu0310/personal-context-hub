@@ -273,3 +273,97 @@ test("Discord publication errors preserve safe actionable codes across RPC", asy
     );
   }
 });
+
+test("transient connection failures retry channel reads and existing edits once without sending", async () => {
+  let reads = 0,
+    edits = 0,
+    sends = 0;
+  const failure = () =>
+    new TypeError("fetch failed", {
+      cause: Object.assign(new Error("private endpoint"), {
+        code: "UND_ERR_CONNECT_TIMEOUT",
+      }),
+    });
+  const publisher = new Publications(
+    async () => {
+      if (++reads === 1) throw failure();
+      return {
+        isTextBased: () => true,
+        send: async () => {
+          sends++;
+          return { id: "unexpected" };
+        },
+        messages: {
+          edit: async () => {
+            if (++edits === 1) throw failure();
+          },
+        },
+      };
+    },
+    () => {},
+  );
+  await publisher.update("key", "channel", "updated", "existing");
+  assert.equal(reads, 2);
+  assert.equal(edits, 2);
+  assert.equal(sends, 0);
+});
+
+test("persistent connection failure stops after one retry and keeps the original cause", async () => {
+  let reads = 0;
+  const publisher = new Publications(
+    async () => {
+      reads++;
+      throw new TypeError("fetch failed", {
+        cause: Object.assign(new Error("private endpoint"), {
+          code: "UND_ERR_CONNECT_TIMEOUT",
+        }),
+      });
+    },
+    () => {},
+  );
+  await assert.rejects(
+    publisher.update("key", "channel", "text"),
+    /UND_ERR_CONNECT_TIMEOUT/,
+  );
+  assert.equal(reads, 2);
+});
+
+test("configuration changes during a connection failure cancel the pending retry", async () => {
+  let current = true,
+    reads = 0;
+  const publisher = new Publications(
+    async () => {
+      reads++;
+      current = false;
+      throw Object.assign(new Error("timeout"), { code: "ETIMEDOUT" });
+    },
+    () => {},
+  );
+  await publisher.update("key", "channel", "text", undefined, () => current);
+  assert.equal(reads, 1);
+});
+
+test("an uncertain new-message send is not retried or replaced", async () => {
+  let sends = 0,
+    saves = 0;
+  const publisher = new Publications(
+    async () => ({
+      isTextBased: () => true,
+      send: async () => {
+        sends++;
+        throw Object.assign(new Error("connection lost after send"), {
+          code: "ECONNRESET",
+        });
+      },
+    }),
+    () => {
+      saves++;
+    },
+  );
+  await assert.rejects(
+    publisher.update("key", "channel", "text"),
+    /ECONNRESET/,
+  );
+  assert.equal(sends, 1);
+  assert.equal(saves, 0);
+});

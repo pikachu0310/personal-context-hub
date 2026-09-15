@@ -47,3 +47,81 @@ test("STT only calls the provider for enough audio above the signal threshold", 
     assert.equal(calls - before, expected ? 1 : 0);
   }
 });
+
+test("STT rejects sub-100ms WAV files without rejecting 80ms of speech in a longer file", async () => {
+  let calls = 0;
+  const models = {
+    transcribe: async () => {
+      calls++;
+      return "はい";
+    },
+  };
+  for (const [durationMs, activeMs, expected] of [
+    [80, 80, false],
+    [99, 99, false],
+    [100, 100, true],
+    [200, 80, true],
+  ]) {
+    const pcm = Buffer.alloc(durationMs * 192);
+    for (let i = 0; i < activeMs * 192; i += 4) {
+      const sample = Math.round(
+        1500 * Math.sin(((i / 4) * 2 * Math.PI * 440) / 48000),
+      );
+      pcm.writeInt16LE(sample, i);
+      pcm.writeInt16LE(sample, i + 2);
+    }
+    const before = calls;
+    assert.equal(
+      await transcribe(models, wrapPcmAsWav(pcm)),
+      expected ? "はい" : "",
+    );
+    assert.equal(calls - before, expected ? 1 : 0);
+  }
+});
+
+test("inconsistent WAV headers and truncated sample frames are rejected before STT", async () => {
+  const original = wrapPcmAsWav(Buffer.alloc(38400));
+  const corrupt = [
+    (wav) => {
+      wav.write("NOPE", 8);
+      return wav;
+    },
+    (wav) => {
+      wav.writeUInt32LE(18, 16);
+      return wav;
+    },
+    (wav) => {
+      wav.writeUInt32LE(0, 4);
+      return wav;
+    },
+    (wav) => {
+      wav.writeUInt32LE(999, 40);
+      return wav;
+    },
+    (wav) => {
+      wav.writeUInt16LE(2, 32);
+      return wav;
+    },
+    (wav) => {
+      wav.writeUInt32LE(96000, 28);
+      return wav;
+    },
+    (wav) => {
+      const short = wav.subarray(0, wav.length - 1);
+      short.writeUInt32LE(short.length - 8, 4);
+      short.writeUInt32LE(short.length - 44, 40);
+      return short;
+    },
+  ];
+  for (const mutate of corrupt) {
+    await assert.rejects(
+      transcribe(
+        {
+          transcribe: async () => assert.fail("must not upload malformed WAV"),
+        },
+        mutate(Buffer.from(original)),
+      ),
+      /INVALID_PCM_WAV/,
+    );
+  }
+});
