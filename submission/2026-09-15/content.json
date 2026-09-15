@@ -1,0 +1,89 @@
+{
+  "project": "IDOエンジン",
+  "team": "結論、めっちゃ開発",
+  "title": "会議で決める前に、触って試せる。",
+  "subtitle": "会議の文脈で試作し、触った感想を同じCodexタスクへ返す。",
+  "segments": [
+    {
+      "id": "01_hook_engine",
+      "start": 0,
+      "end": 12,
+      "heading": "この二つ、どちらがいい？",
+      "voice": "ワープ移動と、歩く移動。どちらがいい？ 会議の中で、実物を触って決める。イドエンジンです。",
+      "caption": "会議の中で、実物を触って決める。",
+      "visual": "prototype",
+      "filmInsert": "ido-film-reel.mp4 00:00–00:08。続いてT118の実物操作。"
+    },
+    {
+      "id": "02_problem_engine",
+      "start": 12,
+      "end": 28,
+      "heading": "話した内容を、AIへ説明し直している。",
+      "voice": "私たちが減らしたいのは、チームの会話をAIへ説明し直す往復です。話して、持ち帰って、また集まる。動くものを作りやすくなった今、触って決めるまでの待ち時間に着目しました。",
+      "caption": "小さな開発チームの、再説明と持ち帰りを減らしたい。",
+      "visual": "problem",
+      "filmInsert": "ido-film-reel.mp4 00:08–00:16。必要なら8秒静止延長。"
+    },
+    {
+      "id": "03_context_engine",
+      "start": 28,
+      "end": 53,
+      "heading": "会議の文脈を、作業するCodexへ。",
+      "voice": "イドエンジンが会議を受け取り、調査や試作を各PCのコーデックスへ渡します。議事録だけでなく、元の発言も参照できます。このデモでは、会話と制作条件を用意し、二つの移動方式を比べる試作を実際に生成しました。",
+      "caption": "デモ用会話・制作条件を設定した実動作。待機を短縮して編集。",
+      "visual": "context",
+      "filmInsert": "T118の議事録・元発言の実画面を先に8秒。reel 00:16–00:28を12秒。残りは試作操作。"
+    },
+    {
+      "id": "04_iteration_engine",
+      "start": 53,
+      "end": 82,
+      "heading": "「速すぎる」を、同じタスクへ。",
+      "voice": "触ってみると、連続移動が速い。初期速度を半分にして。同じタスクへ感想を返すと、コーデックスが続きを修正します。新しい版を開き、前の版と比較する。作って終わらず、触った評価が次の実装へ戻ります。",
+      "caption": "同じタスクで修正。新しい版を開いて、もう一度比較。",
+      "visual": "iteration",
+      "filmInsert": "reel 00:28–00:40を導入に使用。T118の実際の修正履歴・到着・版比較を最低10秒残す。reel 00:40–00:50は速度パラメータ比較として3〜7秒挿入。"
+    },
+    {
+      "id": "05_codex_engine",
+      "start": 82,
+      "end": 102,
+      "heading": "この体験の開発にも、Codex。",
+      "voice": "この体験を作る開発にも、コーデックスを使いました。当日は、試作を開いて修正を頼む画面と、修正前後の比較を追加。人が目指す体験を決め、既存コードの調査から実装、ブラウザでの確認まで進めました。",
+      "caption": "本日のCodex開発：試作プレビュー・修正依頼・前後比較",
+      "visual": "codex",
+      "filmInsert": "T118の開発説明を維持。ido-slide-inserts.pptxの2枚目はこの場面用。"
+    },
+    {
+      "id": "06_close_engine",
+      "start": 102,
+      "end": 117,
+      "heading": "会議の出口に、触って判断できるものを。",
+      "voice": "まず、ディスコードで共同制作する小さなチームへ。ゲームの企画から、UIの試作にも広げたい。会議の出口に、触って判断できるものを。イドエンジンです。",
+      "caption": "IDOエンジン / 結論、めっちゃ開発",
+      "visual": "close",
+      "filmInsert": "ido-slide-inserts.pptxの3枚目から、reel 00:50–00:56で締める。"
+    }
+  ],
+  "disclosure": "デモ用会話と制作条件を設定した実動作を使用し、待ち時間を短縮しています。撮影用画面では会話・進行を再構成し、生成済みの試作を操作しています。速度比較は同じ試作のパラメータ切替です。VR機器での快適性、会議時間の短縮、第三者の継続利用は未検証です。Slack・VRChat連携と画面共有の認識は今後の構想です。",
+  "sources": {
+    "rules": "https://codex-student-hack-fes.openai.chatgpt.site/official-rules/",
+    "submission": "https://codex-hackathon-20260915.openai.chatgpt.site/",
+    "repository": "https://github.com/pikachu0310/personal-context-hub-discord-voice",
+    "implementationRevision": "fd8af93",
+    "prototypeRevision": "38feef1",
+    "todayDevelopment": [
+      "be57d37",
+      "1346767"
+    ]
+  },
+  "editorialNotes": {
+    "status": "T120の取り込み用素材。T118の本編ファイルは上書きしない。",
+    "duration": "ナレーションとカットの目標は117秒。音声の実尺はT118の最終編集で調整し、120秒以内にする。",
+    "runtime": "会議の会話調整はOpenAI Responses API。実装・調査は各PCのCodex。",
+    "knowledge": "議事録・元発言を検索できる実装を説明する。今回の試作生成で検索ツールが呼ばれたとは断言しない。",
+    "sameTaskEvidence": "デモの追加修正記録でsameTask=true、sameThread=true、speed=0.5。追加修正91719ms、初回生成284221msは準備済み環境での各1回。通常速度や改善率として使用しない。",
+    "voicePronunciation": "画面はIDOエンジン。音声ではイドエンジン。",
+    "reuse": "短い撮影素材をT118の実システム収録に差し込む。撮影用UIだけで自律実行の証拠を代替しない。"
+  }
+}
