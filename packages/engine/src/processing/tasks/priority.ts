@@ -3,10 +3,10 @@ import type { TaskEvaluation, TaskPriority } from "@ido/common/contracts/work";
 
 // Policy values are tuning defaults, not calibrated probabilities.
 export const priorityPolicy = {
-  version: 1,
+  version: 2,
   weights: { immediacy: 25, certainty: 35, importance: 25, specificity: 15 },
-  researchThreshold: 40,
-  workThreshold: 60,
+  researchThreshold: 25,
+  workThreshold: 40,
   requestedFloor: 80,
   minimumSpecificity: 2,
   notificationThreshold: 70,

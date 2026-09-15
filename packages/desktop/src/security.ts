@@ -1,4 +1,17 @@
 import { endpoint } from "@ido/common/contracts/protocol";
+export function previewRequestAllowed(
+  url: string,
+  frameUrl: string,
+  resourceType: string,
+  clientOrigin: string,
+  registered: (value: string) => boolean,
+) {
+  if (registered(frameUrl)) return registered(url);
+  return (
+    localSender(url, clientOrigin) ||
+    (resourceType === "subFrame" && registered(url))
+  );
+}
 export function parseJoinLink(value: string) {
   if (value.length > 4096) throw new Error("INVALID_JOIN_LINK");
   const url = new URL(value);

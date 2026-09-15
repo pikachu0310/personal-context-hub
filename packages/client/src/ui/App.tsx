@@ -1,3 +1,4 @@
+import { PreviewDialog } from "./PreviewDialog.js";
 import { Collapsible } from "./Collapsible.js";
 import { SidebarTaskList } from "./SidebarTaskList.js";
 import { sidebarTasks, sidebarTaskTitle } from "./sidebar-tasks.js";
@@ -255,6 +256,12 @@ export function App() {
   ];
   return (
     <div className={`agent-workspace ${sidebar ? "" : "sidebar-hidden"}`}>
+      <PreviewDialog
+        networkFor={(projectId) =>
+          state.settings.mappings.find((m) => m.projectId === projectId)
+            ?.network ?? false
+        }
+      />
       <TaskReadObserver
         scope={readScope}
         item={viewedTask}

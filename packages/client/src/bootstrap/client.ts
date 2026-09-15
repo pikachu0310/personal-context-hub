@@ -1,3 +1,10 @@
+import { stopPreviewBrowserInstall } from "../preview/capture.js";
+import { LocalPreviews } from "../preview/local.js";
+import { ImplementationSync } from "../preview/sync.js";
+import {
+  executionSlots,
+  MAX_EXECUTION_SLOTS,
+} from "@ido/common/contracts/work";
 import { ClientTaskDetails } from "../connection/task-details.js";
 import { type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
@@ -51,6 +58,8 @@ interface Settings {
 }
 export class Client {
   readonly details = new ClientTaskDetails(this);
+  readonly implementations = new ImplementationSync(this);
+  readonly localPreviews: LocalPreviews;
   agentCatalog = async () => {
     const catalog = await agentCatalog(this.executor.home, this.directory);
     this.loginStatus = catalog.find((value) => value.agent === "codex")
@@ -64,7 +73,11 @@ export class Client {
     if (!this.stopping) this.ready();
     return catalog;
   };
-  settings: Settings = { mappings: [], slots: 1, projects: [] };
+  settings: Settings = {
+    mappings: [],
+    slots: MAX_EXECUTION_SLOTS,
+    projects: [],
+  };
   credentials: Credentials;
   executor: Executor;
   preview: ClientPreview;
@@ -143,7 +156,10 @@ export class Client {
       )
       .map((mapping) => ({
         ...mapping,
-        slots: mapping.workspaceMode === "project" ? 1 : mapping.slots,
+        slots:
+          mapping.workspaceMode === "project"
+            ? 1
+            : executionSlots(mapping.slots),
         network: isUnrestrictedAccess(mapping.accessMode) || mapping.network,
       }));
   }
@@ -179,7 +195,12 @@ export class Client {
       void this.route(req, res).catch((e) => {
         if (!res.headersSent)
           send(res, e instanceof HttpError ? e.status : 400, {
-            error: e instanceof HttpError ? e.message : "REQUEST_FAILED",
+            error:
+              e instanceof HttpError ||
+              (/^\/api\/(previews|implementations)\//.test(req.url ?? "") &&
+                /^[A-Z_]+$/.test(e.message))
+                ? e.message
+                : "REQUEST_FAILED",
           });
       }),
   );
@@ -217,6 +238,8 @@ export class Client {
         clientId: share.deviceId,
       };
     };
+    this.localPreviews = new LocalPreviews(this);
+    this.executor.additionalOccupied = () => this.localPreviews.occupied();
     this.preview = new ClientPreview((data) => this.emit(data));
   }
   async start(port = 4320) {
@@ -224,6 +247,10 @@ export class Client {
       join(this.directory, "client.json"),
       this.settings,
     );
+    this.settings.slots = executionSlots(this.settings.slots);
+    for (const mapping of this.settings.mappings)
+      mapping.slots =
+        mapping.workspaceMode === "project" ? 1 : executionSlots(mapping.slots);
     this.settings.profile ??= { name: "参加者", context: "" };
     this.allowedProjects.clear();
     for (const mapping of this.settings.mappings)
@@ -235,6 +262,7 @@ export class Client {
       )
         this.allowedProjects.add(mapping.projectId);
     await this.executor.load();
+    await this.localPreviews.load();
     if (this.settings.progressMode) {
       for (const mapping of this.settings.mappings)
         mapping.progressMode ??= this.settings.progressMode;
@@ -268,6 +296,7 @@ export class Client {
     const address = this.server.address();
     this.origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}`;
     this.details.start();
+    this.implementations.start();
     this.localSharingTimer = setInterval(
       () => void this.syncLocalShares(),
       5000,
@@ -346,6 +375,9 @@ export class Client {
   async close() {
     this.stopping = true;
     this.details.close();
+    this.implementations.close();
+    await this.localPreviews.close();
+    await stopPreviewBrowserInstall();
     clearInterval(this.localSharingTimer);
     clearTimeout(this.reconnect);
     clearTimeout(this.pairTimer);

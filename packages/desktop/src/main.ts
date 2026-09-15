@@ -10,6 +10,7 @@ import {
   localSender,
   parseJoinLink,
   parseProjectLink,
+  previewRequestAllowed,
 } from "./security.js";
 
 app.setName("IDO Agent");
@@ -163,6 +164,7 @@ else {
         !!client && localSender(url, client.origin);
       const open = (url: string) => {
         if (
+          client?.localPreviews.allows(url) ||
           externalLink(
             url,
             client?.pairing?.url,
@@ -193,7 +195,19 @@ else {
       );
       window.webContents.session.setPermissionCheckHandler(() => false);
       window.webContents.session.webRequest.onBeforeRequest(
-        (details, callback) => callback({ cancel: !trusted(details.url) }),
+        (details, callback) => {
+          const frameUrl = details.frame?.url ?? "";
+          const allowed =
+            !!client &&
+            previewRequestAllowed(
+              details.url,
+              frameUrl,
+              details.resourceType,
+              client.origin,
+              (url) => client!.localPreviews.allows(url),
+            );
+          callback({ cancel: !allowed });
+        },
       );
       window.webContents.session.on("will-download", (event) =>
         event.preventDefault(),

@@ -19,6 +19,7 @@ await build({
     "electron",
     "ws",
     "@openai/codex",
+    "playwright",
     "@anthropic-ai/claude-agent-sdk",
     "zod",
   ],
@@ -81,6 +82,8 @@ async function copyDependency(name, resolver = require) {
   }))
     await copyDependency(child, nextResolver);
 }
+await copyDependency("playwright");
+dependencies.playwright = "1.63.0";
 await copyDependency("@anthropic-ai/claude-agent-sdk");
 await copyDependency(
   `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`,

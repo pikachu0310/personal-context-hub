@@ -1,3 +1,9 @@
+import { previewReference } from "@ido/common/contracts/api";
+import { installPreviewBrowser } from "../preview/capture.js";
+import {
+  executionSlots,
+  MAX_EXECUTION_SLOTS,
+} from "@ido/common/contracts/work";
 import { attachTaskSource } from "@ido/common/contracts/protocol";
 import {
   readArtifactVersion,
@@ -116,6 +122,17 @@ export async function route(
     });
     return;
   }
+  if (req.method === "GET" && url.pathname === "/api/previews/image") {
+    const bytes = await this.localPreviews.image(
+      id(url.searchParams.get("id")),
+    );
+    res.writeHead(200, {
+      "Content-Type": "image/png",
+      "Cache-Control": "no-store",
+    });
+    res.end(bytes);
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/activity") {
     const value = this.executor.runs[id(url.searchParams.get("runId"))];
     if (!value || this.executor.deletedTasks[value.task.id])
@@ -202,6 +219,74 @@ export async function route(
     url.pathname === "/api/project/meeting-input" ? 600000 : 65536,
   );
   switch (url.pathname) {
+    case "/api/implementations/list": {
+      if (!this.implementations.supported)
+        throw new HttpError(409, "IMPLEMENTATIONS_UNSUPPORTED");
+      send(
+        res,
+        200,
+        await this.workspaceRequest("implementations.list", {
+          projectId: id(input.projectId),
+        }),
+      );
+      return;
+    }
+    case "/api/previews/prepare":
+      send(
+        res,
+        200,
+        await this.localPreviews.prepare(
+          previewReference(input),
+          id(input.owner),
+        ),
+      );
+      return;
+    case "/api/previews/state":
+      send(res, 200, this.localPreviews.list(id(input.owner)));
+      return;
+    case "/api/previews/start":
+      if (input.network !== undefined && typeof input.network !== "boolean")
+        throw new HttpError(400, "INVALID_PREVIEW_COMMAND");
+      send(
+        res,
+        200,
+        await this.localPreviews.start(
+          id(input.id),
+          id(input.owner),
+          input.network as boolean | undefined,
+        ),
+      );
+      return;
+    case "/api/previews/stop":
+      await this.localPreviews.stop(id(input.id), id(input.owner));
+      break;
+    case "/api/previews/release":
+      await this.localPreviews.release(id(input.owner));
+      break;
+    case "/api/previews/remove":
+      await this.localPreviews.remove(id(input.id), id(input.owner));
+      break;
+    case "/api/previews/inspect":
+      send(
+        res,
+        200,
+        await this.localPreviews.inspect(
+          id(input.id),
+          input.path,
+          id(input.owner),
+        ),
+      );
+      return;
+    case "/api/previews/capture":
+      await this.localPreviews.takeCapture(
+        id(input.id),
+        input,
+        id(input.owner),
+      );
+      break;
+    case "/api/previews/install-browser":
+      await installPreviewBrowser();
+      break;
     case "/api/project/meeting-input":
     case "/api/project/meeting-read": {
       const projectId = id(input.projectId);
@@ -501,7 +586,12 @@ export async function route(
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       this.settings.mappings = this.settings.mappings
         .filter((m) => m.projectId !== project.id)
-        .concat({ projectId: project.id, directory, network: false, slots: 1 });
+        .concat({
+          projectId: project.id,
+          directory,
+          network: false,
+          slots: MAX_EXECUTION_SLOTS,
+        });
       this.suggestedInvite = undefined;
       await this.save();
       this.ready();
@@ -575,10 +665,19 @@ export async function route(
             progressMode: input.progressMode === "manual" ? "manual" : "auto",
             workspaceMode:
               input.workspaceMode === "project" ? "project" : "worktree",
-            slots: 1,
+            slots:
+              input.workspaceMode === "project"
+                ? 1
+                : executionSlots(input.slots),
           });
         delete this.settings.pendingProject;
         if (input.allow === true) this.allowedProjects.add(project.id);
+        this.settings.slots = executionSlots(
+          this.executionMappings().reduce(
+            (total, mapping) => total + mapping.slots,
+            0,
+          ),
+        );
         await this.save();
         this.ready();
       } finally {
@@ -625,16 +724,13 @@ export async function route(
 
           network: input.network === true,
           workspaceMode,
-          slots:
-            workspaceMode === "project"
-              ? 1
-              : Math.max(1, Math.min(8, Number(input.slots) || 1)),
+          slots: workspaceMode === "project" ? 1 : executionSlots(input.slots),
         });
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
       if (typeof input.allow === "boolean")
         this.settings.slots = Math.min(
-          8,
+          MAX_EXECUTION_SLOTS,
           Math.max(
             1,
             this.executionMappings().reduce(
@@ -662,11 +758,11 @@ export async function route(
       mapping.slots =
         mapping.workspaceMode === "project"
           ? 1
-          : Math.max(1, Math.min(8, Number(input.slots) || mapping.slots));
+          : executionSlots(input.slots, executionSlots(mapping.slots));
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
       this.settings.slots = Math.min(
-        8,
+        MAX_EXECUTION_SLOTS,
         Math.max(
           1,
           this.executionMappings().reduce((total, m) => total + m.slots, 0),

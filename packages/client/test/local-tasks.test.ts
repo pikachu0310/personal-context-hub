@@ -33,6 +33,7 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
     "fixture",
   );
   const client = new Client(join(directory, "client"));
+  client.settings.slots = 1; // This scenario specifically tests a one-slot Client.
   let loggedIn = true;
   client.agentCatalog = async () => [
     {

@@ -36,7 +36,7 @@ test("project execution grants and progress modes are isolated and new runs reta
       body: JSON.stringify(input),
     });
   assert.equal(
-    (await post("allow", { projectId: "alpha", allow: true, slots: 4 })).status,
+    (await post("allow", { projectId: "alpha", allow: true, slots: 8 })).status,
     200,
   );
   assert.deepEqual(client.grants(), [
@@ -97,6 +97,11 @@ test("project execution grants and progress modes are isolated and new runs reta
     200,
   );
   assert.equal(
+    client.settings.slots,
+    4,
+    "projects share the four-slot Client limit",
+  );
+  assert.equal(
     (await post("allow", { projectId: "alpha", allow: false })).status,
     200,
   );
@@ -146,13 +151,18 @@ test("project creation applies network, progress mode and execution opt-in befor
   assert.equal(client.settings.mappings[0].network, true);
   assert.equal(client.settings.mappings[0].progressMode, "manual");
   assert.deepEqual(client.grants(), [
-    { projectId: "alpha", network: true, slots: 1 },
+    { projectId: "alpha", network: true, slots: 4 },
   ]);
+  client.settings.slots = 8;
+  client.settings.mappings[0].slots = 8;
+  await client.save();
   const restored = new Client(directory);
   t.mock.method(restored, "checkAccount", async () => {});
   await restored.start(0);
   try {
     assert.equal(restored.allow, true);
+    assert.equal(restored.settings.slots, 4);
+    assert.equal(restored.settings.mappings[0].slots, 4);
     assert.equal(restored.settings.mappings[0].executionAllowed, true);
   } finally {
     await restored.close();

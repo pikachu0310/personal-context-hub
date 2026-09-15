@@ -1,3 +1,5 @@
+import { Implementations } from "../../processing/tasks/implementations.js";
+import { executionSlots } from "@ido/common/contracts/work";
 import { TaskDetails } from "../../processing/tasks/details.js";
 import { supportsTask } from "../../clients/scheduler.js";
 import { projectDiscussion } from "../../processing/tasks/board.js";
@@ -192,6 +194,7 @@ export class ClientConnections {
       timer: NodeJS.Timeout;
     }
   >();
+  onImplementationChanged?: (meetingId: string) => void;
   readonly preview: PreviewRelay;
   readonly scheduler: Scheduler;
   readonly tasks: Tasks;
@@ -320,6 +323,7 @@ export class ClientConnections {
               localSharingVersion: 1,
               taskListVersion: 1,
               taskDetailVersion: 1,
+              implementationVersion: 1,
               lifecycleVersion: 1,
               deletions:
                 device.lifecycleVersion === 1
@@ -465,6 +469,26 @@ export class ClientConnections {
                   generation,
             };
             switch (data.operation) {
+              case "implementations.sync": {
+                result = new Implementations(this.store).sync(device.id, input);
+                const update = result as {
+                  changed: boolean;
+                  meetingId: string;
+                };
+                if (update.changed)
+                  this.onImplementationChanged?.(update.meetingId);
+                break;
+              }
+              case "implementations.list": {
+                const projectId = id(input.projectId);
+                team.require(device.id, projectId);
+                result = new Implementations(this.store).choices(projectId);
+                break;
+              }
+              case "implementations.read":
+                result = new Implementations(this.store).read(device.id, input);
+                break;
+
               case "task.detail.target": {
                 const task = this.details.task(device.id, String(input.taskId));
                 if (
@@ -811,6 +835,9 @@ export class ClientConnections {
             );
             if (
               ![
+                "implementations.sync",
+                "implementations.list",
+                "implementations.read",
                 "task.detail.target",
                 "task.detail.sync",
                 "task.detail.read",
@@ -957,7 +984,7 @@ export class ClientConnections {
                     ),
                   }
                 : {}),
-              slots: Math.max(1, Math.min(8, Number(g.slots) || 1)),
+              slots: executionSlots(g.slots, 1),
             }))
             .filter(
               (g) =>
@@ -966,7 +993,7 @@ export class ClientConnections {
                   `${g.projectId}:${device.id}`,
                 ),
             );
-          device.slots = Math.max(1, Math.min(8, Number(data.slots) || 1));
+          device.slots = executionSlots(data.slots, 1);
           device.executionPolicyVersion =
             data.executionPolicyVersion === 1 ? 1 : undefined;
           this.store.put("device", device.id, device);
