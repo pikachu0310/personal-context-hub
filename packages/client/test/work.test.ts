@@ -531,3 +531,44 @@ test("direct project admission serializes two projects sharing the same checkout
   const accepted = executor.runs.second as Run | undefined;
   assert.equal(accepted?.directory, directory);
 });
+
+test("client admission caps legacy eight-slot settings at four across projects", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ido-four-slots-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const executor = new Executor(directory, () => {});
+  await executor.load();
+  executor.execute = async () => {};
+  const mappings = ["project", "other"].map((projectId) => ({
+    projectId,
+    directory,
+    slots: 8,
+    network: true,
+  }));
+  const send = (index: number) => {
+    const task = {
+      ...baseTask(),
+      id: `task-${index}`,
+      runId: `run-${index}`,
+      projectId: index % 2 ? "other" : "project",
+    };
+    return executor.receive(
+      {
+        v: 1,
+        type: "execute",
+        id: task.id,
+        taskId: task.id,
+        runId: task.runId,
+        task,
+      },
+      mappings,
+      true,
+      8,
+    );
+  };
+  for (let index = 0; index < 5; index++) await send(index);
+  assert.equal(Object.keys(executor.runs).length, 4);
+  assert.equal(executor.runs["run-4"], undefined);
+  executor.runs["run-0"].state = "completed";
+  await send(4);
+  assert.equal((executor.runs["run-4"] as Run | undefined)?.state, "assigned");
+});

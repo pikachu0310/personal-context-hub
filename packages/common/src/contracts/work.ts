@@ -1,5 +1,14 @@
 export type AccessMode = "sandbox" | "approval" | "full";
 
+export const MAX_EXECUTION_SLOTS = 4;
+
+export function executionSlots(value: unknown, fallback = MAX_EXECUTION_SLOTS) {
+  const slots = Number(value);
+  return Number.isFinite(slots) && slots > 0
+    ? Math.max(1, Math.min(MAX_EXECUTION_SLOTS, Math.floor(slots)))
+    : fallback;
+}
+
 export function isAccessMode(value: unknown): value is AccessMode {
   return value === "sandbox" || value === "approval" || value === "full";
 }
@@ -51,6 +60,16 @@ export interface TaskPriority {
   version: number;
   batchId: string;
   runRevision: number;
+}
+export interface MinutesTaskContext {
+  taskId: string;
+  title: string;
+  link: string;
+  text: string;
+  state: string;
+  sourceIds: string[];
+  runId: string;
+  revision: number;
 }
 export interface MinutesTaskResult {
   sourceIds: string[];

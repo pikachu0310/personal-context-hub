@@ -1,4 +1,7 @@
-import type { MinutesTaskResult } from "@ido/common/contracts/work";
+import type {
+  MinutesTaskContext,
+  MinutesTaskResult,
+} from "@ido/common/contracts/work";
 import type { Task } from "@ido/common/contracts/protocol";
 import type { Meeting } from "../domain/models.js";
 export interface Models {
@@ -15,6 +18,7 @@ export interface Models {
     meeting: Meeting,
     taskLinks: string[],
     taskResults?: MinutesTaskResult[],
+    tasks?: MinutesTaskContext[],
   ): Promise<string>;
   update(
     meeting: Meeting,

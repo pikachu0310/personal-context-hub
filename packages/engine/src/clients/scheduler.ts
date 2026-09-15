@@ -1,3 +1,4 @@
+import { executionSlots } from "@ido/common/contracts/work";
 import {
   canSchedule,
   schedulingPriority,
@@ -76,7 +77,7 @@ export class Scheduler {
               ),
             ) ||
               d.executionPolicyVersion === 1) &&
-            d.slots > active(d) &&
+            executionSlots(d.slots, 1) > active(d) &&
             d.grants.some(
               (g) =>
                 g.projectId === task.projectId &&
@@ -86,12 +87,14 @@ export class Scheduler {
                     t.clientId === d.id &&
                     t.projectId === g.projectId &&
                     ["assigned", "running", "interrupted"].includes(t.state),
-                ).length < g.slots,
+                ).length < executionSlots(g.slots, 1),
             ),
         );
         eligible.sort(
           (a, b) =>
-            b.slots - active(b) - (a.slots - active(a)) ||
+            executionSlots(b.slots, 1) -
+              active(b) -
+              (executionSlots(a.slots, 1) - active(a)) ||
             a.lastAssigned - b.lastAssigned ||
             a.id.localeCompare(b.id),
         );

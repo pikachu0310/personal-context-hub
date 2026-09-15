@@ -29,7 +29,7 @@ test("priority axes use the policy weights and distinguish research from executa
     );
   }
   for (const kind of ["research", "implementation", "test", "benchmark"]) {
-    const threshold = kind === "research" ? 40 : 60;
+    const threshold = kind === "research" ? 25 : 40;
     for (let a = 0; a <= 4; a++)
       for (let b = 0; b <= 4; b++)
         for (let c = 0; c <= 4; c++)

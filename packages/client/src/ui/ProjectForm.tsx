@@ -1,3 +1,4 @@
+import { MAX_EXECUTION_SLOTS } from "@ido/common/contracts/work";
 import {
   ActionIcon,
   Button,
@@ -214,7 +215,7 @@ export function AddProjectForm({
             network,
             progressMode: mode,
             workspaceMode,
-            slots: 1,
+            slots: workspaceMode === "project" ? 1 : MAX_EXECUTION_SLOTS,
           });
           saved();
         }}
