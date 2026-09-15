@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { desktopBridge } from "./desktop.js";
 import { Anchor, Button, Code, Group, Paper, Stack, Text } from "@mantine/core";
 import { Card, Form, Status } from "@ido/common-ui";
 import type { Action, ClientState, Invoke } from "@ido/common-ui";
@@ -16,6 +17,8 @@ export function ClientView({
 }) {
   const [reconnecting, setReconnecting] = useState(false);
   const [connectionError, setConnectionError] = useState("");
+  const [updateMessage, setUpdateMessage] = useState("");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   return (
     <Stack>
       {state.desktop && (
@@ -27,6 +30,52 @@ export function ClientView({
               {state.desktop.pid}
             </Text>
           </Group>
+          {desktopBridge()?.checkUpdate && (
+            <Group mt="sm">
+              <Button
+                loading={checkingUpdate}
+                variant="default"
+                onClick={async () => {
+                  setCheckingUpdate(true);
+                  try {
+                    const update = await desktopBridge()!.checkUpdate!();
+                    setUpdateMessage(
+                      update.status === "available"
+                        ? `v${update.latest}を配布しています。タスクを停止し、配布ページから更新版をインストールしてください。`
+                        : update.status === "unpublished"
+                          ? "公開済みの更新版はまだありません。"
+                          : "公開されている最新版です。",
+                    );
+                  } catch {
+                    setUpdateMessage(
+                      "更新情報を取得できませんでした。配布ページで確認できます。",
+                    );
+                  } finally {
+                    setCheckingUpdate(false);
+                  }
+                }}
+              >
+                更新を確認
+              </Button>
+              <Button
+                variant="subtle"
+                onClick={() =>
+                  void desktopBridge()!
+                    .openReleases?.()
+                    .catch(() =>
+                      setUpdateMessage("配布ページを開けませんでした。"),
+                    )
+                }
+              >
+                配布ページを開く
+              </Button>
+            </Group>
+          )}
+          {updateMessage && (
+            <Text role="status" size="sm">
+              {updateMessage}
+            </Text>
+          )}
           <Text size="xs" c="dimmed">
             アプリを終了すると、このアプリのタスク実行と接続も停止します。
           </Text>

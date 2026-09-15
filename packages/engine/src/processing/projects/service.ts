@@ -69,6 +69,30 @@ export class Projects {
       return project;
     });
   }
+  selectByNameOrId(value: unknown): Project {
+    const selection = text(value, 100).normalize("NFKC").trim();
+    const projects = this.store.list<Project>("project");
+    const exact = projects.find((project) => project.id === selection);
+    const matches = exact
+      ? [exact]
+      : projects.filter(
+          (project) =>
+            project.name.normalize("NFKC").toLowerCase() ===
+            selection.toLowerCase(),
+        );
+    if (!matches.length) throw new Error("PROJECT_NOT_FOUND");
+    if (matches.length > 1) throw new Error("PROJECT_NAME_AMBIGUOUS");
+    this.project(matches[0].id);
+    return matches[0];
+  }
+  conversationProject(config: Record<string, string>) {
+    const selected = config.projectId?.trim();
+    return this.project(
+      selected && this.store.get("project", selected)
+        ? selected
+        : DEFAULT_PROJECT,
+    );
+  }
   project(projectId?: string, meetingId?: string) {
     const meeting = meetingId
       ? this.store.get<Meeting>("meeting", id(meetingId))

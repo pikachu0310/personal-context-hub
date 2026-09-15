@@ -17,6 +17,7 @@ export async function connect(this: Client) {
   clearTimeout(this.reconnect);
   this.ws?.close();
   this.connected = false;
+  this.details.reset();
   this.executor.board.close();
   this.controlSupported = false;
   this.lifecycleSupported = false;
@@ -61,6 +62,8 @@ export async function connect(this: Client) {
             ...this.settings.profile,
             name: this.settings.profile?.name || "参加者",
             codexConnected: this.loginStatus === "authenticated",
+            claudeConnected: this.claudeLoginStatus === "authenticated",
+            taskOptionsVersion: 1,
           },
           signature: sign(
             null,
@@ -82,10 +85,13 @@ export async function connect(this: Client) {
       this.generation = Number(data.generation);
       this.connected = true;
       this.executor.board.supported = data.taskBoardVersion === 1;
+      this.executor.board.projectSupported = data.conversationVersion === 1;
       this.controlSupported = data.controlVersion === 1;
       this.continuationSupported = data.continuationVersion === 1;
       this.projectCreationSupported = data.projectVersion === 1;
       this.workspaceSupported = data.workspaceVersion === 1;
+      this.taskOptionsSupported = data.taskOptionsVersion === 1;
+      this.details.supported = data.taskDetailVersion === 1;
       this.localSharingSupported = data.localSharingVersion === 1;
       void this.syncLocalShares();
       this.teamTasksSupported = data.taskListVersion === 1;
@@ -107,10 +113,12 @@ export async function connect(this: Client) {
           for (const value of Object.values(this.executor.runs))
             this.executor.report(value);
           this.ready();
+          void this.details.sync();
         })
         .catch(() => {
           this.status = "削除履歴の同期を再試行しています";
           this.ready();
+          void this.details.sync();
         });
       return;
     }
@@ -119,6 +127,10 @@ export async function connect(this: Client) {
       return;
     }
     if (data.generation !== this.generation) return;
+    if (data.type === "task.detail.refresh") {
+      this.details.refresh(String(data.taskId));
+      return;
+    }
     if (this.executor.board.receive(data)) return;
     if (data.type === "projects.updated") {
       this.syncProjects(
@@ -218,6 +230,7 @@ export async function connect(this: Client) {
   ws.once("close", (code) => {
     if (this.ws !== ws) return;
     this.connected = false;
+    this.details.reset();
     this.executor.board.close();
     this.controlSupported = false;
     this.lifecycleSupported = false;
@@ -241,6 +254,7 @@ export async function connect(this: Client) {
     }
     this.workspaceRequests.clear();
     this.workspaceSupported = false;
+    this.taskOptionsSupported = false;
     this.localSharingSupported = false;
     this.status =
       code === 4004

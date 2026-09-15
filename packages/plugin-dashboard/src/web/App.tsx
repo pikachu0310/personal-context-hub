@@ -324,6 +324,11 @@ export function App() {
               </Group>
             </Group>
           </Paper>
+          {state.conversationBindings?.map((binding) => (
+            <Text key={binding.pluginId} size="sm" mt="sm" role="status">
+              {binding.title} の参加先: {binding.projectName}
+            </Text>
+          ))}
           {state.deletionSync && (
             <Text size="sm" c="dimmed" mt="sm" role="status">
               {state.deletionSync.pendingClients
@@ -539,6 +544,12 @@ export function App() {
         select={select}
         stale={stale}
         refresh={refresh}
+        deleted={async (deletedProjectId) => {
+          select(undefined);
+          if (deletedProjectId && deletedProjectId === projectId)
+            setProjectId("");
+          else await refresh();
+        }}
         openRaw={openRaw}
       />
     </AppShell>

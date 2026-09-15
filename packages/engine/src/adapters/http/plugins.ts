@@ -13,6 +13,26 @@ export async function plugins(
 ) {
   const admin = auth.user.role === "admin";
   switch (url.pathname) {
+    case "/api/admin/plugins/forum": {
+      this.mutate(req, auth, true);
+      if (!["status", "recover"].includes(input.action))
+        throw new Error("INVALID_FORUM_ACTION");
+      const plugin = this.plugins.get("discord");
+      if (plugin.status !== "running") throw new Error("DISCORD_NOT_RUNNING");
+      const result = await plugin.request(
+        `forum.${input.action}`,
+        input.action === "status"
+          ? {}
+          : {
+              projectId: id(input.projectId),
+              taskId: id(input.taskId),
+              threadId: input.threadId ? id(input.threadId) : undefined,
+              recreate: input.recreate === true,
+            },
+      );
+      send(res, 200, result);
+      return true;
+    }
     case "/api/admin/plugins/setup": {
       this.mutate(req, auth, true);
       const result = await this.plugins.setup(id(input.pluginId), input.config);

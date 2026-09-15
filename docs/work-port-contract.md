@@ -31,7 +31,7 @@ flowchart TB
 ```
 
 `WorkRequest` carries `requestKey`, meeting/project/author IDs, request text,
-optional title and kind, source IDs/statements/sequences, execution policy and
+optional title and kind, requested/proactive trigger, source IDs/statements/sequences, execution policy and
 network request. The adapter maps `requestKey` to `Task.requestId`. Deduplication
 uses `[authorId, projectId, requestKey]` and rejects reuse across meetings.
 Unknown acceptance must be reconciled with that identity rather than retried
@@ -43,8 +43,7 @@ viewers. Model-supplied task text, speaker identity, project or permission claim
 are not authorization. The coordinator preserves the accepted source statements
 and their provenance, and may include the model's title and acceptance criteria
 as task instructions. Author, project and source grants still come from Engine
-records. Discussion and incomplete speech segments do
-not become implementation requests solely because the model proposes a task.
+records. A concrete, source-backed opportunity can become a small proactive task within the coordinator's per-project limits; a model proposal alone cannot authorize unrelated work or incomplete speech. Multiple participants may contribute evidence, while the last eligible requester owns the requested work.
 
 ## Versions and control receipts
 
@@ -59,7 +58,7 @@ not become implementation requests solely because the model proposes a task.
 
 `WorkControl` supports `stop`, `instruction` and explicit `retry`, with an
 optional `expectedControlVersion`. The adapter maps `instruction` to the task
-service's `steer`. Receipts retain `accepted: true` independently of `delivery`:
+service's `steer`. A follow-up to a completed task uses `retry` with `continuation`, preserving task identity, workspace and Codex history while advancing the specification. Receipts retain `accepted: true` independently of `delivery`:
 `pending`, `queued`, `applied`, `stopped`, `uncertain` or `rejected`.
 
 A queued instruction is not proof that the active model consumed it. A stop

@@ -26,6 +26,16 @@ export function Meetings({
         title="現在のプロジェクトの会話"
         description="全ての入力元の会話を共有します。会話が途切れると議事録を自動で分けます。"
       >
+        <Text size="sm" fw={600} mb="sm">
+          プロジェクト:{" "}
+          {state.projects.find((project) => project.id === projectId)?.name ??
+            "未選択"}
+        </Text>
+        {state.conversationBindings?.map((binding) => (
+          <Text key={binding.pluginId} size="sm" mb="sm">
+            {binding.title} の参加先: {binding.projectName}
+          </Text>
+        ))}
         <ScrollArea h={messages.length ? 400 : 0}>
           {messages.map((m) => (
             <Paper key={m.id} p="sm" mb="xs" bg="gray.0">

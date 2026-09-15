@@ -6,6 +6,7 @@ export interface DiscordState {
   config: Record<string, string>;
   client?: Client;
   forum?: ForumSync;
+  forums?: Map<string, ForumSync>;
   projectCommand?: (
     subject: string,
     projectId?: string,
@@ -13,9 +14,11 @@ export interface DiscordState {
     projects: import("@ido/common/contracts/protocol").Project[];
     projectId: string;
   }>;
+  refreshTranscript?: () => Promise<void>;
   connectionGuide?: () => Promise<string>;
   voice?: VoiceConnection;
   speechEpoch: number;
+  playbackRevision: number;
   audioSessionId: string;
   activeSpeakers: Set<string>;
   player: ReturnType<typeof createAudioPlayer>;
@@ -32,6 +35,7 @@ export function createDiscordState(): DiscordState {
   return {
     config: {},
     speechEpoch: 0,
+    playbackRevision: 0,
     audioSessionId: randomUUID(),
     activeSpeakers: new Set(),
     player: createAudioPlayer(),

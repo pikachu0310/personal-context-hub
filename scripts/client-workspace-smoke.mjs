@@ -141,6 +141,24 @@ try {
       },
     ],
   };
+  client.details.read = async (taskId) => {
+    const summary = client.teamTasks.tasks.find((task) => task.id === taskId);
+    return {
+      task: {
+        ...summary,
+        text: summary.title,
+        requestId: taskId,
+        authorId: "remote",
+        meetingId: "meeting",
+        createdAt: 1,
+        network: false,
+        history: [],
+        progress: summary.progress,
+      },
+      supported: false,
+      ownerConnected: true,
+    };
+  };
   const thread = {
     activeTurnId: null,
     async steer(text) {
@@ -636,14 +654,15 @@ try {
     .locator('.task-row[data-task-id="remote-task"] .task-link')
     .click();
   await page
-    .getByText("ルーティングのテストを実行中です。", { exact: true })
+    .getByRole("status")
+    .filter({ hasText: "ルーティングのテストを実行中です。" })
     .waitFor();
-  assert.equal(await page.getByLabel("エージェントへの追加指示").count(), 0);
+  assert.equal(await page.getByLabel("エージェントへの追加指示").count(), 1);
   assert.equal(
     await page
       .getByRole("button", { name: "タスクを停止", exact: true })
       .count(),
-    0,
+    1,
   );
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
@@ -653,8 +672,9 @@ try {
     .locator('.task-row[data-task-id="queued-task"] .task-link')
     .click();
   await page
-    .getByText("実行先が決まると、このPCまたはほかのPCの一覧へ移動します。", {
-      exact: true,
+    .getByRole("status")
+    .filter({
+      hasText: "実行先が決まると、このPCまたはほかのPCの一覧へ移動します。",
     })
     .waitFor();
   await page.reload();
@@ -861,7 +881,7 @@ try {
   await page.getByRole("button", { name: "最新の状態に更新" }).click();
   await page
     .getByRole("button", { name: "実行権限", exact: true })
-    .filter({ hasText: "フルアクセス・承認なし" })
+    .filter({ hasText: "フルアクセス" })
     .waitFor();
   await inspector.getByText("Discord共有", { exact: true }).waitFor();
   await inspector

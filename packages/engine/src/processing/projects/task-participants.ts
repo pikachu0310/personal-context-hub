@@ -39,11 +39,14 @@ function inferredParticipants(
     }
   };
   add(task.clientId, true);
-  add(task.authorId);
-  for (const source of task.sourceStatements ?? [])
-    add(source.authorId ?? source.userId);
+  if (task.participantPolicy !== "execution") {
+    add(task.authorId);
+    for (const source of task.sourceStatements ?? [])
+      add(source.authorId ?? source.userId);
+  }
   for (const receipt of Object.values(task.controlReceipts ?? {}))
-    add(receipt.authorId);
+    if (!botDirectedControl(task, receipt.sourcePluginId))
+      add(receipt.authorId);
   if (
     task.createdByBot ||
     (task.createdByBot === undefined && (task.kind || task.sourceIds?.length))
@@ -54,6 +57,8 @@ function inferredParticipants(
 
 export const participantId = (actor: string) =>
   actor.startsWith("client-") ? actor.slice(7) : actor;
+export const botDirectedControl = (task: Task, sourcePluginId?: string) =>
+  task.participantPolicy === "execution" && sourcePluginId === "discord";
 export function seedParticipants(store: Repository, task: Task) {
   if (task.memberStates !== undefined) return;
   task.memberStates = Object.fromEntries(

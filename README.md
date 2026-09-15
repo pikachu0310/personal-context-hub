@@ -2,7 +2,11 @@
 
 Self-hosted Engine with API-based conversation processing, local Codex Clients for delegated work, a bundled Dashboard plugin, and an optional Discord plugin. Node.js 24 is required. The Engine supports both text with STT/TTS and GPT-Live with independent speaker-attributed STT.
 
+Meetings keep speaker-attributed raw statements and automatically updated topic minutes with source references. Meeting Codex tasks can search this context, receive a teammate's follow-up in the same task, and stop on a clearly targeted request. Useful small investigations and prototypes can start proactively with duplicate, concurrency and cooldown limits. See [meeting behavior and evaluation](docs/conversation-modes.md).
+
 ## Local development
+
+See [app, Engine and Discord wiring](docs/agent-wiring.md) for local task creation, project discussions, task controls, provider selection and update guidance.
 
 ```sh
 npm ci

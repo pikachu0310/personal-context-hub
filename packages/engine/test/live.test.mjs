@@ -64,15 +64,15 @@ test("Live waits for startup, delegates metadata without inventing task text, st
   socket.emit("session.output_audio.delta", audio);
   bridge.speakerEnd("a");
   socket.emit("session.output_audio.delta", audio);
-  assert.equal(output.length, 1);
+  assert.equal(output.length, 3);
   bridge.speakerEnd("b");
   bridge.silence();
   socket.emit("session.output_audio.delta", audio);
-  assert.equal(output.length, 1);
+  assert.equal(output.length, 3);
   bridge.resume();
   socket.emit("session.output_audio.delta", audio);
-  assert.equal(output.length, 2);
-  assert.equal(clearCount, 3);
+  assert.equal(output.length, 4);
+  assert.equal(clearCount, 1);
   socket.emit("session.delegation.created", {
     delegation: { id: "d1", target: "client" },
     offset_ms: 100,

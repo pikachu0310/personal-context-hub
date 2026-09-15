@@ -1,3 +1,6 @@
+import { TaskDetails } from "../../processing/tasks/details.js";
+import { supportsTask } from "../../clients/scheduler.js";
+import { projectDiscussion } from "../../processing/tasks/board.js";
 import { attachTaskSource } from "@ido/common/contracts/protocol";
 import { shareLocalTask } from "../../processing/tasks/local-sharing.js";
 import { WorkspaceLifecycle } from "../../processing/projects/lifecycle.js";
@@ -27,8 +30,13 @@ import { Tasks } from "../../processing/tasks/service.js";
 import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
 import { taskSnapshot } from "./task-list.js";
-import { TaskBoard } from "../../processing/tasks/board.js";
+import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
+import { BoardInputError, TaskBoard } from "../../processing/tasks/board.js";
 export class ClientConnections {
+  private detailService?: TaskDetails;
+  get details() {
+    return (this.detailService ??= new TaskDetails(this.store));
+  }
   readonly peers = new Map<string, WebSocket>();
   readonly ready = new Set<string>();
   readonly sessions = new Map<
@@ -182,6 +190,7 @@ export class ClientConnections {
   readonly tasks: Tasks;
   lifecycle: WorkspaceLifecycle;
   invalidateTask(task: Task) {
+    this.detailService?.invalidate(task.id);
     this.preview.removeTask(task.id);
     for (const [id, request] of this.artifactRequests)
       if (request.runId === task.runId) {
@@ -299,8 +308,11 @@ export class ClientConnections {
               projectVersion: 1,
               projects: new ProjectTeam(this.store).projects(device.id),
               workspaceVersion: 1,
+              taskOptionsVersion: 1,
+              conversationVersion: 1,
               localSharingVersion: 1,
               taskListVersion: 1,
+              taskDetailVersion: 1,
               lifecycleVersion: 1,
               deletions:
                 device.lifecycleVersion === 1
@@ -348,6 +360,7 @@ export class ClientConnections {
               throw new Error("TASK_NOT_RUNNING");
             new ProjectTeam(this.store).require(device.id, task.projectId);
             if (
+              !task.localMirror &&
               !device.grants.some((grant) => grant.projectId === task.projectId)
             )
               throw new Error("PERMISSION_DENIED");
@@ -367,7 +380,9 @@ export class ClientConnections {
                 input,
                 `${task.runId}:${text(data.postKey, 600)}`,
               );
-              const target = this.store.get<Task>("task", result.taskId)!;
+              const target =
+                this.store.get<Task>("task", result.taskId) ??
+                projectDiscussion(task.projectId);
               if (
                 result.created &&
                 !["completed", "failed", "cancelled"].includes(target.state)
@@ -375,9 +390,15 @@ export class ClientConnections {
                 this.notifyBoard(task);
             } else throw new Error("INVALID_BOARD_OPERATION");
             ws.send(JSON.stringify({ ...response, result }));
-          } catch {
+          } catch (error) {
             ws.send(
-              JSON.stringify({ ...response, error: "BOARD_REQUEST_REJECTED" }),
+              JSON.stringify({
+                ...response,
+                error:
+                  error instanceof BoardInputError
+                    ? error.message
+                    : "BOARD_REQUEST_REJECTED",
+              }),
             );
           }
           return;
@@ -437,6 +458,51 @@ export class ClientConnections {
                   generation,
             };
             switch (data.operation) {
+              case "task.detail.target": {
+                const task = this.details.task(device.id, String(input.taskId));
+                if (
+                  task.clientId !== device.id ||
+                  task.runId !== input.runId ||
+                  task.revision !== input.revision
+                )
+                  throw new Error("TASK_ASSIGNMENT_CHANGED");
+                const saved = this.store.get<{
+                  snapshot: { sequence: number; revision: number };
+                }>("task-detail", task.id);
+                result = {
+                  sequence:
+                    saved?.snapshot.revision === task.revision
+                      ? saved.snapshot.sequence
+                      : 0,
+                };
+                break;
+              }
+              case "task.detail.sync":
+                result = this.details.sync(device.id, generation, input);
+                break;
+              case "task.detail.read":
+                result = this.details.read(device.id, input, this.peers);
+                break;
+              case "task.detail.refresh": {
+                const task = this.details.task(device.id, String(input.taskId));
+                const owner = task.clientId && this.peers.get(task.clientId);
+                if (owner)
+                  owner.send(
+                    JSON.stringify({
+                      v: 1,
+                      type: "task.detail.refresh",
+                      generation: this.store.get<Device>(
+                        "device",
+                        task.clientId!,
+                      )?.generation,
+                      taskId: task.id,
+                      runId: task.runId,
+                      revision: task.revision,
+                    }),
+                  );
+                result = { requested: !!owner };
+                break;
+              }
               case "project.leave":
                 result = team.leave(
                   device.id,
@@ -502,6 +568,31 @@ export class ClientConnections {
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
+              case "project.knowledge": {
+                const projectId = id(input.projectId);
+                team.require(device.id, projectId);
+                result = new MeetingKnowledgeStore(this.store).search(
+                  projectId,
+                  input,
+                );
+                break;
+              }
+              case "task.knowledge": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (
+                  task.clientId !== device.id ||
+                  task.runId !== input.runId ||
+                  task.revision !== input.revision
+                )
+                  throw new Error("TASK_ASSIGNMENT_CHANGED");
+                result = new MeetingKnowledgeStore(this.store).search(
+                  task.projectId,
+                  input,
+                );
+                break;
+              }
               case "task.sources": {
                 const task = this.store.get<Task>("task", id(input.taskId));
                 if (!task) throw new Error("TASK_NOT_FOUND");
@@ -515,6 +606,81 @@ export class ClientConnections {
                   this.changed();
                 }
                 result = { sources: task.attachedSources ?? [] };
+                break;
+              }
+              case "task.conversation":
+              case "project.conversation": {
+                const task =
+                  data.operation === "project.conversation"
+                    ? projectDiscussion(id(input.projectId))
+                    : this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                const board = new TaskBoard(this.store);
+                if (input.text !== undefined) {
+                  board.post(
+                    task,
+                    { body: text(input.text, 16000) },
+                    `app:${device.id}:${id(input.requestId)}`,
+                    device.profile?.name ?? device.name,
+                    "app",
+                  );
+                  this.notifyBoard(task, true);
+                }
+                const page = board.read(task, {
+                  taskId: task.id,
+                  limit: 10,
+                  ...(input.postId !== undefined
+                    ? { id: input.postId, offset: input.offset }
+                    : {}),
+                  ...(input.before !== undefined
+                    ? { before: input.before }
+                    : {}),
+                });
+                result = page;
+                break;
+              }
+              case "task.access-reset": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (
+                  task.clientId !== device.id ||
+                  task.revision !== input.revision ||
+                  !["completed", "failed", "cancelled"].includes(task.state)
+                )
+                  throw new Error("STOP_BEFORE_ACCESS_CHANGE");
+                task.effectiveExecutionPolicy = task.executionPolicy;
+                this.store.put("task", task.id, task);
+                this.store.audit(device.id, "task.access-reset", task.id);
+                result = { ok: true };
+                break;
+              }
+              case "task.control": {
+                const task = this.store.get<Task>("task", id(input.taskId));
+                if (!task) throw new Error("TASK_NOT_FOUND");
+                team.require(device.id, task.projectId);
+                if (input.operation !== "stop" && input.operation !== "steer")
+                  throw new Error("INVALID_CONTROL");
+                if (
+                  !Number.isSafeInteger(input.revision) ||
+                  Number(input.revision) < 1
+                )
+                  throw new Error("INVALID_REVISION");
+                result = this.tasks.control(
+                  task.id,
+                  `client-${device.id}`,
+                  input.operation,
+                  input.operation === "steer"
+                    ? text(input.text, 8000)
+                    : undefined,
+                  {
+                    requestKey: `client:${device.id}:control:${id(input.requestId)}`,
+                    expectedRevision: Number(input.revision),
+                  },
+                );
+                this.flush();
+                this.changed();
                 break;
               }
               case "task.continue": {
@@ -555,6 +721,28 @@ export class ClientConnections {
                 break;
               }
               case "task.create": {
+                const agent = input.agent;
+                if (
+                  agent !== undefined &&
+                  agent !== "codex" &&
+                  agent !== "claude"
+                )
+                  throw new Error("INVALID_AGENT");
+                if (
+                  input.progressMode !== undefined &&
+                  input.progressMode !== "auto" &&
+                  input.progressMode !== "manual"
+                )
+                  throw new Error("INVALID_PROGRESS_MODE");
+                const selected = (value: unknown) => {
+                  if (value === undefined || value === "") return undefined;
+                  if (
+                    typeof value !== "string" ||
+                    !/^[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,159}$/.test(value)
+                  )
+                    throw new Error("INVALID_MODEL");
+                  return value;
+                };
                 const projectId = id(input.projectId);
                 team.require(device.id, projectId);
                 const routed = new Projects(this.store).accept(
@@ -572,6 +760,11 @@ export class ClientConnections {
                   text: text(input.text),
                   requestId: id(input.requestId),
                   network: false,
+                  agent,
+                  model: selected(input.model),
+                  reasoningEffort: selected(input.reasoningEffort),
+                  progressMode: input.progressMode as
+                    "auto" | "manual" | undefined,
                 });
                 this.flush();
                 this.changed();
@@ -590,8 +783,18 @@ export class ClientConnections {
               }),
             );
             if (
-              data.operation !== "project.snapshot" &&
-              data.operation !== "project.inspect-invite"
+              ![
+                "task.detail.target",
+                "task.detail.sync",
+                "task.detail.read",
+                "task.detail.refresh",
+                "project.snapshot",
+                "project.knowledge",
+                "task.knowledge",
+                "task.conversation",
+                "project.conversation",
+                "project.inspect-invite",
+              ].includes(String(data.operation))
             )
               this.broadcastProjects();
           } catch (error) {
@@ -717,6 +920,14 @@ export class ClientConnections {
             .map((g: Grant) => ({
               projectId: id(g.projectId),
               network: g.network === true,
+              ...(Array.isArray(g.agents)
+                ? {
+                    agents: g.agents.filter(
+                      (agent: string) =>
+                        agent === "codex" || agent === "claude",
+                    ),
+                  }
+                : {}),
               slots: Math.max(1, Math.min(8, Number(g.slots) || 1)),
             }))
             .filter(
@@ -754,10 +965,10 @@ export class ClientConnections {
       }
     });
   }
-  private notifyBoard(author: Task) {
+  private notifyBoard(author: Task, includeAuthor = false) {
     for (const task of this.store.list<Task>("task")) {
       if (
-        task.id === author.id ||
+        (!includeAuthor && task.id === author.id) ||
         task.projectId !== author.projectId ||
         !task.clientId ||
         !["assigned", "running"].includes(task.state)
@@ -771,7 +982,8 @@ export class ClientConnections {
         device.taskBoardVersion !== 1 ||
         !this.ready.has(device.id) ||
         socket?.readyState !== WebSocket.OPEN ||
-        !device.grants.some((grant) => grant.projectId === task.projectId)
+        (!task.localMirror &&
+          !device.grants.some((grant) => grant.projectId === task.projectId))
       )
         continue;
       try {
@@ -804,7 +1016,7 @@ export class ClientConnections {
           if (
             ["execute", "retry"].includes(command.type) &&
             task &&
-            (!device.codexConnected ||
+            (!supportsTask(device, task) ||
               !this.store.get(
                 "project-member",
                 `${task.projectId}:${device.id}`,

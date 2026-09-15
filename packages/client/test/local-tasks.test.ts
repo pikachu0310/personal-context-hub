@@ -90,6 +90,10 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   assert.equal(executions, 1);
   const value = client.executor.runs[runId];
   assert.equal(value.origin, "local");
+  const stateResponse = await (
+    await fetch(`${client.origin}/api/state`)
+  ).json();
+  assert.ok(stateResponse.runs.some((run: Run) => run.task.runId === runId));
   const sourceInput = {
     runId,
     taskId: value.task.id,
@@ -248,7 +252,7 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
   });
   assert.equal(auto.status, 200);
   const autoRun = client.executor.runs[(await auto.json()).runId];
-  assert.equal(autoRun.accessMode, "full");
+  assert.equal(autoRun.accessMode, "approval");
   assert.equal(autoRun.task.network, true);
   assert.equal(autoRun.task.executionPolicy?.sandboxMode, undefined);
   client.settings.projects = [
@@ -271,8 +275,8 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
     ).status,
     200,
   );
-  assert.equal(client.settings.mappings[0].accessMode, "full");
-  assert.equal(client.settings.mappings[0].network, true);
+  assert.equal(client.settings.mappings[0].accessMode, "approval");
+  assert.equal(client.settings.mappings[0].network, false);
   assert.equal(
     (
       await post("progress-mode", {
@@ -284,8 +288,64 @@ test("local tasks start offline once, enforce slots and CSRF, persist origin and
     200,
   );
   assert.equal(client.settings.mappings[0].accessMode, "approval");
-  assert.equal(autoRun.accessMode, "full");
+  assert.equal(autoRun.accessMode, "approval");
   autoRun.state = "completed";
+  for (const mode of ["auto", "manual"] as const) {
+    for (const accessMode of ["sandbox", "approval", "full"] as const) {
+      for (const network of [false, true]) {
+        const response = await post("local-tasks/start", {
+          ...input,
+          requestKey: `${mode}-${accessMode}-${network}`,
+          mode,
+          accessMode,
+          network,
+          sandboxMode: undefined,
+        });
+        assert.equal(response.status, 200, await response.clone().text());
+        const value = client.executor.runs[(await response.json()).runId];
+        assert.equal(value.accessMode, accessMode);
+        assert.equal(value.progressMode, mode);
+        assert.equal(
+          value.task.executionPolicy?.sandboxMode,
+          accessMode === "sandbox" ? "workspace-write" : undefined,
+        );
+        assert.equal(
+          value.task.network,
+          accessMode === "sandbox" ? network : true,
+        );
+        value.state = "completed";
+      }
+    }
+  }
+  const count = Object.keys(client.executor.runs).length;
+  assert.equal(
+    (
+      await post("local-tasks/start", {
+        ...input,
+        requestKey: "bad-access",
+        accessMode: "invalid",
+      })
+    ).status,
+    400,
+  );
+  const catalog = client.agentCatalog;
+  client.agentCatalog = async () => [
+    {
+      agent: "claude",
+      authenticated: true,
+      models: [{ id: "test-model", name: "Test" }],
+    },
+  ];
+  const unsupported = await post("local-tasks/start", {
+    ...input,
+    requestKey: "claude-sandbox",
+    agent: "claude",
+    accessMode: "sandbox",
+  });
+  assert.equal(unsupported.status, 400);
+  assert.equal((await unsupported.json()).error, "CLAUDE_SANDBOX_UNSUPPORTED");
+  assert.equal(Object.keys(client.executor.runs).length, count);
+  client.agentCatalog = catalog;
   client.settings.engineUrl = "https://team.example";
   client.settings.deviceId = "fixture-device";
   const shared = await post("local-tasks/start", {

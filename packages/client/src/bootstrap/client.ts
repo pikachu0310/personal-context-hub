@@ -1,3 +1,4 @@
+import { ClientTaskDetails } from "../connection/task-details.js";
 import { type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import { dirname, join } from "node:path";
@@ -28,6 +29,7 @@ import { ClientPreview } from "../preview/relay.js";
 import { checkAccount } from "../auth/account.js";
 import { workspaceRequest } from "../connection/workspace.js";
 import { createProject } from "../connection/projects.js";
+import { isUnrestrictedAccess } from "@ido/common/contracts/work";
 interface Settings {
   pendingPair?: { id: string; engineUrl: string; expires: number };
   identityId?: string;
@@ -48,6 +50,7 @@ interface Settings {
   projects: Project[];
 }
 export class Client {
+  readonly details = new ClientTaskDetails(this);
   agentCatalog = async () => {
     const catalog = await agentCatalog(this.executor.home, this.directory);
     this.loginStatus = catalog.find((value) => value.agent === "codex")
@@ -74,9 +77,11 @@ export class Client {
   continuationSupported = false;
   localSharingSupported = false;
   localSharingBusy = false;
+  localSharingPending?: Promise<void>;
   localSharingTimer?: NodeJS.Timeout;
   readonly syncLocalShares = syncLocalShares.bind(this);
   workspaceSupported = false;
+  taskOptionsSupported = false;
   workspaceRequests = new Map<
     string,
     {
@@ -130,11 +135,16 @@ export class Client {
       );
   }
   executionMappings() {
-    return this.settings.mappings.filter(
-      (m) =>
-        this.allowedProjects.has(m.projectId) &&
-        this.settings.projects.some((p) => p.id === m.projectId),
-    );
+    return this.settings.mappings
+      .filter(
+        (m) =>
+          this.allowedProjects.has(m.projectId) &&
+          this.settings.projects.some((p) => p.id === m.projectId),
+      )
+      .map((mapping) => ({
+        ...mapping,
+        network: isUnrestrictedAccess(mapping.accessMode) || mapping.network,
+      }));
   }
   projectBusy(projectId: string) {
     return (
@@ -178,7 +188,34 @@ export class Client {
   ) {
     this.credentials = new Credentials(directory, "ido-client");
     this.executor = new Executor(directory, (data) => this.emit(data));
+    this.executor.knowledge = (task, input) =>
+      this.workspaceRequest("task.knowledge", {
+        ...input,
+        taskId: task.id,
+        runId: task.runId,
+        revision: task.revision,
+      });
+    this.executor.onSaved = () => this.details.changed();
     this.executor.contextProfile = () => this.settings.profile;
+    this.executor.sharedTask = async (value) => {
+      if (!value.discordShare || !this.connected) return undefined;
+      await this.localSharingPending;
+      await this.syncLocalShares();
+      const share = value.discordShare;
+      if (
+        share.status !== "synced" ||
+        !share.taskId ||
+        share.engineUrl !== this.settings.engineUrl ||
+        share.deviceId !== this.settings.deviceId
+      )
+        return undefined;
+      return {
+        ...value.task,
+        id: share.taskId,
+        projectId: share.projectId,
+        clientId: share.deviceId,
+      };
+    };
     this.preview = new ClientPreview((data) => this.emit(data));
   }
   async start(port = 4320) {
@@ -187,6 +224,15 @@ export class Client {
       this.settings,
     );
     this.settings.profile ??= { name: "参加者", context: "" };
+    this.allowedProjects.clear();
+    for (const mapping of this.settings.mappings)
+      if (
+        mapping.executionAllowed === true &&
+        this.settings.projects.some(
+          (project) => project.id === mapping.projectId,
+        )
+      )
+        this.allowedProjects.add(mapping.projectId);
     await this.executor.load();
     if (this.settings.progressMode) {
       for (const mapping of this.settings.mappings)
@@ -220,6 +266,7 @@ export class Client {
     });
     const address = this.server.address();
     this.origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}`;
+    this.details.start();
     this.localSharingTimer = setInterval(
       () => void this.syncLocalShares(),
       5000,
@@ -232,6 +279,8 @@ export class Client {
   }
   private saving: Promise<void> = Promise.resolve();
   save() {
+    for (const mapping of this.settings.mappings)
+      mapping.executionAllowed = this.allowedProjects.has(mapping.projectId);
     const snapshot = structuredClone(this.settings);
     this.saving = this.saving
       .catch(() => {})
@@ -248,11 +297,21 @@ export class Client {
       this.ws.send(JSON.stringify({ ...data, generation: this.generation }));
   }
   grants() {
-    return this.executionMappings().map(({ projectId, network, slots }) => ({
-      projectId,
-      network,
-      slots,
-    }));
+    return this.executionMappings().map(
+      ({ projectId, network, slots, accessMode }) => ({
+        projectId,
+        network,
+        slots,
+        ...(this.claudeLoginStatus === "authenticated"
+          ? {
+              agents: [
+                "codex",
+                ...(accessMode === "sandbox" ? [] : ["claude"]),
+              ] as Array<"codex" | "claude">,
+            }
+          : {}),
+      }),
+    );
   }
   ready() {
     this.emit({
@@ -263,6 +322,8 @@ export class Client {
         ...this.settings.profile,
         name: this.settings.profile?.name || "参加者",
         codexConnected: this.loginStatus === "authenticated",
+        claudeConnected: this.claudeLoginStatus === "authenticated",
+        taskOptionsVersion: 1,
       },
       grants: this.grants(),
       slots: this.settings.slots,
@@ -283,6 +344,7 @@ export class Client {
   readonly route = route.bind(this);
   async close() {
     this.stopping = true;
+    this.details.close();
     clearInterval(this.localSharingTimer);
     clearTimeout(this.reconnect);
     clearTimeout(this.pairTimer);

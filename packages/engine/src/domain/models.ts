@@ -18,6 +18,7 @@ export interface Device {
 }
 export interface Meeting extends MinutesMetadata {
   summaryContextRevision?: number;
+  knowledge?: import("@ido/common/contracts/knowledge").MeetingKnowledge;
   startedAt?: number;
   closedAt?: number;
   id: string;

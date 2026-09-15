@@ -13,6 +13,8 @@ export function ProjectMenu({
   mapping,
   newTask,
   canCreate,
+  localTask,
+  discussion,
 }: {
   project: Project;
   deviceId?: string;
@@ -20,6 +22,8 @@ export function ProjectMenu({
   mapping: () => void;
   newTask: () => void;
   canCreate: boolean;
+  localTask?: () => void;
+  discussion?: () => void;
 }) {
   const [rename, setRename] = useState(false),
     [url, setUrl] = useState(""),
@@ -89,6 +93,12 @@ export function ProjectMenu({
           </button>
         </Menu.Target>
         <Menu.Dropdown>
+          {discussion && (
+            <Menu.Item onClick={discussion}>相談・共有（Issueなし）</Menu.Item>
+          )}
+          {localTask && (
+            <Menu.Item onClick={localTask}>このPCでタスクを開始</Menu.Item>
+          )}
           <Menu.Item disabled={!canCreate} onClick={newTask}>
             新しいタスク
           </Menu.Item>
