@@ -119,7 +119,7 @@ export async function execute(
       status: "running",
     });
     await this.save();
-    if (create) {
+    if (create && value.workspaceMode !== "project") {
       await mkdir(dirname(value.directory), { recursive: true, mode: 0o700 });
       await run("git", [
         "-C",
@@ -237,6 +237,9 @@ export async function execute(
         : "",
       options.sandboxMode === "read-only"
         ? "これは読み取り専用の調査です。ファイル変更・送信・公開・サービス操作などの外部変更は行わず、根拠と不明点を報告してください。"
+        : "",
+      value.workspaceMode === "project"
+        ? "このタスクは設定されたプロジェクトフォルダーで直接作業します。開いているUnityなどにも変更が反映されます。既存の未コミット変更を保ち、依頼の範囲だけ変更してください。"
         : "",
       value.task.text,
       contextPrompt(value.contextSources),

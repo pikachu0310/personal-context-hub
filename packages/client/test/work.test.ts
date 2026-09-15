@@ -408,3 +408,126 @@ test("local access survives restart and controls actual runtime approval and san
     }
   }
 });
+
+test("direct project work preserves the editor checkout on first execution and resume", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ido-direct-project-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const cwd: string[] = [];
+  const thread = {
+    runStreamed: async () => ({
+      events: (async function* () {
+        yield { type: "thread.started", thread_id: "direct-thread" };
+        yield {
+          type: "item.completed",
+          item: { type: "agent_message", text: "Done" },
+        };
+        yield { type: "turn.completed" };
+      })(),
+    }),
+  };
+  const factory = () =>
+    ({
+      startThread: (options: any) => {
+        cwd.push(options.workingDirectory);
+        return thread;
+      },
+      resumeThread: (_id: string, options: any) => {
+        cwd.push(options.workingDirectory);
+        return thread;
+      },
+      close: async () => {},
+    }) as any;
+  const executor = new Executor(directory, () => {}, factory);
+  await executor.load();
+  const mapping = {
+    projectId: "project",
+    directory,
+    slots: 1,
+    network: true,
+    workspaceMode: "project" as const,
+  };
+  const task = { ...baseTask(), model: "test-codex-model" };
+  await executor.receive(
+    {
+      v: 1,
+      type: "execute",
+      id: "direct-start",
+      taskId: task.id,
+      runId: task.runId,
+      task,
+    },
+    [mapping],
+    true,
+    1,
+  );
+  await executor.running.get(task.runId);
+  assert.equal(executor.runs.run.state, "completed");
+  assert.equal(cwd[0], directory);
+  // This directory deliberately has no Git repository: attempting worktree add
+  // would fail before the provider starts.
+  assert.equal(executor.runs.run.workspaceMode, "project");
+  const restarted = new Executor(directory, () => {}, factory);
+  await restarted.load();
+  const next = { ...task, revision: 2 };
+  await restarted.receive(
+    {
+      v: 1,
+      type: "retry",
+      id: "direct-resume",
+      taskId: task.id,
+      runId: task.runId,
+      task: next,
+    },
+    [{ ...mapping, workspaceMode: "worktree" }],
+    true,
+    1,
+  );
+  await restarted.running.get(task.runId);
+  assert.equal(restarted.runs.run.state, "completed");
+  assert.deepEqual(cwd, [directory, directory]);
+});
+
+test("direct project admission serializes two projects sharing the same checkout", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ido-direct-exclusive-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const executor = new Executor(directory, () => {});
+  await executor.load();
+  executor.execute = async () => {};
+  const mapping = {
+    projectId: "project",
+    directory,
+    slots: 8,
+    network: true,
+    workspaceMode: "project" as const,
+  };
+  const first = baseTask();
+  const second = {
+    ...baseTask(),
+    id: "second",
+    runId: "second",
+    projectId: "other",
+  };
+  const mappings = [mapping, { ...mapping, projectId: "other" }];
+  const send = (task: Task) =>
+    executor.receive(
+      {
+        v: 1,
+        type: "execute",
+        id: task.id,
+        taskId: task.id,
+        runId: task.runId,
+        task,
+      },
+      mappings,
+      true,
+      8,
+    );
+  await send(first);
+  await send(second);
+  assert.equal(executor.runs.second, undefined);
+  assert.equal(executor.commands.includes(second.id), false);
+  executor.runs.run.state = "completed";
+  await send(second);
+  const accepted = executor.runs.second as Run | undefined;
+  assert.equal(accepted?.directory, directory);
+});

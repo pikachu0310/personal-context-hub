@@ -47,6 +47,7 @@ export interface Grant {
   slots: number;
 }
 export interface Mapping extends Grant {
+  workspaceMode?: "worktree" | "project";
   agent?: "codex" | "claude";
   executionAllowed?: boolean;
   model?: string;
