@@ -53,6 +53,9 @@ export function MeetingInput({
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const discard = useRef(false);
   const alive = useRef(true);
+  const connection = useRef(connected);
+  connection.current = connected;
+  const inFlight = useRef(false);
   const request = useRef<
     { key: string; text?: string; audio?: string } | undefined
   >(undefined);
@@ -102,10 +105,24 @@ export function MeetingInput({
   }, [projectId, connected, audioReplies]);
 
   async function send(content: { text?: string; audio?: string }) {
-    if (!connected) {
-      setError("Engineへ接続してから発言してください。");
+    if (inFlight.current) return;
+    if (!connection.current) {
+      if (content.audio) {
+        pendingAudio.current = content.audio;
+        setAudioRetry(true);
+      }
+      setSending(false);
+      setError("Engineへの接続が切れています。再接続後に送信してください。");
       return;
     }
+    if (pendingAudio.current && pendingAudio.current !== content.audio) {
+      setError(
+        "保持している音声を再送するか破棄してから、次の発言を送信してください。",
+      );
+      setSending(false);
+      return;
+    }
+    inFlight.current = true;
     if (
       request.current?.text !== content.text ||
       request.current?.audio !== content.audio ||
@@ -123,7 +140,10 @@ export function MeetingInput({
       });
       update(value);
       if (alive.current) {
-        if (content.text) setDraft("");
+        if (content.text)
+          setDraft((current) =>
+            current.trim() === content.text ? "" : current,
+          );
         setAudioRetry(false);
       }
       pendingAudio.current = undefined;
@@ -135,6 +155,7 @@ export function MeetingInput({
       }
       pendingAudio.current = content.audio;
     } finally {
+      inFlight.current = false;
       if (alive.current) setSending(false);
     }
   }
@@ -149,6 +170,7 @@ export function MeetingInput({
   }
 
   async function record() {
+    if (!connection.current || inFlight.current || pendingAudio.current) return;
     setError("");
     setSending(true);
     try {
@@ -184,7 +206,11 @@ export function MeetingInput({
         setError("録音できませんでした。マイクの接続を確認してください。");
       };
       media.onstop = async () => {
+        clearInterval(timer.current);
+        capture.getTracks().forEach((track) => track.stop());
         if (discard.current || !alive.current) return;
+        setRecording(false);
+        setSending(true);
         try {
           const audio = await meetingAudio(
             new Blob(chunks, { type: media.mimeType }),
@@ -256,7 +282,7 @@ export function MeetingInput({
             <Button
               variant="light"
               onClick={() => void record()}
-              disabled={!connected || sending || pending >= 2}
+              disabled={!connected || sending || audioRetry || pending >= 2}
             >
               マイクで話す
             </Button>
@@ -268,7 +294,12 @@ export function MeetingInput({
         <Button
           onClick={() => void send({ text: draft.trim() })}
           disabled={
-            !connected || !draft.trim() || recording || sending || pending >= 2
+            !connected ||
+            !draft.trim() ||
+            recording ||
+            sending ||
+            audioRetry ||
+            pending >= 2
           }
           loading={sending}
         >
@@ -289,6 +320,7 @@ export function MeetingInput({
           </Button>
           <Button
             variant="subtle"
+            disabled={sending}
             onClick={() => {
               pendingAudio.current = undefined;
               request.current = undefined;

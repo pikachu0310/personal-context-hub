@@ -53,6 +53,9 @@ export function ProjectView({
     [error, setError] = useState("");
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setState(undefined);
+    setError("");
     const refresh = async () => {
       try {
         const result = await api<ProjectWorkspace>("project/snapshot", {
@@ -78,13 +81,14 @@ export function ProjectView({
         if (active) {
           setError((e as Error).message);
         }
+      } finally {
+        if (active) timer = setTimeout(() => void refresh(), 2500);
       }
     };
     void refresh();
-    const timer = setInterval(() => void refresh(), 2500);
     return () => {
       active = false;
-      clearInterval(timer);
+      clearTimeout(timer);
     };
   }, [projectId]);
   if (!state)

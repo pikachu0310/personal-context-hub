@@ -1,17 +1,33 @@
 .live-meeting-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
-  gap: 24px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(240px, 0.9fr);
+  gap: 16px;
   align-items: start;
 }
 .live-meeting-grid > section {
   min-width: 0;
+  max-height: max(360px, calc(100dvh - 380px));
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-right: 4px;
+  overflow-wrap: anywhere;
 }
 .live-meeting-directory {
   overflow-wrap: anywhere;
 }
-@media (max-width: 850px) {
+@media (max-width: 1050px) {
+  .live-meeting-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .live-meeting-grid > section:last-child {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 650px) {
   .live-meeting-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .live-meeting-grid > section {
+    max-height: 65dvh;
   }
 }

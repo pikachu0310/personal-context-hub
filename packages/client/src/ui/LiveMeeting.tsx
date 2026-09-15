@@ -16,6 +16,7 @@ import type {
   TaskReference,
 } from "@ido/common/contracts/api";
 import { stateLabel } from "./ActivityFeed.js";
+import { MinutesMarkdown } from "./MinutesMarkdown.js";
 import { taskReadiness } from "./task-readiness.js";
 import "./live-meeting.css";
 
@@ -233,6 +234,48 @@ export function LiveMeeting({
             })}
           </Stack>
         </section>
+        <section aria-label="現在の議事録">
+          <Group justify="space-between" mb="sm">
+            <Title order={3}>議事録</Title>
+            <Badge
+              color={
+                meeting?.summaryState === "failed"
+                  ? "red"
+                  : meeting?.summaryState === "updating"
+                    ? "blue"
+                    : "gray"
+              }
+              variant="light"
+            >
+              {meeting?.summaryState === "failed"
+                ? "更新に失敗"
+                : meeting?.summaryState === "updating"
+                  ? "更新中"
+                  : meeting?.summary
+                    ? "保存済み"
+                    : "発言待ち"}
+            </Badge>
+          </Group>
+          {meeting?.summaryUpdatedAt && (
+            <Text size="xs" c="dimmed" mb="sm">
+              最終保存 {time(meeting.summaryUpdatedAt)}
+            </Text>
+          )}
+          {meeting?.summaryState === "failed" && (
+            <Alert color="orange" mb="sm">
+              更新に失敗しました。最後に保存した議事録を表示しています。
+            </Alert>
+          )}
+          {meeting?.summary ? (
+            <Paper withBorder p="md">
+              <MinutesMarkdown text={meeting.summary} openTask={openTask} />
+            </Paper>
+          ) : (
+            <Alert color="gray">
+              発言がまとまると議事録が表示されます。原発言は会話に残ります。
+            </Alert>
+          )}
+        </section>
         <section aria-label="会話から進んでいる作業">
           <Title order={3} mb="sm">
             進んでいる作業
@@ -246,51 +289,90 @@ export function LiveMeeting({
             </Alert>
           )}
           <Stack gap="sm">
-            {tasks.map((task) => (
-              <Paper withBorder p="md" key={task.id}>
-                <Group justify="space-between" mb="xs">
-                  <Badge
-                    variant="light"
-                    color={
-                      task.state === "running"
-                        ? "teal"
-                        : task.state === "failed"
-                          ? "red"
-                          : "gray"
-                    }
-                  >
-                    {stateLabel(task.state)}
-                  </Badge>
-                  <Text size="xs" c="dimmed">
-                    {time(task.updatedAt)}
+            {tasks.map((task) => {
+              const run = client.runs.find(
+                (run) =>
+                  run.task.id === task.id &&
+                  run.task.projectId === task.projectId &&
+                  run.task.runId === task.runId,
+              );
+              const active = ["running", "assigned", "queued"].includes(
+                task.state,
+              );
+              const approval =
+                active &&
+                run &&
+                client.approvals.some(
+                  (entry) => entry.runId === run.task.runId,
+                );
+              const waitingPlan = active && run?.phase === "awaiting-plan";
+              return (
+                <Paper withBorder p="md" key={task.id}>
+                  <Group justify="space-between" mb="xs">
+                    <Badge
+                      variant="light"
+                      color={
+                        approval || waitingPlan
+                          ? "orange"
+                          : task.state === "running"
+                            ? "teal"
+                            : task.state === "failed"
+                              ? "red"
+                              : "gray"
+                      }
+                    >
+                      {approval
+                        ? "承認待ち"
+                        : waitingPlan
+                          ? "計画の確認待ち"
+                          : stateLabel(task.state)}
+                    </Badge>
+                    <Text size="xs" c="dimmed">
+                      {time(task.updatedAt)}
+                    </Text>
+                  </Group>
+                  <Text fw={600} size="sm">
+                    {task.title ?? task.text.slice(0, 100)}
                   </Text>
-                </Group>
-                <Text fw={600} size="sm">
-                  {task.title ?? task.text.slice(0, 100)}
-                </Text>
-                {task.progress && (
-                  <Text size="sm" c="dimmed" mt="xs" lineClamp={3}>
-                    {task.progress}
-                  </Text>
-                )}
-                {task.resultSpecRevision !== undefined &&
-                  task.resultSpecRevision !== (task.specRevision ?? 1) && (
-                    <Text size="xs" c="orange" mt="xs">
-                      追加指示の反映を確認してください。
+                  {(approval || waitingPlan) && (
+                    <Text size="sm" c="orange" mt="xs">
+                      作業を開いて確認すると、続きを進められます。
                     </Text>
                   )}
-                <Button
-                  variant="light"
-                  mt="sm"
-                  fullWidth
-                  onClick={() =>
-                    openTask({ projectId: task.projectId, taskId: task.id })
-                  }
-                >
-                  作業・追加指示を開く
-                </Button>
-              </Paper>
-            ))}
+                  {task.progress && (
+                    <Text size="sm" c="dimmed" mt="xs" lineClamp={3}>
+                      {task.progress}
+                    </Text>
+                  )}
+                  {task.result && (
+                    <Text
+                      size="sm"
+                      mt="xs"
+                      lineClamp={5}
+                      style={{ whiteSpace: "pre-wrap" }}
+                    >
+                      {task.result}
+                    </Text>
+                  )}
+                  {task.resultSpecRevision !== undefined &&
+                    task.resultSpecRevision !== (task.specRevision ?? 1) && (
+                      <Text size="xs" c="orange" mt="xs">
+                        追加指示の反映を確認してください。
+                      </Text>
+                    )}
+                  <Button
+                    variant="light"
+                    mt="sm"
+                    fullWidth
+                    onClick={() =>
+                      openTask({ projectId: task.projectId, taskId: task.id })
+                    }
+                  >
+                    作業・追加指示を開く
+                  </Button>
+                </Paper>
+              );
+            })}
           </Stack>
         </section>
       </div>
