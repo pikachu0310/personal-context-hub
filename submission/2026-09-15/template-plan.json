@@ -1,0 +1,751 @@
+{
+  "templatePresentationId": "1xH4t0VUuy-3j6_bO1Q3wADtvQLaRd6zYgj5587UCpqM",
+  "templateSlideId": "g3fb5b1f6772_0_17",
+  "editablePresentationId": "1DR1OJDGeKmsxOZfpR18xb1ltxzrdUBJI4WGPia9ltfw",
+  "pageSize": {
+    "width": {
+      "magnitude": 9144000,
+      "unit": "EMU"
+    },
+    "height": {
+      "magnitude": 5143500,
+      "unit": "EMU"
+    }
+  },
+  "publicDemoUrl": "https://ido-engine-demo.pikachu0310.chatgpt.site",
+  "slideElements": [
+    {
+      "objectId": "g3fb5b1f6772_0_18",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.6087,
+        "scaleY": 0.1693,
+        "translateX": 457200,
+        "translateY": 279400,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "IDOエンジン\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.09019608,
+              "green": 0.16862746,
+              "blue": 0.22745098
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 29,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_19",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 2.7517,
+        "scaleY": 0.1228,
+        "translateX": 457200,
+        "translateY": 812800,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "会議で決める前に、触って試せる。\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.09019608,
+              "green": 0.16862746,
+              "blue": 0.23137255
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 20,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_20",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 2.7432,
+        "scaleY": 0.0024,
+        "translateX": 457200,
+        "translateY": 1243012.5,
+        "unit": "EMU"
+      },
+      "shapeType": "RECTANGLE",
+      "text": ""
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_21",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.2065,
+        "scaleY": 0.0804,
+        "translateX": 457200,
+        "translateY": 1460500,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "背景と課題\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.13725491,
+              "green": 0.40784314,
+              "blue": 0.8235294
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 11,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_22",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.2277,
+        "scaleY": 0.199,
+        "translateX": 457200,
+        "translateY": 1739900,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "小さな開発チームの、再説明と持ち帰り。\n会議の文脈をAIへ渡し直し、試作を待つ。\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.09019608,
+              "green": 0.16862746,
+              "blue": 0.22745098
+            }
+          }
+        },
+        "bold": false,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 12.5,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 400
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_23",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.2065,
+        "scaleY": 0.0762,
+        "translateX": 457200,
+        "translateY": 2438400,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "解決方法\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.13725491,
+              "green": 0.40784314,
+              "blue": 0.8235294
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 11,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_24",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.2277,
+        "scaleY": 0.2032,
+        "translateX": 457200,
+        "translateY": 2705100,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "話す → Codexが試作 → 触って直す。\nゲームもUIも、会議中に実物で比べる。\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.09019608,
+              "green": 0.16862746,
+              "blue": 0.22745098
+            }
+          }
+        },
+        "bold": false,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 13,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 400
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_25",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.2785,
+        "scaleY": 0.0762,
+        "translateX": 457200,
+        "translateY": 3441700,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "Codex活用：開発にも、実行にも\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.13725491,
+              "green": 0.40784314,
+              "blue": 0.8235294
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 11,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_26",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.2573,
+        "scaleY": 0.2201,
+        "translateX": 457200,
+        "translateY": 3733800,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "会議の発言を検索し、実装・追加修正。\n当日も修正依頼・版比較をCodexで開発。\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.09019608,
+              "green": 0.16862746,
+              "blue": 0.22745098
+            }
+          }
+        },
+        "bold": false,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 12.5,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 400
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_27",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.3928,
+        "scaleY": 0.0804,
+        "translateX": 4508500,
+        "translateY": 1473200,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "実演：会話から、動く試作と修正まで\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.13725491,
+              "green": 0.40784314,
+              "blue": 0.8235294
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 11,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_31",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 0.1905,
+        "scaleY": 0.0762,
+        "translateX": 5956300,
+        "translateY": 304800,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "チーム\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.13725491,
+              "green": 0.40784314,
+              "blue": 0.8235294
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 9,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_32",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 0.7535,
+        "scaleY": 0.1101,
+        "translateX": 6565900,
+        "translateY": 266700,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "結論、めっちゃ開発\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.09019608,
+              "green": 0.16862746,
+              "blue": 0.22745098
+            }
+          }
+        },
+        "bold": false,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 12,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 400
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_33",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 0.3683,
+        "scaleY": 0.0804,
+        "translateX": 457200,
+        "translateY": 4711700,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "デモを触る\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.13725491,
+              "green": 0.40784314,
+              "blue": 0.8235294
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 11,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "g3fb5b1f6772_0_34",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 2.3283,
+        "scaleY": 0.0931,
+        "translateX": 1701800,
+        "translateY": 4686300,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "ido-engine-demo.pikachu0310.chatgpt.site\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "themeColor": "HYPERLINK"
+          }
+        },
+        "bold": false,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 12,
+          "unit": "PT"
+        },
+        "link": {
+          "url": "https://ido-engine-demo.pikachu0310.chatgpt.site"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": true,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 400
+        }
+      }
+    },
+    {
+      "objectId": "ido_demo_caption",
+      "size": {
+        "width": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 3000000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 1.3928,
+        "scaleY": 0.1397,
+        "translateX": 4508500,
+        "translateY": 4178300,
+        "unit": "EMU"
+      },
+      "shapeType": "TEXT_BOX",
+      "text": "「速すぎる」→ 速度半分 → 目標追加\n同じタスクで修正。前後を触って比較。\n",
+      "textStyle": {
+        "backgroundColor": {},
+        "foregroundColor": {
+          "opaqueColor": {
+            "rgbColor": {
+              "red": 0.09019608,
+              "green": 0.16862746,
+              "blue": 0.23137255
+            }
+          }
+        },
+        "bold": true,
+        "italic": false,
+        "fontFamily": "Noto Sans JP",
+        "fontSize": {
+          "magnitude": 10.5,
+          "unit": "PT"
+        },
+        "baselineOffset": "NONE",
+        "smallCaps": false,
+        "strikethrough": false,
+        "underline": false,
+        "weightedFontFamily": {
+          "fontFamily": "Noto Sans JP",
+          "weight": 700
+        }
+      }
+    },
+    {
+      "objectId": "ido_demo_video",
+      "size": {
+        "width": {
+          "magnitude": 12000,
+          "unit": "EMU"
+        },
+        "height": {
+          "magnitude": 9000,
+          "unit": "EMU"
+        }
+      },
+      "transform": {
+        "scaleX": 348.1917,
+        "scaleY": 261.1438,
+        "translateX": 4508500,
+        "translateY": 1765300,
+        "unit": "EMU"
+      },
+      "video": {
+        "source": "DRIVE",
+        "id": "1UUzFCY4FjKIbEqmHwEpFiF7oqt9ZbjKL"
+      }
+    }
+  ],
+  "speakerNotes": "\n動画107–111秒にはVRChat連携の試作を収録。Unity ClientSim内のUdonからlocalhostへGETし、固定サンプルの返答を表示した素材です。AIの実応答・本番VRChatでの完成・VR機器での快適性を示すものではありません。\n公開デモは https://ido-engine-demo.pikachu0310.chatgpt.site で公開済み（T094が公開と操作確認を担当）。\nGoogle Slidesと埋め込みDrive動画は現在非公開。大会提出時は両方の閲覧権限を合わせてください。\n\n動画：117秒（1分57秒）。Driveファイル https://drive.google.com/file/d/1UUzFCY4FjKIbEqmHwEpFiF7oqt9ZbjKL/view\n撮影用に再構成した画面と、生成済み試作の操作素材を一部使用しています。同じ試作の速度パラメータ比較を、実際の過去版比較とは分けて表示しています。実システムでの修正履歴・到着・過去版比較を映像内に残しています。\n公開デモURL：https://ido-engine-demo.pikachu0310.chatgpt.site （公開の統合はT094が担当）IDOエンジンは、会話から試作を進めるチーム向けAIエージェントです。人が目的と触った評価を返し、Codexが会議の文脈を検索しながら実装・追加修正を進めます。\n\n実演は準備済みの会話と制作条件に基づく実システムの動作です。今回1回の記録は初回試作約4分44秒、修正約1分32秒。動画は待ち時間を短縮し、AI音声で説明しています。実利用での時間短縮は未測定です。ブラウザ上の試作で、VR機器での検証は含みません。\n\n9月15日9時以前から会話処理・Engine/Client・Discord連携・Codex実行の基盤が存在します。当日に、プレビューからの同じタスクへの修正依頼と版比較などを開発しました（be57d37 / 1346767）。本体はUNLICENSED、主要依存はMIT/Apache-2.0、Noto Sans JPはOFL-1.1。第三者技術・既存資産の詳しい説明は納品のsubmission-notes.mdに記載。\n\n公式テンプレート：https://docs.google.com/presentation/d/1xH4t0VUuy-3j6_bO1Q3wADtvQLaRd6zYgj5587UCpqM/\n公式案内：https://codex-hackathon-20260915.openai.chatgpt.site/\n公式ルール：https://codex-student-hack-fes.openai.chatgpt.site/official-rules/\n",
+  "staticExports": "PPTX export links the video poster to Drive. Google Slides embeds the video."
+}
