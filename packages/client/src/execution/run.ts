@@ -42,10 +42,13 @@ export async function execute(
     this.board.supported &&
     !!sharedTask &&
     (!value.threadId || value.boardToolsEnabled);
+  const contextEnabled = !!sharedTask && !!this.knowledge;
   const knowledgeAvailable =
-    !!sharedTask &&
-    !!this.knowledge &&
-    (!value.threadId || value.knowledgeToolsEnabled);
+    contextEnabled &&
+    value.meetingToolsEnabled !== false &&
+    (!value.threadId ||
+      value.knowledgeToolsEnabled ||
+      value.meetingToolsEnabled === true);
   const createRuntime =
     value.agent === "claude" ? this.createClaude : this.createCodex;
   const codex = createRuntime({
@@ -107,6 +110,7 @@ export async function execute(
         text: `${value.model} / ${value.reasoningEffort}`,
       });
     }
+    value.reasoningEffort ??= value.modelReasoningEffort;
     recordActivity(value, {
       kind: "status",
       title: value.progressMode === "manual" ? "相談を開始" : "作業を開始",
@@ -140,14 +144,23 @@ export async function execute(
         ? value.accessMode
         : undefined;
     const options = {
-      ...(board || knowledgeAvailable
+      ...(board || contextEnabled
         ? {
             dynamicTools: [
               ...(board ? taskBoardTools : []),
               ...(knowledgeAvailable ? meetingContextTools : []),
             ],
+            // A resumed thread may already know these tools even when an older
+            // Client did not persist the registration flag. Do not register new
+            // tools on that thread, but keep authorized existing calls working.
+            allowedDynamicToolNames: [
+              ...(board ? taskBoardTools.map((tool) => tool.name) : []),
+              ...(contextEnabled
+                ? meetingContextTools.map((tool) => tool.name)
+                : []),
+            ],
             onToolCall: (params: any) =>
-              knowledgeAvailable &&
+              contextEnabled &&
               meetingContextTools.some((tool) => tool.name === params.tool)
                 ? contextToolHandler(this, value, sharedTask)(params)
                 : board
@@ -187,7 +200,10 @@ export async function execute(
     active.thread = value.threadId
       ? codex.resumeThread(value.threadId, options)
       : codex.startThread(options);
-    if (knowledgeAvailable) value.knowledgeToolsEnabled = true;
+    if (knowledgeAvailable) {
+      value.knowledgeToolsEnabled = true;
+      value.meetingToolsEnabled = true;
+    }
     if (board) {
       value.boardToolsEnabled = true;
       stopBoardWatch = watchTaskBoard(board, active.thread);
@@ -198,6 +214,21 @@ export async function execute(
       this.contextProfile(),
       value.contextSources,
     );
+    if (contextEnabled && !knowledgeAvailable && this.knowledge) {
+      // Legacy Codex threads keep their history, but cannot acquire new dynamic
+      // tools on resume. Supply a fresh, task-authorized snapshot for this turn.
+      const context = await this.knowledge(sharedTask!, { limit: 20 });
+      abort.signal.throwIfAborted();
+      value.contextSources = value.contextSources.filter(
+        (source) => source.id !== "meeting-migration-context",
+      );
+      value.contextSources.push({
+        id: "meeting-migration-context",
+        kind: "minutes",
+        title: "最新の会議文脈",
+        text: JSON.stringify(context),
+      });
+    }
     await this.save();
     this.report(value);
     let prompt = [

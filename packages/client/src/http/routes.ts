@@ -1,4 +1,13 @@
 import { attachTaskSource } from "@ido/common/contracts/protocol";
+import {
+  readArtifactVersion,
+  saveArtifactVersion,
+} from "../preview/artifact-versions.js";
+import {
+  artifactPolicy,
+  listArtifacts,
+  readArtifact,
+} from "../preview/artifacts.js";
 import { projectDirectory } from "../execution/project-directory.js";
 import { startLogin } from "../auth/login.js";
 import { startClaudeLogin, checkClaudeLogin } from "../auth/claude.js";
@@ -139,6 +148,46 @@ export async function route(
     });
     return;
   }
+  if (
+    req.method === "GET" &&
+    ["/api/artifacts", "/api/artifact-document"].includes(url.pathname)
+  ) {
+    const value = this.executor.runs[id(url.searchParams.get("runId"))];
+    if (
+      !value ||
+      this.executor.deletedTasks[value.task.id] ||
+      (value.origin !== "local" &&
+        !this.settings.projects.some((p) => p.id === value.task.projectId))
+    )
+      throw new HttpError(404, "RUN_NOT_FOUND");
+    const path = url.searchParams.get("path");
+    if (url.pathname === "/api/artifact-document") {
+      const version = url.searchParams.get("version");
+      const artifact = version
+        ? await readArtifactVersion(this.directory, value.task.runId, version)
+        : await readArtifact(value.directory, path ?? "");
+      res.setHeader("Content-Security-Policy", artifactPolicy);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.writeHead(200);
+      res.end(artifact.html);
+      return;
+    }
+    if (path === null)
+      send(res, 200, { artifacts: await listArtifacts(value.directory) });
+    else {
+      const artifact = await readArtifact(value.directory, path);
+      send(res, 200, {
+        ...artifact,
+        ...(await saveArtifactVersion(
+          this.directory,
+          value.task.runId,
+          artifact,
+        )),
+      });
+    }
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/local-tasks/progress") {
     send(res, 200, localProgress(this.executor.runs));
     return;
@@ -148,8 +197,28 @@ export async function route(
     !equal(String(req.headers["x-csrf-token"] ?? ""), this.csrf)
   )
     throw new HttpError(403, "CSRF_REQUIRED");
-  const input = await body(req);
+  const input = await body(
+    req,
+    url.pathname === "/api/project/meeting-input" ? 600000 : 65536,
+  );
   switch (url.pathname) {
+    case "/api/project/meeting-input":
+    case "/api/project/meeting-read": {
+      const projectId = id(input.projectId);
+      if (!this.settings.projects.some((project) => project.id === projectId))
+        throw new HttpError(404, "PROJECT_NOT_FOUND");
+      send(
+        res,
+        200,
+        await this.workspaceRequest(
+          url.pathname.endsWith("meeting-input")
+            ? "project.meeting.input"
+            : "project.meeting.read",
+          input,
+        ),
+      );
+      return;
+    }
     case "/api/task/detail": {
       send(
         res,
@@ -347,6 +416,7 @@ export async function route(
     case "/api/project/minutes/update":
     case "/api/project/snapshot":
     case "/api/project/knowledge":
+    case "/api/project/transcript":
     case "/api/project/task":
     case "/api/project/control":
     case "/api/task/conversation":
@@ -381,6 +451,7 @@ export async function route(
         "/api/project/remove-member": "project.remove-member",
         "/api/project/snapshot": "project.snapshot",
         "/api/project/knowledge": "project.knowledge",
+        "/api/project/transcript": "project.transcript",
         "/api/project/minutes/update": "project.minutes.update",
         "/api/project/task": "task.create",
         "/api/project/control": "task.control",

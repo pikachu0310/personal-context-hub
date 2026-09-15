@@ -96,6 +96,12 @@ test("topic minutes preserve source statements and corrections, survive restart,
   for (const statement of statements)
     store.put("message", statement.id, statement);
   const knowledge = new MeetingKnowledgeStore(store);
+  const edited = store.get<Meeting>("meeting", "meeting")!;
+  edited.summary =
+    "# 人が編集した議事録\n検索速度の計測予算は担当者が確認する。";
+  edited.summaryRevision = 7;
+  edited.summaryUpdatedAt = 10;
+  store.put("meeting", "meeting", edited);
   const patch = {
     meetingId: "meeting",
     topics: [
@@ -113,7 +119,8 @@ test("topic minutes preserve source statements and corrections, survive restart,
   assert.equal(knowledge.apply("project", patch, allowed), true);
   let meeting = store.get<Meeting>("meeting", "meeting")!;
   const id = meeting.knowledge!.topics[0].id;
-  assert.equal(meeting.summary, "");
+  assert.equal(meeting.summary, "# 人が編集した議事録\n検索速度の計測予算は担当者が確認する。");
+  assert.equal(meeting.summaryRevision, 7);
   assert.deepEqual(meeting.knowledge!.topics[0].openQuestions, [
     "検索速度の確認",
   ]);
@@ -159,6 +166,8 @@ test("topic minutes preserve source statements and corrections, survive restart,
   store = new Store(directory);
   const restored = new MeetingKnowledgeStore(store);
   const search = restored.search("project", { query: "検索 速度", limit: 1 });
+  assert.equal(search.documents?.[0].markdown, edited.summary);
+  assert.equal(search.documents?.[0].revision, 7);
   assert.equal(search.topics[0].id, id);
   assert.equal(search.nextOffset, 1);
   assert.ok(

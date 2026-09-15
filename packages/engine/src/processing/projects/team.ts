@@ -1,4 +1,5 @@
 import { MAX_MINUTES_LENGTH } from "@ido/common/contracts/api";
+import { messageView } from "../minutes/transcript.js";
 import {
   seedParticipants,
   taskBusy,
@@ -289,29 +290,50 @@ export class ProjectTeam {
   }
   snapshot(deviceId: string, projectId: string) {
     this.require(deviceId, projectId);
+    let remainingMessages = 100;
+    let remainingCharacters = 128000;
     return {
+      transcriptPaging: true,
       project: this.store.get<Project>("project", projectId),
       canEditMinutes: this.canEditMinutes(deviceId),
       minutes: this.store
         .list<Meeting>("meeting")
         .filter((m) => m.projectId === projectId)
-        .map((meeting) => ({
-          ...meeting,
-          messages: meeting.messages.map((message) => {
-            const device = message.authorId.startsWith("client-")
-              ? this.store.get<Device>("device", message.authorId.slice(7))
-              : undefined;
-            return {
-              ...message,
-              ...(device
-                ? {
-                    authorIdentityId: deviceIdentity(this.store, device),
-                    authorName: device.profile?.name ?? device.name,
-                  }
-                : {}),
-            };
-          }),
-        })),
+        .sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
+        .map((meeting) => {
+          const preview: Meeting["messages"] = [];
+          for (const message of meeting.messages.toReversed()) {
+            if (!remainingMessages || message.text.length > remainingCharacters)
+              break;
+            preview.unshift(message);
+            remainingMessages--;
+            remainingCharacters -= message.text.length;
+          }
+          return {
+            ...meeting,
+            messageCount: meeting.messages.filter(
+              (m) => m.role !== "assistant" && m.text.trim(),
+            ).length,
+            lastMessageAt: meeting.messages.reduce(
+              (at, m) => Math.max(at, m.at),
+              0,
+            ),
+            messages: preview.map((message) => {
+              const device = message.authorId.startsWith("client-")
+                ? this.store.get<Device>("device", message.authorId.slice(7))
+                : undefined;
+              return {
+                ...messageView(message),
+                ...(device
+                  ? {
+                      authorIdentityId: deviceIdentity(this.store, device),
+                      authorName: device.profile?.name ?? device.name,
+                    }
+                  : {}),
+              };
+            }),
+          };
+        }),
       participants: this.participants(projectId),
       tasks: this.store
         .list<import("@ido/common/contracts/protocol").Task>("task")

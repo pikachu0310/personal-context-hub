@@ -747,6 +747,7 @@ class MeetingCoordinator {
     record.stage = "queued";
     record.steps = {
       ...record.steps,
+      transcription: { state: event.audio ? "completed" : "skipped" },
       minutes: { state: "pending" },
       reply: { state: "pending" },
       delivery: { state: "pending" },
@@ -834,7 +835,6 @@ class MeetingCoordinator {
           candidates.map((task) => task.id),
         );
     }
-    this.updateMinutes(event.meetingId);
     await this.inbox.submit(
       [
         {

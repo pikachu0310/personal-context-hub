@@ -1,9 +1,10 @@
-import { TaskPriority } from "./TaskPriority.js";
 import { TaskFollowup } from "./TaskFollowup.js";
 import { TaskConversation } from "./TaskConversation.js";
 import { accessOptions } from "./access-mode.js";
 import type { TaskDetailRead } from "@ido/common/contracts/api";
+import { TaskPriority } from "./TaskPriority.js";
 import { TaskOwner } from "./TaskOwner.js";
+import { TaskArtifacts } from "./TaskArtifacts.js";
 import {
   initialSender,
   displaySender,
@@ -217,9 +218,9 @@ export function ClientRuns({
           : state.controlSupported &&
             (state.allowedProjectIds?.includes(current.task.projectId) ??
               state.allow))));
-  async function submit() {
-    const instruction = draft.trim();
-    if (!instruction || sending || savingModel || !canSend) return;
+  async function submit(override?: string): Promise<boolean> {
+    const instruction = (override ?? draft).trim();
+    if (!instruction || sending || savingModel || !canSend) return false;
     if (request.current?.text !== instruction)
       request.current = {
         text: instruction,
@@ -236,7 +237,7 @@ export function ClientRuns({
         revision: request.current.revision,
         instruction,
       });
-      setDraft("");
+      if (override === undefined) setDraft("");
       request.current = undefined;
       setNotice(
         local
@@ -244,8 +245,10 @@ export function ClientRuns({
           : "Engineが追加指示を受け付けました。反映状況は会話ログに表示されます。",
       );
       setFollow(true);
+      return true;
     } catch (error) {
       setNotice(controlError((error as Error).message));
+      return false;
     } finally {
       setSending(false);
     }
@@ -288,6 +291,15 @@ export function ClientRuns({
                 <p role="status">{remote.notice}</p>
               </>
             )}
+            <TaskArtifacts
+              key={runId}
+              runId={runId!}
+              version={`${current.state}:${current.task.revision}`}
+              canFollowup={Boolean(canSend)}
+              onFollowup={(text) => submit(text)}
+              running={running}
+              executionLabel={stateLabel(current.state)}
+            />
             <RequestMessage
               sender={displaySender(
                 initialSender(current.task, local, state),

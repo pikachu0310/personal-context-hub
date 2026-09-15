@@ -373,7 +373,7 @@ export class InputRouter {
       const errorId = failure(
         error,
         operation,
-        operation === "audio.transcribe" ? "gpt-4o-mini-transcribe" : undefined,
+        operation === "audio.transcribe" ? this.ai.models.transcriptionModel : undefined,
       );
       if (operation === "audio.transcribe") {
         const { message } = this.ai.messages.record(

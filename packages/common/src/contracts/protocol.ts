@@ -71,11 +71,11 @@ export interface AttachedTaskSource {
   text: string;
 }
 export interface Task {
-  priority?: import("./work.js").TaskPriority;
   agent?: "codex" | "claude";
   model?: string;
   reasoningEffort?: string;
   progressMode?: "auto" | "manual";
+  priority?: import("./work.js").TaskPriority;
   trigger?: "requested" | "proactive";
   initialText?: string;
   queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;

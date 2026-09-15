@@ -157,6 +157,8 @@ const conversationPublications = new ConversationPublications(
 state.refreshTranscript = () => conversationPublications.refresh();
 state.player.on("error", () => emit({ type: "status", status: "audio-error" }));
 let pendingFrames = 0;
+let lastInputAt: number | undefined;
+let receivedAudioFrames = 0;
 const emit = (data: Record<string, unknown>) => {
   if (data.type === "input") {
     const input = normalizeInput(
@@ -182,6 +184,8 @@ const emit = (data: Record<string, unknown>) => {
         ?.taskForThread(String(data.channelId)),
     );
     if (input) {
+      lastInputAt = Date.now();
+      if (input.audioFrame) receivedAudioFrames++;
       if (input.audioFrame && pendingFrames >= 32) return;
       if (input.audioFrame) pendingFrames++;
       void runtime.rpc
@@ -202,6 +206,17 @@ const web = new DiscordWeb(
 const runtime = pluginRuntime(
   discordManifest,
   async (operation, input) => {
+    if (operation === "health")
+      return {
+        gatewayReady: state.client?.isReady() ?? false,
+        voiceStatus: state.voice?.state.status ?? "disconnected",
+        voiceChannelId: state.voice?.joinConfig.channelId,
+        playbackStatus: state.player.state.status,
+        activeSpeakers: state.activeSpeakers.size,
+        pendingFrames,
+        receivedAudioFrames,
+        lastInputAt,
+      };
     if (operation === "setup")
       return inspectSetup(input.config as Record<string, string>);
     if (operation === "validate") {

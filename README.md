@@ -4,6 +4,8 @@ Self-hosted Engine with API-based conversation processing, local Codex Clients f
 
 Meetings keep speaker-attributed raw statements and automatically updated topic minutes with source references. Meeting Codex tasks can search this context, receive a teammate's follow-up in the same task, and stop on a clearly targeted request. Useful small investigations and prototypes can start proactively with duplicate, concurrency and cooldown limits. See [meeting behavior and evaluation](docs/conversation-modes.md).
 
+Generated standalone HTML prototypes can be opened directly in a task. Try the result, request a change from the preview, and open the updated version in the same conversation. See [the meeting-to-prototype exhibition rehearsal](docs/meeting-demo.md) for a concrete VR locomotion comparison and a short live-demo sequence.
+
 ## Local development
 
 See [app, Engine and Discord wiring](docs/agent-wiring.md) for local task creation, project discussions, task controls, provider selection and update guidance.

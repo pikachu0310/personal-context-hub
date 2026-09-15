@@ -31,8 +31,15 @@ import { createWorkPort } from "../../processing/tasks/work.js";
 import { PreviewRelay } from "./preview.js";
 import { taskSnapshot } from "./task-list.js";
 import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
+import { transcriptPage } from "../../processing/minutes/transcript.js";
 import { BoardInputError, TaskBoard } from "../../processing/tasks/board.js";
 export class ClientConnections {
+  meetingInput?: (
+    device: Device,
+    operation: string,
+    input: Record<string, unknown>,
+    valid: () => boolean,
+  ) => Promise<unknown>;
   private detailService?: TaskDetails;
   get details() {
     return (this.detailService ??= new TaskDetails(this.store));
@@ -565,6 +572,12 @@ export class ClientConnections {
               case "project.minutes.update":
                 result = team.updateMinutes(device.id, input);
                 break;
+              case "project.transcript": {
+                const projectId = id(input.projectId);
+                team.require(device.id, projectId);
+                result = transcriptPage(this.store, projectId, input);
+                break;
+              }
               case "project.snapshot":
                 result = team.snapshot(device.id, id(input.projectId));
                 break;
@@ -606,6 +619,20 @@ export class ClientConnections {
                   this.changed();
                 }
                 result = { sources: task.attachedSources ?? [] };
+                break;
+              }
+              case "project.meeting.input":
+              case "project.meeting.read": {
+                if (!this.meetingInput)
+                  throw new Error("MEETING_INPUT_UNSUPPORTED");
+                result = await this.meetingInput(
+                  device,
+                  String(data.operation),
+                  input,
+                  () =>
+                    this.peers.get(device.id) === ws &&
+                    ws.readyState === WebSocket.OPEN,
+                );
                 break;
               }
               case "task.conversation":
@@ -790,9 +817,11 @@ export class ClientConnections {
                 "task.detail.refresh",
                 "project.snapshot",
                 "project.knowledge",
+                "project.transcript",
                 "task.knowledge",
                 "task.conversation",
                 "project.conversation",
+                "project.meeting.read",
                 "project.inspect-invite",
               ].includes(String(data.operation))
             )

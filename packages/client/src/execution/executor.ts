@@ -58,8 +58,10 @@ export interface Run {
   requestAt?: number;
   contextSources?: TaskContextSource[];
   boardToolsEnabled?: boolean;
-  knowledgeToolsEnabled?: boolean;
+  meetingToolsEnabled?: boolean;
   model?: string;
+  modelReasoningEffort?: "low" | "medium" | "high";
+  knowledgeToolsEnabled?: boolean;
   reasoningEffort?: string;
   agent?: AgentKind;
   origin?: "local";
@@ -289,6 +291,7 @@ export class Executor {
             : task.agent || task.model
               ? task.reasoningEffort
               : mapping.reasoningEffort,
+        modelReasoningEffort: previous?.modelReasoningEffort,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
         discordShare: previous?.discordShare ?? local?.discordShare,
@@ -310,6 +313,7 @@ export class Executor {
         directory,
         threadId: previous?.threadId,
         boardToolsEnabled: previous?.boardToolsEnabled,
+        meetingToolsEnabled: previous?.meetingToolsEnabled,
         knowledgeToolsEnabled: previous?.knowledgeToolsEnabled,
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],

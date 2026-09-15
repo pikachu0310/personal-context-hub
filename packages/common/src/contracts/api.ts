@@ -45,6 +45,8 @@ export interface MessageView {
   steps?: Record<string, { state: string; errorId?: string }>;
 }
 export interface MeetingView extends MinutesMetadata {
+  messageCount?: number;
+  lastMessageAt?: number;
   knowledge?: import("./knowledge.js").MeetingKnowledge;
   startedAt?: number;
   closedAt?: number;
@@ -74,6 +76,7 @@ export interface WorkspaceState {
   tasks: Task[];
 }
 export interface ProjectWorkspace {
+  transcriptPaging?: boolean;
   canEditMinutes?: boolean;
   project: Project;
   minutes: MeetingView[];
@@ -86,6 +89,17 @@ export interface ProjectWorkspace {
     avatar?: string;
     codexConnected: boolean;
   }>;
+}
+export interface TranscriptQuery {
+  query?: string;
+  meetingId?: string;
+  topicId?: string;
+  before?: { at: number; id: string };
+}
+export interface TranscriptPage {
+  messages: Array<MessageView & { meetingId: string; meetingName: string }>;
+  total: number;
+  next?: { at: number; id: string };
 }
 export interface PluginState {
   id: string;

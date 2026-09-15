@@ -73,6 +73,7 @@ const engine = new Engine({
   port: 0,
   previewPort: 0,
   conversation: { coordinator: factory, observationIntervalMs: 60_000 },
+  speech: { transcriptionModel: process.env.IDO_EVAL_TRANSCRIPTION_MODEL },
 });
 engine.credentials.get = async (name) =>
   name === "openai" ? process.env.OPENAI_API_KEY : undefined;
@@ -291,6 +292,22 @@ try {
     }),
   );
 } finally {
+  report.finalState = {
+    messages: engine.store
+      .list("message")
+      .map(({ text, origin, stage }) => ({ text, origin, stage })),
+    tasks: engine.store
+      .list("task")
+      .map(({ id, state, progress, revision }) => ({
+        id,
+        state,
+        progress,
+        revision,
+      })),
+    outputs,
+    coordinatorRequests: requests,
+  };
+  console.log(JSON.stringify({ stage: "final-state", ...report.finalState }));
   await browser?.close();
   await client.close();
   await engine.close();

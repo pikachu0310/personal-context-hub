@@ -12,6 +12,14 @@ client.checkAccount = async () => {};
 const now = Date.now();
 const project = { id: "project", name: "検索画面の検討", remote: "" };
 const messages = [
+  ...Array.from({ length: 220 }, (_, index) => ({
+    id: `older-${index}`,
+    authorId: "alice",
+    authorName: "参加者A",
+    at: now - 900000 - index * 1000,
+    text: index === 219 ? "最初の議論で決めた追加仕様" : `過去の発言 ${index}`,
+    role: "user",
+  })),
   {
     id: "a",
     authorId: "alice",
@@ -73,9 +81,48 @@ try {
   client.connected = true;
   client.allowedProjects.add("project");
   client.settings.deviceId = "device";
-  client.workspaceRequest = async (operation) => {
+  client.workspaceRequest = async (operation, input) => {
+    if (operation === "project.transcript") {
+      assert.equal(input.projectId, "project");
+      const selected = messages
+        .filter(
+          (m) =>
+            (!input.topicId || ["a", "b"].includes(m.id)) &&
+            (!input.query || m.text.includes(input.query)),
+        )
+        .toSorted((a, b) => b.at - a.at);
+      if (input.topicId) assert.equal(input.meetingId, "meeting");
+      const older = selected.filter(
+        (m) => !input.before || m.at < input.before.at,
+      );
+      const page = older
+        .slice(0, 100)
+        .map((m) => ({
+          ...m,
+          meetingId: "meeting",
+          meetingName: "今日の打ち合わせ",
+        }));
+      const last = page.at(-1);
+      return {
+        messages: page,
+        total: selected.length,
+        ...(older.length > page.length
+          ? { next: { id: last.id, at: last.at } }
+          : {}),
+      };
+    }
     assert.equal(operation, "project.snapshot");
-    return { project, minutes, tasks: [], participants: [] };
+    return {
+      project,
+      transcriptPaging: true,
+      minutes: minutes.map((m) => ({
+        ...m,
+        messageCount: messages.length,
+        messages: messages.slice(-3),
+      })),
+      tasks: [],
+      participants: [],
+    };
   };
   browser = await chromium.launch({
     headless: true,
@@ -99,17 +146,28 @@ try {
     fullPage: true,
   });
   await page.getByRole("button", { name: "元の発言を見る（2件）" }).click();
+  await page.locator("#statement-a").waitFor();
   assert.equal(await page.locator("#statement-a").count(), 1);
   assert.equal(await page.locator("#statement-b").count(), 1);
   assert.equal(await page.locator("#statement-c").count(), 0);
   await page.getByRole("button", { name: "すべての発言へ戻る" }).click();
   await page.getByLabel("議事録・発言を検索").fill("青");
+  await page.getByText("1件の発言", { exact: false }).waitFor();
+  await page.locator("#statement-c").waitFor();
   assert.equal(await page.locator("#statement-c").count(), 1);
   assert.equal(await page.locator("#statement-a").count(), 0);
   await page.screenshot({
     path: ".ido-build/screenshots/meeting-source-search.png",
     fullPage: true,
   });
+  await page.getByLabel("議事録・発言を検索").fill("");
+  await page.getByRole("button", { name: "以前の発言をさらに表示" }).click();
+  await page.waitForFunction(
+    () => document.querySelectorAll('[id^="statement-"]').length === 200,
+  );
+  await page.getByLabel("議事録・発言を検索").fill("追加仕様");
+  await page.locator("#statement-older-219").waitFor();
+  assert.equal(await page.locator('[id^="statement-"]').count(), 1);
   await page.getByLabel("議事録・発言を検索").fill("");
   await page.getByRole("tab", { name: "議題別の議事録" }).click();
   await page
@@ -135,6 +193,7 @@ try {
       currentMinutes: true,
       citationNavigation: true,
       rawSearch: true,
+      historicalSearchAndPaging: true,
       mobileOverflow: false,
       browserErrors: 0,
     }),
