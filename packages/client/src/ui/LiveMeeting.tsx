@@ -173,11 +173,13 @@ export function LiveMeeting({
                     {message.text.trim() ||
                       (message.steps?.transcription?.state === "failed"
                         ? "文字起こしに失敗しました。"
-                        : ["pending", "running"].includes(
-                              message.steps?.transcription?.state ?? "",
-                            )
-                          ? "音声を受信しました。文字起こし中…"
-                          : "この音声では発言が検出されませんでした。")}
+                        : message.steps?.transcription?.state === "interrupted"
+                          ? "文字起こしが中断されました。必要ならもう一度お話しください。"
+                          : ["pending", "running"].includes(
+                                message.steps?.transcription?.state ?? "",
+                              )
+                            ? "音声を受信しました。文字起こし中…"
+                            : "この音声では発言が検出されませんでした。")}
                   </Text>
                   {message.replyText && (
                     <Text
@@ -189,12 +191,14 @@ export function LiveMeeting({
                       IDO: {message.replyText}
                     </Text>
                   )}
-                  {Object.values(message.steps ?? {}).some(
-                    (step) => step.state === "failed",
+                  {Object.values(message.steps ?? {}).some((step) =>
+                    ["failed", "interrupted"].includes(step.state),
                   ) && (
                     <Text size="xs" c="red" mt="xs">
                       {Object.entries(message.steps ?? {})
-                        .filter(([, step]) => step.state === "failed")
+                        .filter(([, step]) =>
+                          ["failed", "interrupted"].includes(step.state),
+                        )
                         .map(
                           ([name]) =>
                             (
@@ -207,7 +211,7 @@ export function LiveMeeting({
                             )[name] ?? "発言の処理",
                         )
                         .join("・")}
-                      でエラーが発生しています。
+                      の処理が完了していません。
                     </Text>
                   )}
                   {related.length > 0 && (
