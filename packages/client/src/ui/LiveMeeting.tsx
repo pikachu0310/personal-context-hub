@@ -169,7 +169,14 @@ export function LiveMeeting({
                     size="sm"
                     style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
                   >
-                    {message.text}
+                    {message.text.trim() ||
+                      (message.steps?.transcription?.state === "failed"
+                        ? "文字起こしに失敗しました。"
+                        : ["pending", "running"].includes(
+                              message.steps?.transcription?.state ?? "",
+                            )
+                          ? "音声を受信しました。文字起こし中…"
+                          : "この音声では発言が検出されませんでした。")}
                   </Text>
                   {message.replyText && (
                     <Text
@@ -185,7 +192,21 @@ export function LiveMeeting({
                     (step) => step.state === "failed",
                   ) && (
                     <Text size="xs" c="red" mt="xs">
-                      この発言の処理でエラーが発生しています。
+                      {Object.entries(message.steps ?? {})
+                        .filter(([, step]) => step.state === "failed")
+                        .map(
+                          ([name]) =>
+                            (
+                              ({
+                                transcription: "文字起こし",
+                                reply: "応答",
+                                minutes: "議事録",
+                                delivery: "返答の配送",
+                              }) as Record<string, string>
+                            )[name] ?? "発言の処理",
+                        )
+                        .join("・")}
+                      でエラーが発生しています。
                     </Text>
                   )}
                   {related.length > 0 && (
