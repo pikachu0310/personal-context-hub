@@ -48,10 +48,9 @@ export class OpenAIModels implements Models {
     ).audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "alloy",
-      speed: 2,
       input: text.slice(0, 500),
       response_format: "opus",
-      speed: this.speech.speed ?? 1,
+      speed: this.speech.speed ?? 2,
     });
     return Buffer.from(await response.arrayBuffer()).toString("base64");
   }
