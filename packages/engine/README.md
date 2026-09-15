@@ -15,6 +15,8 @@ Configure the OpenAI API key in Engine administration for conversation, STT, TTS
 
 `start` defaults to `--conversation-mode text-speech`. `--conversation-mode live` selects Live for new meeting sessions while retaining independent speaker-attributed STT. Existing meetings resume their saved mode. `--conversation-mode legacy` retains the previous packages-based Responses path for comparison; it never imports `v0`. Discord can switch the current meeting with `/ido mode value:text-speech` or `/ido mode value:live`.
 
+The Engine listens on `0.0.0.0:4310` by default. Open `http://<server-address>:4310/admin` from another machine; HTTP and WebSocket connections do not require a local HTTPS proxy. Engine URLs accept HTTP and HTTPS. Login, CSRF, browser origin checks and device authentication apply to every address.
+
 Administration is a bundled React/Mantine UI at `/admin`. The independent Dashboard plugin is also bundled and starts at `/dashboard/`; its failure does not stop administration or Client processing. Discord remains optional. Plugins communicate over versioned IPC and cannot import Engine internals.
 
 Administration setup proceeds through OpenAI, public URL (only for external access), and optional plugin connections. Discord is installed before its configuration fields are shown. Credential fields use ordinary text inputs; saved values display a read-only mask with an explicit change action. Only actual account passwords use password inputs. The admin state API exposes credential presence and the Engine storage path, never saved credential values. By default, credentials are stored unencrypted in `<engine-data>/secrets.json`, not browser storage; unchanged masked fields are omitted from save requests.

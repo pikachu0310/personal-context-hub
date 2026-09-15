@@ -29,6 +29,14 @@ const errors: Record<string, string> = {
     "サーバーの起動を確認できませんでした。起動ログを確認してください。",
   PREVIEW_BROWSER_INSTALL_FAILED:
     "撮影用ブラウザを取得できませんでした。ネット接続を確認して再試行してください。",
+  MEETING_INPUT_UNSUPPORTED: "ブラウザから発言するにはEngineの更新が必要です。",
+  UNKNOWN_OPERATION:
+    "接続先Engineがこの操作に対応していません。Engineを更新してください。",
+  MEETING_INPUT_BUSY:
+    "先ほどの発言を処理しています。少し待ってからお送りください。",
+  INVALID_MEETING_AUDIO:
+    "音声を読み込めませんでした。12秒以内で録音し直してください。",
+  MEETING_INPUT_REQUIRED: "会議へ送る文章か音声が必要です。",
   TASK_OPTIONS_UNSUPPORTED:
     "依頼のモデルと進め方を引き継ぐにはEngineの更新が必要です。",
   STOP_BEFORE_ACCESS_CHANGE:

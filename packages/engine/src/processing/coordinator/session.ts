@@ -634,6 +634,31 @@ class MeetingCoordinator {
     }
   }
 
+  private resumeReturningSpeaker(route: Route) {
+    if (!this.active(route)) return;
+    const { context, event } = route;
+    const snapshot = this.inbox.snapshot();
+    const ids = this.missingRoutes([
+      ...(snapshot.active?.events ?? []),
+      ...(snapshot.active?.steering ?? []),
+      ...snapshot.pending,
+    ])
+      .filter(
+        (source) =>
+          source.authorId === context.actor.id &&
+          source.meetingId === event.meetingId &&
+          source.projectId === event.projectId &&
+          this.store.get<{ pluginId: string }>(
+            "coordinator-source-route",
+            source.id,
+          )?.pluginId === context.pluginId,
+      )
+      .map((source) => source.id);
+    // A fresh authenticated input restores only this speaker's transport
+    // authority. Unknown provider deliveries still require explicit resolution.
+    if (ids.length) this.resume(context, ids);
+  }
+
   async segment(
     event: ConversationInput,
     context: InputContext,
@@ -726,6 +751,7 @@ class MeetingCoordinator {
     const route = { event, context };
     this.routes.set(id, route);
     this.lastRoute = route;
+    this.resumeReturningSpeaker(route);
     if (this.routes.size > 1000)
       this.routes.delete(this.routes.keys().next().value!);
     const record = this.messages.record(
@@ -747,6 +773,7 @@ class MeetingCoordinator {
     record.stage = "queued";
     record.steps = {
       ...record.steps,
+      transcription: { state: event.audio ? "completed" : "skipped" },
       minutes: { state: "pending" },
       reply: { state: "pending" },
       delivery: { state: "pending" },
@@ -834,7 +861,6 @@ class MeetingCoordinator {
           candidates.map((task) => task.id),
         );
     }
-    this.updateMinutes(event.meetingId);
     await this.inbox.submit(
       [
         {

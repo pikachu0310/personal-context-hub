@@ -1,0 +1,17 @@
+.live-meeting-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.live-meeting-grid > section {
+  min-width: 0;
+}
+.live-meeting-directory {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 850px) {
+  .live-meeting-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

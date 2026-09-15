@@ -1,6 +1,8 @@
 import { SharedTaskDetail } from "./TeamTasks.js";
 import { MinutesInspector } from "./MinutesInspector.js";
 import { MinutesList } from "./MinutesList.js";
+import { LiveMeeting } from "./LiveMeeting.js";
+import { MeetingInput } from "./MeetingInput.js";
 import type { TaskReference } from "@ido/common/contracts/api";
 import {
   Alert,
@@ -14,7 +16,11 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type {
+  TranscriptPage,
+  TranscriptQuery,
+} from "@ido/common/contracts/api";
 import type { ProjectWorkspace } from "@ido/common/contracts/api";
 import type { ClientState } from "@ido/common/contracts/api";
 import { api } from "./api.js";
@@ -37,6 +43,12 @@ export function ProjectView({
   dirtyChanged: (id: string, dirty: boolean) => void;
 }) {
   const [projectDetails, setProjectDetails] = useState(false);
+  const [meetingOpen, setMeetingOpen] = useState(false);
+  const loadTranscript = useCallback(
+    (query: TranscriptQuery) =>
+      api<TranscriptPage>("project/transcript", { ...query, projectId }),
+    [projectId],
+  );
   const [state, setState] = useState<ProjectWorkspace>(),
     [error, setError] = useState("");
   useEffect(() => {
@@ -104,11 +116,18 @@ export function ProjectView({
         <Stack gap="sm">
           {error && <Alert color="red">{error}</Alert>}
           <Group justify="space-between">
-            <Title order={2}>議事録</Title>
+            <Title order={2}>会議・議事録</Title>
             <Group gap="xs">
               <Text c="dimmed" size="sm">
                 {state.project.name}
               </Text>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => setMeetingOpen(true)}
+              >
+                会議へ発言する
+              </Button>
               {
                 <Button
                   size="xs"
@@ -120,35 +139,70 @@ export function ProjectView({
               }
             </Group>
           </Group>
-          <>
-            <MinutesList
-              key={projectId}
-              meetings={state.minutes}
-              projectId={projectId}
-              projects={clientState.settings.projects.filter(
-                (p) =>
-                  !clientState.allowedProjectIds ||
-                  clientState.allowedProjectIds.includes(p.id),
-              )}
-              canEdit={clientState.connected && state.canEditMinutes === true}
-              openTask={openTask}
-              dirtyChanged={dirtyChanged}
-              saved={(meeting) =>
-                setState(
-                  (current) =>
-                    current && {
-                      ...current,
-                      minutes: current.minutes.map((item) =>
-                        item.id === meeting.id &&
-                        (item.summaryRevision ?? 0) <=
-                          (meeting.summaryRevision ?? 0)
-                          ? meeting
-                          : item,
-                      ),
-                    },
-                )
-              }
-            />
+          <Modal
+            opened={meetingOpen}
+            onClose={() => setMeetingOpen(false)}
+            title="ブラウザから会議へ"
+            size="xl"
+          >
+            {meetingOpen && (
+              <MeetingInput
+                key={`${clientState.settings.engineUrl}:${deviceId}:${projectId}`}
+                projectId={projectId}
+                connected={clientState.connected}
+                openTask={(reference) => {
+                  setMeetingOpen(false);
+                  openTask(reference);
+                }}
+              />
+            )}
+          </Modal>
+          <Tabs defaultValue="live" keepMounted>
+            <Tabs.List mb="md">
+              <Tabs.Tab value="live">ライブ会議</Tabs.Tab>
+              <Tabs.Tab value="minutes">議事録</Tabs.Tab>
+            </Tabs.List>
+            <Tabs.Panel value="live">
+              <LiveMeeting
+                workspace={state}
+                client={clientState}
+                openTask={openTask}
+                openSettings={openSettings}
+              />
+            </Tabs.Panel>
+            <Tabs.Panel value="minutes">
+              <MinutesList
+                key={projectId}
+                meetings={state.minutes}
+                loadTranscript={
+                  state.transcriptPaging ? loadTranscript : undefined
+                }
+                projectId={projectId}
+                projects={clientState.settings.projects.filter(
+                  (p) =>
+                    !clientState.allowedProjectIds ||
+                    clientState.allowedProjectIds.includes(p.id),
+                )}
+                canEdit={clientState.connected && state.canEditMinutes === true}
+                openTask={openTask}
+                dirtyChanged={dirtyChanged}
+                saved={(meeting) =>
+                  setState(
+                    (current) =>
+                      current && {
+                        ...current,
+                        minutes: current.minutes.map((item) =>
+                          item.id === meeting.id &&
+                          (item.summaryRevision ?? 0) <=
+                            (meeting.summaryRevision ?? 0)
+                            ? meeting
+                            : item,
+                        ),
+                      },
+                  )
+                }
+              />
+            </Tabs.Panel>
             <Modal
               opened={projectDetails}
               onClose={() => setProjectDetails(false)}
@@ -161,7 +215,13 @@ export function ProjectView({
                   <Tabs.Tab value="members">参加者</Tabs.Tab>
                 </Tabs.List>
                 <Tabs.Panel value="notes" className="project-notes-modal">
-                  <MinutesInspector key={projectId} meetings={state.minutes} />
+                  <MinutesInspector
+                    key={projectId}
+                    meetings={state.minutes}
+                    loadTranscript={
+                      state.transcriptPaging ? loadTranscript : undefined
+                    }
+                  />
                 </Tabs.Panel>
                 <Tabs.Panel value="members" pt="sm">
                   <Stack gap="xs">
@@ -229,7 +289,7 @@ export function ProjectView({
                 </Tabs.Panel>
               </Tabs>
             </Modal>
-          </>
+          </Tabs>
         </Stack>
       </div>
     </div>

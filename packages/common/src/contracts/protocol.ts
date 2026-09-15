@@ -47,6 +47,7 @@ export interface Grant {
   slots: number;
 }
 export interface Mapping extends Grant {
+  workspaceMode?: "worktree" | "project";
   agent?: "codex" | "claude";
   executionAllowed?: boolean;
   model?: string;
@@ -71,11 +72,11 @@ export interface AttachedTaskSource {
   text: string;
 }
 export interface Task {
-  priority?: import("./work.js").TaskPriority;
   agent?: "codex" | "claude";
   model?: string;
   reasoningEffort?: string;
   progressMode?: "auto" | "manual";
+  priority?: import("./work.js").TaskPriority;
   trigger?: "requested" | "proactive";
   initialText?: string;
   queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;
@@ -180,14 +181,8 @@ export function endpoint(value: unknown): URL {
     url.pathname !== "/"
   )
     throw new Error("INVALID_ORIGIN");
-  if (
-    url.protocol !== "https:" &&
-    !(
-      url.protocol === "http:" &&
-      ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-    )
-  )
-    throw new Error("HTTPS_REQUIRED");
+  if (url.protocol !== "https:" && url.protocol !== "http:")
+    throw new Error("HTTP_OR_HTTPS_REQUIRED");
   return url;
 }
 export function clean(value: string): string {

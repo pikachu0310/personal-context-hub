@@ -56,11 +56,7 @@ export function externalLink(
         ].includes(url.origin) && url.pathname === "/oauth/authorize"
       );
     if (value === pairing)
-      return (
-        url.protocol === "https:" ||
-        (url.protocol === "http:" &&
-          ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
-      );
+      return url.protocol === "https:" || url.protocol === "http:";
     return value === login && url.origin === "https://auth.openai.com";
   } catch {
     return false;

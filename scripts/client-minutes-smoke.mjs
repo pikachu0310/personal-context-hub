@@ -150,7 +150,10 @@ try {
   client.connected = true;
   client.projectTasks = tasks;
   for (const project of projects) client.allowedProjects.add(project.id);
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.IDO_BROWSER_EXECUTABLE,
+  });
   const page = await browser.newPage({
     viewport: { width: 1440, height: 1050 },
   });

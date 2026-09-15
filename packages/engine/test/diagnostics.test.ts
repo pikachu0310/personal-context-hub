@@ -29,6 +29,7 @@ test("SDK quota errors retain useful metadata without provider messages or heade
     status: 429,
     requestId: "req_test123",
     parameter: "model",
+    providerErrorType: undefined,
     reason:
       "OpenAI APIの利用枠が不足しています。請求設定・残高・利用上限を確認してください。",
   });

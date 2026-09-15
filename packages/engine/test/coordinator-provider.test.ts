@@ -95,7 +95,7 @@ test("coordinator uses only Responses API and the current Engine API key, with c
     assert.match(request.input, /previous question and answer/);
     assert.equal(request.text.format.type, "json_schema");
     assert.equal(request.text.format.strict, true);
-    assert.equal(options.maxRetries, 0);
+    assert.equal(options.maxRetries, 1);
     assert.equal(options.timeout, 60000);
   }
 });
@@ -185,10 +185,34 @@ test("API authentication errors retain safe status/code/request ID and allow ret
   });
 });
 
-test("connection failure, incomplete output and invalid JSON stay uncertain without replay", async (t) => {
+test("stateless transport failures permit a later retry without applying a lost response", async (t) => {
+  for (const failure of [
+    new OpenAI.APIConnectionError({ message: "private" }),
+    new OpenAI.APIConnectionTimeoutError(),
+    new OpenAI.APIUserAbortError(),
+  ]) {
+    let available = false;
+    const f = fixture(async () => {
+      if (!available) throw failure;
+      return { status: "completed", output_text: JSON.stringify(silent) };
+    });
+    t.after(() => f.factory.close());
+    const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+    await assert.rejects(runtime.run(observation()), {
+      delivery: "retryable",
+      code: "COORDINATOR_TRANSPORT_RETRYABLE",
+    });
+    assert.equal(f.calls.length, 1);
+    available = true;
+    assert.deepEqual(await runtime.run(observation()), silent);
+    assert.equal(f.calls.length, 2);
+  }
+});
+
+test("unknown failure, incomplete output and invalid JSON stay uncertain without replay", async (t) => {
   for (const respond of [
     async () => {
-      throw new OpenAI.APIConnectionError({ message: "private" });
+      throw new Error("unknown provider failure");
     },
     async () => ({ status: "incomplete", output_text: JSON.stringify(silent) }),
     async () => ({ status: "completed", output_text: "not json" }),
@@ -394,4 +418,48 @@ test("a new API task with missing scoring cannot enter the saved-legacy compatib
   const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
   const response = await runtime.run(observation());
   assert.equal(response.tasks[0].evaluation, null);
+});
+
+test("ordinary audio input cannot be mistaken for a speech playback review", async (t) => {
+  const f = fixture();
+  t.after(() => f.factory.close());
+  const input = observation();
+  if (input.events[0].type === "message")
+    input.events[0].source.origin = "audio";
+  const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+  await runtime.run(input);
+  const request = f.calls[0].request;
+  assert.deepEqual(request.text.format.schema.properties.speech, {
+    type: "null",
+  });
+  assert.doesNotMatch(request.input, /最新の候補1件へspeech/);
+  assert.match(request.input, /文字起こし済みの人の発言/);
+  assert.match(request.input, /topicsが空なら議題の整理は未完了/);
+});
+
+test("mixed playback review and message batches retain independent topic processing", async (t) => {
+  const f = fixture();
+  t.after(() => f.factory.close());
+  const input = observation();
+  input.events.push({
+    id: "review",
+    type: "speech_review",
+    review: {
+      candidateId: "candidate",
+      revision: 1,
+      state: "queued",
+      text: "確認しました。",
+      sourceIds: ["one"],
+      targets: [],
+      provider: "text-speech",
+      conversation: [],
+    },
+  });
+  const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+  await runtime.run(input);
+  const request = f.calls[0].request;
+  assert.ok(request.text.format.schema.properties.speech.anyOf);
+  assert.match(request.input, /最新の候補1件へspeech/);
+  assert.match(request.input, /通常messageは通常どおり処理/);
+  assert.match(request.input, /議題の更新は発話・タスク作成とは独立/);
 });

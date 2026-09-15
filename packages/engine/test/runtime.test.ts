@@ -3,7 +3,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { request } from "node:http";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { WebSocket } from "ws";
@@ -72,6 +72,108 @@ async function post(
     },
   );
 }
+test("direct HTTP and WebSocket access works on all interfaces without proxy headers", async (t) => {
+  const engine = await fixture(t);
+  const address = engine.server.address();
+  assert.ok(address && typeof address !== "string");
+  assert.equal(address.address, "0.0.0.0");
+  const lan = Object.values(networkInterfaces())
+    .flat()
+    .find((entry) => entry?.family === "IPv4" && !entry.internal);
+  const origin = `http://${lan?.address ?? "localhost"}:${address.port}`;
+  // A configured public URL must not prevent access through another address.
+  engine.store.put("config", "public", {
+    provider: "manual",
+    engineUrl: "https://public.example.com",
+  });
+  assert.equal((await fetch(origin + "/health")).status, 200);
+  assert.equal((await fetch(origin + "/preview/")).status, 410);
+  const response = await fetch(origin + "/api/admin/login", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin },
+    body: JSON.stringify({ name: "admin", password: "test-password-long" }),
+  });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get("set-cookie")!;
+  assert.ok(!cookie.includes("; Secure"));
+  assert.equal(
+    (await fetch(origin + "/api/admin/state", { headers: { cookie, origin } }))
+      .status,
+    200,
+  );
+  assert.equal((await fetch(origin + "/api/admin/state")).status, 401);
+  assert.equal(
+    (
+      await fetch(origin + "/api/admin/state", {
+        headers: { cookie, origin: "https://unrelated.example" },
+      })
+    ).status,
+    403,
+  );
+  const { publicKey } = generateKeyPairSync("ed25519");
+  const pair = await fetch(origin + "/api/admin/pair/request", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: "LAN Client",
+      publicKey: publicKey.export({ type: "spki", format: "pem" }),
+    }),
+  });
+  assert.equal(pair.status, 201);
+  assert.ok(
+    ((await pair.json()) as any).url.startsWith(origin + "/admin/pair/"),
+  );
+  const ws = new WebSocket(origin.replace("http:", "ws:") + "/connect");
+  t.after(() => ws.terminate());
+  const [challenge] = await once(ws, "message");
+  assert.equal(JSON.parse(challenge.toString()).type, "challenge");
+  ws.close();
+  await once(ws, "close");
+  engine.store.put("config", "public", {
+    provider: "manual",
+    engineUrl: origin,
+  });
+  assert.deepEqual((await engine.tunnels.diagnose()).checks, [
+    { check: "engine", ok: true },
+    { check: "preview", ok: true },
+    { check: "websocket", ok: true },
+  ]);
+});
+
+test("HTTPS proxies accept same-origin login through any Host and set Secure cookies", async (t) => {
+  const engine = await fixture(t);
+  const result = await new Promise<{ status?: number; cookie: string }>(
+    (resolve, reject) => {
+      const req = request(
+        engine.origin + "/api/admin/login",
+        {
+          method: "POST",
+          headers: {
+            host: "proxy.example.com",
+            origin: "https://proxy.example.com",
+            "x-forwarded-host": "proxy.example.com",
+            "x-forwarded-proto": "https",
+            "content-type": "application/json",
+          },
+        },
+        (res) => {
+          res.resume();
+          resolve({
+            status: res.statusCode,
+            cookie: res.headers["set-cookie"]?.[0] ?? "",
+          });
+        },
+      );
+      req.on("error", reject);
+      req.end(
+        JSON.stringify({ name: "admin", password: "test-password-long" }),
+      );
+    },
+  );
+  assert.equal(result.status, 200);
+  assert.ok(result.cookie.includes("; Secure"));
+});
+
 test("pending connections expose only unexpired, unapproved summaries to administrators", async (t) => {
   const e = await fixture(t);
   for (const [id, extra] of [
@@ -135,7 +237,7 @@ test("only administrators can read Engine diagnostics", async (t) => {
     }
   }
 });
-test("local bootstrap required; password hashing, write-only secrets, CSRF, role changes and host checks", async (t) => {
+test("password hashing, write-only secrets, CSRF, role changes and alternate hosts", async (t) => {
   const e = await fixture(t),
     session = await login(e);
   assert.equal(
@@ -185,14 +287,14 @@ test("local bootstrap required; password hashing, write-only secrets, CSRF, role
     await new Promise((resolve) =>
       request(
         e.origin + "/health",
-        { headers: { Host: "attacker.example" } },
+        { headers: { Host: "engine.lan:4310" } },
         (res) => {
           res.resume();
           resolve(res.statusCode);
         },
       ).end(),
     ),
-    403,
+    200,
   );
   assert.equal((await fetch(e.origin + "/api/admin/state")).status, 401);
   const viewer = e.store.createUser("viewer", "test-password-long", "viewer"),
@@ -363,7 +465,7 @@ test("failed plugin installation preserves the active installation", async (t) =
   assert.equal(e.store.get<any>("plugin", "discord").version, "previous");
 });
 
-test("one public HTTPS origin serves management and preview; public setup validates HTTPS", async (t) => {
+test("public setup accepts HTTPS and LAN HTTP origins for management and preview", async (t) => {
   const engine = await fixture(t),
     session = await login(engine);
   assert.equal(
@@ -386,12 +488,13 @@ test("one public HTTPS origin serves management and preview; public setup valida
       await post(
         engine,
         "public",
-        { provider: "manual", engineUrl: "http://127.0.0.1:9999" },
+        { provider: "manual", engineUrl: "http://engine.lan:9999" },
         session,
       )
     ).status,
-    400,
+    200,
   );
+  assert.equal(engine.config().engineUrl, "http://engine.lan:9999");
   assert.equal((await fetch(engine.origin + "/preview/")).status, 410);
   const result = await post(
     engine,

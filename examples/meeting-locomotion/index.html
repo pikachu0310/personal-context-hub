@@ -1,0 +1,1096 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VR移動方式 比較モック</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --slate: #172c43;
+      --ice: #edf3f9;
+      --blue: #1476ca;
+      --amber: #db790b;
+      --white: #fff;
+      --muted: #53687d;
+      --line: #cad7e3;
+      --shadow: 0 18px 50px rgba(23, 44, 67, .12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      color: var(--slate);
+      background:
+        radial-gradient(circle at 85% -10%, rgba(20, 118, 202, .13), transparent 31rem),
+        linear-gradient(180deg, #fff 0, var(--ice) 78%);
+      font-family: Inter, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    }
+
+    button, input { font: inherit; }
+    button { touch-action: manipulation; }
+
+    .shell {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: clamp(24px, 4vw, 58px) clamp(16px, 3vw, 44px) 32px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: clamp(22px, 3vw, 38px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px;
+      color: var(--blue);
+      font-size: .72rem;
+      font-weight: 800;
+      letter-spacing: .16em;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 25px;
+      height: 2px;
+      background: currentColor;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 4.4vw, 4.8rem);
+      line-height: .98;
+      letter-spacing: -.055em;
+      font-weight: 900;
+    }
+
+    .lead {
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: clamp(.95rem, 1.4vw, 1.14rem);
+      font-weight: 650;
+    }
+
+    .keyboard-note {
+      margin: 0;
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255,255,255,.72);
+      font-size: .76rem;
+      white-space: nowrap;
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: clamp(14px, 2vw, 26px);
+      align-items: start;
+    }
+
+    .scene-card {
+      --accent: var(--blue);
+      overflow: hidden;
+      border: 1px solid rgba(23, 44, 67, .13);
+      border-top: 4px solid var(--accent);
+      border-radius: 18px;
+      background: rgba(255,255,255,.93);
+      box-shadow: var(--shadow);
+    }
+
+    .scene-card.smooth { --accent: var(--amber); }
+
+    .scene-card.complete {
+      border-top-color: #1aaec4;
+      box-shadow: 0 18px 55px rgba(26, 174, 196, .2);
+    }
+
+    .scene-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px 15px;
+    }
+
+    .scene-title-wrap { min-width: 0; }
+
+    .scene-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .scene-kicker {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--accent);
+      font-size: .68rem;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(1.22rem, 2vw, 1.65rem);
+      letter-spacing: -.035em;
+    }
+
+    .mode-pill {
+      flex: 0 0 auto;
+      padding: 7px 10px;
+      border-radius: 8px;
+      color: var(--white);
+      background: var(--accent);
+      font-size: .72rem;
+      font-weight: 800;
+    }
+
+    .challenge-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 5px 9px;
+      border: 1px solid color-mix(in srgb, var(--accent), white 55%);
+      border-radius: 999px;
+      color: var(--slate);
+      background: color-mix(in srgb, var(--accent), white 92%);
+      font-size: .68rem;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .goal-dots {
+      display: flex;
+      gap: 3px;
+    }
+
+    .goal-dot {
+      width: 7px;
+      height: 7px;
+      border: 1px solid color-mix(in srgb, var(--accent), white 35%);
+      border-radius: 50%;
+      background: white;
+    }
+
+    .goal-dot.collected {
+      border-color: #16a9c0;
+      background: #36d8e8;
+      box-shadow: 0 0 7px rgba(54, 216, 232, .75);
+    }
+
+    .progress-output {
+      min-width: 2ch;
+      color: var(--accent);
+      font-size: .76rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .viewport {
+      position: relative;
+      margin: 0 12px;
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--slate);
+      outline: 3px solid transparent;
+      outline-offset: 3px;
+      transition: outline-color .18s ease;
+    }
+
+    .viewport:focus-visible { outline-color: var(--accent); }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: clamp(300px, 38vw, 520px);
+    }
+
+    .view-label {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 9px;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 7px;
+      color: white;
+      background: rgba(10, 23, 37, .64);
+      backdrop-filter: blur(8px);
+      font-size: .7rem;
+      font-weight: 750;
+      pointer-events: none;
+    }
+
+    .view-label::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 70%);
+    }
+
+    .canvas-message {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      translate: -50% 8px;
+      opacity: 0;
+      padding: 8px 12px;
+      border-radius: 999px;
+      color: white;
+      background: rgba(10, 23, 37, .78);
+      font-size: .75rem;
+      font-weight: 750;
+      pointer-events: none;
+      transition: opacity .18s ease, translate .18s ease;
+      white-space: nowrap;
+    }
+
+    .canvas-message.show { opacity: 1; translate: -50% 0; }
+
+    .controls { padding: 17px 20px 20px; }
+
+    .readout {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .readout-label {
+      color: var(--muted);
+      font-size: .76rem;
+      font-weight: 700;
+    }
+
+    output {
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      font-size: .92rem;
+      font-weight: 900;
+    }
+
+    .pad-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .move-button, .reset-button {
+      min-height: 45px;
+      border-radius: 9px;
+      cursor: pointer;
+      font-weight: 800;
+      transition: transform .12s ease, background .12s ease, border-color .12s ease;
+    }
+
+    .move-button {
+      border: 1px solid color-mix(in srgb, var(--accent), white 42%);
+      color: var(--slate);
+      background: color-mix(in srgb, var(--accent), white 91%);
+    }
+
+    .move-button:hover { background: color-mix(in srgb, var(--accent), white 83%); }
+    .move-button:active { transform: translateY(1px); }
+    .move-button:focus-visible, .reset-button:focus-visible, input:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent), transparent 62%);
+      outline-offset: 2px;
+    }
+
+    .forward { grid-column: 2; }
+    .left { grid-column: 1; grid-row: 2; }
+    .back { grid-column: 2; grid-row: 2; }
+    .right { grid-column: 3; grid-row: 2; }
+
+    .reset-button {
+      width: 100%;
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: white;
+    }
+
+    .reset-button:hover { border-color: var(--accent); color: var(--accent); }
+
+    .scene-card.complete .reset-button {
+      border-color: #159caf;
+      color: white;
+      background: #159caf;
+    }
+
+    .speed-control {
+      margin-top: 14px;
+      padding: 13px 14px;
+      border-radius: 10px;
+      background: var(--ice);
+    }
+
+    .speed-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+      font-size: .78rem;
+      font-weight: 800;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--amber);
+      cursor: pointer;
+    }
+
+    .footnote {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      margin: 22px 2px 0;
+      color: var(--muted);
+      font-size: .75rem;
+      line-height: 1.65;
+    }
+
+    .footnote p { margin: 0; }
+    .footnote strong { color: var(--slate); }
+
+    @media (max-width: 860px) {
+      header { grid-template-columns: 1fr; }
+      .keyboard-note { display: none; }
+      .compare { grid-template-columns: 1fr; }
+      canvas { height: clamp(300px, 68vw, 500px); }
+      .footnote { flex-direction: column; gap: 7px; }
+    }
+
+    @media (min-width: 861px) and (max-height: 700px) {
+      .shell { padding-block: 8px; }
+      header {
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .eyebrow { display: none; }
+      h1 { font-size: clamp(1.65rem, 3.1vw, 2.6rem); }
+      .lead {
+        margin-top: 4px;
+        font-size: .74rem;
+      }
+      .keyboard-note {
+        padding: 6px 10px;
+        font-size: .66rem;
+      }
+      .compare { gap: 14px; }
+      .scene-head { padding: 8px 12px 7px; }
+      .scene-kicker {
+        margin-bottom: 2px;
+        font-size: .56rem;
+      }
+      h2 { font-size: 1.08rem; }
+      .mode-pill {
+        padding: 5px 8px;
+        font-size: .63rem;
+      }
+      .scene-meta { gap: 5px; }
+      .challenge-pill {
+        min-height: 25px;
+        padding: 3px 7px;
+        font-size: .58rem;
+      }
+      .progress-output { font-size: .67rem; }
+      .viewport { margin-inline: 8px; }
+      canvas { height: 190px; }
+      .view-label {
+        top: 8px;
+        left: 8px;
+        padding: 5px 7px;
+        font-size: .6rem;
+      }
+      .controls { padding: 7px 12px 8px; }
+      .readout { padding-bottom: 6px; }
+      .readout-label { font-size: .68rem; }
+      output { font-size: .78rem; }
+      .pad-row {
+        gap: 5px;
+        margin-top: 6px;
+      }
+      .move-button, .reset-button {
+        min-height: 32px;
+        font-size: .72rem;
+      }
+      .reset-button { margin-top: 5px; }
+      .speed-control {
+        margin-top: 6px;
+        padding: 5px 9px;
+      }
+      .speed-label {
+        margin-bottom: 2px;
+        font-size: .68rem;
+      }
+      input[type="range"] { display: block; }
+      .footnote {
+        margin-top: 7px;
+        font-size: .62rem;
+        line-height: 1.35;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .shell { padding-inline: 10px; }
+      .scene-head { padding-inline: 15px; }
+      .controls { padding-inline: 15px; }
+      .mode-pill { display: none; }
+      .challenge-pill > span:first-child { display: none; }
+      canvas { height: 300px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">ブラウザ比較用の試作</p>
+        <h1>会議の続きを、動くもので。</h1>
+        <p class="lead">VRゲームの移動方式を、その場で比べる。</p>
+      </div>
+      <p class="keyboard-note">シーンを選択すると、矢印キーでも操作できます</p>
+    </header>
+
+    <section class="compare" aria-label="移動方式の比較">
+      <article class="scene-card teleport" data-scene="teleport">
+        <div class="scene-head">
+          <div class="scene-title-wrap">
+            <span class="scene-kicker">Teleport</span>
+            <h2>ワープ移動</h2>
+          </div>
+          <div class="scene-meta">
+            <span class="mode-pill">瞬間移動</span>
+            <div class="challenge-pill" aria-label="目標の進行">
+              <span>目標</span>
+              <span class="goal-dots" aria-hidden="true"><i class="goal-dot"></i><i class="goal-dot"></i><i class="goal-dot"></i></span>
+              <output class="progress-output" aria-live="polite">0/3</output>
+            </div>
+          </div>
+        </div>
+        <div class="viewport" tabindex="0" role="application" aria-label="ワープ移動シーン。矢印キーで移動できます">
+          <canvas aria-label="ワープ移動の一人称コース"></canvas>
+          <span class="view-label">COURSE A · 同一設計</span>
+          <span class="canvas-message" aria-hidden="true"></span>
+        </div>
+        <div class="controls">
+          <div class="readout">
+            <span class="readout-label">現在位置</span>
+            <output aria-live="polite">X 2.50 / Z 13.50</output>
+          </div>
+          <div class="pad-row" aria-label="ワープ移動操作">
+            <button class="move-button forward" type="button" data-move="forward" aria-label="ワープで前へ">↑ 前へ</button>
+            <button class="move-button left" type="button" data-move="left" aria-label="ワープで左へ">← 左へ</button>
+            <button class="move-button back" type="button" data-move="back" aria-label="ワープで後へ">↓ 後へ</button>
+            <button class="move-button right" type="button" data-move="right" aria-label="ワープで右へ">右へ →</button>
+          </div>
+          <button class="reset-button" type="button" data-reset>初期位置</button>
+        </div>
+      </article>
+
+      <article class="scene-card smooth" data-scene="smooth">
+        <div class="scene-head">
+          <div class="scene-title-wrap">
+            <span class="scene-kicker">Smooth motion</span>
+            <h2>連続移動</h2>
+          </div>
+          <div class="scene-meta">
+            <span class="mode-pill">連続移動</span>
+            <div class="challenge-pill" aria-label="目標の進行">
+              <span>目標</span>
+              <span class="goal-dots" aria-hidden="true"><i class="goal-dot"></i><i class="goal-dot"></i><i class="goal-dot"></i></span>
+              <output class="progress-output" aria-live="polite">0/3</output>
+            </div>
+          </div>
+        </div>
+        <div class="viewport" tabindex="0" role="application" aria-label="連続移動シーン。矢印キーで移動できます">
+          <canvas aria-label="連続移動の一人称コース"></canvas>
+          <span class="view-label">COURSE A · 同一設計</span>
+          <span class="canvas-message" aria-hidden="true"></span>
+        </div>
+        <div class="controls">
+          <div class="readout">
+            <span class="readout-label">現在位置</span>
+            <output aria-live="polite">X 2.50 / Z 13.50</output>
+          </div>
+          <div class="pad-row" aria-label="連続移動操作">
+            <button class="move-button forward" type="button" data-move="forward" aria-label="連続移動で前へ">↑ 前へ</button>
+            <button class="move-button left" type="button" data-move="left" aria-label="連続移動で左へ">← 左へ</button>
+            <button class="move-button back" type="button" data-move="back" aria-label="連続移動で後へ">↓ 後へ</button>
+            <button class="move-button right" type="button" data-move="right" aria-label="連続移動で右へ">右へ →</button>
+          </div>
+          <button class="reset-button" type="button" data-reset>初期位置</button>
+          <div class="speed-control">
+            <label class="speed-label" for="speed">
+              <span>連続移動の速さ</span>
+              <output id="speed-value" for="speed">0.50</output>
+            </label>
+            <input id="speed" type="range" min="0.5" max="2" step="0.25" value="0.5" aria-valuetext="0.50">
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <div class="footnote">
+      <p><strong>チャレンジ：</strong>同じ場所にある光る目標を3つ集めて、移動感を比べよう。</p>
+      <p>※ ブラウザ上の操作比較です。VR機器での快適性・酔いは別途検証が必要です。</p>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const MAP = [
+        '1111111111111111',
+        '1000000000000001',
+        '1000000000000001',
+        '1000222022200001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000000000000001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000222022200001',
+        '1000000000000001',
+        '1000000000000001',
+        '1000000000000001',
+        '1111111111111111'
+      ];
+      const START = { x: 2.5, y: 13.5 };
+      const FACING = -Math.PI / 2;
+      const MOVE_DISTANCE = 1.05;
+      const GOALS = [
+        { x: 2.5, y: 10.35, color: '#48e6f1', rgb: '72,230,241' },
+        { x: 1.45, y: 7.2, color: '#ffae3d', rgb: '255,174,61' },
+        { x: 2.5, y: 4.05, color: '#48e6f1', rgb: '72,230,241' }
+      ];
+      const FOV = Math.PI / 3;
+      const DPR_LIMIT = 1.5;
+      const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+      const wallColors = {
+        1: [108, 137, 162],
+        2: [49, 79, 105]
+      };
+
+      const scenes = [...document.querySelectorAll('[data-scene]')].map(card => {
+        const canvas = card.querySelector('canvas');
+        const scene = {
+          type: card.dataset.scene,
+          card,
+          viewport: card.querySelector('.viewport'),
+          canvas,
+          ctx: canvas.getContext('2d', { alpha: false }),
+          output: card.querySelector('.readout output'),
+          progressOutput: card.querySelector('.progress-output'),
+          goalDots: [...card.querySelectorAll('.goal-dot')],
+          resetButton: card.querySelector('[data-reset]'),
+          message: card.querySelector('.canvas-message'),
+          x: START.x,
+          y: START.y,
+          angle: FACING,
+          animation: null,
+          pulse: 0,
+          collected: new Set(),
+          celebrationStarted: 0,
+          messageTimer: null
+        };
+
+        card.querySelectorAll('[data-move]').forEach(button => {
+          button.addEventListener('click', () => {
+            scene.viewport.focus({ preventScroll: true });
+            requestMove(scene, button.dataset.move);
+          });
+        });
+        scene.resetButton.addEventListener('click', () => resetScene(scene));
+        scene.viewport.addEventListener('keydown', event => {
+          const direction = {
+            ArrowUp: 'forward', ArrowDown: 'back',
+            ArrowLeft: 'left', ArrowRight: 'right'
+          }[event.key];
+          if (!direction) return;
+          event.preventDefault();
+          requestMove(scene, direction);
+        });
+        return scene;
+      });
+
+      const speedInput = document.querySelector('#speed');
+      const speedValue = document.querySelector('#speed-value');
+      speedInput.addEventListener('input', () => {
+        const value = Number(speedInput.value).toFixed(2);
+        speedValue.value = value;
+        speedInput.setAttribute('aria-valuetext', value);
+      });
+
+      function isOpen(x, y) {
+        const radius = .22;
+        return [
+          [x - radius, y - radius], [x + radius, y - radius],
+          [x - radius, y + radius], [x + radius, y + radius]
+        ].every(([px, py]) => MAP[Math.floor(py)]?.[Math.floor(px)] === '0');
+      }
+
+      function requestMove(scene, direction) {
+        const vectors = {
+          forward: [Math.cos(scene.angle), Math.sin(scene.angle)],
+          back: [-Math.cos(scene.angle), -Math.sin(scene.angle)],
+          left: [Math.cos(scene.angle - Math.PI / 2), Math.sin(scene.angle - Math.PI / 2)],
+          right: [Math.cos(scene.angle + Math.PI / 2), Math.sin(scene.angle + Math.PI / 2)]
+        };
+        const [dx, dy] = vectors[direction];
+        const baseX = scene.animation ? scene.animation.toX : scene.x;
+        const baseY = scene.animation ? scene.animation.toY : scene.y;
+        const toX = baseX + dx * MOVE_DISTANCE;
+        const toY = baseY + dy * MOVE_DISTANCE;
+
+        if (!isOpen(toX, toY)) {
+          showMessage(scene, '障害物があります');
+          scene.pulse = .25;
+          return;
+        }
+
+        if (scene.type === 'teleport') {
+          scene.x = toX;
+          scene.y = toY;
+          scene.pulse = 1;
+          updateReadout(scene);
+          checkGoals(scene, performance.now());
+        } else {
+          const fromX = scene.x;
+          const fromY = scene.y;
+          const distance = Math.hypot(toX - fromX, toY - fromY);
+          scene.animation = {
+            fromX, fromY, toX, toY,
+            started: performance.now(),
+            duration: Math.max(180, 620 * distance / MOVE_DISTANCE / Number(speedInput.value))
+          };
+        }
+      }
+
+      function resetScene(scene) {
+        const replaying = scene.collected.size === GOALS.length;
+        scene.animation = null;
+        scene.x = START.x;
+        scene.y = START.y;
+        scene.pulse = scene.type === 'teleport' ? .7 : 0;
+        scene.collected.clear();
+        scene.celebrationStarted = 0;
+        scene.card.classList.remove('complete');
+        scene.resetButton.textContent = '初期位置';
+        updateReadout(scene);
+        updateProgress(scene);
+        showMessage(scene, replaying ? 'チャレンジ再開！' : '初期位置に戻りました');
+        scene.viewport.focus({ preventScroll: true });
+      }
+
+      function showMessage(scene, text) {
+        scene.message.textContent = text;
+        scene.message.classList.add('show');
+        clearTimeout(scene.messageTimer);
+        scene.messageTimer = setTimeout(() => scene.message.classList.remove('show'), 1100);
+      }
+
+      function updateReadout(scene) {
+        scene.output.value = `X ${scene.x.toFixed(2)} / Z ${scene.y.toFixed(2)}`;
+      }
+
+      function updateProgress(scene) {
+        const count = scene.collected.size;
+        scene.progressOutput.value = `${count}/3`;
+        scene.goalDots.forEach((dot, index) => dot.classList.toggle('collected', index < count));
+      }
+
+      function checkGoals(scene, now) {
+        GOALS.forEach((goal, index) => {
+          if (scene.collected.has(index) || Math.hypot(scene.x - goal.x, scene.y - goal.y) > .68) return;
+          scene.collected.add(index);
+          scene.pulse = 1;
+          updateProgress(scene);
+          if (scene.collected.size === GOALS.length) {
+            scene.animation = null;
+            scene.celebrationStarted = now;
+            scene.card.classList.add('complete');
+            scene.resetButton.textContent = 'もう一度遊ぶ';
+            showMessage(scene, '3/3 すべて集めました！');
+          } else {
+            showMessage(scene, `目標をゲット！ ${scene.collected.size}/3`);
+          }
+        });
+      }
+
+      function resizeCanvas(scene) {
+        const rect = scene.canvas.getBoundingClientRect();
+        const dpr = Math.min(devicePixelRatio || 1, DPR_LIMIT);
+        const width = Math.max(320, Math.round(rect.width * dpr));
+        const height = Math.max(260, Math.round(rect.height * dpr));
+        if (scene.canvas.width !== width || scene.canvas.height !== height) {
+          scene.canvas.width = width;
+          scene.canvas.height = height;
+        }
+      }
+
+      function castRay(x, y, angle) {
+        const dirX = Math.cos(angle);
+        const dirY = Math.sin(angle);
+        let mapX = Math.floor(x);
+        let mapY = Math.floor(y);
+        const deltaX = Math.abs(1 / (dirX || .00001));
+        const deltaY = Math.abs(1 / (dirY || .00001));
+        const stepX = dirX < 0 ? -1 : 1;
+        const stepY = dirY < 0 ? -1 : 1;
+        let sideX = dirX < 0 ? (x - mapX) * deltaX : (mapX + 1 - x) * deltaX;
+        let sideY = dirY < 0 ? (y - mapY) * deltaY : (mapY + 1 - y) * deltaY;
+        let side = 0;
+        let tile = '1';
+
+        for (let i = 0; i < 40; i++) {
+          if (sideX < sideY) { sideX += deltaX; mapX += stepX; side = 0; }
+          else { sideY += deltaY; mapY += stepY; side = 1; }
+          tile = MAP[mapY]?.[mapX] || '1';
+          if (tile !== '0') break;
+        }
+        const distance = side === 0
+          ? (mapX - x + (1 - stepX) / 2) / (dirX || .00001)
+          : (mapY - y + (1 - stepY) / 2) / (dirY || .00001);
+        const hit = side === 0 ? y + distance * dirY : x + distance * dirX;
+        return { distance: Math.max(.01, distance), side, tile: Number(tile), texture: hit - Math.floor(hit) };
+      }
+
+      function render(scene, now) {
+        resizeCanvas(scene);
+        const { ctx, canvas } = scene;
+        const w = canvas.width;
+        const h = canvas.height;
+        const horizon = h * .46;
+
+        const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+        sky.addColorStop(0, '#8ca8bf');
+        sky.addColorStop(1, '#dbe7ef');
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, w, horizon);
+
+        const floor = ctx.createLinearGradient(0, horizon, 0, h);
+        floor.addColorStop(0, '#677b8c');
+        floor.addColorStop(1, '#263b4e');
+        ctx.fillStyle = floor;
+        ctx.fillRect(0, horizon, w, h - horizon);
+
+        ctx.lineWidth = Math.max(1, w / 700);
+        for (let i = 1; i <= 9; i++) {
+          const t = i / 9;
+          const y = horizon + Math.pow(t, 2.2) * (h - horizon);
+          ctx.strokeStyle = `rgba(237,243,249,${.05 + t * .14})`;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        }
+        [-.7, -.35, 0, .35, .7].forEach(offset => {
+          ctx.strokeStyle = 'rgba(237,243,249,.13)';
+          ctx.beginPath();
+          ctx.moveTo(w / 2, horizon);
+          ctx.lineTo(w / 2 + offset * w, h);
+          ctx.stroke();
+        });
+
+        drawGuide(scene, w, h, horizon, now);
+
+        const quality = Math.min(w, 720);
+        const stripeWidth = w / quality;
+        for (let column = 0; column < quality; column++) {
+          const cameraX = column / quality - .5;
+          const rayAngle = scene.angle + cameraX * FOV;
+          const ray = castRay(scene.x, scene.y, rayAngle);
+          const corrected = ray.distance * Math.cos(rayAngle - scene.angle);
+          const wallH = Math.min(h * 1.7, h / corrected);
+          const top = horizon - wallH / 2;
+          const base = wallColors[ray.tile] || wallColors[1];
+          const sideShade = ray.side ? .73 : 1;
+          const textureShade = .86 + .14 * Math.sin(ray.texture * Math.PI);
+          const fog = Math.max(.35, 1 - corrected / 18);
+          const shade = sideShade * textureShade * fog;
+          ctx.fillStyle = `rgb(${base.map(v => Math.round(v * shade)).join(',')})`;
+          ctx.fillRect(column * stripeWidth, top, stripeWidth + 1, wallH);
+          if (column % 24 === 0) {
+            ctx.fillStyle = 'rgba(237,243,249,.1)';
+            ctx.fillRect(column * stripeWidth, top, Math.max(1, stripeWidth), wallH);
+          }
+        }
+
+        drawGoals(scene, w, h, horizon, now);
+        drawMiniMap(scene, w, h);
+        drawReticle(scene, w, h);
+        drawCelebration(scene, w, h, now);
+
+        if (scene.pulse > 0) {
+          const accent = scene.type === 'teleport' ? '20,118,202' : '219,121,11';
+          ctx.fillStyle = `rgba(${accent},${scene.pulse * .22})`;
+          ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = `rgba(255,255,255,${scene.pulse * .75})`;
+          ctx.lineWidth = Math.max(2, w * .006);
+          ctx.strokeRect(w * .03, h * .04, w * .94, h * .92);
+          scene.pulse = Math.max(0, scene.pulse - .055);
+        }
+      }
+
+      function nextGoalIndex(scene) {
+        return GOALS.findIndex((_, index) => !scene.collected.has(index));
+      }
+
+      function relativeAngle(scene, goal) {
+        let relative = Math.atan2(goal.y - scene.y, goal.x - scene.x) - scene.angle;
+        while (relative > Math.PI) relative -= Math.PI * 2;
+        while (relative < -Math.PI) relative += Math.PI * 2;
+        return relative;
+      }
+
+      function drawGuide(scene, w, h, horizon, now) {
+        const index = nextGoalIndex(scene);
+        if (index < 0) return;
+        const goal = GOALS[index];
+        const relative = relativeAngle(scene, goal);
+        const endX = Math.max(w * .12, Math.min(w * .88, w / 2 + relative / FOV * w * .72));
+        const endY = horizon + h * .08;
+        const ctx = scene.ctx;
+        ctx.save();
+        ctx.setLineDash([Math.max(8, w * .015), Math.max(8, w * .012)]);
+        ctx.lineDashOffset = reducedMotion.matches ? 0 : -now / 45;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = `rgba(${goal.rgb},.7)`;
+        ctx.shadowColor = goal.color;
+        ctx.shadowBlur = 12;
+        ctx.lineWidth = Math.max(3, w * .006);
+        ctx.beginPath();
+        ctx.moveTo(w / 2, h * .96);
+        ctx.quadraticCurveTo(w / 2, h * .7, endX, endY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        const direction = endX < w / 2 ? -1 : 1;
+        ctx.fillStyle = goal.color;
+        ctx.beginPath();
+        ctx.moveTo(endX, endY - 7);
+        ctx.lineTo(endX + direction * 13, endY + 3);
+        ctx.lineTo(endX, endY + 11);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function drawGoals(scene, w, h, horizon, now) {
+        const ctx = scene.ctx;
+        const active = nextGoalIndex(scene);
+        const visible = GOALS.map((goal, index) => {
+          if (scene.collected.has(index)) return null;
+          const dx = goal.x - scene.x;
+          const dy = goal.y - scene.y;
+          const distance = Math.hypot(dx, dy);
+          const relative = relativeAngle(scene, goal);
+          if (Math.abs(relative) > FOV * .58) return null;
+          const wall = castRay(scene.x, scene.y, Math.atan2(dy, dx));
+          return wall.distance < distance - .25 ? null : { goal, index, distance, relative };
+        }).filter(Boolean).sort((a, b) => b.distance - a.distance);
+
+        visible.forEach(({ goal, index, distance, relative }) => {
+          const x = w / 2 + relative / FOV * w;
+          const size = Math.min(h * .3, h * 1.05 / Math.max(1.2, distance));
+          const bob = reducedMotion.matches ? 0 : Math.sin(now / 330 + index) * size * .08;
+          const y = horizon - size * .12 + bob;
+          const glow = ctx.createRadialGradient(x, y, 0, x, y, size);
+          glow.addColorStop(0, 'rgba(255,255,255,.98)');
+          glow.addColorStop(.13, `rgba(${goal.rgb},.98)`);
+          glow.addColorStop(1, `rgba(${goal.rgb},0)`);
+          ctx.fillStyle = glow;
+          ctx.fillRect(x - size, y - size, size * 2, size * 2);
+          ctx.save();
+          ctx.translate(x, y);
+          if (!reducedMotion.matches) ctx.rotate(now / 1100 * (index % 2 ? -1 : 1));
+          ctx.fillStyle = '#fff';
+          ctx.strokeStyle = goal.color;
+          ctx.lineWidth = Math.max(2, size * .08);
+          ctx.beginPath();
+          for (let point = 0; point < 8; point++) {
+            const a = point * Math.PI / 4 - Math.PI / 2;
+            const r = point % 2 ? size * .18 : size * .38;
+            ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+          if (index === active) {
+            ctx.fillStyle = 'rgba(10,23,37,.78)';
+            ctx.fillRect(x - 18, y + size * .48, 36, 16);
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.font = `800 ${Math.max(10, w * .014)}px sans-serif`;
+            ctx.fillText(`${index + 1}/3`, x, y + size * .48 + 12);
+          }
+        });
+
+        if (active >= 0 && !visible.some(item => item.index === active)) {
+          const goal = GOALS[active];
+          const relative = relativeAngle(scene, goal);
+          const x = relative < 0 ? w * .08 : w * .92;
+          const y = h * .46;
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(relative < 0 ? Math.PI : 0);
+          ctx.fillStyle = goal.color;
+          ctx.shadowColor = goal.color;
+          ctx.shadowBlur = 14;
+          ctx.beginPath();
+          ctx.moveTo(13, 0); ctx.lineTo(-8, -11); ctx.lineTo(-8, 11); ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      function drawMiniMap(scene, w, h) {
+        const ctx = scene.ctx;
+        const scale = Math.max(3.1, Math.min(5.3, w / 125));
+        const size = scale * MAP.length;
+        const x0 = w - size - 13;
+        const y0 = 13;
+        ctx.fillStyle = 'rgba(10,23,37,.74)';
+        ctx.fillRect(x0 - 7, y0 - 7, size + 14, size + 14);
+        MAP.forEach((row, y) => [...row].forEach((tile, x) => {
+          if (tile === '0') return;
+          ctx.fillStyle = tile === '2' ? '#6e879d' : '#354e63';
+          ctx.fillRect(x0 + x * scale, y0 + y * scale, scale, scale);
+        }));
+        ctx.strokeStyle = 'rgba(237,243,249,.42)';
+        ctx.lineWidth = Math.max(1, scale * .22);
+        ctx.setLineDash([scale, scale * .65]);
+        ctx.beginPath();
+        ctx.moveTo(x0 + START.x * scale, y0 + START.y * scale);
+        GOALS.forEach(goal => ctx.lineTo(x0 + goal.x * scale, y0 + goal.y * scale));
+        ctx.stroke();
+        ctx.setLineDash([]);
+        GOALS.forEach((goal, index) => {
+          ctx.fillStyle = scene.collected.has(index) ? '#6e879d' : goal.color;
+          ctx.beginPath();
+          ctx.arc(x0 + goal.x * scale, y0 + goal.y * scale, scale * .55, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.fillStyle = scene.type === 'teleport' ? '#1476ca' : '#db790b';
+        ctx.beginPath();
+        ctx.arc(x0 + scene.x * scale, y0 + scene.y * scale, scale * .62, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = Math.max(1, scale * .28);
+        ctx.beginPath();
+        ctx.moveTo(x0 + scene.x * scale, y0 + scene.y * scale);
+        ctx.lineTo(x0 + (scene.x + Math.cos(scene.angle) * 1.4) * scale, y0 + (scene.y + Math.sin(scene.angle) * 1.4) * scale);
+        ctx.stroke();
+      }
+
+      function drawCelebration(scene, w, h, now) {
+        if (!scene.celebrationStarted) return;
+        const elapsed = now - scene.celebrationStarted;
+        if (elapsed > 2600) return;
+        const ctx = scene.ctx;
+        const cx = w / 2;
+        const cy = h * .45;
+        const reveal = Math.min(1, elapsed / 220);
+        if (!reducedMotion.matches) {
+          for (let i = 0; i < 18; i++) {
+            const angle = i / 18 * Math.PI * 2;
+            const travel = Math.min(w, h) * .34 * Math.min(1, elapsed / 900);
+            const x = cx + Math.cos(angle) * travel;
+            const y = cy + Math.sin(angle) * travel * .65 + elapsed * .018;
+            ctx.fillStyle = i % 2 ? '#48e6f1' : '#ffae3d';
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(angle + elapsed / 350);
+            ctx.fillRect(-4, -2, 8, 4);
+            ctx.restore();
+          }
+        }
+        ctx.save();
+        ctx.globalAlpha = reveal;
+        ctx.fillStyle = 'rgba(10,23,37,.88)';
+        ctx.strokeStyle = '#48e6f1';
+        ctx.lineWidth = Math.max(2, w * .004);
+        const boxW = Math.min(w * .58, 290);
+        const boxH = Math.min(h * .3, 92);
+        ctx.fillRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH);
+        ctx.strokeRect(cx - boxW / 2, cy - boxH / 2, boxW, boxH);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#48e6f1';
+        ctx.font = `900 ${Math.max(12, Math.min(18, w * .025))}px sans-serif`;
+        ctx.fillText('CHALLENGE CLEAR', cx, cy - 5);
+        ctx.fillStyle = '#fff';
+        ctx.font = `800 ${Math.max(10, Math.min(14, w * .018))}px sans-serif`;
+        ctx.fillText('3つの目標を集めました', cx, cy + 19);
+        ctx.restore();
+      }
+
+      function drawReticle(scene, w, h) {
+        const ctx = scene.ctx;
+        const x = w / 2;
+        const y = h * .47;
+        const r = Math.max(5, w * .008);
+        ctx.strokeStyle = 'rgba(255,255,255,.8)';
+        ctx.lineWidth = Math.max(1.3, w / 650);
+        ctx.beginPath();
+        ctx.moveTo(x - r * 2, y); ctx.lineTo(x - r * .65, y);
+        ctx.moveTo(x + r * .65, y); ctx.lineTo(x + r * 2, y);
+        ctx.moveTo(x, y - r * 2); ctx.lineTo(x, y - r * .65);
+        ctx.moveTo(x, y + r * .65); ctx.lineTo(x, y + r * 2);
+        ctx.stroke();
+      }
+
+      function tick(now) {
+        scenes.forEach(scene => {
+          if (scene.animation) {
+            const a = scene.animation;
+            const t = Math.min(1, (now - a.started) / a.duration);
+            const eased = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+            scene.x = a.fromX + (a.toX - a.fromX) * eased;
+            scene.y = a.fromY + (a.toY - a.fromY) * eased;
+            updateReadout(scene);
+            checkGoals(scene, now);
+            if (t >= 1) scene.animation = null;
+          }
+          render(scene, now);
+        });
+        requestAnimationFrame(tick);
+      }
+
+      scenes.forEach(scene => {
+        updateReadout(scene);
+        updateProgress(scene);
+      });
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>

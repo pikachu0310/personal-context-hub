@@ -1,14 +1,26 @@
 import { Button, Group, Tabs, Text, TextInput } from "@mantine/core";
 import { useRef, useState } from "react";
 import type { MeetingView } from "@ido/common/contracts/api";
+import type {
+  TranscriptPage,
+  TranscriptQuery,
+} from "@ido/common/contracts/api";
+import { useTranscriptPage } from "./useTranscriptPage.js";
 
 /** A bounded reader: selecting a topic never moves the adjacent minutes document. */
-export function MinutesInspector({ meetings }: { meetings: MeetingView[] }) {
+export function MinutesInspector({
+  meetings,
+  loadTranscript,
+}: {
+  meetings: MeetingView[];
+  loadTranscript?: (query: TranscriptQuery) => Promise<TranscriptPage>;
+}) {
   const [tab, setTab] = useState<string | null>("topics");
   const [query, setQuery] = useState("");
   const [selected, select] = useState("");
   const [sources, setSources] = useState<{
     meetingId: string;
+    topicId: string;
     ids: string[];
   }>();
   const [limit, setLimit] = useState(100);
@@ -44,21 +56,44 @@ export function MinutesInspector({ meetings }: { meetings: MeetingView[] }) {
       ),
     );
   const topic = topics.find((item) => item.key === selected) ?? topics[0];
-  const messages = ordered
-    .flatMap((meeting) =>
-      meeting.messages.map((message) => ({ ...message, meeting })),
-    )
-    .filter(
-      (message) =>
-        message.text.trim() &&
-        (!sources ||
-          (message.meeting.id === sources.meetingId &&
-            sources.ids.includes(message.id))) &&
-        matches(
-          `${message.authorName ?? message.authorId} ${message.text} ${message.replyText ?? ""}`,
-        ),
-    )
-    .sort((a, b) => a.at - b.at);
+  const remote = useTranscriptPage(
+    loadTranscript,
+    {
+      query,
+      ...(sources
+        ? { meetingId: sources.meetingId, topicId: sources.topicId }
+        : {}),
+    },
+    meetings
+      .map(
+        (m) =>
+          `${m.id}:${m.lastMessageAt ?? m.messages.at(-1)?.at}:${m.knowledge?.revision}`,
+      )
+      .join("|"),
+    tab === "transcript",
+  );
+  const messages = loadTranscript
+    ? (remote.page?.messages ?? [])
+        .map((message) => ({
+          ...message,
+          meeting: { id: message.meetingId, name: message.meetingName },
+        }))
+        .sort((a, b) => a.at - b.at)
+    : ordered
+        .flatMap((meeting) =>
+          meeting.messages.map((message) => ({ ...message, meeting })),
+        )
+        .filter(
+          (message) =>
+            message.text.trim() &&
+            (!sources ||
+              (message.meeting.id === sources.meetingId &&
+                sources.ids.includes(message.id))) &&
+            matches(
+              `${message.authorName ?? message.authorId} ${message.text} ${message.replyText ?? ""}`,
+            ),
+        )
+        .sort((a, b) => a.at - b.at);
   return (
     <section className="minutes-inspector" aria-label="議事録の関連情報">
       <h3 className="minutes-inspector-title">詳細を確認</h3>
@@ -148,6 +183,7 @@ export function MinutesInspector({ meetings }: { meetings: MeetingView[] }) {
                     select(topic.key);
                     setSources({
                       meetingId: topic.meeting.id,
+                      topicId: topic.id,
                       ids: topic.sourceIds,
                     });
                     setQuery("");
@@ -195,8 +231,10 @@ export function MinutesInspector({ meetings }: { meetings: MeetingView[] }) {
               </>
             )}
             <Text size="xs" c="dimmed">
-              {messages.length}件の発言
-              {messages.length > limit && ` · 直近${limit}件を表示`}
+              {remote.page?.total ?? messages.length}件の発言
+              {loadTranscript
+                ? ` · ${messages.length}件を表示`
+                : messages.length > limit && ` · 直近${limit}件を表示`}
             </Text>
           </div>
           <div
@@ -205,44 +243,65 @@ export function MinutesInspector({ meetings }: { meetings: MeetingView[] }) {
             tabIndex={0}
             aria-label="発言の内容"
           >
-            {messages.length > limit && (
+            {(loadTranscript ? remote.page?.next : messages.length > limit) && (
               <Button
                 size="xs"
                 variant="subtle"
-                onClick={() => setLimit(limit + 100)}
+                loading={remote.loading}
+                onClick={() =>
+                  loadTranscript ? void remote.more() : setLimit(limit + 100)
+                }
               >
                 以前の発言をさらに表示
               </Button>
             )}
-            {!messages.length && (
+            {loadTranscript && remote.error && (
+              <div role="alert">
+                <Text size="sm" c="red">
+                  {remote.error}
+                </Text>
+                <Button variant="subtle" size="xs" onClick={remote.retry}>
+                  再読み込み
+                </Button>
+              </div>
+            )}
+            {loadTranscript && remote.loading && (
+              <Text size="sm" role="status">
+                発言を読み込んでいます…
+              </Text>
+            )}
+            {!messages.length && !remote.loading && !remote.error && (
               <Text size="sm" c="dimmed">
                 {query
                   ? "一致する発言はありません。"
                   : "表示できる発言はありません。"}
               </Text>
             )}
-            {messages.slice(-limit).map((message) => (
-              <article
-                className="minutes-statement"
-                key={`${message.meeting.id}:${message.id}`}
-              >
-                <header>
-                  <strong>{message.authorName ?? message.authorId}</strong>
-                  <time>{new Date(message.at).toLocaleString("ja-JP")}</time>
-                </header>
-                <p>{message.text}</p>
-                {message.replyText && (
-                  <p className="minutes-statement-reply">
-                    IDO: {message.replyText}
-                  </p>
-                )}
-                {meetings.length > 1 && (
-                  <Text size="xs" c="dimmed">
-                    {message.meeting.name}
-                  </Text>
-                )}
-              </article>
-            ))}
+            {(loadTranscript ? messages : messages.slice(-limit)).map(
+              (message) => (
+                <article
+                  className="minutes-statement"
+                  key={`${message.meeting.id}:${message.id}`}
+                  id={`statement-${message.id}`}
+                >
+                  <header>
+                    <strong>{message.authorName ?? message.authorId}</strong>
+                    <time>{new Date(message.at).toLocaleString("ja-JP")}</time>
+                  </header>
+                  <p>{message.text}</p>
+                  {message.replyText && (
+                    <p className="minutes-statement-reply">
+                      IDO: {message.replyText}
+                    </p>
+                  )}
+                  {meetings.length > 1 && (
+                    <Text size="xs" c="dimmed">
+                      {message.meeting.name}
+                    </Text>
+                  )}
+                </article>
+              ),
+            )}
           </div>
         </Tabs.Panel>
       </Tabs>

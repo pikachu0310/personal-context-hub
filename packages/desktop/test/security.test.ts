@@ -94,12 +94,15 @@ test("join links accept only a single Engine origin and never encode task or cre
     parseJoinLink("ido-agent://connect?engine=http%3A%2F%2F127.0.0.1%3A3000"),
     "http://127.0.0.1:3000",
   );
+  assert.equal(
+    parseJoinLink("ido-agent://connect?engine=http://engine.lan:4310"),
+    "http://engine.lan:4310",
+  );
   for (const link of [
     "https://connect?engine=https://example.com",
     "ido-agent://connect?engine=https://example.com&task=run",
     "ido-agent://connect?engine=https://example.com&engine=https://evil.example",
     "ido-agent://connect?engine=https://user:secret@example.com",
-    "ido-agent://connect?engine=http://example.com",
     "ido-agent://connect?engine=https://example.com/path",
     "ido-agent://connect?engine=file:///tmp",
   ])
@@ -111,6 +114,9 @@ test("desktop allows only its own renderer origin and exact active login or pair
   const pairing = "https://engine.example.com/pair?challenge=example";
   const login = "https://auth.openai.com/oauth/authorize?state=example";
   assert.ok(externalLink(pairing, pairing, login));
+  const lanPairing = "http://engine.lan:4310/admin/pair/example";
+  assert.ok(externalLink(lanPairing, lanPairing));
+  assert.ok(!externalLink(lanPairing + "other", lanPairing));
   assert.ok(externalLink(login, pairing, login));
   const claude = "https://claude.ai/oauth/authorize?state=fixture";
   assert.ok(externalLink(claude, undefined, undefined, claude));
@@ -142,11 +148,16 @@ test("project links validate the invitation and Engine origin", () => {
     ),
     { engineUrl: "https://engine.example.com", token },
   );
+  assert.deepEqual(
+    parseProjectLink(
+      `ido-agent://project?engine=http://engine.lan:4310&token=${token}`,
+    ),
+    { engineUrl: "http://engine.lan:4310", token },
+  );
   for (const link of [
     `ido-agent://project?engine=https://engine.example.com&token=${token}&task=run`,
     `ido-agent://project?engine=https://engine.example.com&token=${token}&token=${token}`,
     `ido-agent://project?engine=https://user:secret@engine.example.com&token=${token}`,
-    `ido-agent://project?engine=http://engine.example.com&token=${token}`,
     `ido-agent://project?engine=https://engine.example.com&token=short`,
   ])
     assert.throws(() => parseProjectLink(link));

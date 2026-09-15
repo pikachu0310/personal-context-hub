@@ -58,7 +58,7 @@ export function taskReadiness(
   if (
     occupied.length >= state.settings.slots ||
     occupied.filter((r) => r.task.projectId === task.projectId).length >=
-      mapping.slots
+      (mapping.workspaceMode === "project" ? 1 : mapping.slots)
   )
     return {
       reason: "capacity",

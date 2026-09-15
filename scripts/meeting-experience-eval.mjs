@@ -14,6 +14,26 @@ if (process.env.IDO_LIVE_EVAL !== "1" || !process.env.OPENAI_API_KEY)
 
 const scenarios = [
   {
+    id: "unverified-concern",
+    rounds: [
+      [
+        "複数アカウントを一括で運用すると規約に触れるかもしれないと思っている。まだ一次資料を確認していない。調査は今は始めず、懸念として残しておこう。",
+      ],
+    ],
+    counts: [0],
+    noDecisions: true,
+  },
+  {
+    id: "proposal-is-not-adoption",
+    rounds: [
+      [
+        "UIをChrome拡張で変えられたら便利そう。採用すると決めたわけではなく、今は案の一つとして挙げただけ。",
+      ],
+    ],
+    counts: [0],
+    noDecisions: true,
+  },
+  {
     id: "polite-request",
     rounds: [
       [
@@ -134,7 +154,10 @@ try {
     const engine = new Engine({
       directory: join(root, scenario.id),
       conversation: { coordinator: factory, observationIntervalMs: 60_000 },
+      speech: { transcriptionModel: process.env.IDO_EVAL_TRANSCRIPTION_MODEL },
     });
+    engine.credentials.get = async (name) =>
+      name === "openai" ? process.env.OPENAI_API_KEY : undefined;
     engine.plugins.publish = () => {};
     engine.store.put("project", "project", {
       id: "project",
@@ -162,12 +185,32 @@ try {
           const actor = engine.store.conversationAuthor(
             index % 2 ? "speaker-b" : "speaker-a",
           );
+          let audio;
+          if (
+            process.env.IDO_EVAL_AUDIO === "1" &&
+            index === statements.length - 1 &&
+            ["polite-request", "direct-research", "hold", "bare-call"].includes(
+              scenario.id,
+            )
+          ) {
+            const response = await new OpenAI({
+              apiKey: process.env.OPENAI_API_KEY,
+            }).audio.speech.create({
+              model: "gpt-4o-mini-tts",
+              voice: "alloy",
+              input: content,
+              response_format: "wav",
+            });
+            audio = Buffer.from(await response.arrayBuffer()).toString(
+              "base64",
+            );
+          }
           await engine.input.handle(
             {
               eventId: `input-${++sequence}`,
               projectId: "project",
               meetingId: "meeting",
-              text: content,
+              ...(audio ? { audio } : { text: content }),
               priority: "normal",
             },
             {
@@ -180,6 +223,7 @@ try {
           );
         }
         await engine.conversation.coordinated.flush("meeting");
+        await engine.conversation.document.refresh("meeting");
         const tasks = engine.store.list("task");
         rounds.push({
           round: round + 1,
@@ -203,6 +247,11 @@ try {
         pass:
           rounds.every((round) => round.expectedTasks === round.actualTasks) &&
           (!scenario.reply || replies.length > 0) &&
+          (!scenario.noDecisions ||
+            (!!meeting.knowledge?.topics.length &&
+              meeting.knowledge.topics.every(
+                (topic) => topic.decisions.length === 0,
+              ))) &&
           (!scenario.minutes ||
             (!!meeting.knowledge?.topics.length &&
               meeting.knowledge.topics.some((topic) =>
@@ -215,6 +264,15 @@ try {
         minutes: meeting.knowledge,
         calls,
         diagnostics: engine.store.diagnostics?.() ?? [],
+        document: {
+          markdown: meeting.summary,
+          state: meeting.summaryState,
+          revision: meeting.summaryRevision,
+        },
+        audioInputs: engine.store
+          .list("message")
+          .filter((m) => m.origin === "audio")
+          .map(({ text, stage, steps }) => ({ text, stage, steps })),
       };
       outputs.push(result);
       console.log(
@@ -223,6 +281,7 @@ try {
           pass: result.pass,
           rounds,
           replies,
+          audioInputs: result.audioInputs,
           topics: meeting.knowledge?.topics.map(
             ({ title, summary, decisions, openQuestions }) => ({
               title,

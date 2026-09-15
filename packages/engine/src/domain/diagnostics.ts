@@ -15,6 +15,20 @@ export interface Diagnostic extends DiagnosticContext {
 }
 
 const reasons: Record<string, string> = {
+  PLUGIN_DELIVERY_FAILED: "プラグインへのイベント配信に失敗しました。",
+  PLUGIN_REQUEST_FAILED: "プラグイン内でイベントの処理に失敗しました。",
+  PLUGIN_TIMEOUT: "プラグインの処理が制限時間内に完了しませんでした。",
+  PLUGIN_STOPPED: "処理中にプラグインが停止しました。",
+  PLUGIN_NOT_RUNNING: "配信先のプラグインが起動していません。",
+  DISCORD_MISSING_ACCESS: "Discordの配信先チャンネルにアクセスできません。",
+  DISCORD_MISSING_PERMISSIONS:
+    "Discordの配信先でBotの送信・編集権限が不足しています。",
+  DISCORD_UNKNOWN_CHANNEL: "Discordの配信先チャンネルが見つかりません。",
+  DISCORD_CANNOT_EDIT_MESSAGE:
+    "保存されたDiscordメッセージをこのBotで編集できません。",
+  DISCORD_INVALID_MESSAGE:
+    "Discordが配信用メッセージの形式を受け付けませんでした。",
+  DISCORD_RATE_LIMITED: "Discordの配信がレート制限に達しました。",
   COORDINATOR_CLOSED: "会議の会話処理は終了しています。",
   COORDINATOR_BUSY: "この会議の会話処理は実行中です。",
   COORDINATOR_ALREADY_OPEN: "この会議の会話処理は既に開かれています。",
@@ -24,6 +38,8 @@ const reasons: Record<string, string> = {
   COORDINATOR_NOT_STARTED: "会話APIへの送信前に処理が停止しました。",
   COORDINATOR_RESPONSE_UNCERTAIN:
     "会話APIの結果を確認できませんでした。会話状態を確認して再開してください。",
+  COORDINATOR_TRANSPORT_RETRYABLE:
+    "会話判断APIとの通信が中断しました。入力を保持して次の処理周期で再試行します。",
   COORDINATOR_RESPONSE_INCOMPLETE: "会話APIの応答が完了しませんでした。",
   INVALID_COORDINATOR_RESPONSE: "会話APIの応答が必要な形式を満たしていません。",
   COORDINATOR_SOURCE_REVALIDATION_REQUIRED:
@@ -140,5 +156,18 @@ export function describeError(value: unknown) {
                     : status
                       ? "OpenAI APIがリクエストを受け付けませんでした。"
                       : "処理に失敗しました。処理段階と関連IDを確認してください。";
-  return { type, code, cause, status, requestId, parameter, reason };
+  const providerErrorType =
+    typeof e.providerErrorType === "string" && types.has(e.providerErrorType)
+      ? e.providerErrorType
+      : undefined;
+  return {
+    type,
+    code,
+    cause,
+    status,
+    requestId,
+    parameter,
+    reason,
+    providerErrorType,
+  };
 }

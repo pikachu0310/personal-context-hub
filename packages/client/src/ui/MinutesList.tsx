@@ -1,15 +1,25 @@
 import { MinutesInspector } from "./MinutesInspector.js";
 import { Button, Text } from "@mantine/core";
 import { useCallback, useRef, useState, type ComponentProps } from "react";
-import type { MeetingView } from "@ido/common/contracts/api";
+import type {
+  MeetingView,
+  TranscriptPage,
+  TranscriptQuery,
+} from "@ido/common/contracts/api";
 import { MinutesEditor } from "./MinutesEditor.js";
 import { visibleMinutes } from "./minutes-list.js";
 
 type Props = Omit<ComponentProps<typeof MinutesEditor>, "meeting"> & {
   meetings: MeetingView[];
+  loadTranscript?: (query: TranscriptQuery) => Promise<TranscriptPage>;
 };
 
-export function MinutesList({ meetings, dirtyChanged, ...editor }: Props) {
+export function MinutesList({
+  meetings,
+  dirtyChanged,
+  loadTranscript,
+  ...editor
+}: Props) {
   const [selectedId, select] = useState<string>();
   const [pane, setPane] = useState("document");
   const [dirty, setDirty] = useState(false);
@@ -20,6 +30,11 @@ export function MinutesList({ meetings, dirtyChanged, ...editor }: Props) {
   if (current) lastSelected.current = current;
   const selected =
     current ?? (selectedId && dirty ? lastSelected.current : undefined);
+  const loadSelectedTranscript = useCallback(
+    (query: TranscriptQuery) =>
+      loadTranscript!({ ...query, meetingId: selected?.id }),
+    [loadTranscript, selected?.id],
+  );
   const changed = useCallback(
     (id: string, value: boolean) => {
       setDirty(value);
@@ -78,7 +93,11 @@ export function MinutesList({ meetings, dirtyChanged, ...editor }: Props) {
               {...editor}
             />
           </div>
-          <MinutesInspector key={selected.id} meetings={[selected]} />
+          <MinutesInspector
+            key={selected.id}
+            meetings={[selected]}
+            loadTranscript={loadTranscript ? loadSelectedTranscript : undefined}
+          />
         </div>
       </section>
     );

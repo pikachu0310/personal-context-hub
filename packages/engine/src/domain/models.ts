@@ -25,14 +25,7 @@ export interface Meeting extends MinutesMetadata {
   name: string;
   projectId?: string;
   summary: string;
-  messages: Array<{
-    id: string;
-    authorId: string;
-    text: string;
-    at: number;
-    stage: string;
-    errorId?: string;
-  }>;
+  messages: Array<Omit<Message, "meetingId">>;
 }
 
 export type ProcessingStep = "transcription" | "reply" | "minutes" | "delivery";

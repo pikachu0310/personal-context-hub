@@ -87,6 +87,15 @@ test("approved Client owns projects, invites participants, retries unknown resul
   assert.equal((await edited.json()).summaryRevision, 1);
   const staleMinutes = await updateMinutes(0, "stale");
   assert.equal((await staleMinutes.json()).error, "MINUTES_CONFLICT");
+  const emptyTranscript = await c.workspaceRequest<any>("project.transcript", {
+    projectId: "default",
+  });
+  assert.equal(emptyTranscript.total, 0);
+  assert.deepEqual(emptyTranscript.messages, []);
+  await assert.rejects(
+    c.workspaceRequest("project.transcript", { projectId: "private-project" }),
+    /PROJECT_INVITATION_REQUIRED/,
+  );
   const minutesSnapshot = await clients[1].workspaceRequest<any>(
     "project.snapshot",
     { projectId: "default" },

@@ -174,7 +174,10 @@ export interface CoordinatorFactory {
 export class CoordinatorDeliveryError extends Error {
   constructor(
     readonly code: string,
-    readonly delivery: "rejected" | "unknown",
+    // retryable is reserved for providers whose failed request cannot have
+    // performed tools or changed a remote conversation. It does not mean that
+    // the provider rejected the request or that no usage was billed.
+    readonly delivery: "rejected" | "unknown" | "retryable",
   ) {
     super(code);
     this.name = "CoordinatorDeliveryError";

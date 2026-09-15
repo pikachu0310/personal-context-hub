@@ -35,8 +35,11 @@ export class AppServerThread {
             approvalPolicy: options.approvalPolicy ?? "never",
             config: {
               web_search: options.webSearchMode ?? "disabled",
-              ...(options.modelReasoningEffort
-                ? { model_reasoning_effort: options.modelReasoningEffort }
+              ...((options.reasoningEffort ?? options.modelReasoningEffort)
+                ? {
+                    model_reasoning_effort:
+                      options.reasoningEffort ?? options.modelReasoningEffort,
+                  }
                 : {}),
               ...(options.disableShellTool
                 ? {
@@ -205,7 +208,10 @@ export class AppServerThread {
           !this.activeTurnId ||
           params.turnId !== this.activeTurnId ||
           params.namespace ||
-          !this.options.dynamicTools?.some((tool) => tool.name === params.tool)
+          !(
+            this.options.allowedDynamicToolNames ??
+            this.options.dynamicTools?.map((tool) => tool.name)
+          )?.includes(params.tool)
         )
           throw new Error("Tool call does not belong to this active turn");
         return this.options.onToolCall(params);

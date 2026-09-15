@@ -366,3 +366,91 @@ test("a member role change fences an explicit task already waiting for minutes",
   await pending;
   assert.equal(engine.store.list("task").length, 0);
 });
+
+test("event delivery diagnostics identify the plugin, event type and original safe cause", async (t) => {
+  const { engine } = await setup(t);
+  const plugin = engine.plugins.get("fixture");
+  plugin.running = true;
+  plugin.request = async () => {
+    throw new Error("DISCORD_MISSING_PERMISSIONS");
+  };
+  engine.plugins.publish({ type: "minutes", meetingId: "meeting", data: {} });
+  await new Promise((resolve) => setImmediate(resolve));
+  const entry = engine.store
+    .diagnostics()
+    .find((e) => e.source === "plugin:fixture")!;
+  assert.equal(entry.operation, "event.deliver");
+  assert.equal(entry.eventId, "minutes");
+  assert.equal(entry.meetingId, "meeting");
+  assert.equal(entry.error.code, "DISCORD_MISSING_PERMISSIONS");
+  assert.match(entry.error.reason, /権限/);
+});
+
+test("slow plugin publication coalesces snapshots and preserves the newest meeting state", async (t) => {
+  const { engine } = await setup(t);
+  const plugin = engine.plugins.get("fixture");
+  plugin.running = true;
+  const received: any[] = [];
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  plugin.request = async (_operation, input) => {
+    received.push(input?.event);
+    if (received.length === 1) await blocked;
+    return undefined as any;
+  };
+  for (let revision = 0; revision < 100; revision++)
+    engine.plugins.publish({
+      type: "transcript",
+      meetingId: "meeting",
+      data: { revision },
+    });
+  assert.equal(received.length, 1);
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    received.map((event) => event.data.revision),
+    [0, 99],
+  );
+  assert.equal(
+    engine.store
+      .diagnostics()
+      .filter((entry) => entry.source === "plugin:fixture").length,
+    0,
+  );
+});
+
+test("a failed snapshot does not discard its newer pending replacement", async (t) => {
+  const { engine } = await setup(t);
+  const plugin = engine.plugins.get("fixture");
+  plugin.running = true;
+  const received: any[] = [];
+  let fail!: (error: Error) => void;
+  const blocked = new Promise<never>((_resolve, reject) => {
+    fail = reject;
+  });
+  plugin.request = async (_operation, input) => {
+    received.push(input?.event);
+    if (received.length === 1) await blocked;
+    return undefined as any;
+  };
+  for (let revision = 0; revision < 2; revision++)
+    engine.plugins.publish({
+      type: "minutes",
+      meetingId: "meeting",
+      data: { revision },
+    });
+  fail(new Error("PLUGIN_TIMEOUT"));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    received.map((event) => event.data.revision),
+    [0, 1],
+  );
+  assert.equal(
+    engine.store
+      .diagnostics()
+      .find((entry) => entry.source === "plugin:fixture")?.error.code,
+    "PLUGIN_TIMEOUT",
+  );
+});

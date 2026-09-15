@@ -76,8 +76,6 @@ export class Tunnels {
         : provider === "cloudflare"
           ? config?.engineUrl
           : undefined;
-      if (engineUrl && !engineUrl.startsWith("https:"))
-        throw new HttpError(400, "PUBLIC_HTTPS_REQUIRED");
       if (provider === "cloudflare" && !engineUrl)
         throw new HttpError(400, "PUBLIC_URL_REQUIRED");
       if (!this.store.get("tunnel", provider)) {
@@ -110,7 +108,6 @@ export class Tunnels {
         if (message.type === "public-url") {
           try {
             const url = endpoint(message.url).origin;
-            if (!url.startsWith("https:")) throw new Error("HTTPS_REQUIRED");
             this.store.put("config", "public", { provider, engineUrl: url });
           } catch {
             this.error = "TUNNEL_URL_INVALID";
@@ -173,7 +170,6 @@ export class Tunnels {
       ["engine", "preview"].map(async (key) => {
         try {
           const url = endpoint(config.engineUrl);
-          if (url.protocol !== "https:") throw new Error("HTTPS_REQUIRED");
           const response = await fetch(
             url.origin + (key === "engine" ? "/health" : "/preview/"),
             { redirect: "error", signal: AbortSignal.timeout(10000) },
@@ -218,8 +214,8 @@ export class Tunnels {
     return {
       checks,
       websocket: websocket
-        ? "WSS protocol challenge received"
-        : "WSS connection failed",
+        ? "WebSocket protocol challenge received"
+        : "WebSocket connection failed",
       activity: "Confirm inside the plugin using a linked member",
       externalDevice: "Confirm from a different network",
     };

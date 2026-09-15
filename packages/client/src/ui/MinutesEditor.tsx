@@ -212,7 +212,10 @@ export function MinutesEditor({
       {draft === undefined ? (
         <MinutesMarkdown
           text={
-            meeting.summary || "会話が始まると、ここに議事録がまとまります。"
+            meeting.summary ||
+            ((meeting.messageCount ?? meeting.messages.length)
+              ? "議事録をまとめています。議題別の議事録や発言ログから会話を確認できます。"
+              : "会話が始まると、ここに議事録がまとまります。")
           }
           openTask={openTask}
         />

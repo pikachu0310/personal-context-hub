@@ -52,8 +52,12 @@ export function App() {
     window.addEventListener("beforeunload", leave);
     return () => window.removeEventListener("beforeunload", leave);
   }, []);
-  const [page, setPage] = useState<"overview" | "runs">();
-  const [selected, select] = useState<string>();
+  const [page, setPage] = useState<"overview" | "runs" | undefined>(() =>
+    new URL(location.href).searchParams.has("previewRun") ? "runs" : undefined,
+  );
+  const [selected, select] = useState<string | undefined>(
+    () => new URL(location.href).searchParams.get("previewRun") ?? undefined,
+  );
   const [selectedShared, selectShared] = useState<string>();
   const [query, search] = useState("");
   const [sidebar, showSidebar] = useState(true);
@@ -391,10 +395,14 @@ export function App() {
                     <button
                       disabled={!projectConnected}
                       className={`task-link ${projectView?.projectId === id && !projectView.taskId && !projectView.draft ? "selected" : ""}`}
-                      onClick={() => setProjectView({ projectId: id })}
+                      onClick={() => {
+                        setProjectView({ projectId: id });
+                        if (window.matchMedia("(max-width: 900px)").matches)
+                          showSidebar(false);
+                      }}
                     >
                       <Icon name="file" size={15} />
-                      <span>議事録</span>
+                      <span>会議・議事録</span>
                     </button>
                   )}
                   {Object.hasOwn(taskDrafts, id) && (

@@ -148,6 +148,7 @@ export class Client {
       )
       .map((mapping) => ({
         ...mapping,
+        slots: mapping.workspaceMode === "project" ? 1 : mapping.slots,
         network: isUnrestrictedAccess(mapping.accessMode) || mapping.network,
       }));
   }

@@ -85,6 +85,32 @@ test("definitely rejected provider input stays prepared until a later explicit f
   await data.inbox.close();
 });
 
+test("a stateless retryable failure waits for the next flush and applies the batch once", async () => {
+  let available = false;
+  const data = fixture({
+    run: async () => {
+      if (!available)
+        throw Object.assign(new Error("COORDINATOR_TRANSPORT_RETRYABLE"), {
+          delivery: "retryable",
+        });
+      return "response";
+    },
+  });
+  await data.inbox.submit([event("kept-input")]);
+  await data.inbox.flush();
+  await new Promise(setImmediate);
+  assert.equal(data.inbox.uncertain, false);
+  assert.equal(data.inbox.snapshot().active.status, "prepared");
+  assert.equal(data.calls.length, 1);
+  assert.equal(data.applied.length, 0);
+  available = true;
+  await data.inbox.flush();
+  assert.equal(data.calls.length, 2);
+  assert.equal(data.applied.length, 1);
+  assert.deepEqual(data.inbox.snapshot().receipts, ["kept-input"]);
+  await data.inbox.close();
+});
+
 test("normal input waits for the active coordinator turn and drains afterward", async () => {
   const first = deferred();
   const { inbox, calls, steers, applied } = fixture({
