@@ -203,15 +203,19 @@ export class AppServerCodex extends EventEmitter {
     this.child.stdin.write(JSON.stringify(message) + "\n");
   }
 
-  requestRaw(method, params) {
+  /** @param {number | null} timeoutMs */
+  requestRaw(method, params, timeoutMs = this.requestTimeoutMs) {
     return new Promise((resolve, reject) => {
       const id = ++this.sequence;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        const error = new Error(`Codex request timed out: ${method}`);
-        error.code = "CODEX_RPC_TIMEOUT";
-        reject(error);
-      }, this.requestTimeoutMs);
+      const timer =
+        timeoutMs === null
+          ? undefined
+          : setTimeout(() => {
+              this.pending.delete(id);
+              const error = new Error(`Codex request timed out: ${method}`);
+              error.code = "CODEX_RPC_TIMEOUT";
+              reject(error);
+            }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       try {
         this.send({ id, method, params });
@@ -223,9 +227,10 @@ export class AppServerCodex extends EventEmitter {
     });
   }
 
-  async request(method, params) {
+  /** @param {number | null} timeoutMs */
+  async request(method, params, timeoutMs = this.requestTimeoutMs) {
     await this.connect();
-    return this.requestRaw(method, params);
+    return this.requestRaw(method, params, timeoutMs);
   }
 
   fail(error) {

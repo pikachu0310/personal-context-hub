@@ -146,10 +146,14 @@ export async function execute(
     const options = {
       ...(board || contextEnabled
         ? {
-            dynamicTools: [
-              ...(board ? taskBoardTools : []),
-              ...(knowledgeAvailable ? meetingContextTools : []),
-            ],
+            ...(board || knowledgeAvailable
+              ? {
+                  dynamicTools: [
+                    ...(board ? taskBoardTools : []),
+                    ...(knowledgeAvailable ? meetingContextTools : []),
+                  ],
+                }
+              : {}),
             // A resumed thread may already know these tools even when an older
             // Client did not persist the registration flag. Do not register new
             // tools on that thread, but keep authorized existing calls working.

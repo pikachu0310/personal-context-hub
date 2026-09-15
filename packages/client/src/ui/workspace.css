@@ -1644,7 +1644,6 @@ button {
   border-radius: 2px;
   background: var(--mantine-color-orange-5);
 }
-.project-menu,
 .task-row > .icon-button {
   opacity: 0;
   pointer-events: none;

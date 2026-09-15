@@ -286,6 +286,10 @@ export class WorkspaceLifecycle {
   }
   private purgeTask(task: Task) {
     this.store.remove("task-detail", task.id);
+    this.store.remove("implementation-status", task.id);
+    for (const entry of this.store.entries())
+      if (entry.kind === "implementation" && entry.value?.taskId === task.id)
+        this.store.remove(entry.kind, entry.id);
     this.store.remove("task-board", task.id);
     for (const thread of this.store.list<BoardThread>("task-board")) {
       const retained = thread.posts.filter(

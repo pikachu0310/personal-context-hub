@@ -38,6 +38,7 @@ export async function buildPackages(names = runtimePackages) {
         "prism-media",
         "opusscript",
         "@openai/codex",
+        "playwright",
         "@anthropic-ai/claude-agent-sdk",
         "zod",
       ],

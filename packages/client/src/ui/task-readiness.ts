@@ -1,3 +1,4 @@
+import { executionSlots } from "@ido/common/contracts/work";
 import type { ClientState } from "@ido/common/contracts/api";
 import { isUnrestrictedAccess } from "@ido/common/contracts/work";
 export function taskReadiness(
@@ -56,9 +57,11 @@ export function taskReadiness(
     ["assigned", "running", "interrupted"].includes(r.state),
   );
   if (
-    occupied.length >= state.settings.slots ||
+    occupied.length >= executionSlots(state.settings.slots, 1) ||
     occupied.filter((r) => r.task.projectId === task.projectId).length >=
-      (mapping.workspaceMode === "project" ? 1 : mapping.slots)
+      (mapping.workspaceMode === "project"
+        ? 1
+        : executionSlots(mapping.slots, 1))
   )
     return {
       reason: "capacity",

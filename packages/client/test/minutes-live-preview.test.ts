@@ -1,3 +1,4 @@
+import { ensureSyntaxTree } from "@codemirror/language";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EditorState, EditorSelection } from "@codemirror/state";
@@ -17,6 +18,8 @@ const stateAt = (line: number) => {
     .state;
 };
 function ranges(state: EditorState) {
+  // Finish parsing explicitly; the background parser budget can expire under parallel CI load.
+  ensureSyntaxTree(state, state.doc.length, 1000);
   const result: Array<{ from: number; to: number; spec: any }> = [];
   minutesDecorations(state, () => {}).between(
     0,
