@@ -196,12 +196,14 @@ export function LiveMeeting({
                         .filter(([, step]) => step.state === "failed")
                         .map(
                           ([name]) =>
-                            ({
-                              transcription: "文字起こし",
-                              reply: "応答",
-                              minutes: "議事録",
-                              delivery: "返答の配送",
-                            })[name] ?? "発言の処理",
+                            (
+                              ({
+                                transcription: "文字起こし",
+                                reply: "応答",
+                                minutes: "議事録",
+                                delivery: "返答の配送",
+                              }) as Record<string, string>
+                            )[name] ?? "発言の処理",
                         )
                         .join("・")}
                       でエラーが発生しています。
