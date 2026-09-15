@@ -12,6 +12,7 @@ import { Engine } from "../packages/engine/src/bootstrap/engine.ts";
 import { Client } from "../packages/client/src/bootstrap/client.ts";
 import { createOpenAICoordinatorFactory } from "../packages/engine/src/adapters/openai/coordinator.ts";
 import { renderPublication } from "../packages/plugin-discord/src/output/render.ts";
+import { wrapPcmAsWav } from "../packages/engine/src/input/audio/signal.mjs";
 
 if (
   process.env.IDO_LIVE_EVAL !== "1" ||
@@ -188,11 +189,14 @@ try {
     model: "gpt-4o-mini-tts",
     voice: "alloy",
     input: spoken,
-    response_format: "wav",
+    response_format: "pcm",
   });
   const started = Date.now();
   await input("b", {
-    audio: Buffer.from(await audio.arrayBuffer()).toString("base64"),
+    audio: wrapPcmAsWav(Buffer.from(await audio.arrayBuffer()), {
+      sampleRate: 24_000,
+      channels: 1,
+    }).toString("base64"),
   });
   await engine.conversation.coordinated.flush("meeting");
   engine.flush();

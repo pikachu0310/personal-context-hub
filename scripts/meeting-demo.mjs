@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile, symlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import OpenAI from "openai";
+import { wrapPcmAsWav } from "../packages/engine/src/input/audio/signal.mjs";
 import { Engine } from "../packages/engine/src/bootstrap/engine.ts";
 import { Client } from "../packages/client/src/bootstrap/client.ts";
 import { createOpenAICoordinatorFactory } from "../packages/engine/src/adapters/openai/coordinator.ts";
@@ -208,13 +209,16 @@ try {
     const audio = await api.audio.speech.create({
       model: "gpt-4o-mini-tts",
       voice: "alloy",
-      response_format: "wav",
+      response_format: "pcm",
       input:
         "井戸ボット、今話した二つの移動方式を同じ画面で触って比べられるモックを作ってください。前や左右に動く操作も付けてください。",
     });
     const started = Date.now();
     await input("b", {
-      audio: Buffer.from(await audio.arrayBuffer()).toString("base64"),
+      audio: wrapPcmAsWav(Buffer.from(await audio.arrayBuffer()), {
+        sampleRate: 24_000,
+        channels: 1,
+      }).toString("base64"),
     });
     await engine.conversation.coordinated.flush("meeting");
     engine.flush();
