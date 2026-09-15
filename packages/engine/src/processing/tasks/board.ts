@@ -2,6 +2,9 @@ import { id, type Task } from "@ido/common/contracts/protocol";
 import type { Repository } from "../../ports/repository.js";
 
 interface Post {
+  authorKind?: "human" | "agent";
+  authorName?: string;
+  external?: boolean;
   id: number;
   authorTaskId: string;
   createdAt: number;
@@ -18,6 +21,25 @@ export interface BoardThread {
 }
 const finished = (task: Task) =>
   ["completed", "failed", "cancelled"].includes(task.state);
+export function projectDiscussion(projectId: string): Task {
+  const id = `discussion-${projectId}`;
+  return {
+    id,
+    projectId,
+    runId: id,
+    requestId: id,
+    meetingId: id,
+    authorId: "project",
+    text: "相談・共有",
+    title: "相談・共有",
+    state: "running",
+    revision: 1,
+    network: false,
+    createdAt: 0,
+    updatedAt: 0,
+    history: [],
+  };
+}
 // Only caller-fixable validation messages may cross the Client boundary.
 export class BoardInputError extends Error {}
 
@@ -73,6 +95,13 @@ export class TaskBoard {
     );
   }
   private target(author: Task, taskId: unknown) {
+    if (
+      taskId === undefined &&
+      author.id === projectDiscussion(author.projectId).id
+    )
+      return projectDiscussion(author.projectId);
+    if (taskId === projectDiscussion(author.projectId).id)
+      return projectDiscussion(author.projectId);
     const task = this.store.get<Task>(
       "task",
       taskId === undefined ? author.id : id(taskId),
@@ -87,6 +116,8 @@ export class TaskBoard {
     input = Object.fromEntries(
       Object.entries(input).filter(([, value]) => value !== null),
     );
+    if (input.scope === "project")
+      input = { ...input, taskId: projectDiscussion(author.projectId).id };
     const limit = integer(input.limit, 10, 10, "limit", 1);
     if (
       input.query !== undefined &&
@@ -170,6 +201,7 @@ export class TaskBoard {
         : integer(input.replyTo, 0, Number.MAX_SAFE_INTEGER, "replyTo", 1);
     const matches = thread.posts.filter(
       (post) =>
+        (input.before === undefined || post.id < integer(input.before, 0)) &&
         (after === undefined || post.id > after) &&
         (replyTo === undefined || post.replyTo === replyTo) &&
         (!query || post.body.toLowerCase().includes(query)),
@@ -187,11 +219,22 @@ export class TaskBoard {
       nextAfter: page.at(-1)?.id ?? after ?? 0,
     };
   }
-  post(author: Task, input: Record<string, unknown>, requestKey: string) {
+  post(
+    author: Task,
+    input: Record<string, unknown>,
+    requestKey: string,
+    externalAuthor?: string,
+    source: "app" | "discord" = "discord",
+  ) {
     const content = body(input.body, 16000);
     const key = body(requestKey, 800);
     return this.store.transaction(() => {
-      const task = this.target(author, input.taskId);
+      const task = this.target(
+        author,
+        input.scope === "project"
+          ? projectDiscussion(author.projectId).id
+          : input.taskId,
+      );
       const thread = this.thread(task);
       const replyTo =
         input.replyTo === undefined ? undefined : integer(input.replyTo, 0);
@@ -209,6 +252,16 @@ export class TaskBoard {
       )
         throw new Error("BOARD_REPLY_NOT_FOUND");
       const post = {
+        authorKind:
+          externalAuthor === undefined
+            ? ("agent" as const)
+            : ("human" as const),
+        authorName:
+          externalAuthor ??
+          (author.clientId
+            ? `${this.store.get<{ name?: string; profile?: { name?: string } }>("device", author.clientId)?.profile?.name ?? this.store.get<{ name?: string }>("device", author.clientId)?.name ?? "Agent"} · ${author.agent ?? "codex"}`
+            : undefined),
+        external: externalAuthor !== undefined && source === "discord",
         id: ++thread.sequence,
         authorTaskId: author.id,
         createdAt: Date.now(),

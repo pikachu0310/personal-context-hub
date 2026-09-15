@@ -36,6 +36,7 @@ export async function checkClaudeLogin(client: Client) {
     client.claudeLoginStatus =
       "認証を確認できません。公式ログインを完了してください。";
   }
+  if (client.connected) client.ready();
 }
 export function officialClaudeLoginUrl(output: string) {
   for (const match of stripVTControlCharacters(output).matchAll(
@@ -90,6 +91,7 @@ export function startClaudeLogin(client: Client) {
         ? "authenticated"
         : "ログイン未完了。公式Claude Codeで認証してから再確認してください。";
     if (client.login === child) client.login = undefined;
+    if (client.connected) client.ready();
   };
   child.once("error", () => finish(1));
   child.once("close", finish);

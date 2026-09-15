@@ -39,6 +39,7 @@ export async function buildPackages(names = runtimePackages) {
         "opusscript",
         "@openai/codex",
         "@anthropic-ai/claude-agent-sdk",
+        "zod",
       ],
     });
     for (const input of Object.keys(result.metafile.inputs)) {

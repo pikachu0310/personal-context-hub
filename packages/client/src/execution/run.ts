@@ -1,3 +1,4 @@
+import { taskProgress } from "@ido/common/contracts/api";
 import { randomUUID } from "node:crypto";
 import { mkdir, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -32,14 +33,17 @@ export async function execute(
 ) {
   const repository = await realpath(mapping.directory);
   if (value.state === "cancelled") return;
+  const sharedTask =
+    value.origin === "local" ? await this.sharedTask?.(value) : value.task;
+  // Registration can await the Engine while a stop arrives locally.
+  if (["cancelled"].includes(value.state) || this.deletedTasks[value.task.id])
+    return;
   const boardAvailable =
     this.board.supported &&
-    value.origin !== "local" &&
-    value.agent !== "claude" &&
+    !!sharedTask &&
     (!value.threadId || value.boardToolsEnabled);
   const knowledgeAvailable =
-    value.origin !== "local" &&
-    value.agent !== "claude" &&
+    !!sharedTask &&
     !!this.knowledge &&
     (!value.threadId || value.knowledgeToolsEnabled);
   const createRuntime =
@@ -74,7 +78,7 @@ export async function execute(
   const abort = new AbortController();
   const active = { thread: undefined as any, codex, abort };
   const board = boardAvailable
-    ? this.board.forTask(value.task, abort.signal)
+    ? this.board.forTask(sharedTask!, abort.signal)
     : undefined;
   let stopBoardWatch = () => {};
   this.active.set(value.task.runId, active);
@@ -145,7 +149,7 @@ export async function execute(
             onToolCall: (params: any) =>
               knowledgeAvailable &&
               meetingContextTools.some((tool) => tool.name === params.tool)
-                ? contextToolHandler(this, value)(params)
+                ? contextToolHandler(this, value, sharedTask)(params)
                 : board
                   ? callTaskBoard(board, params)
                   : Promise.reject(new Error("Unknown task tool")),
@@ -279,7 +283,7 @@ export async function execute(
           abort.signal.throwIfAborted();
           throw new Error("CODEX_TURN_FAILED");
         }
-        value.progress = event.type;
+        value.progress = taskProgress(undefined, value.state);
         this.report(value);
       }
       await this.steering.get(value.task.runId);
@@ -313,6 +317,7 @@ export async function execute(
             )
           ? "interrupted"
           : "completed";
+      value.progress = taskProgress(undefined, value.state);
       recordActivity(value, {
         id: "terminal",
         kind: "status",

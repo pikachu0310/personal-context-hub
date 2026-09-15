@@ -43,6 +43,7 @@ test("local task sharing recovers lost responses, creates one forum thread and r
     });
   }
   store.put("config", "discord", {
+    guildId: "guild",
     projectId: project.id,
     issueForumChannelId: "forum",
   });

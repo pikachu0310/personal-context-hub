@@ -13,6 +13,30 @@ import {
   requiresPolicySupport,
   restrictExecutionPolicy,
 } from "@ido/common/contracts/work";
+export function supportsTask(device: Device, task: Task) {
+  if (
+    (task.model ||
+      task.reasoningEffort ||
+      task.progressMode ||
+      task.agent === "claude") &&
+    device.profile?.taskOptionsVersion !== 1
+  )
+    return false;
+  return task.agent === "claude"
+    ? device.profile?.claudeConnected === true &&
+        device.grants.some(
+          (g) => g.projectId === task.projectId && g.agents?.includes("claude"),
+        )
+    : task.agent === "codex"
+      ? device.codexConnected === true
+      : device.codexConnected === true ||
+        (device.profile?.taskOptionsVersion === 1 &&
+          device.profile?.claudeConnected === true &&
+          device.grants.some(
+            (g) =>
+              g.projectId === task.projectId && g.agents?.includes("claude"),
+          ));
+}
 export class Scheduler {
   constructor(readonly repository: Repository) {}
   schedule(online: Set<string>) {
@@ -20,9 +44,7 @@ export class Scheduler {
       const tasks = this.repository.list<Task>("task");
       const devices = this.repository
         .list<Device>("device")
-        .filter(
-          (d) => online.has(d.id) && !d.revoked && d.codexConnected === true,
-        );
+        .filter((d) => online.has(d.id) && !d.revoked);
       for (const task of tasks
         .filter(
           (t) =>
@@ -46,6 +68,7 @@ export class Scheduler {
           ).length;
         const eligible = devices.filter(
           (d) =>
+            supportsTask(d, task) &&
             (!requiresPolicySupport(
               restrictExecutionPolicy(
                 task.executionPolicy,
@@ -74,6 +97,7 @@ export class Scheduler {
         );
         const device = eligible[0];
         if (!device) continue;
+        task.agent ??= device.codexConnected ? "codex" : "claude";
         addParticipant(this.repository, task, device.id);
         task.clientId = device.id;
         task.assignedAt = Date.now();

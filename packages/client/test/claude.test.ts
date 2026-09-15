@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { taskBoardTools } from "../src/execution/task-board.mjs";
+import { meetingContextTools } from "../src/execution/knowledge.js";
 import test from "node:test";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -171,6 +175,81 @@ test("Claude adapter normalizes public events, preserves sessions and queues liv
     1,
   );
   assert.ok(!JSON.stringify(events).includes("private"));
+  await runtime.close();
+});
+
+test("Claude exposes scoped board and knowledge tools over an in-process MCP server", async () => {
+  const calls: any[] = [];
+  const runtime = new ClaudeRuntime(
+    { env: {}, onApprovalRequest: async () => ({ decision: "decline" }) },
+    (({ options }: any) => ({
+      close() {},
+      async *[Symbol.asyncIterator]() {
+        yield { type: "system", subtype: "init", session_id: "shared-session" };
+        const [clientTransport, serverTransport] =
+          InMemoryTransport.createLinkedPair();
+        const peer = new McpClient({ name: "fixture", version: "1" });
+        await options.mcpServers.ido.instance.connect(serverTransport);
+        await peer.connect(clientTransport);
+        try {
+          assert.equal((await peer.listTools()).tools.length, 4);
+          assert.equal(
+            (await options.canUseTool("mcp__ido__board_read", {})).behavior,
+            "allow",
+          );
+          assert.equal(
+            (await options.canUseTool("mcp__untrusted__board_read", {}))
+              .behavior,
+            "deny",
+          );
+          await peer.callTool({
+            name: "board_post",
+            arguments: { scope: "project", body: "Finding" },
+          });
+          await peer.callTool({
+            name: "meeting_context_search",
+            arguments: { query: "Decision" },
+          });
+          const rejected = await peer.callTool({
+            name: "board_post",
+            arguments: { body: 42 },
+          });
+          assert.equal(rejected.isError, true);
+        } finally {
+          await peer.close();
+          await options.mcpServers.ido.instance.close();
+        }
+        yield {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: "Done",
+          session_id: "shared-session",
+        };
+      },
+    })) as any,
+  );
+  const thread = runtime.startThread({
+    workingDirectory: tmpdir(),
+    sandboxMode: "read-only",
+    networkAccessEnabled: false,
+    dynamicTools: [...taskBoardTools, ...meetingContextTools],
+    onToolCall: async (input) => {
+      calls.push(input);
+      return { ok: true };
+    },
+  });
+  for await (const _event of (
+    await thread.runStreamed("Read context", {
+      signal: new AbortController().signal,
+    })
+  ).events) {
+    /* consume */
+  }
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].threadId, "shared-session");
+  assert.equal(calls[0].arguments.scope, "project");
+  assert.equal(calls[1].tool, "meeting_context_search");
   await runtime.close();
 });
 

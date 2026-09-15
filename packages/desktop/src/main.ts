@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "../../client/src/bootstrap/client.js";
 import { dataDirectory } from "@ido/common/runtime/platform";
 import { lifetime } from "@ido/common/runtime/lifecycle";
+import { checkUpdate, releasePage } from "./updates.js";
 import {
   externalLink,
   localSender,
@@ -197,6 +198,26 @@ else {
       window.webContents.session.on("will-download", (event) =>
         event.preventDefault(),
       );
+      ipcMain.handle("ido:check-update", async (event) => {
+        if (
+          !window ||
+          event.sender !== window.webContents ||
+          event.senderFrame !== window.webContents.mainFrame ||
+          !trusted(event.senderFrame.url)
+        )
+          throw new Error("UNTRUSTED_SENDER");
+        return checkUpdate(app.getVersion());
+      });
+      ipcMain.handle("ido:open-releases", async (event) => {
+        if (
+          !window ||
+          event.sender !== window.webContents ||
+          event.senderFrame !== window.webContents.mainFrame ||
+          !trusted(event.senderFrame.url)
+        )
+          throw new Error("UNTRUSTED_SENDER");
+        await shell.openExternal(releasePage);
+      });
       ipcMain.handle("ido:pick-directory", async (event) => {
         if (
           !window ||
@@ -205,8 +226,6 @@ else {
           !trusted(event.senderFrame.url)
         )
           throw new Error("UNTRUSTED_SENDER");
-        if (client?.allow || client?.executor.active.size)
-          throw new Error("PAUSE_BEFORE_EDITING");
         const result = await dialog.showOpenDialog(window, {
           title: "Git作業フォルダーを選択",
           properties: ["openDirectory"],

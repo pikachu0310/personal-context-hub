@@ -64,10 +64,14 @@ try {
   );
   const packaged = process.argv[2];
   const env = { ...process.env, IDO_DATA_DIR: directory };
+  const launchArgs = [
+    ...(packaged ? [] : [resolve(".ido-build/desktop/app")]),
+    `--user-data-dir=${join(directory, "electron-profile")}`,
+  ];
   delete env.ELECTRON_RUN_AS_NODE;
   app = await electron.launch({
     executablePath: packaged ? resolve(packaged) : require("electron"),
-    args: packaged ? [] : [resolve(".ido-build/desktop/app")],
+    args: launchArgs,
     env,
   });
   const page = await app.firstWindow();
@@ -86,6 +90,24 @@ try {
   assert.equal(
     await page.evaluate(() => typeof globalThis.idoDesktop?.pickDirectory),
     "function",
+  );
+  await app.evaluate(() => {
+    const request = globalThis.fetch;
+    globalThis.fetch = (input, options) =>
+      String(input) ===
+      "https://api.github.com/repos/pikachu0310/personal-context-hub-discord-voice/releases/latest"
+        ? Promise.resolve(
+            Response.json({
+              tag_name: "v9.0.0",
+              draft: false,
+              prerelease: false,
+            }),
+          )
+        : request(input, options);
+  });
+  assert.equal(
+    (await page.evaluate(() => globalThis.idoDesktop.checkUpdate())).status,
+    "available",
   );
   assert.match(await page.locator("body").innerText(), /PID \d+/);
   await app.evaluate(({ app }) =>
@@ -210,7 +232,7 @@ try {
   browserClient = undefined;
   app = await electron.launch({
     executablePath: packaged ? resolve(packaged) : require("electron"),
-    args: packaged ? [] : [resolve(".ido-build/desktop/app")],
+    args: launchArgs,
     env,
   });
   const reopened = await app.firstWindow();

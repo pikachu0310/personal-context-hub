@@ -24,7 +24,7 @@ export function NewLocalTask({
 }) {
   const [directory, setDirectory] = useState(initialDirectory ?? "");
   const [detailsOpen, setDetailsOpen] = useState(!initialDirectory);
-  const [shareDiscord, setShareDiscord] = useState(true);
+  const [shareDiscord, setShareDiscord] = useState(projects.length > 0);
   const [shareProjectId, setShareProjectId] = useState(
     initialProjectId ?? projects[0]?.id ?? "",
   );
@@ -224,6 +224,11 @@ export function NewLocalTask({
             />
           )}
         </div>
+        {shareDiscord && (
+          <p className="muted">
+            共有先の参加者は、会話・実行ログ・差分・実行環境・ソースを閲覧できます。
+          </p>
+        )}
       </details>
       <div className="composer-dock">
         <form
@@ -341,7 +346,10 @@ export function NewLocalTask({
           </label>
         )}
         <p className="composer-footnote">
-          Enterで送信 · Shift + Enterで改行<span>行動ログはこのPCに保存</span>
+          Enterで送信 · Shift + Enterで改行
+          <span>
+            {shareDiscord ? "履歴は共有先にも保存" : "行動ログはこのPCに保存"}
+          </span>
         </p>
         {(modelError || !available.length) && (
           <div role="status">

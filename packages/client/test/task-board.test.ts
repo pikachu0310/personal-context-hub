@@ -82,6 +82,50 @@ test("board reads normalize unused arguments before sending to older engines wit
   assert.equal(attempts, 1);
 });
 
+test("stopping during local sharing registration never starts the agent afterwards", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ido-stop-registration-"));
+  let started = 0;
+  const executor = new Executor(directory, () => {}, (() => {
+    started++;
+    throw new Error("MUST_NOT_START");
+  }) as any);
+  t.after(async () => {
+    await executor.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  await executor.load();
+  let entered!: () => void, finish!: () => void;
+  const entering = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  executor.sharedTask = async (value) => {
+    entered();
+    await pending;
+    return value.task;
+  };
+  const value: Run = {
+    task: task(),
+    directory,
+    origin: "local",
+    state: "assigned",
+  };
+  executor.runs.run = value;
+  const executing = executor.execute(
+    value,
+    { projectId: "project", directory, network: false, slots: 1 },
+    false,
+  );
+  await entering;
+  value.state = "cancelled";
+  finish();
+  await executing;
+  assert.equal(started, 0);
+  assert.equal(executor.active.size, 0);
+});
+
 test("Codex receives board tools for new engine work and retains them on resume without granting them to local tasks", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ido-client-board-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -201,12 +245,17 @@ test("Codex receives board tools for new engine work and retains them on resume 
   await restarted.close();
 });
 
-test("board requests reject on disconnection and notices coalesce without peer text or idle wakeups", async () => {
+test("board requests reject on disconnection and notices coalesce without peer text or idle wakeups", async (t) => {
   const sent: Command[] = [];
   const connection = new TaskBoardConnection((frame) => sent.push(frame));
   connection.supported = true;
   const controller = new AbortController();
   const board = connection.forTask(task(), controller.signal);
+  await assert.rejects(
+    board.post({ scope: "project", body: "Discussion" }, "old-engine"),
+    /ENGINE_UPDATE/,
+  );
+  assert.equal(sent.length, 0);
   let notices = 0;
   const stop = watchTaskBoard(
     board,
@@ -218,6 +267,17 @@ test("board requests reject on disconnection and notices coalesce without peer t
     },
     { delayMs: 2 },
   );
+  t.after(() => {
+    stop();
+    controller.abort();
+    connection.close();
+  });
+  for (const frame of sent)
+    connection.receive({
+      ...frame,
+      type: "board.result",
+      result: { posts: [] },
+    });
   connection.receive({
     v: 1,
     type: "board.changed",
@@ -237,7 +297,7 @@ test("board requests reject on disconnection and notices coalesce without peer t
   assert.equal(notices, 1);
   const pending = board.read({});
   connection.receive({
-    ...sent[0],
+    ...sent.at(-1)!,
     type: "board.result",
     runId: "wrong",
     result: {},

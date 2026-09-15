@@ -1966,3 +1966,55 @@ button {
     transition: none;
   }
 }
+.shared-conversation-panel {
+  margin: 20px 0;
+  border-block: 1px solid var(--mantine-color-dark-4, #383838);
+  padding: 14px 0;
+}
+.shared-conversation-panel > summary {
+  cursor: pointer;
+}
+.shared-discussion {
+  width: 100%;
+  min-width: 0;
+}
+.shared-discussion > p,
+.shared-discussion small {
+  color: var(--mantine-color-dimmed, #999);
+  font-size: 13px;
+}
+.shared-discussion article {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--workspace-line);
+  overflow-wrap: anywhere;
+}
+.shared-discussion form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+.shared-discussion textarea {
+  width: 100%;
+  min-height: 100px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--workspace-border);
+  border-radius: 12px;
+  color: inherit;
+  background: var(--workspace-soft);
+  font: inherit;
+}
+.shared-discussion button {
+  border: 1px solid var(--workspace-border);
+  border-radius: 8px;
+  background: var(--workspace-soft);
+  color: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.shared-discussion button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
