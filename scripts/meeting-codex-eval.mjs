@@ -20,6 +20,7 @@ if (process.env.IDO_LIVE_EVAL !== "1" || !process.env.IDO_EVAL_AUTH_FILE)
     "Set IDO_LIVE_EVAL=1 and IDO_EVAL_AUTH_FILE to an existing Codex auth file.",
   );
 const root = await mkdtemp(join(tmpdir(), "ido-meeting-codex-"));
+const legacy = process.env.IDO_EVAL_LEGACY_CONTEXT === "1";
 const repository = join(root, "repository"),
   home = join(root, "client", "codex");
 await mkdir(repository);
@@ -32,7 +33,7 @@ await writeFile(
 );
 await writeFile(
   join(repository, "AGENTS.md"),
-  "This is an isolated integration fixture. Use meeting_context_search and meeting_context_read to retrieve the current agreed color. Only write color.txt. Do not create agents, commit, run tests, use the network or modify other files.\n",
+  `This is an isolated integration fixture. ${legacy ? "Read the latest meeting context supplied with each request to find the currently agreed color." : "Use meeting_context_search and meeting_context_read to retrieve the current agreed color."} Only write color.txt. Do not create agents, commit, run tests, use the network or modify other files.\n`,
 );
 execFileSync("git", ["init", "-q", repository]);
 const store = new Store(join(root, "engine"));
@@ -94,6 +95,7 @@ executor.knowledge = async (task, input) => {
   return knowledge.search(task.projectId, input);
 };
 const value = {
+  ...(legacy ? { meetingToolsEnabled: false, boardToolsEnabled: false } : {}),
   directory: repository,
   state: "assigned",
   task: {
@@ -137,12 +139,17 @@ try {
     (await readFile(join(repository, "color.txt"), "utf8")).trim(),
     "green",
   );
-  assert.ok(calls.some((call) => call.input.sourceIds?.includes("a")));
+  assert.ok(
+    legacy
+      ? calls.length === 1
+      : calls.some((call) => call.input.sourceIds?.includes("a")),
+  );
   const threadId = value.threadId,
     model = value.model;
   console.log(
     JSON.stringify({
       stage: "created",
+      legacyContext: legacy,
       model,
       effort: value.modelReasoningEffort,
       contextCalls: calls.length,
@@ -162,7 +169,8 @@ try {
   assert.equal(value.model, model);
   assert.ok(
     calls.some(
-      (call) => call.round === 2 && call.input.sourceIds?.includes("b"),
+      (call) =>
+        call.round === 2 && (legacy || call.input.sourceIds?.includes("b")),
     ),
   );
   console.log(
