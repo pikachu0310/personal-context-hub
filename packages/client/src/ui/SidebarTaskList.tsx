@@ -36,6 +36,20 @@ export function SidebarTaskList({
         const { task, run } = item;
         const title = sidebarTaskTitle(item);
         const indicator = taskIndicator(item, seen[taskReadKey(scope, item)]);
+        const active = [
+          "running",
+          "in_progress",
+          "assigned",
+          "queued",
+        ].includes(sidebarTaskState(item));
+        const waiting =
+          active &&
+          run &&
+          state.approvals.some((approval) => approval.runId === run.task.runId)
+            ? "承認待ち"
+            : active && run?.phase === "awaiting-plan"
+              ? "計画の確認待ち"
+              : undefined;
         const menuTask = state.projectTasks?.find(
           (candidate) => candidate.id === task.id,
         );
@@ -54,7 +68,7 @@ export function SidebarTaskList({
               className={`task-link ${selected === task.runId ? "selected" : ""}`}
               disabled={!connected && run?.origin !== "local"}
               aria-current={selected === task.runId ? "page" : undefined}
-              title={`${title} · ${location} · ${stateLabel(sidebarTaskState(item))}`}
+              title={`${title} · ${location} · ${waiting ?? stateLabel(sidebarTaskState(item))}`}
               onClick={() => select(item)}
             >
               <span className="task-title">
@@ -68,13 +82,14 @@ export function SidebarTaskList({
               </span>
               <TaskAvatars state={state} task={task} local={!!run} />
               <span className="task-indicator-slot">
-                {indicator && (
+                {(waiting || indicator) && (
                   <span
                     role="img"
                     aria-label={
-                      indicator === "running" ? "実行中" : "未確認の結果"
+                      waiting ??
+                      (indicator === "running" ? "実行中" : "未確認の結果")
                     }
-                    className={`task-indicator ${indicator}`}
+                    className={`task-indicator ${waiting ? "waiting" : indicator}`}
                   />
                 )}
               </span>

@@ -1638,6 +1638,12 @@ button {
   border-radius: 50%;
   background: var(--workspace-focus);
 }
+.task-indicator.waiting {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--mantine-color-orange-5);
+}
 .project-menu,
 .task-row > .icon-button {
   opacity: 0;
