@@ -233,7 +233,7 @@ export function Setup({
                 allowDeselect={false}
                 onChange={(value) => setProvider(value!)}
                 data={[
-                  { value: "manual", label: "既存のHTTPS URL" },
+                  { value: "manual", label: "既存のHTTP / HTTPS URL" },
                   { value: "ngrok", label: "ngrokで公開" },
                   { value: "cloudflare", label: "Cloudflareで公開" },
                 ]}
@@ -245,7 +245,7 @@ export function Setup({
                   fields={[
                     {
                       key: "engineUrl",
-                      label: "公開HTTPS URL",
+                      label: "公開URL（HTTP / HTTPS）",
                       placeholder: "https://ido.example.com",
                     },
                   ]}
@@ -278,7 +278,7 @@ export function Setup({
                       ? [
                           {
                             key: "engineUrl",
-                            label: "公開HTTPS URL",
+                            label: "公開URL（HTTP / HTTPS）",
                             placeholder: "https://ido.example.com",
                           },
                         ]

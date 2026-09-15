@@ -180,14 +180,8 @@ export function endpoint(value: unknown): URL {
     url.pathname !== "/"
   )
     throw new Error("INVALID_ORIGIN");
-  if (
-    url.protocol !== "https:" &&
-    !(
-      url.protocol === "http:" &&
-      ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)
-    )
-  )
-    throw new Error("HTTPS_REQUIRED");
+  if (url.protocol !== "https:" && url.protocol !== "http:")
+    throw new Error("HTTP_OR_HTTPS_REQUIRED");
   return url;
 }
 export function clean(value: string): string {

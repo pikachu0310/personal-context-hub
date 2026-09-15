@@ -45,8 +45,6 @@ export async function route(
   res: ServerResponse,
 ) {
   const url = new URL(req.url ?? "/", this.origin);
-  if (!this.trustedHost(req))
-    throw new HttpError(403, "HTTPS_PROXY_OR_LOCALHOST_REQUIRED");
   // Preview requests use a scoped capability, never the management session.
   // Opaque sandbox origins must reach the relay but cannot reach management APIs.
   if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) {
@@ -54,10 +52,11 @@ export async function route(
     return;
   }
   const requestOrigin = req.headers.origin;
-  const expected =
-    req.headers.host === new URL(this.origin).host
-      ? this.origin
-      : this.config().engineUrl;
+  const protocol =
+    req.headers["x-forwarded-proto"] === "https" ? "https:" : "http:";
+  const expected = new URL(
+    `${protocol}//${req.headers.host ?? new URL(this.origin).host}`,
+  ).origin;
   const pluginEntry = this.plugins.catalog.find((entry) => {
     const base = this.plugins.get(entry.id).manifest?.web?.basePath;
     return (

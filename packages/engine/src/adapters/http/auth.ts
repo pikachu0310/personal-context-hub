@@ -10,24 +10,6 @@ export function config(this: Engine) {
     ...this.store.get<Record<string, string>>("config", "engine"),
   };
 }
-export function trustedHost(this: Engine, req: IncomingMessage) {
-  const remote = this.config().engineUrl;
-  const local =
-    req.headers.host === new URL(this.origin).host &&
-    ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
-      req.socket.remoteAddress ?? "",
-    );
-  if (local && !req.headers["x-forwarded-host"]) return true;
-  // Remote requests must arrive through a local HTTPS reverse proxy. Headers from remote sockets are never trusted.
-  return Boolean(
-    remote &&
-    ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(
-      req.socket.remoteAddress ?? "",
-    ) &&
-    req.headers.host === new URL(remote).host &&
-    req.headers["x-forwarded-proto"] === "https",
-  );
-}
 export function authenticate(this: Engine, req: IncomingMessage): Auth {
   const token =
     (req.headers.cookie ?? "")

@@ -101,7 +101,9 @@ test("registered previews relay HTTP, forms and WebSockets without management cr
   assert.equal(data.prefix, path);
   assert.equal(data.cookie, undefined);
   assert.equal(data.authorization, undefined);
-  const ws = new WebSocket(origin.replace("http:", "ws:") + path + "socket");
+  const ws = new WebSocket(origin.replace("http:", "ws:") + path + "socket", {
+    headers: { Host: "engine.lan:4310" },
+  });
   await once(ws, "open");
   ws.send("hello");
   const message = await once(ws, "message");
