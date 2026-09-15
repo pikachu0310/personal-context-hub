@@ -535,6 +535,9 @@
   border-bottom: 1px solid var(--mantine-color-default-border);
   flex-shrink: 0;
 }
+.minutes-log-content {
+  overflow-anchor: none;
+}
 .minutes-statement {
   padding: 8px 0;
   border-bottom: 1px solid var(--mantine-color-default-border);

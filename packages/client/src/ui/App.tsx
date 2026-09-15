@@ -71,11 +71,14 @@ export function App() {
     emptyDraftState,
   );
   const taskDrafts = draftState.drafts;
-  const [projectView, setProjectView] = useState<{
-    projectId: string;
-    taskId?: string;
-    draft?: boolean;
-  }>(() => {
+  const [projectView, setProjectView] = useState<
+    | {
+        projectId: string;
+        taskId?: string;
+        draft?: boolean;
+      }
+    | undefined
+  >(() => {
     const url = new URL(location.href);
     const projectId = url.searchParams.get("meetingProject");
     return !url.searchParams.has("previewRun") &&
