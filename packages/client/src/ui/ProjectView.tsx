@@ -149,6 +149,10 @@ export function ProjectView({
                 key={`${clientState.settings.engineUrl}:${deviceId}:${projectId}`}
                 projectId={projectId}
                 connected={clientState.connected}
+                openTask={(reference) => {
+                  setMeetingOpen(false);
+                  openTask(reference);
+                }}
               />
             )}
           </Modal>

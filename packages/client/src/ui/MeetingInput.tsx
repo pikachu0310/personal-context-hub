@@ -12,6 +12,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import { meetingAudio } from "./meeting-audio.js";
+import { stateLabel } from "./ActivityFeed.js";
+import type { TaskReference } from "@ido/common/contracts/api";
 
 type Entry = {
   id: number;
@@ -24,18 +26,22 @@ type MeetingResponse = {
   accepted?: boolean;
   entries: Entry[];
   pending: number;
+  tasks?: Array<TaskReference & { title: string; state: string }>;
 };
 
 export function MeetingInput({
   projectId,
   connected,
+  openTask,
 }: {
   projectId: string;
   connected: boolean;
+  openTask: (task: TaskReference) => void;
 }) {
   const [draft, setDraft] = useState("");
   const [entries, setEntries] = useState<Entry[]>([]);
   const [pending, setPending] = useState(0);
+  const [tasks, setTasks] = useState<NonNullable<MeetingResponse["tasks"]>>([]);
   const [error, setError] = useState("");
   const [pollError, setPollError] = useState("");
   const [sending, setSending] = useState(false);
@@ -56,6 +62,7 @@ export function MeetingInput({
     if (alive.current) {
       setEntries(value.entries);
       setPending(value.pending);
+      setTasks(value.tasks ?? []);
     }
   };
 
@@ -304,6 +311,40 @@ export function MeetingInput({
         <Text size="sm" role="status">
           {pending}件の発言を会議へ反映しています…
         </Text>
+      )}
+      {!!tasks.length && (
+        <section
+          className="meeting-browser-tasks"
+          aria-label="会議から進んだ作業"
+        >
+          <Text fw={650} size="sm">
+            会議から進んだ作業
+          </Text>
+          <Text size="xs" c="dimmed">
+            この画面を開いてから作成・更新された、このプロジェクトのタスクです。
+          </Text>
+          {tasks.map((task) => (
+            <Paper key={task.taskId} p="sm" withBorder>
+              <Group justify="space-between" wrap="nowrap">
+                <div style={{ minWidth: 0 }}>
+                  <Text size="sm" fw={600} lineClamp={2}>
+                    {task.title}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {stateLabel(task.state)}
+                  </Text>
+                </div>
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => openTask(task)}
+                >
+                  タスクを開く
+                </Button>
+              </Group>
+            </Paper>
+          ))}
+        </section>
       )}
       <div className="meeting-browser-entries" aria-live="polite">
         {!entries.length && (
