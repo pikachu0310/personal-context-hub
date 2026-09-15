@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>IDOエンジン — 撮影スタジオ</title>
+  <link rel="stylesheet" href="film.css">
+</head>
+<body>
+  <main>
+    <div class="screen-wrap">
+      <section class="screen" aria-label="IDOエンジンの撮影画面" data-scene="0">
+        <header class="masthead">
+          <div class="brand"><span class="wordmark">IDO</span><span class="brand-name">エンジン</span></div>
+          <div class="room"><span class="room-dot"></span>VRゲームの企画会議</div>
+          <span class="source-tag">撮影用画面 · 生成済みの試作</span>
+        </header>
+        <div class="title-area">
+          <p id="eyebrow">会議の中で、触って決める</p>
+          <h1 id="headline">「どっちがいい？」を、<br>その場で試す。</h1>
+          <p id="subhead">ワープか、連続移動か。話している間に、比べられるものへ。</p>
+        </div>
+        <section class="workspace">
+          <aside class="conversation" aria-label="会話の演出">
+            <div class="conversation-head"><span>MEETING</span><span>デモ用の会話</span></div>
+            <div id="messages"></div>
+            <div class="context-note"><span>引き継ぐ文脈</span><strong id="context">同じコースで、移動の違いを比べたい。</strong></div>
+          </aside>
+          <div class="artifact-area">
+            <div class="artifact-head"><div><span id="artifact-tag">GENERATED PROTOTYPE</span><strong id="artifact-title">二つの移動方式を、同じコースで。</strong></div><span class="artifact-state" id="artifact-state">操作できる試作</span></div>
+            <div class="prototype-grid">
+              <div class="prototype-pane"><div class="pane-label"><span id="left-title">ワープ移動</span><small id="left-detail">瞬間的に移動</small></div><iframe id="left" title="左側の操作できる比較試作" sandbox="allow-scripts"></iframe></div>
+              <div class="prototype-pane"><div class="pane-label"><span id="right-title">連続移動</span><small id="right-detail">滑らかに移動</small></div><iframe id="right" title="右側の操作できる比較試作" sandbox="allow-scripts"></iframe></div>
+            </div>
+            <div class="artifact-footer"><span id="artifact-footnote">生成済みのブラウザ試作を再生</span><span id="artifact-hint">前へボタンで、違いを試せます</span></div>
+          </div>
+        </section>
+        <section class="conclusion" aria-label="IDOエンジンの価値">
+          <p>会議の出口に、<br><em>触って判断できるものを。</em></p>
+          <div class="close-detail"><div><span>いまの入口</span><strong>Discord・ブラウザ</strong><small>会議の文脈から、各PCのCodexへ</small></div><div><span>次に広げる先</span><strong>ゲームの企画から、UI試作へ</strong><small>Slack・VRChat・画面共有の認識は今後の構想</small></div></div>
+        </section>
+        <footer class="stage-footer">
+          <ol class="loop" aria-label="会議から修正まで"><li>話す</li><li>作る</li><li>触る</li><li>直す</li></ol>
+          <div class="disclosure" id="disclosure">会話・制作条件を設定した実動作をもとに再構成。VR機器での検証は含みません。</div>
+        </footer>
+      </section>
+    </div>
+    <nav class="director" aria-label="撮影操作">
+      <button id="play" type="button">56秒を再生</button>
+      <button id="restart" type="button">最初から</button>
+      <label>場面 <select id="scene"><option value="0">1. 比べる</option><option value="1">2. 会議</option><option value="2">3. 試作</option><option value="3">4. 感想</option><option value="4">5. 速度比較</option><option value="5">6. 会議の出口</option></select></label>
+      <button id="move" type="button">両方を前へ</button>
+      <button id="reset" type="button">位置を戻す</button>
+      <button id="fullscreen" type="button">全画面</button>
+      <output id="time" aria-live="off">00:00 / 00:56</output>
+    </nav>
+    <p class="production-note">これは撮影用の演出画面です。会話と進行表示は台本で再生し、Codexへ依頼を送信しません。試作の移動操作は実際に動きます。速度比較は同じ試作のパラメータを切り替えています。Space：再生/停止、← →：場面切替。</p>
+  </main>
+  <script type="module" src="film.mjs"></script>
+</body>
+</html>
