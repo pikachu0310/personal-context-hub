@@ -1,4 +1,5 @@
 import {
+  canSchedule,
   evaluatePriority,
   parseTaskEvaluation,
   priorityPolicy,
@@ -1310,7 +1311,8 @@ class MeetingCoordinator {
             (existing) =>
               existing.trigger === "proactive" &&
               existing.state === "queued" &&
-              !existing.clientId,
+              !existing.clientId &&
+              canSchedule(existing),
           ).length >= priorityPolicy.maximumPendingProactive
         ) {
           decision("proactive_limit");
@@ -1445,7 +1447,19 @@ class MeetingCoordinator {
         ));
     for (const source of sources) {
       if (
-        (source.requestReply || explicitDelegation(source.text)) &&
+        (evaluated &&
+        !response.controls.length &&
+        !application.rejections.length
+          ? response.tasks.some(
+              (task) =>
+                task.sourceIds.includes(source.id) &&
+                (task.evaluation
+                  ? task.evaluation.intent === "requested" &&
+                    task.evaluation.certainty === 4 &&
+                    task.evaluation.resolution !== "resolved"
+                  : source.requestReply || explicitDelegation(source.text)),
+            )
+          : source.requestReply || explicitDelegation(source.text)) &&
         !source.handled &&
         (!receipts.has(source.id) || unresolvedCorrection) &&
         (application.rejections.length > 0 ||
@@ -1472,7 +1486,13 @@ class MeetingCoordinator {
       const results =
         answer.reason === "direct_answer" && selected.length > 0
           ? []
-          : batch.events.filter((event) => event.type === "task_result");
+          : batch.events
+              .filter((event) => event.type === "task_result")
+              .filter(
+                (event) =>
+                  !answer.resultTaskIds ||
+                  answer.resultTaskIds.includes(event.taskId),
+              );
       const resultEvent =
         results.length > 0 &&
         results.every((event) => {
@@ -1496,6 +1516,10 @@ class MeetingCoordinator {
       });
       const allowed =
         answer.delivery !== "record_only" &&
+        (!answer.resultTaskIds ||
+          answer.resultTaskIds.every((id) =>
+            results.some((event) => event.taskId === id),
+          )) &&
         resultsNotifiable &&
         (!response.tasks.length ||
           (evaluated &&
@@ -1602,7 +1626,11 @@ class MeetingCoordinator {
                   resultEvent || this.audio.mode === "live"
                     ? "backend"
                     : "direct",
-                events: batch.events,
+                events: batch.events.filter(
+                  (event) =>
+                    event.type !== "task_result" ||
+                    results.some((result) => result.id === event.id),
+                ),
               },
               route?.context,
             )

@@ -161,10 +161,17 @@ export const coordinatorSchema = {
         {
           type: "object",
           additionalProperties: false,
-          required: ["text", "reason", "sourceIds", "delivery"],
+          required: [
+            "text",
+            "reason",
+            "sourceIds",
+            "delivery",
+            "resultTaskIds",
+          ],
           properties: {
             text: { type: "string" },
             delivery: { type: "string", enum: ["notify", "record_only"] },
+            resultTaskIds: ids,
             reason: {
               type: "string",
               enum: ["direct_answer", "verified_correction", "new_finding"],
@@ -255,6 +262,7 @@ export function coordinatorPrompt(
     observation.mode === "live"
       ? "Liveが音声会話を担当しています。通常の音声質問に独立した直接回答を作らず、バックエンドで確認した情報・作業結果、またはテキスト質問への回答を返してください。"
       : "メインモデルが回答を管理します。単なる観測ならreply=nullで構いません。入力のたびに回答を生成する必要はありません。",
+    "複数のtask_resultがある場合、通知が必要な結果だけをreply本文に含め、そのtaskIdをreply.resultTaskIdsに列挙します。通知不要の結果を混ぜません。結果に関係しない直接回答はresultTaskIds=[]です。",
     "task_resultの案内はnew_findingで、新しい利用者発言がなければsourceIds=[]を使用できます。assistant_outputはBot発言の記録、attentionは元発言への注意通知であり、新しい作業依頼ではありません。",
     "今回処理する依頼はeventsのmessageです。tasks/controlsのsourceIdsは、今回のmessage.source.idだけから選んでください。event.idとは別のIDです。参考履歴context・minutes・activeTasksの発言IDを混ぜることも禁止です。過去の発言は対象の理解にだけ使い、今回の発言に作業の依頼・機会があるか確認してください。『明日の天気』の後の『今日の天気を調べて』や別のアクセス調査は、日付・対象・成果が異なる新しい依頼です。過去のタスクと一括して同じ仕事と判断しないでください。",
     ...(observation.taskValidation
@@ -313,6 +321,9 @@ export function parseCoordinatorResponse(raw: string): CoordinatorResponse {
       text: text(value.reply.text),
       reason,
       sourceIds: sources(value.reply.sourceIds, false),
+      ...(value.reply.resultTaskIds !== undefined
+        ? { resultTaskIds: sources(value.reply.resultTaskIds, false) }
+        : {}),
       ...(value.reply.delivery !== undefined
         ? {
             delivery:

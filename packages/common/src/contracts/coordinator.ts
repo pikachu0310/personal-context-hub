@@ -129,6 +129,7 @@ export interface CoordinatorResponse {
   minutes?: import("./knowledge.js").MinutesUpdate[];
   reply: null | {
     delivery?: "notify" | "record_only";
+    resultTaskIds?: string[];
     text: string;
     reason: "direct_answer" | "verified_correction" | "new_finding";
     sourceIds: string[];

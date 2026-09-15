@@ -2658,3 +2658,89 @@ test("five unaddressed complete STT requests enter the scored path without inter
   assert.equal(f.tasks().length, 5);
   assert.equal(f.calls.length, 5);
 });
+
+test("a resolved candidate produces neither work nor an unnecessary clarification notification", async (t) => {
+  const f = await fixture(t);
+  const { evaluation } = await import("./priority-fixture.js");
+  f.respond((observation) => ({
+    ...silent(),
+    priorityEvaluations: [],
+    tasks: [
+      {
+        ...taskResponse(observation).tasks[0],
+        evaluation: evaluation(sourceIds(observation), {
+          resolution: "resolved",
+        }),
+      },
+    ],
+  }));
+  await f.input({
+    text: "井戸Bot、調べてもらった件はもう解決していました",
+    interaction: false,
+  });
+  await f.core.flush("meeting");
+  await f.idle();
+  assert.equal(f.tasks().length, 0);
+  assert.equal(f.delivered.filter((o) => o.kind === "reply").length, 0);
+});
+
+test("a result requiring notification is not suppressed by a resolved sibling in the same batch", async (t) => {
+  const f = await fixture(t);
+  const { evaluation } = await import("./priority-fixture.js");
+  f.respond((observation) => ({
+    ...silent(),
+    priorityEvaluations: [],
+    tasks: ["仕様の調査", "原因の分析"].map((title) => ({
+      ...taskResponse(observation).tasks[0],
+      title,
+      evaluation: evaluation(sourceIds(observation)),
+    })),
+  }));
+  await f.input({ text: "仕様と原因を調べて", interaction: false });
+  await f.core.flush("meeting");
+  await f.idle();
+  const tasks = f.tasks();
+  for (const task of tasks)
+    f.engine.store.put("task", task.id, {
+      ...task,
+      state: "completed",
+      result: task.title,
+      resultSpecRevision: task.specRevision ?? 1,
+    });
+  const events = tasks.map((task) => ({
+    id: `result:${task.id}:${task.runId}:${task.revision}`,
+    type: "task_result" as const,
+    taskId: task.id,
+    meetingId: "meeting",
+    revision: task.revision,
+    text: task.title!,
+    sourceIds: [],
+    superseded: false,
+  }));
+  f.respond((observation) => ({
+    ...silent(),
+    priorityEvaluations: observation.activeTasks.map((task, index) => ({
+      taskId: task.id,
+      revision: task.revision,
+      expectedVersion: task.priority?.version ?? 0,
+      evaluation: evaluation([], {
+        resolution: index === 0 ? "unresolved" : "resolved",
+      }),
+    })),
+    reply: {
+      text: "求められている結果だけ",
+      reason: "new_finding",
+      sourceIds: [],
+      resultTaskIds: [observation.activeTasks[0].id],
+      delivery: "notify",
+    },
+  }));
+  await f.core.session("meeting").inbox.submit(events, { start: true });
+  await f.idle();
+  assert.equal(
+    f.delivered.filter(
+      (o) => o.kind === "reply" && o.content === "求められている結果だけ",
+    ).length,
+    1,
+  );
+});
