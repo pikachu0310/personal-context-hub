@@ -250,3 +250,147 @@ test("topic updates and Markdown edits coexist during generation and context sea
   assert.deepEqual(knowledge.search("p", {}).documents, []);
   assert.equal(meeting().knowledge!.topics.length, 1);
 });
+
+test("silent results, failures and interrupted output are chunked into minutes and not repeated after restart", async (t) => {
+  const { store, meeting } = await fixture(t);
+  const text = "前".repeat(3999) + "😀" + "後".repeat(19000);
+  for (const [id, state, result] of [
+    ["silent", "completed", text],
+    ["failed", "failed", "途中の成果と未確認事項"],
+    ["cancelled", "cancelled", "停止前の成果"],
+    ["interrupted", "interrupted", "再確認が必要"],
+  ]) {
+    store.put("task", id, {
+      id,
+      projectId: "p",
+      meetingId: "m",
+      title: id,
+      text: id,
+      runId: `run-${id}`,
+      revision: 1,
+      state,
+      result,
+      history: [],
+    });
+  }
+  const received: import("@ido/common/contracts/work").MinutesTaskResult[] = [];
+  const generate = async (
+    m: Meeting,
+    _links: string[],
+    parts: import("@ido/common/contracts/work").MinutesTaskResult[],
+  ) => {
+    assert.ok(parts.length <= 4);
+    assert.ok(parts.every((p) => p.text.length <= 4000));
+    received.push(...parts);
+    return (
+      m.summary +
+      "\n" +
+      parts.map((p) => `${p.link} ${p.state} ${p.text}`).join("\n")
+    );
+  };
+  await new MinutesDocument(store, generate).refresh("m");
+  assert.equal(
+    received
+      .filter((p) => p.taskId === "silent")
+      .map((p) => p.text)
+      .join(""),
+    text,
+  );
+  assert.ok(
+    received.every((p) => !/^[\uDC00-\uDFFF]|[\uD800-\uDBFF]$/u.test(p.text)),
+  );
+  assert.match(meeting().summary, /途中の成果と未確認事項/);
+  assert.match(meeting().summary, /停止前の成果/);
+  const count = received.length;
+  await new MinutesDocument(store, generate).refresh("m");
+  assert.equal(received.length, count);
+  assert.equal(store.list("task").length, 4);
+});
+
+test("result updates and manual edits during generation are reconciled before committing progress", async (t) => {
+  const { store, meeting, edit } = await fixture(t);
+  const task = {
+    id: "result",
+    projectId: "p",
+    meetingId: "m",
+    title: "Result",
+    text: "Result",
+    runId: "run",
+    revision: 1,
+    state: "failed",
+    result: "old partial",
+    history: [],
+  };
+  store.put("task", task.id, task);
+  let release!: (value: string) => void;
+  const calls: string[] = [];
+  const document = new MinutesDocument(store, async (m, _links, parts) => {
+    calls.push(parts.map((p) => p.text).join(""));
+    if (calls.length === 1)
+      return new Promise<string>((resolve) => {
+        release = resolve;
+      });
+    return m.summary + "\n" + parts.map((p) => p.text).join("\n");
+  });
+  const pending = document.refresh("m");
+  edit("# 手で整理した議題");
+  store.put("task", task.id, { ...task, result: "new partial" });
+  release("stale");
+  await pending;
+  assert.deepEqual(calls, ["old partial", "new partial"]);
+  assert.match(meeting().summary, /手で整理した議題/);
+  assert.match(meeting().summary, /new partial/);
+  await document.refresh("m");
+  assert.equal(calls.length, 2);
+});
+
+test("a retry retains failed partial output and its explanation without reflecting the old version twice", async (t) => {
+  const { store } = await fixture(t);
+  const first = {
+    id: "retry",
+    projectId: "p",
+    meetingId: "m",
+    title: "Retry",
+    text: "Retry",
+    runId: "run",
+    revision: 1,
+    state: "failed",
+    result: "検証済みの部分",
+    progress: "接続できず残りは未確認",
+    history: [],
+  };
+  store.put("task", first.id, first);
+  const seen: string[] = [];
+  const generate = async (
+    m: Meeting,
+    _links: string[],
+    parts: import("@ido/common/contracts/work").MinutesTaskResult[],
+  ) => {
+    seen.push(...parts.map((p) => p.text));
+    return m.summary + "\n" + parts.map((p) => p.text).join("\n");
+  };
+  await new MinutesDocument(store, generate).refresh("m");
+  assert.deepEqual(seen, ["接続できず残りは未確認\n検証済みの部分"]);
+  store.put("task", first.id, {
+    ...first,
+    revision: 2,
+    state: "completed",
+    result: "再確認完了",
+    progress: undefined,
+    history: [
+      {
+        revision: 1,
+        runId: "run",
+        state: first.state,
+        result: first.result,
+        progress: first.progress,
+        text: first.text,
+      },
+    ],
+  });
+  await new MinutesDocument(store, generate).refresh("m");
+  assert.deepEqual(seen, [
+    "接続できず残りは未確認\n検証済みの部分",
+    "再確認完了",
+  ]);
+});

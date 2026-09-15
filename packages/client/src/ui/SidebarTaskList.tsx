@@ -57,7 +57,15 @@ export function SidebarTaskList({
               title={`${title} · ${location} · ${stateLabel(sidebarTaskState(item))}`}
               onClick={() => select(item)}
             >
-              <span className="task-title">{title}</span>
+              <span className="task-title">
+                {title}
+                {task.priority && (
+                  <small title={task.priority.evaluation.reason}>
+                    {" "}
+                    · 優先度 {task.priority.score}
+                  </small>
+                )}
+              </span>
               <TaskAvatars state={state} task={task} local={!!run} />
               <span className="task-indicator-slot">
                 {indicator && (

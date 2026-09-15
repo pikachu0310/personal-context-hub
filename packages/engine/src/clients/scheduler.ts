@@ -1,4 +1,8 @@
 import {
+  canSchedule,
+  schedulingPriority,
+} from "../processing/tasks/priority.js";
+import {
   addParticipant,
   taskParticipants,
 } from "../processing/projects/task-participants.js";
@@ -41,13 +45,21 @@ export class Scheduler {
       const devices = this.repository
         .list<Device>("device")
         .filter((d) => online.has(d.id) && !d.revoked);
-      for (const task of tasks.filter(
-        (t) =>
-          t.state === "queued" &&
-          !t.clientId &&
-          !t.localMirror &&
-          !this.repository.get("project-lock", t.projectId),
-      )) {
+      for (const task of tasks
+        .filter(
+          (t) =>
+            t.state === "queued" &&
+            canSchedule(t) &&
+            !t.clientId &&
+            !t.localMirror &&
+            !this.repository.get("project-lock", t.projectId),
+        )
+        .sort(
+          (a, b) =>
+            schedulingPriority(b) - schedulingPriority(a) ||
+            a.createdAt - b.createdAt ||
+            a.id.localeCompare(b.id),
+        )) {
         const active = (device: Device) =>
           tasks.filter(
             (t) =>

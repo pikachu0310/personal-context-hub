@@ -17,7 +17,13 @@ export function deferredDelegation(text) {
     )
   )
     return true;
-  return /(?:まだ|あとで|後で|今は|今回は).{0,24}(?:不要|しない|やらない|待って|保留|決めてない|決まってない)|(?:しなくて|やらなくて|始めなくて)(?:いい|よい)|(?:しないで|やらないで|始めないで|作らないで)|(?:検討中|未定|未決定|決まってない|決まっていない|やめよう|保留|見送|自分でやる|自分で作る)/u.test(
+  if (/(?:検討中|未定|未決定|決まってない|決まっていない)/u.test(unquote(text)))
+    return true;
+  return prohibitedDelegation(text);
+}
+
+export function prohibitedDelegation(text) {
+  return /(?:まだ|あとで|後で|今は|今回は).{0,24}(?:不要|しない|やらない|待って|保留|決めてない|決まってない)|(?:しなくて|やらなくて|始めなくて)(?:いい|よい)|(?:しないで|やらないで|始めないで|作らないで)|(?:やめよう|実行禁止|保留|見送|自分でやる|自分で作る)/u.test(
     unquote(text),
   );
 }
@@ -67,4 +73,8 @@ export function proactiveOpportunity(text) {
   return /(?:モック|試作|プロトタイプ|検証|比較|調査|原因|遅延|性能|ベンチマーク|実装|ライブラリ|API|SDK|画面|機能|テスト|コード|接続|動くか|動かない|確認したい|確かめたい|調べたい|試したい|試してみたい|作りたい|作ってみたい|分からない|わからない|不明|知りたい)/iu.test(
     value,
   );
+}
+
+export function quotedOnly(text) {
+  return !unquote(text).replace(/[。！!？?、,\s]/gu, "");
 }

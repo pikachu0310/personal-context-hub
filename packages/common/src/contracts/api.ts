@@ -273,6 +273,7 @@ export interface TeamTaskSnapshot {
   tasks: Array<
     Pick<
       Task,
+      | "priority"
       | "id"
       | "runId"
       | "revision"

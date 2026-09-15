@@ -75,6 +75,7 @@ export interface Task {
   model?: string;
   reasoningEffort?: string;
   progressMode?: "auto" | "manual";
+  priority?: import("./work.js").TaskPriority;
   trigger?: "requested" | "proactive";
   initialText?: string;
   queuedInstructions?: Array<RequestMessage & { id: string; text: string }>;
@@ -118,6 +119,9 @@ export interface Task {
   controlReceipts?: Record<string, WorkReceipt>;
   preview?: Preview;
   history: Array<{
+    runId?: string;
+    state?: Task["state"];
+    progress?: string;
     revision: number;
     text: string;
     result?: string;

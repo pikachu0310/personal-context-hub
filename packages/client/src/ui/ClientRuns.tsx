@@ -2,6 +2,7 @@ import { TaskFollowup } from "./TaskFollowup.js";
 import { TaskConversation } from "./TaskConversation.js";
 import { accessOptions } from "./access-mode.js";
 import type { TaskDetailRead } from "@ido/common/contracts/api";
+import { TaskPriority } from "./TaskPriority.js";
 import { TaskOwner } from "./TaskOwner.js";
 import { TaskArtifacts } from "./TaskArtifacts.js";
 import {
@@ -845,6 +846,18 @@ export function ClientRuns({
                   ? "相談・計画中"
                   : stateLabel(current.state)}
             </span>
+          </EnvironmentRow>
+          <EnvironmentRow label="優先度">
+            <TaskPriority
+              priority={
+                state.projectTasks?.find((task) => task.id === current.task.id)
+                  ?.priority ??
+                state.teamTasks?.tasks.find(
+                  (task) => task.id === current.task.id,
+                )?.priority ??
+                current.task.priority
+              }
+            />
           </EnvironmentRow>
           <EnvironmentRow label="エージェント">
             {agentName} · {current.model ?? "既定モデル"}
