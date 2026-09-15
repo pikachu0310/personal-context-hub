@@ -75,7 +75,15 @@ export function App() {
     projectId: string;
     taskId?: string;
     draft?: boolean;
-  }>();
+  }>(() => {
+    const url = new URL(location.href);
+    const projectId = url.searchParams.get("meetingProject");
+    return !url.searchParams.has("previewRun") &&
+      projectId &&
+      /^[a-zA-Z0-9_-]{1,100}$/.test(projectId)
+      ? { projectId }
+      : undefined;
+  });
   const projectViewRef = useRef(projectView);
   projectViewRef.current = projectView;
   useEffect(() => {
