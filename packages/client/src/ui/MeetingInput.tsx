@@ -52,6 +52,7 @@ export function MeetingInput({
   const stream = useRef<MediaStream | null>(null);
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const discard = useRef(false);
+  const recordingGeneration = useRef(0);
   const alive = useRef(true);
   const connection = useRef(connected);
   connection.current = connected;
@@ -74,6 +75,7 @@ export function MeetingInput({
     return () => {
       alive.current = false;
       discard.current = true;
+      recordingGeneration.current += 1;
       clearInterval(timer.current);
       if (recorder.current?.state === "recording") recorder.current.stop();
       stream.current?.getTracks().forEach((track) => track.stop());
@@ -162,6 +164,7 @@ export function MeetingInput({
 
   function stop(cancel = false) {
     discard.current = cancel;
+    if (cancel) recordingGeneration.current += 1;
     clearInterval(timer.current);
     if (recorder.current?.state === "recording") recorder.current.stop();
     stream.current?.getTracks().forEach((track) => track.stop());
@@ -171,6 +174,7 @@ export function MeetingInput({
 
   async function record() {
     if (!connection.current || inFlight.current || pendingAudio.current) return;
+    const generation = ++recordingGeneration.current;
     setError("");
     setSending(true);
     try {
@@ -188,8 +192,18 @@ export function MeetingInput({
           channelCount: 1,
         },
       });
-      if (!alive.current) {
+      if (
+        !alive.current ||
+        generation !== recordingGeneration.current ||
+        !connection.current
+      ) {
         capture.getTracks().forEach((track) => track.stop());
+        if (alive.current && generation === recordingGeneration.current) {
+          setSending(false);
+          setError(
+            "Engineへの接続が切れたため録音を開始しませんでした。再接続後にお試しください。",
+          );
+        }
         return;
       }
       stream.current = capture;
@@ -201,23 +215,31 @@ export function MeetingInput({
         if (event.data.size) chunks.push(event.data);
       };
       media.onerror = () => {
+        if (generation !== recordingGeneration.current || !alive.current)
+          return;
         stop(true);
         setSending(false);
         setError("録音できませんでした。マイクの接続を確認してください。");
       };
       media.onstop = async () => {
-        clearInterval(timer.current);
         capture.getTracks().forEach((track) => track.stop());
-        if (discard.current || !alive.current) return;
+        if (
+          generation !== recordingGeneration.current ||
+          discard.current ||
+          !alive.current
+        )
+          return;
+        clearInterval(timer.current);
         setRecording(false);
         setSending(true);
         try {
           const audio = await meetingAudio(
             new Blob(chunks, { type: media.mimeType }),
           );
-          if (alive.current) await send({ audio });
+          if (alive.current && generation === recordingGeneration.current)
+            await send({ audio });
         } catch (cause) {
-          if (alive.current) {
+          if (alive.current && generation === recordingGeneration.current) {
             setSending(false);
             setError((cause as Error).message);
           }
@@ -234,6 +256,7 @@ export function MeetingInput({
         if (seconds >= 12) stop();
       }, 250);
     } catch (cause) {
+      if (generation !== recordingGeneration.current) return;
       stream.current?.getTracks().forEach((track) => track.stop());
       if (alive.current) {
         setSending(false);
