@@ -76,6 +76,7 @@ const factory = createOpenAICoordinatorFactory(
 );
 const engine = new Engine({
   directory: join(root, "engine"),
+  host: "127.0.0.1",
   port: Number(process.env.IDO_DEMO_ENGINE_PORT ?? 4340),
   previewPort: Number(process.env.IDO_DEMO_PREVIEW_PORT ?? 4341),
   uiDirectory: resolve("packages/engine/dist/ui"),
