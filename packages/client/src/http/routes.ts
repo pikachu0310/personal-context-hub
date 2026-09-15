@@ -1,4 +1,9 @@
 import { attachTaskSource } from "@ido/common/contracts/protocol";
+import {
+  artifactPolicy,
+  listArtifacts,
+  readArtifact,
+} from "../preview/artifacts.js";
 import { projectDirectory } from "../execution/project-directory.js";
 import { startLogin } from "../auth/login.js";
 import { startClaudeLogin, checkClaudeLogin } from "../auth/claude.js";
@@ -132,6 +137,37 @@ export async function route(
       deviceName: hostname(),
       ownerName: this.settings.profile?.name,
     });
+    return;
+  }
+  if (
+    req.method === "GET" &&
+    ["/api/artifacts", "/api/artifact-document"].includes(url.pathname)
+  ) {
+    const value = this.executor.runs[id(url.searchParams.get("runId"))];
+    if (
+      !value ||
+      this.executor.deletedTasks[value.task.id] ||
+      (value.origin !== "local" &&
+        !this.settings.projects.some((p) => p.id === value.task.projectId))
+    )
+      throw new HttpError(404, "RUN_NOT_FOUND");
+    const path = url.searchParams.get("path");
+    if (url.pathname === "/api/artifact-document") {
+      const artifact = await readArtifact(value.directory, path ?? "");
+      res.setHeader("Content-Security-Policy", artifactPolicy);
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.writeHead(200);
+      res.end(artifact.html);
+      return;
+    }
+    send(
+      res,
+      200,
+      path === null
+        ? { artifacts: await listArtifacts(value.directory) }
+        : await readArtifact(value.directory, path),
+    );
     return;
   }
   if (req.method === "GET" && url.pathname === "/api/local-tasks/progress") {

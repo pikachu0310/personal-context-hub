@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VR移動方式 比較モック</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --slate: #172c43;
+      --ice: #edf3f9;
+      --blue: #1476ca;
+      --amber: #db790b;
+      --white: #fff;
+      --muted: #53687d;
+      --line: #cad7e3;
+      --shadow: 0 18px 50px rgba(23, 44, 67, .12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      color: var(--slate);
+      background:
+        radial-gradient(circle at 85% -10%, rgba(20, 118, 202, .13), transparent 31rem),
+        linear-gradient(180deg, #fff 0, var(--ice) 78%);
+      font-family: Inter, "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+    }
+
+    button, input { font: inherit; }
+    button { touch-action: manipulation; }
+
+    .shell {
+      width: min(1500px, 100%);
+      margin: 0 auto;
+      padding: clamp(24px, 4vw, 58px) clamp(16px, 3vw, 44px) 32px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: clamp(22px, 3vw, 38px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 12px;
+      color: var(--blue);
+      font-size: .72rem;
+      font-weight: 800;
+      letter-spacing: .16em;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 25px;
+      height: 2px;
+      background: currentColor;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 4.4vw, 4.8rem);
+      line-height: .98;
+      letter-spacing: -.055em;
+      font-weight: 900;
+    }
+
+    .lead {
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: clamp(.95rem, 1.4vw, 1.14rem);
+      font-weight: 650;
+    }
+
+    .keyboard-note {
+      margin: 0;
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255,255,255,.72);
+      font-size: .76rem;
+      white-space: nowrap;
+    }
+
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: clamp(14px, 2vw, 26px);
+      align-items: start;
+    }
+
+    .scene-card {
+      --accent: var(--blue);
+      overflow: hidden;
+      border: 1px solid rgba(23, 44, 67, .13);
+      border-top: 4px solid var(--accent);
+      border-radius: 18px;
+      background: rgba(255,255,255,.93);
+      box-shadow: var(--shadow);
+    }
+
+    .scene-card.smooth { --accent: var(--amber); }
+
+    .scene-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px 15px;
+    }
+
+    .scene-title-wrap { min-width: 0; }
+
+    .scene-kicker {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--accent);
+      font-size: .68rem;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(1.22rem, 2vw, 1.65rem);
+      letter-spacing: -.035em;
+    }
+
+    .mode-pill {
+      flex: 0 0 auto;
+      padding: 7px 10px;
+      border-radius: 8px;
+      color: var(--white);
+      background: var(--accent);
+      font-size: .72rem;
+      font-weight: 800;
+    }
+
+    .viewport {
+      position: relative;
+      margin: 0 12px;
+      border-radius: 12px;
+      overflow: hidden;
+      background: var(--slate);
+      outline: 3px solid transparent;
+      outline-offset: 3px;
+      transition: outline-color .18s ease;
+    }
+
+    .viewport:focus-visible { outline-color: var(--accent); }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: clamp(300px, 38vw, 520px);
+    }
+
+    .view-label {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 9px;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 7px;
+      color: white;
+      background: rgba(10, 23, 37, .64);
+      backdrop-filter: blur(8px);
+      font-size: .7rem;
+      font-weight: 750;
+      pointer-events: none;
+    }
+
+    .view-label::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent), transparent 70%);
+    }
+
+    .canvas-message {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      translate: -50% 8px;
+      opacity: 0;
+      padding: 8px 12px;
+      border-radius: 999px;
+      color: white;
+      background: rgba(10, 23, 37, .78);
+      font-size: .75rem;
+      font-weight: 750;
+      pointer-events: none;
+      transition: opacity .18s ease, translate .18s ease;
+      white-space: nowrap;
+    }
+
+    .canvas-message.show { opacity: 1; translate: -50% 0; }
+
+    .controls { padding: 17px 20px 20px; }
+
+    .readout {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .readout-label {
+      color: var(--muted);
+      font-size: .76rem;
+      font-weight: 700;
+    }
+
+    output {
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+      font-size: .92rem;
+      font-weight: 900;
+    }
+
+    .pad-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .move-button, .reset-button {
+      min-height: 45px;
+      border-radius: 9px;
+      cursor: pointer;
+      font-weight: 800;
+      transition: transform .12s ease, background .12s ease, border-color .12s ease;
+    }
+
+    .move-button {
+      border: 1px solid color-mix(in srgb, var(--accent), white 42%);
+      color: var(--slate);
+      background: color-mix(in srgb, var(--accent), white 91%);
+    }
+
+    .move-button:hover { background: color-mix(in srgb, var(--accent), white 83%); }
+    .move-button:active { transform: translateY(1px); }
+    .move-button:focus-visible, .reset-button:focus-visible, input:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent), transparent 62%);
+      outline-offset: 2px;
+    }
+
+    .forward { grid-column: 2; }
+    .left { grid-column: 1; grid-row: 2; }
+    .back { grid-column: 2; grid-row: 2; }
+    .right { grid-column: 3; grid-row: 2; }
+
+    .reset-button {
+      width: 100%;
+      margin-top: 8px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: white;
+    }
+
+    .reset-button:hover { border-color: var(--accent); color: var(--accent); }
+
+    .speed-control {
+      margin-top: 14px;
+      padding: 13px 14px;
+      border-radius: 10px;
+      background: var(--ice);
+    }
+
+    .speed-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+      font-size: .78rem;
+      font-weight: 800;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--amber);
+      cursor: pointer;
+    }
+
+    .footnote {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      margin: 22px 2px 0;
+      color: var(--muted);
+      font-size: .75rem;
+      line-height: 1.65;
+    }
+
+    .footnote p { margin: 0; }
+    .footnote strong { color: var(--slate); }
+
+    @media (max-width: 860px) {
+      header { grid-template-columns: 1fr; }
+      .keyboard-note { display: none; }
+      .compare { grid-template-columns: 1fr; }
+      canvas { height: clamp(300px, 68vw, 500px); }
+      .footnote { flex-direction: column; gap: 7px; }
+    }
+
+    @media (min-width: 861px) and (max-height: 700px) {
+      .shell { padding-block: 8px; }
+      header {
+        align-items: center;
+        margin-bottom: 8px;
+      }
+      .eyebrow { display: none; }
+      h1 { font-size: clamp(1.65rem, 3.1vw, 2.6rem); }
+      .lead {
+        margin-top: 4px;
+        font-size: .74rem;
+      }
+      .keyboard-note {
+        padding: 6px 10px;
+        font-size: .66rem;
+      }
+      .compare { gap: 14px; }
+      .scene-head { padding: 8px 12px 7px; }
+      .scene-kicker {
+        margin-bottom: 2px;
+        font-size: .56rem;
+      }
+      h2 { font-size: 1.08rem; }
+      .mode-pill {
+        padding: 5px 8px;
+        font-size: .63rem;
+      }
+      .viewport { margin-inline: 8px; }
+      canvas { height: 190px; }
+      .view-label {
+        top: 8px;
+        left: 8px;
+        padding: 5px 7px;
+        font-size: .6rem;
+      }
+      .controls { padding: 7px 12px 8px; }
+      .readout { padding-bottom: 6px; }
+      .readout-label { font-size: .68rem; }
+      output { font-size: .78rem; }
+      .pad-row {
+        gap: 5px;
+        margin-top: 6px;
+      }
+      .move-button, .reset-button {
+        min-height: 32px;
+        font-size: .72rem;
+      }
+      .reset-button { margin-top: 5px; }
+      .speed-control {
+        margin-top: 6px;
+        padding: 5px 9px;
+      }
+      .speed-label {
+        margin-bottom: 2px;
+        font-size: .68rem;
+      }
+      input[type="range"] { display: block; }
+      .footnote {
+        margin-top: 7px;
+        font-size: .62rem;
+        line-height: 1.35;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .shell { padding-inline: 10px; }
+      .scene-head { padding-inline: 15px; }
+      .controls { padding-inline: 15px; }
+      .mode-pill { display: none; }
+      canvas { height: 300px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: .01ms !important;
+        animation-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <p class="eyebrow">ブラウザ比較用の試作</p>
+        <h1>会議の続きを、動くもので。</h1>
+        <p class="lead">VRゲームの移動方式を、その場で比べる。</p>
+      </div>
+      <p class="keyboard-note">シーンを選択すると、矢印キーでも操作できます</p>
+    </header>
+
+    <section class="compare" aria-label="移動方式の比較">
+      <article class="scene-card teleport" data-scene="teleport">
+        <div class="scene-head">
+          <div class="scene-title-wrap">
+            <span class="scene-kicker">Teleport</span>
+            <h2>ワープ移動</h2>
+          </div>
+          <span class="mode-pill">瞬間移動</span>
+        </div>
+        <div class="viewport" tabindex="0" role="application" aria-label="ワープ移動シーン。矢印キーで移動できます">
+          <canvas aria-label="ワープ移動の一人称コース"></canvas>
+          <span class="view-label">COURSE A · 同一設計</span>
+          <span class="canvas-message" aria-hidden="true"></span>
+        </div>
+        <div class="controls">
+          <div class="readout">
+            <span class="readout-label">現在位置</span>
+            <output aria-live="polite">X 2.50 / Z 13.50</output>
+          </div>
+          <div class="pad-row" aria-label="ワープ移動操作">
+            <button class="move-button forward" type="button" data-move="forward" aria-label="ワープで前へ">↑ 前へ</button>
+            <button class="move-button left" type="button" data-move="left" aria-label="ワープで左へ">← 左へ</button>
+            <button class="move-button back" type="button" data-move="back" aria-label="ワープで後へ">↓ 後へ</button>
+            <button class="move-button right" type="button" data-move="right" aria-label="ワープで右へ">右へ →</button>
+          </div>
+          <button class="reset-button" type="button" data-reset>初期位置</button>
+        </div>
+      </article>
+
+      <article class="scene-card smooth" data-scene="smooth">
+        <div class="scene-head">
+          <div class="scene-title-wrap">
+            <span class="scene-kicker">Smooth motion</span>
+            <h2>連続移動</h2>
+          </div>
+          <span class="mode-pill">連続移動</span>
+        </div>
+        <div class="viewport" tabindex="0" role="application" aria-label="連続移動シーン。矢印キーで移動できます">
+          <canvas aria-label="連続移動の一人称コース"></canvas>
+          <span class="view-label">COURSE A · 同一設計</span>
+          <span class="canvas-message" aria-hidden="true"></span>
+        </div>
+        <div class="controls">
+          <div class="readout">
+            <span class="readout-label">現在位置</span>
+            <output aria-live="polite">X 2.50 / Z 13.50</output>
+          </div>
+          <div class="pad-row" aria-label="連続移動操作">
+            <button class="move-button forward" type="button" data-move="forward" aria-label="連続移動で前へ">↑ 前へ</button>
+            <button class="move-button left" type="button" data-move="left" aria-label="連続移動で左へ">← 左へ</button>
+            <button class="move-button back" type="button" data-move="back" aria-label="連続移動で後へ">↓ 後へ</button>
+            <button class="move-button right" type="button" data-move="right" aria-label="連続移動で右へ">右へ →</button>
+          </div>
+          <button class="reset-button" type="button" data-reset>初期位置</button>
+          <div class="speed-control">
+            <label class="speed-label" for="speed">
+              <span>連続移動の速さ</span>
+              <output id="speed-value" for="speed">0.50</output>
+            </label>
+            <input id="speed" type="range" min="0.5" max="2" step="0.25" value="0.5" aria-valuetext="0.50">
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <div class="footnote">
+      <p><strong>比較のポイント：</strong>移動後の距離は同じ。到達までの感覚だけが異なります。</p>
+      <p>※ ブラウザ上の操作比較です。VR機器での快適性・酔いは別途検証が必要です。</p>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const MAP = [
+        '1111111111111111',
+        '1000000000000001',
+        '1000000000000001',
+        '1000222022200001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000000000000001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000200000200001',
+        '1000222022200001',
+        '1000000000000001',
+        '1000000000000001',
+        '1000000000000001',
+        '1111111111111111'
+      ];
+      const START = { x: 2.5, y: 13.5 };
+      const FACING = -Math.PI / 2;
+      const MOVE_DISTANCE = 1.05;
+      const BEACON = { x: 13.5, y: 2.0 };
+      const FOV = Math.PI / 3;
+      const DPR_LIMIT = 1.5;
+      const wallColors = {
+        1: [108, 137, 162],
+        2: [49, 79, 105]
+      };
+
+      const scenes = [...document.querySelectorAll('[data-scene]')].map(card => {
+        const canvas = card.querySelector('canvas');
+        const scene = {
+          type: card.dataset.scene,
+          card,
+          viewport: card.querySelector('.viewport'),
+          canvas,
+          ctx: canvas.getContext('2d', { alpha: false }),
+          output: card.querySelector('.readout output'),
+          message: card.querySelector('.canvas-message'),
+          x: START.x,
+          y: START.y,
+          angle: FACING,
+          animation: null,
+          pulse: 0,
+          messageTimer: null
+        };
+
+        card.querySelectorAll('[data-move]').forEach(button => {
+          button.addEventListener('click', () => {
+            scene.viewport.focus({ preventScroll: true });
+            requestMove(scene, button.dataset.move);
+          });
+        });
+        card.querySelector('[data-reset]').addEventListener('click', () => resetScene(scene));
+        scene.viewport.addEventListener('keydown', event => {
+          const direction = {
+            ArrowUp: 'forward', ArrowDown: 'back',
+            ArrowLeft: 'left', ArrowRight: 'right'
+          }[event.key];
+          if (!direction) return;
+          event.preventDefault();
+          requestMove(scene, direction);
+        });
+        return scene;
+      });
+
+      const speedInput = document.querySelector('#speed');
+      const speedValue = document.querySelector('#speed-value');
+      speedInput.addEventListener('input', () => {
+        const value = Number(speedInput.value).toFixed(2);
+        speedValue.value = value;
+        speedInput.setAttribute('aria-valuetext', value);
+      });
+
+      function isOpen(x, y) {
+        const radius = .22;
+        return [
+          [x - radius, y - radius], [x + radius, y - radius],
+          [x - radius, y + radius], [x + radius, y + radius]
+        ].every(([px, py]) => MAP[Math.floor(py)]?.[Math.floor(px)] === '0');
+      }
+
+      function requestMove(scene, direction) {
+        const vectors = {
+          forward: [Math.cos(scene.angle), Math.sin(scene.angle)],
+          back: [-Math.cos(scene.angle), -Math.sin(scene.angle)],
+          left: [Math.cos(scene.angle - Math.PI / 2), Math.sin(scene.angle - Math.PI / 2)],
+          right: [Math.cos(scene.angle + Math.PI / 2), Math.sin(scene.angle + Math.PI / 2)]
+        };
+        const [dx, dy] = vectors[direction];
+        const baseX = scene.animation ? scene.animation.toX : scene.x;
+        const baseY = scene.animation ? scene.animation.toY : scene.y;
+        const toX = baseX + dx * MOVE_DISTANCE;
+        const toY = baseY + dy * MOVE_DISTANCE;
+
+        if (!isOpen(toX, toY)) {
+          showMessage(scene, '障害物があります');
+          scene.pulse = .25;
+          return;
+        }
+
+        if (scene.type === 'teleport') {
+          scene.x = toX;
+          scene.y = toY;
+          scene.pulse = 1;
+          updateReadout(scene);
+        } else {
+          const fromX = scene.x;
+          const fromY = scene.y;
+          const distance = Math.hypot(toX - fromX, toY - fromY);
+          scene.animation = {
+            fromX, fromY, toX, toY,
+            started: performance.now(),
+            duration: Math.max(180, 620 * distance / MOVE_DISTANCE / Number(speedInput.value))
+          };
+        }
+      }
+
+      function resetScene(scene) {
+        scene.animation = null;
+        scene.x = START.x;
+        scene.y = START.y;
+        scene.pulse = scene.type === 'teleport' ? .7 : 0;
+        updateReadout(scene);
+        showMessage(scene, '初期位置に戻りました');
+        scene.viewport.focus({ preventScroll: true });
+      }
+
+      function showMessage(scene, text) {
+        scene.message.textContent = text;
+        scene.message.classList.add('show');
+        clearTimeout(scene.messageTimer);
+        scene.messageTimer = setTimeout(() => scene.message.classList.remove('show'), 1100);
+      }
+
+      function updateReadout(scene) {
+        scene.output.value = `X ${scene.x.toFixed(2)} / Z ${scene.y.toFixed(2)}`;
+      }
+
+      function resizeCanvas(scene) {
+        const rect = scene.canvas.getBoundingClientRect();
+        const dpr = Math.min(devicePixelRatio || 1, DPR_LIMIT);
+        const width = Math.max(320, Math.round(rect.width * dpr));
+        const height = Math.max(260, Math.round(rect.height * dpr));
+        if (scene.canvas.width !== width || scene.canvas.height !== height) {
+          scene.canvas.width = width;
+          scene.canvas.height = height;
+        }
+      }
+
+      function castRay(x, y, angle) {
+        const dirX = Math.cos(angle);
+        const dirY = Math.sin(angle);
+        let mapX = Math.floor(x);
+        let mapY = Math.floor(y);
+        const deltaX = Math.abs(1 / (dirX || .00001));
+        const deltaY = Math.abs(1 / (dirY || .00001));
+        const stepX = dirX < 0 ? -1 : 1;
+        const stepY = dirY < 0 ? -1 : 1;
+        let sideX = dirX < 0 ? (x - mapX) * deltaX : (mapX + 1 - x) * deltaX;
+        let sideY = dirY < 0 ? (y - mapY) * deltaY : (mapY + 1 - y) * deltaY;
+        let side = 0;
+        let tile = '1';
+
+        for (let i = 0; i < 40; i++) {
+          if (sideX < sideY) { sideX += deltaX; mapX += stepX; side = 0; }
+          else { sideY += deltaY; mapY += stepY; side = 1; }
+          tile = MAP[mapY]?.[mapX] || '1';
+          if (tile !== '0') break;
+        }
+        const distance = side === 0
+          ? (mapX - x + (1 - stepX) / 2) / (dirX || .00001)
+          : (mapY - y + (1 - stepY) / 2) / (dirY || .00001);
+        const hit = side === 0 ? y + distance * dirY : x + distance * dirX;
+        return { distance: Math.max(.01, distance), side, tile: Number(tile), texture: hit - Math.floor(hit) };
+      }
+
+      function render(scene, now) {
+        resizeCanvas(scene);
+        const { ctx, canvas } = scene;
+        const w = canvas.width;
+        const h = canvas.height;
+        const horizon = h * .46;
+
+        const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+        sky.addColorStop(0, '#8ca8bf');
+        sky.addColorStop(1, '#dbe7ef');
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, w, horizon);
+
+        const floor = ctx.createLinearGradient(0, horizon, 0, h);
+        floor.addColorStop(0, '#677b8c');
+        floor.addColorStop(1, '#263b4e');
+        ctx.fillStyle = floor;
+        ctx.fillRect(0, horizon, w, h - horizon);
+
+        ctx.lineWidth = Math.max(1, w / 700);
+        for (let i = 1; i <= 9; i++) {
+          const t = i / 9;
+          const y = horizon + Math.pow(t, 2.2) * (h - horizon);
+          ctx.strokeStyle = `rgba(237,243,249,${.05 + t * .14})`;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        }
+        [-.7, -.35, 0, .35, .7].forEach(offset => {
+          ctx.strokeStyle = 'rgba(237,243,249,.13)';
+          ctx.beginPath();
+          ctx.moveTo(w / 2, horizon);
+          ctx.lineTo(w / 2 + offset * w, h);
+          ctx.stroke();
+        });
+
+        const quality = Math.min(w, 720);
+        const stripeWidth = w / quality;
+        for (let column = 0; column < quality; column++) {
+          const cameraX = column / quality - .5;
+          const rayAngle = scene.angle + cameraX * FOV;
+          const ray = castRay(scene.x, scene.y, rayAngle);
+          const corrected = ray.distance * Math.cos(rayAngle - scene.angle);
+          const wallH = Math.min(h * 1.7, h / corrected);
+          const top = horizon - wallH / 2;
+          const base = wallColors[ray.tile] || wallColors[1];
+          const sideShade = ray.side ? .73 : 1;
+          const textureShade = .86 + .14 * Math.sin(ray.texture * Math.PI);
+          const fog = Math.max(.35, 1 - corrected / 18);
+          const shade = sideShade * textureShade * fog;
+          ctx.fillStyle = `rgb(${base.map(v => Math.round(v * shade)).join(',')})`;
+          ctx.fillRect(column * stripeWidth, top, stripeWidth + 1, wallH);
+          if (column % 24 === 0) {
+            ctx.fillStyle = 'rgba(237,243,249,.1)';
+            ctx.fillRect(column * stripeWidth, top, Math.max(1, stripeWidth), wallH);
+          }
+        }
+
+        drawBeacon(scene, w, h, horizon, now);
+        drawMiniMap(scene, w, h);
+        drawReticle(scene, w, h);
+
+        if (scene.pulse > 0) {
+          const accent = scene.type === 'teleport' ? '20,118,202' : '219,121,11';
+          ctx.fillStyle = `rgba(${accent},${scene.pulse * .22})`;
+          ctx.fillRect(0, 0, w, h);
+          ctx.strokeStyle = `rgba(255,255,255,${scene.pulse * .75})`;
+          ctx.lineWidth = Math.max(2, w * .006);
+          ctx.strokeRect(w * .03, h * .04, w * .94, h * .92);
+          scene.pulse = Math.max(0, scene.pulse - .055);
+        }
+      }
+
+      function drawBeacon(scene, w, h, horizon, now) {
+        const dx = BEACON.x - scene.x;
+        const dy = BEACON.y - scene.y;
+        const distance = Math.hypot(dx, dy);
+        let relative = Math.atan2(dy, dx) - scene.angle;
+        while (relative > Math.PI) relative -= Math.PI * 2;
+        while (relative < -Math.PI) relative += Math.PI * 2;
+        if (Math.abs(relative) > FOV * .58) return;
+        const centerRay = castRay(scene.x, scene.y, Math.atan2(dy, dx));
+        if (centerRay.distance < distance - .25) return;
+        const x = w / 2 + (relative / FOV) * w;
+        const size = Math.min(h * .34, h * 1.25 / Math.max(1, distance));
+        const bob = Math.sin(now / 430) * size * .06;
+        const y = horizon - size * .08 + bob;
+        const ctx = scene.ctx;
+        const glow = ctx.createRadialGradient(x, y, 0, x, y, size);
+        glow.addColorStop(0, 'rgba(255,255,255,.95)');
+        glow.addColorStop(.16, 'rgba(20,118,202,.9)');
+        glow.addColorStop(1, 'rgba(20,118,202,0)');
+        ctx.fillStyle = glow;
+        ctx.fillRect(x - size, y - size, size * 2, size * 2);
+        ctx.fillStyle = '#edf3f9';
+        ctx.beginPath();
+        ctx.moveTo(x, y - size * .34);
+        ctx.lineTo(x + size * .18, y);
+        ctx.lineTo(x, y + size * .34);
+        ctx.lineTo(x - size * .18, y);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function drawMiniMap(scene, w, h) {
+        const ctx = scene.ctx;
+        const scale = Math.max(3.1, Math.min(5.3, w / 125));
+        const size = scale * MAP.length;
+        const x0 = w - size - 13;
+        const y0 = 13;
+        ctx.fillStyle = 'rgba(10,23,37,.74)';
+        ctx.fillRect(x0 - 7, y0 - 7, size + 14, size + 14);
+        MAP.forEach((row, y) => [...row].forEach((tile, x) => {
+          if (tile === '0') return;
+          ctx.fillStyle = tile === '2' ? '#6e879d' : '#354e63';
+          ctx.fillRect(x0 + x * scale, y0 + y * scale, scale, scale);
+        }));
+        ctx.fillStyle = '#edf3f9';
+        ctx.beginPath();
+        ctx.arc(x0 + BEACON.x * scale, y0 + BEACON.y * scale, scale * .48, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = scene.type === 'teleport' ? '#1476ca' : '#db790b';
+        ctx.beginPath();
+        ctx.arc(x0 + scene.x * scale, y0 + scene.y * scale, scale * .62, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = Math.max(1, scale * .28);
+        ctx.beginPath();
+        ctx.moveTo(x0 + scene.x * scale, y0 + scene.y * scale);
+        ctx.lineTo(x0 + (scene.x + Math.cos(scene.angle) * 1.4) * scale, y0 + (scene.y + Math.sin(scene.angle) * 1.4) * scale);
+        ctx.stroke();
+      }
+
+      function drawReticle(scene, w, h) {
+        const ctx = scene.ctx;
+        const x = w / 2;
+        const y = h * .47;
+        const r = Math.max(5, w * .008);
+        ctx.strokeStyle = 'rgba(255,255,255,.8)';
+        ctx.lineWidth = Math.max(1.3, w / 650);
+        ctx.beginPath();
+        ctx.moveTo(x - r * 2, y); ctx.lineTo(x - r * .65, y);
+        ctx.moveTo(x + r * .65, y); ctx.lineTo(x + r * 2, y);
+        ctx.moveTo(x, y - r * 2); ctx.lineTo(x, y - r * .65);
+        ctx.moveTo(x, y + r * .65); ctx.lineTo(x, y + r * 2);
+        ctx.stroke();
+      }
+
+      function tick(now) {
+        scenes.forEach(scene => {
+          if (scene.animation) {
+            const a = scene.animation;
+            const t = Math.min(1, (now - a.started) / a.duration);
+            const eased = t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+            scene.x = a.fromX + (a.toX - a.fromX) * eased;
+            scene.y = a.fromY + (a.toY - a.fromY) * eased;
+            updateReadout(scene);
+            if (t >= 1) scene.animation = null;
+          }
+          render(scene, now);
+        });
+        requestAnimationFrame(tick);
+      }
+
+      scenes.forEach(updateReadout);
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>

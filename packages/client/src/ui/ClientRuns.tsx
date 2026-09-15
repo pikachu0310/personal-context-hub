@@ -1,4 +1,5 @@
 import { TaskOwner } from "./TaskOwner.js";
+import { TaskArtifacts } from "./TaskArtifacts.js";
 import {
   initialSender,
   displaySender,
@@ -174,9 +175,9 @@ export function ClientRuns({
           : state.controlSupported &&
             (state.allowedProjectIds?.includes(current.task.projectId) ??
               state.allow))));
-  async function submit() {
-    const instruction = draft.trim();
-    if (!instruction || sending || !canSend) return;
+  async function submit(override?: string): Promise<boolean> {
+    const instruction = (override ?? draft).trim();
+    if (!instruction || sending || !canSend) return false;
     if (request.current?.text !== instruction)
       request.current = {
         text: instruction,
@@ -193,7 +194,7 @@ export function ClientRuns({
         revision: request.current.revision,
         instruction,
       });
-      setDraft("");
+      if (override === undefined) setDraft("");
       request.current = undefined;
       setNotice(
         local
@@ -201,8 +202,10 @@ export function ClientRuns({
           : "Engineが追加指示を受け付けました。反映状況は会話ログに表示されます。",
       );
       setFollow(true);
+      return true;
     } catch (error) {
       setNotice(controlError((error as Error).message));
+      return false;
     } finally {
       setSending(false);
     }
@@ -235,6 +238,13 @@ export function ClientRuns({
       <div className="task-conversation">
         <div className="conversation-scroll">
           <div className="conversation-content">
+            <TaskArtifacts
+              key={runId}
+              runId={runId!}
+              version={`${current.state}:${current.task.revision}`}
+              canFollowup={Boolean(canSend)}
+              onFollowup={(text) => submit(text)}
+            />
             <RequestMessage
               sender={displaySender(
                 initialSender(current.task, local, state),
