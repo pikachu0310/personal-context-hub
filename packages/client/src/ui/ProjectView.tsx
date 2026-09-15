@@ -161,12 +161,16 @@ export function ProjectView({
               />
             )}
           </Modal>
-          <Tabs defaultValue="live" keepMounted>
+          <Tabs
+            defaultValue="live"
+            keepMounted
+            className="meeting-workspace-tabs"
+          >
             <Tabs.List mb="md">
               <Tabs.Tab value="live">ライブ会議</Tabs.Tab>
               <Tabs.Tab value="minutes">議事録</Tabs.Tab>
             </Tabs.List>
-            <Tabs.Panel value="live">
+            <Tabs.Panel value="live" className="meeting-live-panel">
               <LiveMeeting
                 workspace={state}
                 client={clientState}
@@ -177,7 +181,7 @@ export function ProjectView({
                 }
               />
             </Tabs.Panel>
-            <Tabs.Panel value="minutes">
+            <Tabs.Panel value="minutes" className="meeting-minutes-panel">
               <MinutesList
                 key={projectId}
                 meetings={state.minutes}

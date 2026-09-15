@@ -360,6 +360,28 @@
   flex: 1;
   min-height: 0;
 }
+/* Carry the bounded workspace height through the tabs to each scroll owner. */
+.meeting-workspace-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.meeting-workspace-tabs > .mantine-Tabs-list {
+  flex-shrink: 0;
+}
+.meeting-workspace-tabs > .mantine-Tabs-panel {
+  flex: 1;
+  min-height: 0;
+}
+.meeting-live-panel {
+  overflow-y: auto;
+}
+.meeting-minutes-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .minutes-list-section {
   flex: 1;
   min-height: 0;
