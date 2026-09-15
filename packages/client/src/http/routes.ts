@@ -197,8 +197,28 @@ export async function route(
     !equal(String(req.headers["x-csrf-token"] ?? ""), this.csrf)
   )
     throw new HttpError(403, "CSRF_REQUIRED");
-  const input = await body(req);
+  const input = await body(
+    req,
+    url.pathname === "/api/project/meeting-input" ? 600000 : 65536,
+  );
   switch (url.pathname) {
+    case "/api/project/meeting-input":
+    case "/api/project/meeting-read": {
+      const projectId = id(input.projectId);
+      if (!this.settings.projects.some((project) => project.id === projectId))
+        throw new HttpError(404, "PROJECT_NOT_FOUND");
+      send(
+        res,
+        200,
+        await this.workspaceRequest(
+          url.pathname.endsWith("meeting-input")
+            ? "project.meeting.input"
+            : "project.meeting.read",
+          input,
+        ),
+      );
+      return;
+    }
     case "/api/task/detail": {
       send(
         res,

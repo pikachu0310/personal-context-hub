@@ -26,6 +26,7 @@ import { Workspace } from "../output/queries/workspace.js";
 import { TaskEvents } from "../output/text/task-events.js";
 import { Conversation } from "../processing/conversation.js";
 import { InputRouter } from "../processing/routing/input.js";
+import { ClientMeetingInput } from "../adapters/client-ws/meeting-input.js";
 import { CoordinatedConversation } from "../processing/coordinator/session.js";
 import { createWorkPort } from "../processing/tasks/work.js";
 import { createOpenAICoordinatorFactory } from "../adapters/openai/coordinator.js";
@@ -133,6 +134,11 @@ export class Engine {
     this.input = new InputRouter(this.store, this.conversation, () =>
       this.flush(),
     );
+    const browserMeeting = new ClientMeetingInput(this.store, this.input, () =>
+      this.flush(),
+    );
+    this.connections.meetingInput = (...args) =>
+      browserMeeting.request(...args);
     this.workspace = new Workspace(
       this.store,
       this.tasks,

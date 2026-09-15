@@ -1,6 +1,7 @@
 import { SharedTaskDetail } from "./TeamTasks.js";
 import { MinutesInspector } from "./MinutesInspector.js";
 import { MinutesList } from "./MinutesList.js";
+import { MeetingInput } from "./MeetingInput.js";
 import type { TaskReference } from "@ido/common/contracts/api";
 import {
   Alert,
@@ -41,6 +42,7 @@ export function ProjectView({
   dirtyChanged: (id: string, dirty: boolean) => void;
 }) {
   const [projectDetails, setProjectDetails] = useState(false);
+  const [meetingOpen, setMeetingOpen] = useState(false);
   const loadTranscript = useCallback(
     (query: TranscriptQuery) =>
       api<TranscriptPage>("project/transcript", { ...query, projectId }),
@@ -118,6 +120,13 @@ export function ProjectView({
               <Text c="dimmed" size="sm">
                 {state.project.name}
               </Text>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => setMeetingOpen(true)}
+              >
+                会議へ発言する
+              </Button>
               {
                 <Button
                   size="xs"
@@ -129,6 +138,20 @@ export function ProjectView({
               }
             </Group>
           </Group>
+          <Modal
+            opened={meetingOpen}
+            onClose={() => setMeetingOpen(false)}
+            title="ブラウザから会議へ"
+            size="xl"
+          >
+            {meetingOpen && (
+              <MeetingInput
+                key={`${clientState.settings.engineUrl}:${deviceId}:${projectId}`}
+                projectId={projectId}
+                connected={clientState.connected}
+              />
+            )}
+          </Modal>
           <>
             <MinutesList
               key={projectId}

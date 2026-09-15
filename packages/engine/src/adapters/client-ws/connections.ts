@@ -34,6 +34,12 @@ import { MeetingKnowledgeStore } from "../../processing/minutes/knowledge.js";
 import { transcriptPage } from "../../processing/minutes/transcript.js";
 import { BoardInputError, TaskBoard } from "../../processing/tasks/board.js";
 export class ClientConnections {
+  meetingInput?: (
+    device: Device,
+    operation: string,
+    input: Record<string, unknown>,
+    valid: () => boolean,
+  ) => Promise<unknown>;
   private detailService?: TaskDetails;
   get details() {
     return (this.detailService ??= new TaskDetails(this.store));
@@ -615,6 +621,20 @@ export class ClientConnections {
                 result = { sources: task.attachedSources ?? [] };
                 break;
               }
+              case "project.meeting.input":
+              case "project.meeting.read": {
+                if (!this.meetingInput)
+                  throw new Error("MEETING_INPUT_UNSUPPORTED");
+                result = await this.meetingInput(
+                  device,
+                  String(data.operation),
+                  input,
+                  () =>
+                    this.peers.get(device.id) === ws &&
+                    ws.readyState === WebSocket.OPEN,
+                );
+                break;
+              }
               case "task.conversation":
               case "project.conversation": {
                 const task =
@@ -801,6 +821,7 @@ export class ClientConnections {
                 "task.knowledge",
                 "task.conversation",
                 "project.conversation",
+                "project.meeting.read",
                 "project.inspect-invite",
               ].includes(String(data.operation))
             )
