@@ -16,8 +16,6 @@ export async function publicRoutes(
     case "/api/admin/public": {
       this.mutate(req, auth, true);
       const engineUrl = endpoint(input.engineUrl).origin;
-      if (!engineUrl.startsWith("https:"))
-        throw new HttpError(400, "PUBLIC_HTTPS_REQUIRED");
       if (!["ngrok", "cloudflare", "manual"].includes(input.provider))
         throw new HttpError(400, "INVALID_PROVIDER");
       this.store.put("config", "public", {

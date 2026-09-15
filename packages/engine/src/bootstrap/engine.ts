@@ -11,12 +11,7 @@ import { Credentials } from "@ido/common/runtime/credentials";
 import { HttpError, RateLimit, send } from "@ido/common/runtime/http";
 import { ClientConnections } from "../adapters/client-ws/connections.js";
 import { route } from "../adapters/http/admin.js";
-import {
-  authenticate,
-  config,
-  mutate,
-  trustedHost,
-} from "../adapters/http/auth.js";
+import { authenticate, config, mutate } from "../adapters/http/auth.js";
 import { OpenAIModels } from "../adapters/openai/models.js";
 import { PluginBroker } from "../adapters/plugins/broker.js";
 import { Plugins, type CatalogEntry } from "../adapters/plugins/host.js";
@@ -74,7 +69,6 @@ export class Engine {
   ui: string;
   timer?: NodeJS.Timeout;
   readonly config = config.bind(this);
-  readonly trustedHost = trustedHost.bind(this);
   readonly authenticate = authenticate.bind(this);
   readonly mutate = mutate.bind(this);
   readonly route = route.bind(this);
@@ -239,15 +233,11 @@ export class Engine {
     this.workspace.engineUrl = () => this.config().engineUrl ?? this.origin;
     this.tunnels = new Tunnels(options.directory, this.store, this.credentials);
     this.server.on("upgrade", (req, socket, head) => {
-      if (req.url?.startsWith("/preview/") && this.trustedHost(req)) {
+      if (req.url?.startsWith("/preview/")) {
         this.preview.server.emit("upgrade", req, socket, head);
         return;
       }
-      if (
-        req.url !== "/connect" ||
-        req.headers.origin ||
-        !this.trustedHost(req)
-      ) {
+      if (req.url !== "/connect" || req.headers.origin) {
         socket.destroy();
         return;
       }
@@ -301,7 +291,7 @@ export class Engine {
       this.server.once("error", reject);
       this.server.listen(
         this.options.port ?? 4310,
-        this.options.host ?? "127.0.0.1",
+        this.options.host ?? "0.0.0.0",
         resolve,
       );
     });
