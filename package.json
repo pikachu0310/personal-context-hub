@@ -58,6 +58,7 @@
     "audit": "npm audit",
     "coordination:read": "node scripts/read-github-coordination.mjs",
     "smoke:dashboard": "node scripts/ido-dashboard-smoke.mjs",
-    "smoke:minutes": "node scripts/client-minutes-smoke.mjs"
+    "smoke:minutes": "node scripts/client-minutes-smoke.mjs",
+    "smoke:previews": "node --import tsx scripts/client-preview-smoke.mjs"
   }
 }

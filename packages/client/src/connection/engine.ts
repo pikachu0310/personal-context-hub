@@ -18,6 +18,7 @@ export async function connect(this: Client) {
   this.ws?.close();
   this.connected = false;
   this.details.reset();
+  this.implementations.supported = false;
   this.executor.board.close();
   this.controlSupported = false;
   this.lifecycleSupported = false;
@@ -92,6 +93,7 @@ export async function connect(this: Client) {
       this.workspaceSupported = data.workspaceVersion === 1;
       this.taskOptionsSupported = data.taskOptionsVersion === 1;
       this.details.supported = data.taskDetailVersion === 1;
+      this.implementations.supported = data.implementationVersion === 1;
       this.localSharingSupported = data.localSharingVersion === 1;
       void this.syncLocalShares();
       this.teamTasksSupported = data.taskListVersion === 1;

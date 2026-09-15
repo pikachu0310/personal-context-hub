@@ -188,6 +188,9 @@ export class Engine {
             }),
           );
     });
+    this.connections.onImplementationChanged = (meetingId) => {
+      void this.conversation.document.refresh(meetingId);
+    };
     if (options.conversation !== false) {
       const conversation = options.conversation ?? {};
       this.coordinatorFactory =

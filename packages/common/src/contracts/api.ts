@@ -1,4 +1,5 @@
 import type { MinutesMetadata } from "./minutes.js";
+export * from "./implementation.js";
 import type { AccessMode } from "./work.js";
 export {
   detailTask,

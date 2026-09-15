@@ -1,3 +1,5 @@
+import { handlePreviewLink } from "./preview-links.js";
+import { parsePreviewUrl } from "@ido/common/contracts/api";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { parseTaskUrl, type TaskReference } from "@ido/common/contracts/api";
@@ -17,6 +19,21 @@ export function MinutesMarkdown({
         urlTransform={minutesUrl}
         components={{
           a: ({ href, children }) => {
+            if (href && parsePreviewUrl(href))
+              return (
+                <a
+                  className="minutes-task-link"
+                  href="#preview"
+                  onAuxClick={(event) => event.preventDefault()}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    handlePreviewLink(href);
+                  }}
+                >
+                  {children}
+                  <span aria-hidden="true"> ▷</span>
+                </a>
+              );
             const reference = href && parseTaskUrl(href);
             if (reference)
               return (

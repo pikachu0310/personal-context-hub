@@ -1,3 +1,5 @@
+import { handlePreviewLink } from "./preview-links.js";
+import { parsePreviewUrl } from "@ido/common/contracts/api";
 import { StateField, type EditorState, type Range } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import {
@@ -58,17 +60,21 @@ function linkParts(
 }
 function linkElement(href: string, openTask: OpenTask): HTMLElement {
   const reference = parseTaskUrl(href);
+  const preview = parsePreviewUrl(href);
   const link = document.createElement(href ? "a" : "span");
   if (!(link instanceof HTMLAnchorElement)) return link;
   link.href = reference
     ? `#projects/${reference.projectId}/tasks/${reference.taskId}`
-    : href;
-  if (reference) {
+    : preview
+      ? "#preview"
+      : href;
+  if (reference || preview) {
     link.className = "minutes-task-link";
     link.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      openTask(reference);
+      if (preview) handlePreviewLink(href);
+      else if (reference) openTask(reference);
     });
     link.addEventListener("auxclick", (event) => event.preventDefault());
   } else {

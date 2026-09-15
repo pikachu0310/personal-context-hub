@@ -2,6 +2,33 @@ import { lifecycleError } from "@ido/common-ui";
 import { browserApi } from "@ido/common/runtime/browser-api";
 const request = browserApi("/api/");
 const errors: Record<string, string> = {
+  IMPLEMENTATIONS_UNSUPPORTED: "起動・比較にはEngineとClientの更新が必要です。",
+  IMPLEMENTATION_NOT_FOUND:
+    "実装は削除されたか、このプロジェクトから参照できません。",
+  INVALID_PREVIEW_REFERENCE: "起動・比較リンクが正しくありません。",
+  PREVIEW_NOT_FOUND: "比較画面を開き直してください。",
+  PREVIEW_NOT_PREPARED: "実装の取得が完了してから起動してください。",
+  PREVIEW_NOT_RUNNING: "撮影するには実装を起動してください。",
+  PREVIEW_IN_USE:
+    "別の比較画面で使用中です。画面を閉じてから削除してください。",
+  PREVIEW_WORKTREE_CHANGED:
+    "比較用worktreeのソースやlockfileが変わりました。起動ログと変更を確認してください。",
+  GIT_FETCH_FAILED:
+    "コミットを取得できません。Git認証とpush先のブランチを確認してください。",
+  INVALID_PREVIEW_PATH:
+    "対象パスは / から始まるアプリ内のパスを指定してください。",
+  INVALID_PREVIEW_SIZE:
+    "表示幅は320〜2560、高さは240〜1600で指定してください。",
+  PREVIEW_SETUP_FAILED:
+    "依存関係の準備に失敗しました。起動ログを確認してください。",
+  PREVIEW_LOCAL_NETWORK_REQUIRED:
+    "この環境ではlocalhost起動にもネット接続の許可が必要です。ネット接続のチェックをONにして再試行してください。",
+  PREVIEW_SERVER_EXITED:
+    "サーバーが終了しました。起動ログを確認して再試行してください。",
+  PREVIEW_START_TIMEOUT:
+    "サーバーの起動を確認できませんでした。起動ログを確認してください。",
+  PREVIEW_BROWSER_INSTALL_FAILED:
+    "撮影用ブラウザを取得できませんでした。ネット接続を確認して再試行してください。",
   TASK_OPTIONS_UNSUPPORTED:
     "依頼のモデルと進め方を引き継ぐにはEngineの更新が必要です。",
   STOP_BEFORE_ACCESS_CHANGE:
@@ -60,4 +87,8 @@ export async function api<T>(
   } catch (error) {
     throw new Error(errors[(error as Error).message] ?? lifecycleError(error));
   }
+}
+
+export function previewError(message: string) {
+  return errors[message] ?? message;
 }

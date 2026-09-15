@@ -1,3 +1,4 @@
+import { ImplementationPicker } from "./ImplementationPicker.js";
 import { createPortal } from "react-dom";
 import { SourcePicker, type SourceTarget } from "./SourcePicker.js";
 import {
@@ -199,6 +200,12 @@ export function TaskInspector({
       </Tabs.List>
       <Tabs.Panel value="environment">
         <Stack gap="lg">
+          {sourceTarget && (
+            <ImplementationPicker
+              projectId={sourceTarget.projectId}
+              taskId={sourceTarget.taskId}
+            />
+          )}
           {children}
           <div className="inspector-section">{sourceList}</div>
         </Stack>
