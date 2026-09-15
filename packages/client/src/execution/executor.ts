@@ -292,7 +292,6 @@ export class Executor {
               ? task.reasoningEffort
               : mapping.reasoningEffort,
         modelReasoningEffort: previous?.modelReasoningEffort,
-        meetingToolsEnabled: previous?.meetingToolsEnabled,
         origin: local ? "local" : undefined,
         localMapping: local ? structuredClone(mapping) : undefined,
         discordShare: previous?.discordShare ?? local?.discordShare,
