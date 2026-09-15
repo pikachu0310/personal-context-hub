@@ -15,17 +15,45 @@ export function useTranscriptPage(
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const epoch = useRef(0);
+  const scope = useRef("");
+  const currentLoad = useRef(load);
+  const loadedOlder = useRef(false);
   const key = JSON.stringify(query);
   useEffect(() => {
     const request = ++epoch.current;
-    if (!load || !enabled) return;
-    setPage(undefined);
+    if (!load || !enabled) {
+      setLoading(false);
+      return;
+    }
+    const changed = scope.current !== key || currentLoad.current !== load;
+    scope.current = key;
+    currentLoad.current = load;
+    if (changed) {
+      loadedOlder.current = false;
+      setPage(undefined);
+    }
     setError("");
     setLoading(true);
     const timer = setTimeout(() => {
       void load(JSON.parse(key))
         .then((result) => {
-          if (request === epoch.current) setPage(result);
+          if (request !== epoch.current) return;
+          setPage((previous) =>
+            changed || !previous
+              ? result
+              : {
+                  ...result,
+                  next: loadedOlder.current ? previous.next : result.next,
+                  messages: [
+                    ...new Map(
+                      [...previous.messages, ...result.messages].map((m) => [
+                        m.id,
+                        m,
+                      ]),
+                    ).values(),
+                  ],
+                },
+          );
         })
         .catch(() => {
           if (request === epoch.current)
@@ -48,6 +76,7 @@ export function useTranscriptPage(
     try {
       const result = await load({ ...query, before: page.next });
       if (request !== epoch.current) return;
+      loadedOlder.current = true;
       setPage((previous) => ({
         ...result,
         messages: [

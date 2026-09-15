@@ -15,6 +15,28 @@
 .live-meeting-directory {
   overflow-wrap: anywhere;
 }
+.live-meeting-grid > .live-meeting-conversation {
+  display: flex;
+  flex-direction: column;
+  height: max(360px, calc(100dvh - 380px));
+  overflow: hidden;
+}
+.live-meeting-conversation > .mantine-Group-root {
+  flex-shrink: 0;
+}
+.live-meeting-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+  padding: 2px 4px 4px 2px;
+}
+.live-meeting-log:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-6);
+  outline-offset: -2px;
+}
 @media (max-width: 1050px) {
   .live-meeting-grid {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

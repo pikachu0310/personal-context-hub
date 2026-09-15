@@ -6,16 +6,19 @@ import type {
   TranscriptQuery,
 } from "@ido/common/contracts/api";
 import { useTranscriptPage } from "./useTranscriptPage.js";
+import { useFollowingLog } from "./useFollowingLog.js";
 
 /** A bounded reader: selecting a topic never moves the adjacent minutes document. */
 export function MinutesInspector({
   meetings,
   loadTranscript,
+  initialTab = "topics",
 }: {
   meetings: MeetingView[];
   loadTranscript?: (query: TranscriptQuery) => Promise<TranscriptPage>;
+  initialTab?: "topics" | "transcript";
 }) {
-  const [tab, setTab] = useState<string | null>("topics");
+  const [tab, setTab] = useState<string | null>(initialTab);
   const [query, setQuery] = useState("");
   const [selected, select] = useState("");
   const [sources, setSources] = useState<{
@@ -25,7 +28,6 @@ export function MinutesInspector({
   }>();
   const [limit, setLimit] = useState(100);
   const topicBody = useRef<HTMLDivElement>(null);
-  const logBody = useRef<HTMLDivElement>(null);
   const terms = query
     .normalize("NFKC")
     .toLowerCase()
@@ -60,6 +62,7 @@ export function MinutesInspector({
     loadTranscript,
     {
       query,
+      ...(meetings.length === 1 ? { meetingId: meetings[0].id } : {}),
       ...(sources
         ? { meetingId: sources.meetingId, topicId: sources.topicId }
         : {}),
@@ -94,6 +97,16 @@ export function MinutesInspector({
             ),
         )
         .sort((a, b) => a.at - b.at);
+  const visibleMessages = loadTranscript ? messages : messages.slice(-limit);
+  const log = useFollowingLog(
+    `${meetings
+      .map((meeting) => meeting.id)
+      .sort()
+      .join(":")}:${query}:${sources?.topicId ?? ""}`,
+    visibleMessages,
+    tab === "transcript",
+    !query.trim() && !sources,
+  );
   return (
     <section className="minutes-inspector" aria-label="議事録の関連情報">
       <h3 className="minutes-inspector-title">詳細を確認</h3>
@@ -189,7 +202,6 @@ export function MinutesInspector({
                     setQuery("");
                     setLimit(Math.max(100, topic.sourceIds.length));
                     setTab("transcript");
-                    logBody.current?.scrollTo(0, 0);
                   }}
                 >
                   元の発言を見る（{topic.sourceIds.length}件）
@@ -230,16 +242,34 @@ export function MinutesInspector({
                 </Group>
               </>
             )}
-            <Text size="xs" c="dimmed">
-              {remote.page?.total ?? messages.length}件の発言
-              {loadTranscript
-                ? ` · ${messages.length}件を表示`
-                : messages.length > limit && ` · 直近${limit}件を表示`}
+            <Group justify="space-between" gap={4} wrap="wrap">
+              <Text size="xs" c="dimmed">
+                {remote.page?.total ?? messages.length}件の発言
+                {loadTranscript
+                  ? ` · ${messages.length}件を表示`
+                  : messages.length > limit && ` · 直近${limit}件を表示`}
+              </Text>
+              <Button
+                size="compact-xs"
+                variant={log.unread ? "light" : "subtle"}
+                onClick={log.latest}
+                disabled={!visibleMessages.length || log.following}
+              >
+                {log.unread ? `新着${log.unread}件 · 最新へ ↓` : "最新へ ↓"}
+              </Button>
+            </Group>
+            <Text size="xs" c="dimmed" role="status" aria-live="polite">
+              {log.following
+                ? "新着に追従中"
+                : log.unread
+                  ? `新しい発言が${log.unread}件あります`
+                  : "閲覧位置を保持しています"}
             </Text>
           </div>
           <div
             className="minutes-log-content"
-            ref={logBody}
+            ref={log.viewport}
+            onScroll={log.onScroll}
             tabIndex={0}
             aria-label="発言の内容"
           >
@@ -265,7 +295,7 @@ export function MinutesInspector({
                 </Button>
               </div>
             )}
-            {loadTranscript && remote.loading && (
+            {loadTranscript && remote.loading && !messages.length && (
               <Text size="sm" role="status">
                 発言を読み込んでいます…
               </Text>
@@ -277,31 +307,30 @@ export function MinutesInspector({
                   : "表示できる発言はありません。"}
               </Text>
             )}
-            {(loadTranscript ? messages : messages.slice(-limit)).map(
-              (message) => (
-                <article
-                  className="minutes-statement"
-                  key={`${message.meeting.id}:${message.id}`}
-                  id={`statement-${message.id}`}
-                >
-                  <header>
-                    <strong>{message.authorName ?? message.authorId}</strong>
-                    <time>{new Date(message.at).toLocaleString("ja-JP")}</time>
-                  </header>
-                  <p>{message.text}</p>
-                  {message.replyText && (
-                    <p className="minutes-statement-reply">
-                      IDO: {message.replyText}
-                    </p>
-                  )}
-                  {meetings.length > 1 && (
-                    <Text size="xs" c="dimmed">
-                      {message.meeting.name}
-                    </Text>
-                  )}
-                </article>
-              ),
-            )}
+            {visibleMessages.map((message) => (
+              <article
+                className="minutes-statement"
+                key={`${message.meeting.id}:${message.id}`}
+                id={`statement-${message.id}`}
+                data-log-id={message.id}
+              >
+                <header>
+                  <strong>{message.authorName ?? message.authorId}</strong>
+                  <time>{new Date(message.at).toLocaleString("ja-JP")}</time>
+                </header>
+                <p>{message.text}</p>
+                {message.replyText && (
+                  <p className="minutes-statement-reply">
+                    IDO: {message.replyText}
+                  </p>
+                )}
+                {meetings.length > 1 && (
+                  <Text size="xs" c="dimmed">
+                    {message.meeting.name}
+                  </Text>
+                )}
+              </article>
+            ))}
           </div>
         </Tabs.Panel>
       </Tabs>

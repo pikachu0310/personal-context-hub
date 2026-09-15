@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Group,
+  Modal,
   Paper,
   Select,
   Stack,
@@ -14,9 +15,13 @@ import type {
   ClientState,
   ProjectWorkspace,
   TaskReference,
+  TranscriptPage,
+  TranscriptQuery,
 } from "@ido/common/contracts/api";
 import { stateLabel } from "./ActivityFeed.js";
 import { MinutesMarkdown } from "./MinutesMarkdown.js";
+import { MinutesInspector } from "./MinutesInspector.js";
+import { useFollowingLog } from "./useFollowingLog.js";
 import { taskReadiness } from "./task-readiness.js";
 import "./live-meeting.css";
 
@@ -31,13 +36,16 @@ export function LiveMeeting({
   client,
   openTask,
   openSettings,
+  loadTranscript,
 }: {
   workspace: ProjectWorkspace;
   client: ClientState;
   openTask: (reference: TaskReference) => void;
   openSettings: () => void;
+  loadTranscript?: (query: TranscriptQuery) => Promise<TranscriptPage>;
 }) {
   const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const meetings = [...workspace.minutes].sort(
     (a, b) =>
       (b.lastMessageAt ?? b.startedAt ?? 0) -
@@ -45,8 +53,9 @@ export function LiveMeeting({
   );
   const meeting = meetings.find((m) => m.id === meetingId) ?? meetings[0];
   const messages = [...(meeting?.messages ?? [])]
-    .sort((a, b) => b.at - a.at)
-    .slice(0, 20);
+    .sort((a, b) => a.at - b.at)
+    .slice(-80);
+  const log = useFollowingLog(meeting?.id ?? "", messages);
   const tasks = workspace.tasks
     .filter(
       (task) =>
@@ -122,117 +131,162 @@ export function LiveMeeting({
           style={{ flex: 1, maxWidth: 520 }}
         />
         <Text size="xs" c="dimmed">
-          最新の発言が上に表示されます · 約2.5秒ごとに更新
+          会話順に表示 · 最新位置では新着に追従します
         </Text>
       </Group>
       <div className="live-meeting-grid">
-        <section aria-label="ライブの発言">
+        <section
+          aria-label="ライブの発言"
+          className="live-meeting-conversation"
+        >
           <Group justify="space-between" mb="sm">
             <Title order={3}>会話</Title>
             <Text size="sm" c="dimmed">
               直近の話者 {speakers.size}人
             </Text>
           </Group>
-          <Group gap={6} mb="sm">
-            {[...speakers].map(([id, name]) => (
-              <Badge key={id} variant="light" color="gray">
-                {name}
-              </Badge>
-            ))}
+          <Group justify="space-between" gap={4} mb="sm">
+            <Text size="xs" c="dimmed" role="status" aria-live="polite">
+              {log.following
+                ? "新着に追従中"
+                : log.unread
+                  ? `新着${log.unread}件`
+                  : "閲覧位置を保持"}
+            </Text>
+            <Button
+              size="compact-xs"
+              variant={log.unread ? "light" : "subtle"}
+              onClick={log.latest}
+              disabled={!messages.length || log.following}
+            >
+              {log.unread ? `新着${log.unread}件 · 最新へ ↓` : "最新へ ↓"}
+            </Button>
           </Group>
-          {!messages.length && (
-            <Alert color="gray">
-              Discordで話すか「会議へ発言する」から入力すると、ここに話者と発言が表示されます。
-            </Alert>
-          )}
-          <Stack gap="sm">
-            {messages.map((message) => {
-              const related = workspace.tasks.filter(
-                (task) =>
-                  task.sourceIds?.includes(message.id) ||
-                  task.sourceStatements?.some(
-                    (source) => source.id === message.id,
-                  ),
-              );
-              return (
-                <Paper withBorder p="md" key={message.id}>
-                  <Group justify="space-between" mb={6}>
-                    <Text size="sm" fw={600}>
-                      {message.role === "assistant"
-                        ? "IDO"
-                        : (message.authorName ?? "参加者")}
-                    </Text>
-                    <Text size="xs" c="dimmed">
-                      {time(message.at)}
-                    </Text>
-                  </Group>
-                  <Text
-                    size="sm"
-                    style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+          <div
+            className="live-meeting-log"
+            ref={log.viewport}
+            onScroll={log.onScroll}
+            tabIndex={0}
+            aria-label="ライブの会話ログ"
+          >
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              mb="sm"
+              onClick={() => setHistoryOpen(true)}
+              disabled={!meeting}
+            >
+              過去の発言を開く
+            </Button>
+            <Group gap={6} mb="sm">
+              {[...speakers].map(([id, name]) => (
+                <Badge key={id} variant="light" color="gray">
+                  {name}
+                </Badge>
+              ))}
+            </Group>
+            {!messages.length && (
+              <Alert color="gray">
+                Discordで話すか「会議へ発言する」から入力すると、ここに話者と発言が表示されます。
+              </Alert>
+            )}
+            <Stack gap="sm">
+              {messages.map((message) => {
+                const related = workspace.tasks.filter(
+                  (task) =>
+                    task.sourceIds?.includes(message.id) ||
+                    task.sourceStatements?.some(
+                      (source) => source.id === message.id,
+                    ),
+                );
+                return (
+                  <Paper
+                    withBorder
+                    p="md"
+                    key={message.id}
+                    data-log-id={message.id}
                   >
-                    {message.text.trim() ||
-                      (message.steps?.transcription?.state === "failed"
-                        ? "文字起こしに失敗しました。"
-                        : ["pending", "running"].includes(
-                              message.steps?.transcription?.state ?? "",
-                            )
-                          ? "音声を受信しました。文字起こし中…"
-                          : "この音声では発言が検出されませんでした。")}
-                  </Text>
-                  {message.replyText && (
+                    <Group justify="space-between" mb={6}>
+                      <Text size="sm" fw={600}>
+                        {message.role === "assistant"
+                          ? "IDO"
+                          : (message.authorName ?? "参加者")}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {time(message.at)}
+                      </Text>
+                    </Group>
                     <Text
                       size="sm"
-                      mt="sm"
-                      c="dimmed"
-                      style={{ whiteSpace: "pre-wrap" }}
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                      }}
                     >
-                      IDO: {message.replyText}
+                      {message.text.trim() ||
+                        (message.steps?.transcription?.state === "failed"
+                          ? "文字起こしに失敗しました。"
+                          : ["pending", "running"].includes(
+                                message.steps?.transcription?.state ?? "",
+                              )
+                            ? "音声を受信しました。文字起こし中…"
+                            : "この音声では発言が検出されませんでした。")}
                     </Text>
-                  )}
-                  {Object.values(message.steps ?? {}).some(
-                    (step) => step.state === "failed",
-                  ) && (
-                    <Text size="xs" c="red" mt="xs">
-                      {Object.entries(message.steps ?? {})
-                        .filter(([, step]) => step.state === "failed")
-                        .map(
-                          ([name]) =>
-                            (
-                              ({
-                                transcription: "文字起こし",
-                                reply: "応答",
-                                minutes: "議事録",
-                                delivery: "返答の配送",
-                              }) as Record<string, string>
-                            )[name] ?? "発言の処理",
-                        )
-                        .join("・")}
-                      でエラーが発生しています。
-                    </Text>
-                  )}
-                  {related.length > 0 && (
-                    <Group gap="xs" mt="sm">
-                      {related.map((task) => (
-                        <Button
-                          key={task.id}
-                          size="compact-xs"
-                          variant="light"
-                          onClick={() =>
-                            openTask({
-                              projectId: task.projectId,
-                              taskId: task.id,
-                            })
-                          }
-                        >
-                          作業を開く: {task.title ?? "タスク"}
-                        </Button>
-                      ))}
-                    </Group>
-                  )}
-                </Paper>
-              );
-            })}
-          </Stack>
+                    {message.replyText && (
+                      <Text
+                        size="sm"
+                        mt="sm"
+                        c="dimmed"
+                        style={{ whiteSpace: "pre-wrap" }}
+                      >
+                        IDO: {message.replyText}
+                      </Text>
+                    )}
+                    {Object.values(message.steps ?? {}).some(
+                      (step) => step.state === "failed",
+                    ) && (
+                      <Text size="xs" c="red" mt="xs">
+                        {Object.entries(message.steps ?? {})
+                          .filter(([, step]) => step.state === "failed")
+                          .map(
+                            ([name]) =>
+                              (
+                                ({
+                                  transcription: "文字起こし",
+                                  reply: "応答",
+                                  minutes: "議事録",
+                                  delivery: "返答の配送",
+                                }) as Record<string, string>
+                              )[name] ?? "発言の処理",
+                          )
+                          .join("・")}
+                        でエラーが発生しています。
+                      </Text>
+                    )}
+                    {related.length > 0 && (
+                      <Group gap="xs" mt="sm">
+                        {related.map((task) => (
+                          <Button
+                            key={task.id}
+                            size="compact-xs"
+                            variant="light"
+                            onClick={() =>
+                              openTask({
+                                projectId: task.projectId,
+                                taskId: task.id,
+                              })
+                            }
+                          >
+                            作業を開く: {task.title ?? "タスク"}
+                          </Button>
+                        ))}
+                      </Group>
+                    )}
+                  </Paper>
+                );
+              })}
+            </Stack>
+          </div>
         </section>
         <section aria-label="現在の議事録">
           <Group justify="space-between" mb="sm">
@@ -376,6 +430,20 @@ export function LiveMeeting({
           </Stack>
         </section>
       </div>
+      <Modal
+        opened={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        title="発言ログ"
+        size="lg"
+      >
+        <div className="project-notes-modal">
+          <MinutesInspector
+            meetings={meeting ? [meeting] : []}
+            loadTranscript={loadTranscript}
+            initialTab="transcript"
+          />
+        </div>
+      </Modal>
     </Stack>
   );
 }

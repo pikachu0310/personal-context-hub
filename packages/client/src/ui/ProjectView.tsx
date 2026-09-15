@@ -172,6 +172,9 @@ export function ProjectView({
                 client={clientState}
                 openTask={openTask}
                 openSettings={openSettings}
+                loadTranscript={
+                  state.transcriptPaging ? loadTranscript : undefined
+                }
               />
             </Tabs.Panel>
             <Tabs.Panel value="minutes">
