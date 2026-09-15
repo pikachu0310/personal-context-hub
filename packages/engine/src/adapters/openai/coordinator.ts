@@ -126,7 +126,7 @@ export function createOpenAICoordinatorFactory(
                 },
                 // This request has no tools or remote conversation state.
                 // One SDK retry can recover a transient transport failure;
-                // exhausted failures still stop at the inbox uncertainty guard.
+                // exhausted transport failures return to the next inbox cycle.
                 { signal: turnSignal, maxRetries: 1, timeout: 60_000 },
               );
               turnSignal.throwIfAborted();
@@ -143,16 +143,26 @@ export function createOpenAICoordinatorFactory(
                 !sent ||
                 (detail.status !== undefined &&
                   [400, 401, 403, 404, 422, 429].includes(detail.status));
+              // This adapter sends store:false, no tools and no conversation
+              // handle. A lost response cannot execute a task or deliver a
+              // reply: those effects occur only after run returns a parsed
+              // result. Preserve the input for the next scheduled attempt.
+              // Unknown errors from other/stateful providers still stop.
+              const retryable =
+                sent &&
+                (error instanceof OpenAI.APIConnectionError ||
+                  error instanceof OpenAI.APIUserAbortError);
               // Retain only allowlisted diagnostic metadata; provider messages
               // can contain private inputs or credentials.
               throw Object.assign(
                 new CoordinatorDeliveryError(
-                  detail.code ??
+                  (retryable ? "COORDINATOR_TRANSPORT_RETRYABLE" : undefined) ??
+                    detail.code ??
                     (detail.status ? "COORDINATOR_HTTP_ERROR" : undefined) ??
                     (sent
                       ? "COORDINATOR_RESPONSE_UNCERTAIN"
                       : "COORDINATOR_NOT_STARTED"),
-                  rejected ? "rejected" : "unknown",
+                  rejected ? "rejected" : retryable ? "retryable" : "unknown",
                 ),
                 {
                   status: detail.status,

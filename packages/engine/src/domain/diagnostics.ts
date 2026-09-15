@@ -38,6 +38,8 @@ const reasons: Record<string, string> = {
   COORDINATOR_NOT_STARTED: "会話APIへの送信前に処理が停止しました。",
   COORDINATOR_RESPONSE_UNCERTAIN:
     "会話APIの結果を確認できませんでした。会話状態を確認して再開してください。",
+  COORDINATOR_TRANSPORT_RETRYABLE:
+    "会話判断APIとの通信が中断しました。入力を保持して次の処理周期で再試行します。",
   COORDINATOR_RESPONSE_INCOMPLETE: "会話APIの応答が完了しませんでした。",
   INVALID_COORDINATOR_RESPONSE: "会話APIの応答が必要な形式を満たしていません。",
   COORDINATOR_SOURCE_REVALIDATION_REQUIRED:

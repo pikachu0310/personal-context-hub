@@ -237,8 +237,9 @@ export class CoordinatorInbox {
             batch.response = await response;
           } catch (error) {
             await this.change(() => {
-              batch.status =
-                error?.delivery === "rejected" ? "prepared" : "uncertain";
+              batch.status = ["rejected", "retryable"].includes(error?.delivery)
+                ? "prepared"
+                : "uncertain";
             });
             throw error;
           } finally {

@@ -185,10 +185,34 @@ test("API authentication errors retain safe status/code/request ID and allow ret
   });
 });
 
-test("connection failure, incomplete output and invalid JSON stay uncertain without replay", async (t) => {
+test("stateless transport failures permit a later retry without applying a lost response", async (t) => {
+  for (const failure of [
+    new OpenAI.APIConnectionError({ message: "private" }),
+    new OpenAI.APIConnectionTimeoutError(),
+    new OpenAI.APIUserAbortError(),
+  ]) {
+    let available = false;
+    const f = fixture(async () => {
+      if (!available) throw failure;
+      return { status: "completed", output_text: JSON.stringify(silent) };
+    });
+    t.after(() => f.factory.close());
+    const runtime = await f.factory.createCoordinator({ meetingId: "meeting" });
+    await assert.rejects(runtime.run(observation()), {
+      delivery: "retryable",
+      code: "COORDINATOR_TRANSPORT_RETRYABLE",
+    });
+    assert.equal(f.calls.length, 1);
+    available = true;
+    assert.deepEqual(await runtime.run(observation()), silent);
+    assert.equal(f.calls.length, 2);
+  }
+});
+
+test("unknown failure, incomplete output and invalid JSON stay uncertain without replay", async (t) => {
   for (const respond of [
     async () => {
-      throw new OpenAI.APIConnectionError({ message: "private" });
+      throw new Error("unknown provider failure");
     },
     async () => ({ status: "incomplete", output_text: JSON.stringify(silent) }),
     async () => ({ status: "completed", output_text: "not json" }),
