@@ -1,4 +1,5 @@
 import { Implementations } from "../../processing/tasks/implementations.js";
+import { executionSlots } from "@ido/common/contracts/work";
 import { TaskDetails } from "../../processing/tasks/details.js";
 import { supportsTask } from "../../clients/scheduler.js";
 import { projectDiscussion } from "../../processing/tasks/board.js";
@@ -983,7 +984,7 @@ export class ClientConnections {
                     ),
                   }
                 : {}),
-              slots: Math.max(1, Math.min(8, Number(g.slots) || 1)),
+              slots: executionSlots(g.slots, 1),
             }))
             .filter(
               (g) =>
@@ -992,7 +993,7 @@ export class ClientConnections {
                   `${g.projectId}:${device.id}`,
                 ),
             );
-          device.slots = Math.max(1, Math.min(8, Number(data.slots) || 1));
+          device.slots = executionSlots(data.slots, 1);
           device.executionPolicyVersion =
             data.executionPolicyVersion === 1 ? 1 : undefined;
           this.store.put("device", device.id, device);

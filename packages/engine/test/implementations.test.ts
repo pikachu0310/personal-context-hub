@@ -81,8 +81,14 @@ test("minutes select validated artifacts; newly available commits trigger genera
   let calls = 0;
   const document = new MinutesDocument(
     store,
-    async (_meeting, _links, _results, artifacts) => {
+    async (_meeting, _links, _results, _tasks, artifacts) => {
       calls++;
+      assert.deepEqual(_tasks.map((task) => task.taskId).sort(), ["a", "b"]);
+      assert.ok(
+        artifacts.every((artifact) =>
+          _tasks.some((task) => task.taskId === artifact.taskId),
+        ),
+      );
       return `# 2つの画面\n{{preview:${artifacts.map((a) => a.id).join(",")}}}`;
     },
   );
@@ -110,10 +116,13 @@ test("minutes retry if publication changes while generation is pending", async (
   const { store, service, sync } = await fixture(t);
   service.sync("d", sync());
   let calls = 0;
-  const document = new MinutesDocument(store, async (_m, _l, _r, artifacts) => {
-    if (++calls === 1) service.sync("d", sync("a", "b".repeat(40)));
-    return `{{preview:${artifacts[0].id}}}`;
-  });
+  const document = new MinutesDocument(
+    store,
+    async (_m, _l, _r, _tasks, artifacts) => {
+      if (++calls === 1) service.sync("d", sync("a", "b".repeat(40)));
+      return `{{preview:${artifacts[0].id}}}`;
+    },
+  );
   await document.refresh("m");
   assert.equal(calls, 2);
   assert.ok(

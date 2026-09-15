@@ -1,3 +1,4 @@
+import { executionSlots } from "@ido/common/contracts/work";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { mkdir, readFile, realpath, writeFile, rm } from "node:fs/promises";
@@ -319,9 +320,11 @@ export class LocalPreviews {
         ...this.occupied(),
       ];
       if (
-        occupied.length < c.settings.slots &&
+        occupied.length < executionSlots(c.settings.slots, 1) &&
         occupied.filter((r) => r.task.projectId === artifact.projectId).length <
-          (mapping?.slots ?? c.settings.slots)
+          (mapping?.workspaceMode === "project"
+            ? 1
+            : executionSlots(mapping?.slots ?? c.settings.slots, 1))
       ) {
         e.claimed = true;
         break;

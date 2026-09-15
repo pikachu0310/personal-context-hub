@@ -1,6 +1,10 @@
 import { stopPreviewBrowserInstall } from "../preview/capture.js";
 import { LocalPreviews } from "../preview/local.js";
 import { ImplementationSync } from "../preview/sync.js";
+import {
+  executionSlots,
+  MAX_EXECUTION_SLOTS,
+} from "@ido/common/contracts/work";
 import { ClientTaskDetails } from "../connection/task-details.js";
 import { type ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
@@ -69,7 +73,11 @@ export class Client {
     if (!this.stopping) this.ready();
     return catalog;
   };
-  settings: Settings = { mappings: [], slots: 1, projects: [] };
+  settings: Settings = {
+    mappings: [],
+    slots: MAX_EXECUTION_SLOTS,
+    projects: [],
+  };
   credentials: Credentials;
   executor: Executor;
   preview: ClientPreview;
@@ -148,7 +156,10 @@ export class Client {
       )
       .map((mapping) => ({
         ...mapping,
-        slots: mapping.workspaceMode === "project" ? 1 : mapping.slots,
+        slots:
+          mapping.workspaceMode === "project"
+            ? 1
+            : executionSlots(mapping.slots),
         network: isUnrestrictedAccess(mapping.accessMode) || mapping.network,
       }));
   }
@@ -236,6 +247,10 @@ export class Client {
       join(this.directory, "client.json"),
       this.settings,
     );
+    this.settings.slots = executionSlots(this.settings.slots);
+    for (const mapping of this.settings.mappings)
+      mapping.slots =
+        mapping.workspaceMode === "project" ? 1 : executionSlots(mapping.slots);
     this.settings.profile ??= { name: "参加者", context: "" };
     this.allowedProjects.clear();
     for (const mapping of this.settings.mappings)

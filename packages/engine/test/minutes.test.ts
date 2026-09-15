@@ -394,3 +394,151 @@ test("a retry retains failed partial output and its explanation without reflecti
     "再確認完了",
   ]);
 });
+
+test("task context links pending work to its sources and reconciles task-only changes during generation", async (t) => {
+  const { store, meeting } = await fixture(t);
+  const task = {
+    id: "research",
+    projectId: "p",
+    meetingId: "m",
+    title: "方式比較",
+    text: "候補を比較する",
+    state: "queued",
+    sourceIds: ["one"],
+    runId: "run",
+    revision: 1,
+    history: [],
+  };
+  store.put("task", task.id, task);
+  store.put("task", "unrelated", {
+    ...task,
+    id: "unrelated",
+    meetingId: "other",
+  });
+  let release!: (text: string) => void;
+  const seen: import("@ido/common/contracts/work").MinutesTaskContext[][] = [];
+  const document = new MinutesDocument(
+    store,
+    async (_m, _links, results, tasks) => {
+      seen.push(tasks);
+      assert.equal(results.length, 0, "pending work has no verified results");
+      if (seen.length === 1)
+        return new Promise<string>((resolve) => {
+          release = resolve;
+        });
+      return `## ${tasks[0].link}\n\n- ${tasks[0].text}（${tasks[0].state}、関連: ${tasks[0].link}）`;
+    },
+  );
+  const pending = document.refresh("m");
+  store.put("task", task.id, {
+    ...task,
+    text: "候補AとBを比較する",
+    state: "running",
+  });
+  release("outdated task context");
+  await pending;
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].length, 1);
+  assert.deepEqual(seen[0][0].sourceIds, ["one"]);
+  assert.equal(seen[0][0].state, "queued");
+  assert.equal(seen[1][0].state, "running");
+  assert.match(meeting().summary, /候補AとB/);
+  assert.equal(
+    meeting().summaryRevision,
+    1,
+    "stale task context is never committed",
+  );
+  await document.refresh("m");
+  assert.equal(seen.length, 2);
+  store.put("task", task.id, { ...task, text: "候補Cも比較する", revision: 2 });
+  await document.refresh("m");
+  assert.equal(
+    seen.length,
+    3,
+    "task-only edits trigger generation without new speech",
+  );
+  assert.match(meeting().summary, /候補C/);
+});
+
+test("conversation passes task provenance to the Markdown model with topic associations and inline citation rules", async (t) => {
+  const { store, meeting } = await fixture(t);
+  const { OpenAIModels } = await import("../src/adapters/openai/models.js");
+  const { Conversation } = await import("../src/processing/conversation.js");
+  const { MeetingKnowledgeStore } =
+    await import("../src/processing/minutes/knowledge.js");
+  new MeetingKnowledgeStore(store).apply(
+    "p",
+    {
+      meetingId: "m",
+      topics: [
+        {
+          id: null,
+          title: "方式",
+          summary: "方式を比較中",
+          decisions: [],
+          openQuestions: ["採用方式は未決"],
+          sourceIds: ["one"],
+        },
+      ],
+    },
+    new Set(["one"]),
+  );
+  store.put("task", "compare", {
+    id: "compare",
+    projectId: "p",
+    meetingId: "m",
+    title: "方式比較",
+    text: "方式AとBを比較",
+    sourceIds: ["one"],
+    state: "queued",
+    runId: "run",
+    revision: 1,
+  });
+  const model = new OpenAIModels({ get: async () => undefined });
+  let calls = 0;
+  t.mock.method(
+    model,
+    "api",
+    async () =>
+      ({
+        responses: {
+          create: async (request: {
+            input: string;
+            instructions: string;
+            tools: unknown[];
+          }) => {
+            calls++;
+            const input = JSON.parse(request.input);
+            assert.deepEqual(input.groundedTopics[0].relatedTaskIds, [
+              "compare",
+            ]);
+            assert.deepEqual(input.tasks[0].sourceIds, ["one"]);
+            assert.equal(input.tasks[0].state, "queued");
+            assert.equal(input.tasks[0].text, "方式AとBを比較");
+            assert.deepEqual(input.taskResults, []);
+            assert.deepEqual(request.tools, []);
+            assert.match(request.instructions, /タスクとの紐付けを最優先/);
+            assert.match(
+              request.instructions,
+              /各記述のすぐそばに関連するタスクリンク/,
+            );
+            assert.match(
+              request.instructions,
+              /依頼内容は成果の証明ではありません/,
+            );
+            return {
+              status: "completed",
+              output_text: `## ${input.tasks[0].link}\n\n- 採用方式は未決（関連: ${input.tasks[0].link}）`,
+            };
+          },
+        },
+      }) as never,
+  );
+  await new Conversation(store, model).document.refresh("m");
+  assert.equal(calls, 1);
+  assert.equal(meeting().summaryState, "ready");
+  assert.equal(
+    meeting().summary.match(/ido:\/\/projects\/p\/tasks\/compare/g)?.length,
+    2,
+  );
+});

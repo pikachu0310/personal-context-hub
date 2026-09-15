@@ -1,5 +1,9 @@
 import { previewReference } from "@ido/common/contracts/api";
 import { installPreviewBrowser } from "../preview/capture.js";
+import {
+  executionSlots,
+  MAX_EXECUTION_SLOTS,
+} from "@ido/common/contracts/work";
 import { attachTaskSource } from "@ido/common/contracts/protocol";
 import {
   readArtifactVersion,
@@ -582,7 +586,12 @@ export async function route(
         throw new HttpError(409, "PAUSE_BEFORE_EDITING");
       this.settings.mappings = this.settings.mappings
         .filter((m) => m.projectId !== project.id)
-        .concat({ projectId: project.id, directory, network: false, slots: 1 });
+        .concat({
+          projectId: project.id,
+          directory,
+          network: false,
+          slots: MAX_EXECUTION_SLOTS,
+        });
       this.suggestedInvite = undefined;
       await this.save();
       this.ready();
@@ -656,10 +665,19 @@ export async function route(
             progressMode: input.progressMode === "manual" ? "manual" : "auto",
             workspaceMode:
               input.workspaceMode === "project" ? "project" : "worktree",
-            slots: 1,
+            slots:
+              input.workspaceMode === "project"
+                ? 1
+                : executionSlots(input.slots),
           });
         delete this.settings.pendingProject;
         if (input.allow === true) this.allowedProjects.add(project.id);
+        this.settings.slots = executionSlots(
+          this.executionMappings().reduce(
+            (total, mapping) => total + mapping.slots,
+            0,
+          ),
+        );
         await this.save();
         this.ready();
       } finally {
@@ -706,16 +724,13 @@ export async function route(
 
           network: input.network === true,
           workspaceMode,
-          slots:
-            workspaceMode === "project"
-              ? 1
-              : Math.max(1, Math.min(8, Number(input.slots) || 1)),
+          slots: workspaceMode === "project" ? 1 : executionSlots(input.slots),
         });
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
       if (typeof input.allow === "boolean")
         this.settings.slots = Math.min(
-          8,
+          MAX_EXECUTION_SLOTS,
           Math.max(
             1,
             this.executionMappings().reduce(
@@ -743,11 +758,11 @@ export async function route(
       mapping.slots =
         mapping.workspaceMode === "project"
           ? 1
-          : Math.max(1, Math.min(8, Number(input.slots) || mapping.slots));
+          : executionSlots(input.slots, executionSlots(mapping.slots));
       if (input.allow === true) this.allowedProjects.add(projectId);
       else if (input.allow === false) this.allowedProjects.delete(projectId);
       this.settings.slots = Math.min(
-        8,
+        MAX_EXECUTION_SLOTS,
         Math.max(
           1,
           this.executionMappings().reduce((total, m) => total + m.slots, 0),
