@@ -84,14 +84,16 @@ export async function inspectSetup(
       P.AttachFiles,
       ...(channel.type === ChannelType.GuildForum
         ? [P.SendMessagesInThreads]
-        : []),
+        : channel.id === config.issueForumChannelId
+          ? [P.CreatePublicThreads, P.SendMessagesInThreads]
+          : []),
     ]);
   });
   const available = eligible
     .filter((channel) => channel.type !== ChannelType.GuildForum)
     .map(({ id, name }) => ({ id, name }));
   const forums = eligible
-    .filter((channel) => channel.type === ChannelType.GuildForum)
+    .filter((channel) => channel.type === ChannelType.GuildForum || channel.type === ChannelType.GuildText)
     .map(({ id, name }) => ({ id, name }));
   if (
     config.issueForumChannelId &&
