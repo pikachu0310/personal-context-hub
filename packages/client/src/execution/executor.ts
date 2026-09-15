@@ -117,6 +117,7 @@ export class Executor {
   planWaiters = new Map<string, (choice: "discuss" | "execute") => void>();
   readonly waitForPlan = waitForPlan.bind(this);
   readonly startPlannedWork = startPlannedWork.bind(this);
+  additionalOccupied: () => Array<{ task: { projectId: string } }> = () => [];
   runs: Record<string, Run> = {};
   commands: string[] = [];
   deletedTasks: Record<string, true> = {};
@@ -229,9 +230,12 @@ export class Executor {
       const mapping = mappings.find(
         (m) => m.projectId === task.projectId && (!task.network || m.network),
       );
-      const occupied = Object.values(this.runs).filter((r) =>
-        ["assigned", "running"].includes(r.state),
-      );
+      const occupied = [
+        ...Object.values(this.runs).filter((r) =>
+          ["assigned", "running"].includes(r.state),
+        ),
+        ...this.additionalOccupied(),
+      ];
       const ownsSlot =
         !!previous && ["assigned", "running"].includes(previous.state);
       if (

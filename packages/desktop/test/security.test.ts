@@ -5,7 +5,84 @@ import {
   localSender,
   parseJoinLink,
   parseProjectLink,
+  previewRequestAllowed,
 } from "../src/security.js";
+test("preview frames may load only registered servers, without relaxing the main renderer", () => {
+  const client = "http://127.0.0.1:4320";
+  const preview = "http://127.0.0.1:50000";
+  const registered = (url: string) =>
+    url.replace(/^ws:/, "http:").startsWith(preview + "/");
+  assert.equal(
+    previewRequestAllowed(
+      preview + "/",
+      client + "/",
+      "subFrame",
+      client,
+      registered,
+    ),
+    true,
+  );
+  assert.equal(
+    previewRequestAllowed(
+      preview + "/main.js",
+      preview + "/",
+      "script",
+      client,
+      registered,
+    ),
+    true,
+  );
+  assert.equal(
+    previewRequestAllowed(
+      "ws://127.0.0.1:50000/hmr",
+      preview + "/",
+      "webSocket",
+      client,
+      registered,
+    ),
+    true,
+  );
+  assert.equal(
+    previewRequestAllowed(
+      client + "/api/state",
+      preview + "/",
+      "xhr",
+      client,
+      registered,
+    ),
+    false,
+  );
+  assert.equal(
+    previewRequestAllowed(
+      "http://127.0.0.1:50001/",
+      preview + "/",
+      "xhr",
+      client,
+      registered,
+    ),
+    false,
+  );
+  assert.equal(
+    previewRequestAllowed(
+      preview + "/main.js",
+      client + "/",
+      "script",
+      client,
+      registered,
+    ),
+    false,
+  );
+  assert.equal(
+    previewRequestAllowed(
+      preview + "/",
+      client + "/",
+      "subFrame",
+      client,
+      () => false,
+    ),
+    false,
+  );
+});
 test("join links accept only a single Engine origin and never encode task or credentials", () => {
   assert.equal(
     parseJoinLink(

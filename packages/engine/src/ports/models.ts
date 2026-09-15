@@ -1,3 +1,4 @@
+import type { Implementation } from "@ido/common/contracts/api";
 import type {
   MinutesTaskContext,
   MinutesTaskResult,
@@ -19,6 +20,7 @@ export interface Models {
     taskLinks: string[],
     taskResults?: MinutesTaskResult[],
     tasks?: MinutesTaskContext[],
+    implementations?: Implementation[],
   ): Promise<string>;
   update(
     meeting: Meeting,

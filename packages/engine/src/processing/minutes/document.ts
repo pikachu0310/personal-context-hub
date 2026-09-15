@@ -1,3 +1,9 @@
+import { Implementations } from "../tasks/implementations.js";
+import {
+  previewMarkdown,
+  parsePreviewUrl,
+  type Implementation,
+} from "@ido/common/contracts/api";
 import { taskResultParts, type ResultProgress } from "./task-results.js";
 import type {
   MinutesTaskContext,
@@ -18,12 +24,14 @@ export type MinutesGenerator = (
   taskLinks: string[],
   taskResults: MinutesTaskResult[],
   tasks: MinutesTaskContext[],
+  implementations: Implementation[],
 ) => Promise<string>;
 type Progress = {
   contextRevision?: number;
   meetingId: string;
   sources: Record<string, string>;
   taskLinks?: string[];
+  implementations?: string;
   taskContextFingerprint?: string;
   results?: Record<string, ResultProgress>;
 };
@@ -117,6 +125,14 @@ export class MinutesDocument {
             (task) =>
               task.projectId === projectId && task.meetingId === meetingId,
           );
+        const artifacts = new Implementations(this.store)
+          .choices(projectId, meetingId)
+          .flatMap((choice) =>
+            choice.implementation ? [choice.implementation] : [],
+          );
+        const artifactFingerprint = JSON.stringify(
+          artifacts.map((a) => a.id).sort(),
+        );
         const tasks = minutesTaskContexts(meetingTasks);
         const taskContextFingerprint = contextFingerprint(tasks);
         const resultParts = taskResultParts(meetingTasks, progress.results);
@@ -127,6 +143,7 @@ export class MinutesDocument {
           ),
         );
         if (
+          (progress.implementations ?? "[]") === artifactFingerprint &&
           !messages.length &&
           !resultParts.length &&
           (progress.taskContextFingerprint ?? contextFingerprint([])) ===
@@ -144,7 +161,7 @@ export class MinutesDocument {
           value.steps = { ...value.steps, minutes: { state: "running" } };
         }
         this.store.put("meeting", meetingId, meeting);
-        const markdown = await this.generate(
+        let markdown = await this.generate(
           {
             ...meeting,
             summary:
@@ -156,6 +173,20 @@ export class MinutesDocument {
           taskLinks,
           resultParts.map((part) => part.value),
           tasks,
+          artifacts,
+        );
+        markdown = markdown.replace(
+          /\{\{preview:([\w-]+)(?:,([\w-]+))?\}\}/g,
+          (_match, left: string, right?: string) => {
+            const ids = [left, right].filter((v): v is string => !!v);
+            if (
+              ids.some(
+                (id) => !artifacts.some((artifact) => artifact.id === id),
+              )
+            )
+              throw new Error("INVALID_PREVIEW_REFERENCE");
+            return previewMarkdown({ projectId, implementationIds: ids });
+          },
         );
         const latest = current();
         if (!latest) return;
@@ -167,6 +198,14 @@ export class MinutesDocument {
           );
         const currentParts = taskResultParts(currentTasks, progress.results);
         if (
+          JSON.stringify(
+            new Implementations(this.store)
+              .choices(projectId, meetingId)
+              .flatMap((choice) =>
+                choice.implementation ? [choice.implementation.id] : [],
+              )
+              .sort(),
+          ) !== artifactFingerprint ||
           (latest.summaryRevision ?? 0) !== revision ||
           contextFingerprint(minutesTaskContexts(currentTasks)) !==
             taskContextFingerprint ||
@@ -192,6 +231,17 @@ export class MinutesDocument {
         );
         for (const link of markdown.match(/ido:\/\/[^\s)]+/g) ?? []) {
           if (existingLinks.has(link)) continue;
+          const preview = parsePreviewUrl(link);
+          if (preview) {
+            if (
+              preview.projectId !== projectId ||
+              preview.implementationIds.some(
+                (id) => !artifacts.some((a) => a.id === id),
+              )
+            )
+              throw new Error("INVALID_PREVIEW_REFERENCE");
+            continue;
+          }
           const reference = parseTaskUrl(link);
           const task =
             reference && this.store.get<Task>("task", reference.taskId);
@@ -219,6 +269,7 @@ export class MinutesDocument {
           }
         }
         progress.taskLinks = taskLinks;
+        progress.implementations = artifactFingerprint;
         progress.taskContextFingerprint = taskContextFingerprint;
         progress.results = Object.assign(Object.create(null), progress.results);
         for (const part of resultParts)

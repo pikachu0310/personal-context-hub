@@ -1,4 +1,8 @@
-import { parseTaskUrl } from "@ido/common/contracts/api";
+import { parseTaskUrl, parsePreviewUrl } from "@ido/common/contracts/api";
 export function minutesUrl(url: string) {
-  return parseTaskUrl(url) || /^(https?:\/\/|mailto:)/i.test(url) ? url : "";
+  return parseTaskUrl(url) ||
+    parsePreviewUrl(url) ||
+    /^(https?:\/\/|mailto:)/i.test(url)
+    ? url
+    : "";
 }

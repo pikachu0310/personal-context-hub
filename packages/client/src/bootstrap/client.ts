@@ -1,3 +1,6 @@
+import { stopPreviewBrowserInstall } from "../preview/capture.js";
+import { LocalPreviews } from "../preview/local.js";
+import { ImplementationSync } from "../preview/sync.js";
 import {
   executionSlots,
   MAX_EXECUTION_SLOTS,
@@ -55,6 +58,8 @@ interface Settings {
 }
 export class Client {
   readonly details = new ClientTaskDetails(this);
+  readonly implementations = new ImplementationSync(this);
+  readonly localPreviews: LocalPreviews;
   agentCatalog = async () => {
     const catalog = await agentCatalog(this.executor.home, this.directory);
     this.loginStatus = catalog.find((value) => value.agent === "codex")
@@ -190,7 +195,12 @@ export class Client {
       void this.route(req, res).catch((e) => {
         if (!res.headersSent)
           send(res, e instanceof HttpError ? e.status : 400, {
-            error: e instanceof HttpError ? e.message : "REQUEST_FAILED",
+            error:
+              e instanceof HttpError ||
+              (/^\/api\/(previews|implementations)\//.test(req.url ?? "") &&
+                /^[A-Z_]+$/.test(e.message))
+                ? e.message
+                : "REQUEST_FAILED",
           });
       }),
   );
@@ -228,6 +238,8 @@ export class Client {
         clientId: share.deviceId,
       };
     };
+    this.localPreviews = new LocalPreviews(this);
+    this.executor.additionalOccupied = () => this.localPreviews.occupied();
     this.preview = new ClientPreview((data) => this.emit(data));
   }
   async start(port = 4320) {
@@ -250,6 +262,7 @@ export class Client {
       )
         this.allowedProjects.add(mapping.projectId);
     await this.executor.load();
+    await this.localPreviews.load();
     if (this.settings.progressMode) {
       for (const mapping of this.settings.mappings)
         mapping.progressMode ??= this.settings.progressMode;
@@ -283,6 +296,7 @@ export class Client {
     const address = this.server.address();
     this.origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : port}`;
     this.details.start();
+    this.implementations.start();
     this.localSharingTimer = setInterval(
       () => void this.syncLocalShares(),
       5000,
@@ -361,6 +375,9 @@ export class Client {
   async close() {
     this.stopping = true;
     this.details.close();
+    this.implementations.close();
+    await this.localPreviews.close();
+    await stopPreviewBrowserInstall();
     clearInterval(this.localSharingTimer);
     clearTimeout(this.reconnect);
     clearTimeout(this.pairTimer);

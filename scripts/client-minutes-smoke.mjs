@@ -163,15 +163,17 @@ try {
   const minutes = () =>
     page
       .locator('.project-group[data-project-id="p"]')
-      .getByRole("button", { name: "議事録", exact: true });
+      .getByRole("button", { name: "会議・議事録", exact: true });
   const openMinutes = async () => {
     await minutes().click();
+    await page.getByRole("tab", { name: "議事録", exact: true }).click();
     await page
       .locator(".minutes-list-row")
       .filter({ hasText: meeting.name })
       .click();
   };
   await minutes().click();
+  await page.getByRole("tab", { name: "議事録", exact: true }).click();
   const rows = page.locator(".minutes-list-row");
   await rows.first().waitFor();
   assert.deepEqual(
@@ -483,7 +485,7 @@ try {
   page.once("dialog", (dialog) => dialog.dismiss());
   await page
     .locator('.project-group[data-project-id="other"]')
-    .getByRole("button", { name: "議事録", exact: true })
+    .getByRole("button", { name: "会議・議事録", exact: true })
     .click();
   assert.equal(await readSource(), draft);
   meeting = {
@@ -544,8 +546,9 @@ try {
   );
   await page
     .locator('.project-group[data-project-id="other"]')
-    .getByRole("button", { name: "議事録", exact: true })
+    .getByRole("button", { name: "会議・議事録", exact: true })
     .click();
+  await page.getByRole("tab", { name: "議事録", exact: true }).click();
   await page
     .getByText("本文のある議事録はまだありません。", { exact: true })
     .waitFor();

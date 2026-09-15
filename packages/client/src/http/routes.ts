@@ -1,3 +1,5 @@
+import { previewReference } from "@ido/common/contracts/api";
+import { installPreviewBrowser } from "../preview/capture.js";
 import {
   executionSlots,
   MAX_EXECUTION_SLOTS,
@@ -120,6 +122,17 @@ export async function route(
     });
     return;
   }
+  if (req.method === "GET" && url.pathname === "/api/previews/image") {
+    const bytes = await this.localPreviews.image(
+      id(url.searchParams.get("id")),
+    );
+    res.writeHead(200, {
+      "Content-Type": "image/png",
+      "Cache-Control": "no-store",
+    });
+    res.end(bytes);
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/api/activity") {
     const value = this.executor.runs[id(url.searchParams.get("runId"))];
     if (!value || this.executor.deletedTasks[value.task.id])
@@ -206,6 +219,74 @@ export async function route(
     url.pathname === "/api/project/meeting-input" ? 600000 : 65536,
   );
   switch (url.pathname) {
+    case "/api/implementations/list": {
+      if (!this.implementations.supported)
+        throw new HttpError(409, "IMPLEMENTATIONS_UNSUPPORTED");
+      send(
+        res,
+        200,
+        await this.workspaceRequest("implementations.list", {
+          projectId: id(input.projectId),
+        }),
+      );
+      return;
+    }
+    case "/api/previews/prepare":
+      send(
+        res,
+        200,
+        await this.localPreviews.prepare(
+          previewReference(input),
+          id(input.owner),
+        ),
+      );
+      return;
+    case "/api/previews/state":
+      send(res, 200, this.localPreviews.list(id(input.owner)));
+      return;
+    case "/api/previews/start":
+      if (input.network !== undefined && typeof input.network !== "boolean")
+        throw new HttpError(400, "INVALID_PREVIEW_COMMAND");
+      send(
+        res,
+        200,
+        await this.localPreviews.start(
+          id(input.id),
+          id(input.owner),
+          input.network as boolean | undefined,
+        ),
+      );
+      return;
+    case "/api/previews/stop":
+      await this.localPreviews.stop(id(input.id), id(input.owner));
+      break;
+    case "/api/previews/release":
+      await this.localPreviews.release(id(input.owner));
+      break;
+    case "/api/previews/remove":
+      await this.localPreviews.remove(id(input.id), id(input.owner));
+      break;
+    case "/api/previews/inspect":
+      send(
+        res,
+        200,
+        await this.localPreviews.inspect(
+          id(input.id),
+          input.path,
+          id(input.owner),
+        ),
+      );
+      return;
+    case "/api/previews/capture":
+      await this.localPreviews.takeCapture(
+        id(input.id),
+        input,
+        id(input.owner),
+      );
+      break;
+    case "/api/previews/install-browser":
+      await installPreviewBrowser();
+      break;
     case "/api/project/meeting-input":
     case "/api/project/meeting-read": {
       const projectId = id(input.projectId);

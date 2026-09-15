@@ -1,3 +1,4 @@
+import type { Implementation } from "@ido/common/contracts/api";
 import type {
   MinutesTaskContext,
   MinutesTaskResult,
@@ -84,6 +85,7 @@ export class OpenAIModels implements Models {
     taskLinks: string[],
     taskResults: MinutesTaskResult[] = [],
     tasks: MinutesTaskContext[] = [],
+    implementations: Implementation[] = [],
   ): Promise<string> {
     const result = await (
       await this.api()
@@ -96,6 +98,7 @@ export class OpenAIModels implements Models {
         "タスクとの紐付けを最優先します。tasksはこの会議の実在タスク一覧で、依頼内容・状態・根拠sourceIdsを含みます。議題とタスクのsourceIdsや依頼内容を照合し、タスクごとの見出しにtasks.linkを使って、背景・要点、決定事項、未決事項、作業結果をまとめます。既存の自動生成部分もこの形式へ整理し、手動の構成指定・補足は尊重します。関連タスクがない議題は『タスク未紐付けの議題』へ残し、無理に関連付けたりタスクを捏造したりしません。タスク参照は末尾の一覧だけで済ませず、本文全体の要点・判断理由・決定・未決事項・作業結果の各記述のすぐそばに関連するタスクリンクを付けます。複数タスクが根拠ならそれぞれを引用します。タスクの依頼内容は成果の証明ではありません。結果に基づく記述はtaskResultsの内容と実行版を根拠にし、結果未提供・待機中・実行中を検証済みと書かないでください。人の決定にはgroundedTopicsの発言根拠を保ち、関連タスクと決定の根拠を区別します。",
         "groundedTopicsがある場合、新たに書く決定事項はgroundedTopics.decisions、未決事項はgroundedTopics.openQuestionsの内容だけにします。既存本文の手書きの補足は保ちますが、要点やmessagesから追加の決定・疑問・日程・次の段取りを作らないでください。配列が空なら該当見出しを省略します。例:『一次資料をまだ確認していない』は現状であり『一次資料を確認しないと決定』ではありません。『採用は未決』から『具体的な実装方針を検討する』を足しません。『計測は金曜日』から『次回会議で結果を確認する』を足しません。",
         "taskResultsは発話しなかった結果も含むBotの作業結果です。全件の要点・根拠・成果物リンク・未確認事項を対応する議題の作業結果へ統合し、失敗・中断も区別して記録してください。人の合意や新しい実行指示と混同しません。taskId/runId/revisionが同じ結果は同じ作業結果欄を更新し、offsetが続く断片は既存の要点に統合します。previousは過去版として区別します。原文はタスクにあるため全文を複写せず、各タスクのlinkを添えてください。groundedTopicsの決定事項とは別の作業結果として扱います。",
+        "implementationsはpush済みコミットに固定された実装候補です。画面確認に適した完成結果には {{preview:実装ID}} を、同じ議題の代替実装2案には {{preview:左の実装ID,右の実装ID}} を本文へ自動で置いてください。人からリンク作成を依頼されなくても判断します。無関係なタスクを比較せず、候補にないIDや取得先を作らないでください。この記法はアプリが検証してリンクに変換します。",
       ].join("\n"),
       temperature: 0,
       input: JSON.stringify({
@@ -122,6 +125,9 @@ export class OpenAIModels implements Models {
         taskLinks,
         tasks,
         taskResults,
+        implementations: implementations.map(
+          ({ id, taskId, title, commit }) => ({ id, taskId, title, commit }),
+        ),
       }),
       max_output_tokens: 8000,
     });

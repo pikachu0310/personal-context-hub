@@ -1,4 +1,8 @@
 import {
+  previewMarkdown,
+  type ImplementationChoice,
+} from "@ido/common/contracts/api";
+import {
   MinutesLiveEditor,
   type MinutesEditorHandle,
 } from "./MinutesLiveEditor.js";
@@ -9,6 +13,7 @@ import {
   Group,
   Modal,
   Select,
+  MultiSelect,
   Stack,
   Text,
 } from "@mantine/core";
@@ -47,7 +52,11 @@ export function MinutesEditor({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [conflict, setConflict] = useState<MeetingView>();
-  const [picker, setPicker] = useState(false);
+  const [picker, setPicker] = useState<false | "task" | "preview">(false);
+  const [implementationChoices, setImplementationChoices] = useState<
+    ImplementationChoice[]
+  >([]);
+  const [implementationIds, setImplementationIds] = useState<string[]>([]);
   const [linkProject, setLinkProject] = useState(projectId);
   const [choices, setChoices] = useState<ProjectWorkspace["tasks"]>([]);
   const [linkTask, setLinkTask] = useState<string | null>(null);
@@ -65,8 +74,27 @@ export function MinutesEditor({
     let active = true;
     setChoices([]);
     setLinkTask(null);
+    setImplementationChoices([]);
+    setImplementationIds([]);
     setPickerError("");
     setLoading(true);
+    if (picker === "preview") {
+      void api<ImplementationChoice[]>("implementations/list", {
+        projectId: linkProject,
+      })
+        .then((result) => {
+          if (active) setImplementationChoices(result);
+        })
+        .catch((e) => {
+          if (active) setPickerError(e.message);
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+      return () => {
+        active = false;
+      };
+    }
     void api<ProjectWorkspace>("project/snapshot", { projectId: linkProject })
       .then((result) => {
         if (active) setChoices(result.tasks);
@@ -121,6 +149,16 @@ export function MinutesEditor({
     }
   };
   const insert = () => {
+    if (picker === "preview") {
+      if (!implementationIds.length || draft === undefined) return;
+      const link = previewMarkdown({
+        projectId: linkProject,
+        implementationIds,
+      });
+      area.current?.insert(selection.current.from, selection.current.to, link);
+      setPicker(false);
+      return;
+    }
     const task = choices.find(
       (t) => t.id === linkTask && t.projectId === linkProject,
     );
@@ -194,10 +232,25 @@ export function MinutesEditor({
                   to: draft.length,
                 };
                 setLinkProject(projectId);
-                setPicker(true);
+                setPicker("task");
               }}
             >
               タスクリンクを挿入
+            </Button>
+            <Button
+              variant="light"
+              size="xs"
+              disabled={busy || !canEdit}
+              onClick={() => {
+                selection.current = area.current?.selection() ?? {
+                  from: draft.length,
+                  to: draft.length,
+                };
+                setLinkProject(projectId);
+                setPicker("preview");
+              }}
+            >
+              起動・比較リンクを挿入
             </Button>
             <Text size="xs" c="dimmed">
               {dirty ? "未保存の変更" : "選択した行を編集"} ·{" "}
@@ -281,9 +334,11 @@ export function MinutesEditor({
         </>
       )}
       <Modal
-        opened={picker}
+        opened={!!picker}
         onClose={() => setPicker(false)}
-        title="タスクリンクを挿入"
+        title={
+          picker === "preview" ? "起動・比較リンクを挿入" : "タスクリンクを挿入"
+        }
         onExitTransitionEnd={() => area.current?.focus()}
       >
         <Stack>
@@ -297,21 +352,53 @@ export function MinutesEditor({
               if (v) setLinkProject(v);
             }}
           />
-          <Select
-            label="タスク"
-            placeholder={loading ? "読み込み中…" : "タスクを検索"}
-            searchable
-            disabled={loading}
-            data={choices.map((t) => ({
-              value: t.id,
-              label: t.title ?? t.text.slice(0, 90),
-            }))}
-            value={linkTask}
-            onChange={setLinkTask}
-            nothingFoundMessage="タスクがありません"
-          />
+          {picker === "preview" ? (
+            <MultiSelect
+              label="実装済みタスク（2件まで）"
+              searchable
+              maxValues={2}
+              disabled={loading}
+              data={implementationChoices.map((choice) => ({
+                value:
+                  choice.implementation?.id ?? `unavailable-${choice.taskId}`,
+                label:
+                  choice.title +
+                  (choice.availability === "uncommitted"
+                    ? "（未コミット変更あり）"
+                    : choice.availability === "unpushed"
+                      ? "（未push）"
+                      : !choice.implementation
+                        ? "（取得できる実装なし）"
+                        : ""),
+                disabled: !choice.implementation,
+              }))}
+              value={implementationIds}
+              onChange={setImplementationIds}
+              nothingFoundMessage="取得できる実装がありません"
+            />
+          ) : (
+            <Select
+              label="タスク"
+              placeholder={loading ? "読み込み中…" : "タスクを検索"}
+              searchable
+              disabled={loading}
+              data={choices.map((t) => ({
+                value: t.id,
+                label: t.title ?? t.text.slice(0, 90),
+              }))}
+              value={linkTask}
+              onChange={setLinkTask}
+              nothingFoundMessage="タスクがありません"
+            />
+          )}
           {pickerError && <Alert color="red">{pickerError}</Alert>}
-          <Button disabled={!linkTask || loading} onClick={insert}>
+          <Button
+            disabled={
+              (picker === "preview" ? !implementationIds.length : !linkTask) ||
+              loading
+            }
+            onClick={insert}
+          >
             挿入
           </Button>
         </Stack>

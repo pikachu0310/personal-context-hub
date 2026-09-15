@@ -18,9 +18,15 @@ export class Conversation {
   ) {
     this.document = new MinutesDocument(
       store,
-      (meeting, links, results, tasks) => {
+      (meeting, links, results, tasks, implementations) => {
         if (!models.summarize) throw new Error("MINUTES_GENERATOR_UNAVAILABLE");
-        return models.summarize(meeting, links, results, tasks);
+        return models.summarize(
+          meeting,
+          links,
+          results,
+          tasks,
+          implementations,
+        );
       },
     );
     this.minutes = new MinutesUpdater(store, models);
