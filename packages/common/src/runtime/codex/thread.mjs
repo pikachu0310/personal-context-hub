@@ -208,7 +208,10 @@ export class AppServerThread {
           !this.activeTurnId ||
           params.turnId !== this.activeTurnId ||
           params.namespace ||
-          !this.options.dynamicTools?.some((tool) => tool.name === params.tool)
+          !(
+            this.options.allowedDynamicToolNames ??
+            this.options.dynamicTools?.map((tool) => tool.name)
+          )?.includes(params.tool)
         )
           throw new Error("Tool call does not belong to this active turn");
         return this.options.onToolCall(params);

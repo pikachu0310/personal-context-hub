@@ -150,6 +150,15 @@ export async function execute(
               ...(board ? taskBoardTools : []),
               ...(knowledgeAvailable ? meetingContextTools : []),
             ],
+            // A resumed thread may already know these tools even when an older
+            // Client did not persist the registration flag. Do not register new
+            // tools on that thread, but keep authorized existing calls working.
+            allowedDynamicToolNames: [
+              ...(board ? taskBoardTools.map((tool) => tool.name) : []),
+              ...(contextEnabled
+                ? meetingContextTools.map((tool) => tool.name)
+                : []),
+            ],
             onToolCall: (params: any) =>
               contextEnabled &&
               meetingContextTools.some((tool) => tool.name === params.tool)

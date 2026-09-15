@@ -7,6 +7,7 @@ export interface AgentRuntimeOptions {
   ) => Promise<{ decision: string }>;
 }
 export interface AgentThreadOptions {
+  allowedDynamicToolNames?: string[];
   dynamicTools?: Array<{
     name: string;
     description: string;

@@ -314,6 +314,7 @@ export class Executor {
         directory,
         threadId: previous?.threadId,
         boardToolsEnabled: previous?.boardToolsEnabled,
+        meetingToolsEnabled: previous?.meetingToolsEnabled,
         knowledgeToolsEnabled: previous?.knowledgeToolsEnabled,
         state: "assigned",
         pendingInstructions: previous?.pendingInstructions ?? [],
