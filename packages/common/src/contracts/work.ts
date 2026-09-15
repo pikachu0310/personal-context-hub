@@ -26,6 +26,44 @@ export interface WorkSource {
   startedAt?: number;
   text: string;
 }
+// Model assessments are evidence, not grants. The Engine computes the score.
+export interface TaskEvaluation {
+  evidence: Record<
+    "immediacy" | "certainty" | "importance" | "specificity" | "resolution",
+    { reason: string; sourceIds: string[] }
+  >;
+  immediacy: number;
+  certainty: number;
+  importance: number;
+  specificity: number;
+  resolution: "unresolved" | "resolved" | "unknown";
+  intent: "requested" | "proposal" | "opportunity";
+  reason: string;
+  sourceIds: string[];
+}
+export interface TaskPriority {
+  evaluation: TaskEvaluation;
+  score: number;
+  eligible: boolean;
+  notify: boolean;
+  reason: string;
+  policyVersion: number;
+  version: number;
+  batchId: string;
+  runRevision: number;
+}
+export interface MinutesTaskResult {
+  sourceIds: string[];
+  taskId: string;
+  title: string;
+  link: string;
+  runId: string;
+  revision: number;
+  state: string;
+  offset: number;
+  totalCharacters: number;
+  text: string;
+}
 export type ControlDelivery =
   "pending" | "queued" | "applied" | "stopped" | "uncertain" | "rejected";
 export interface WorkReceipt {

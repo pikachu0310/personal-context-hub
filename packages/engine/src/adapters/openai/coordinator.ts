@@ -112,14 +112,18 @@ export function createOpenAICoordinatorFactory(
                       schema: coordinatorSchema,
                     },
                   },
-                  max_output_tokens: 4096,
+                  max_output_tokens: 16000,
                 },
                 { signal: turnSignal, maxRetries: 0, timeout: 60_000 },
               );
               turnSignal.throwIfAborted();
               if (response.status !== "completed")
                 throw new Error("COORDINATOR_RESPONSE_INCOMPLETE");
-              return parseCoordinatorResponse(response.output_text);
+              const parsed = parseCoordinatorResponse(response.output_text);
+              // Missing scores from a new API response are never a legacy work grant.
+              // Saved responses bypass this adapter and retain their compatibility path.
+              for (const task of parsed.tasks) task.evaluation ??= null;
+              return parsed;
             } catch (error) {
               const detail = describeError(error);
               const rejected =

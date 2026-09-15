@@ -71,6 +71,7 @@ export interface AttachedTaskSource {
   text: string;
 }
 export interface Task {
+  priority?: import("./work.js").TaskPriority;
   agent?: "codex" | "claude";
   model?: string;
   reasoningEffort?: string;
@@ -118,6 +119,9 @@ export interface Task {
   controlReceipts?: Record<string, WorkReceipt>;
   preview?: Preview;
   history: Array<{
+    runId?: string;
+    state?: Task["state"];
+    progress?: string;
     revision: number;
     text: string;
     result?: string;

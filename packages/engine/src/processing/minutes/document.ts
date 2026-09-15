@@ -1,3 +1,5 @@
+import { taskResultParts, type ResultProgress } from "./task-results.js";
+import type { MinutesTaskResult } from "@ido/common/contracts/work";
 import { createHash } from "node:crypto";
 import {
   MAX_MINUTES_LENGTH,
@@ -11,12 +13,14 @@ import type { Repository } from "../../ports/repository.js";
 export type MinutesGenerator = (
   meeting: Meeting,
   taskLinks: string[],
+  taskResults: MinutesTaskResult[],
 ) => Promise<string>;
 type Progress = {
   contextRevision?: number;
   meetingId: string;
   sources: Record<string, string>;
   taskLinks?: string[];
+  results?: Record<string, ResultProgress>;
 };
 const fingerprint = (message: Meeting["messages"][number]) =>
   createHash("sha256")
@@ -83,20 +87,22 @@ export class MinutesDocument {
               progress.sources[message.id] !== fingerprint(message),
           )
           .slice(0, 30);
-        const taskLinks = this.store
+        const meetingTasks = this.store
           .list<Task>("task")
           .filter(
             (task) =>
               task.projectId === projectId && task.meetingId === meetingId,
-          )
-          .map((task) =>
-            taskMarkdown(
-              { projectId, taskId: task.id },
-              task.title ?? task.text.slice(0, 90),
-            ),
           );
+        const resultParts = taskResultParts(meetingTasks, progress.results);
+        const taskLinks = meetingTasks.map((task) =>
+          taskMarkdown(
+            { projectId, taskId: task.id },
+            task.title ?? task.text.slice(0, 90),
+          ),
+        );
         if (
           !messages.length &&
+          !resultParts.length &&
           JSON.stringify(progress.taskLinks ?? []) === JSON.stringify(taskLinks)
         ) {
           meeting.summaryState = "ready";
@@ -120,10 +126,28 @@ export class MinutesDocument {
             messages,
           },
           taskLinks,
+          resultParts.map((part) => part.value),
         );
         const latest = current();
         if (!latest) return;
-        if ((latest.summaryRevision ?? 0) !== revision) {
+        const currentParts = taskResultParts(
+          this.store
+            .list<Task>("task")
+            .filter(
+              (task) =>
+                task.projectId === projectId && task.meetingId === meetingId,
+            ),
+          progress.results,
+        );
+        if (
+          (latest.summaryRevision ?? 0) !== revision ||
+          JSON.stringify(
+            currentParts.map(({ key, progress }) => ({ key, progress })),
+          ) !==
+            JSON.stringify(
+              resultParts.map(({ key, progress }) => ({ key, progress })),
+            )
+        ) {
           if (++conflicts >= 5) throw new Error("MINUTES_CONFLICT");
           continue;
         }
@@ -166,6 +190,9 @@ export class MinutesDocument {
           }
         }
         progress.taskLinks = taskLinks;
+        progress.results = Object.assign(Object.create(null), progress.results);
+        for (const part of resultParts)
+          progress.results![part.key] = part.progress;
         for (const message of messages)
           progress.sources[message.id] = fingerprint(message);
         this.store.transaction(() => {

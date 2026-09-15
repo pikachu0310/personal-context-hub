@@ -161,6 +161,41 @@ try {
   const localPage = await browser.newPage({
     viewport: { width: 1400, height: 1000 },
   });
+  // Engine metadata can be newer than the worker's saved detail snapshot.
+  task.priority = {
+    score: 87.5,
+    eligible: true,
+    notify: true,
+    reason: "eligible",
+    policyVersion: 1,
+    version: 2,
+    batchId: "priority-update",
+    runRevision: task.revision,
+    evaluation: {
+      immediacy: 3,
+      certainty: 4,
+      importance: 3,
+      specificity: 4,
+      resolution: "unresolved",
+      intent: "requested",
+      reason: "最新の根拠に基づく評価",
+      sourceIds: ["statement"],
+      evidence: Object.fromEntries(
+        [
+          "immediacy",
+          "certainty",
+          "importance",
+          "specificity",
+          "resolution",
+        ].map((axis) => [
+          axis,
+          { reason: "現在の依頼", sourceIds: ["statement"] },
+        ]),
+      ),
+    },
+  };
+  engine.store.put("task", task.id, task);
+  engine.flush();
   const page = await browser.newPage({
     viewport: { width: 1400, height: 1000 },
   });
@@ -220,6 +255,8 @@ try {
     await page.locator(".task-inspector").innerText(),
     /fixture-model/,
   );
+  await page.getByText("優先度 87.5 / 100", { exact: true }).waitFor();
+  await page.getByText("最新の根拠に基づく評価", { exact: true }).waitFor();
   await mkdir(".ido-build/screenshots", { recursive: true });
   await page.screenshot({
     path: ".ido-build/screenshots/shared-history-signed-out.png",

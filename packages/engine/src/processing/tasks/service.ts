@@ -30,6 +30,7 @@ type CreateTaskInput = { sourcePluginId?: string } & Pick<
       | "reasoningEffort"
       | "progressMode"
       | "trigger"
+      | "priority"
       | "title"
       | "kind"
       | "sourceIds"
@@ -320,6 +321,9 @@ export class Tasks {
             );
           }
         task.history.push({
+          runId: task.runId,
+          state: task.state,
+          progress: task.progress,
           revision: task.revision,
           text: task.text,
           result: task.result,

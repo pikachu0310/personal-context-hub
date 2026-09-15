@@ -13,7 +13,25 @@ export function createWorkPort({
   tasks?: Tasks;
   onChange?: () => void;
 }): WorkPort {
+  let deferrals = 0;
+  let dirty = false;
+  const changed = () => {
+    if (deferrals) dirty = true;
+    else onChange();
+  };
   return {
+    deferDispatch() {
+      deferrals++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        if (--deferrals === 0 && dirty) {
+          dirty = false;
+          onChange();
+        }
+      };
+    },
     submit(request) {
       const actor = repository.conversationAuthor(request.authorId);
       if (!actor || actor.role === "viewer")
@@ -30,13 +48,43 @@ export function createWorkPort({
         kind: request.kind,
         createdByBot: true,
         trigger: request.trigger,
+        priority: request.priority,
         sourceIds: structuredClone(request.sourceIds),
         sourceStatements: structuredClone(request.sourceStatements),
         sourceSequences: structuredClone(request.sourceSequences),
         executionPolicy: normalizeExecutionPolicy(request.executionPolicy),
       });
-      onChange();
+      changed();
       return structuredClone(task);
+    },
+    prioritize(updates) {
+      const applied = repository.transaction(() => {
+        const ids: string[] = [];
+        for (const update of updates) {
+          const task = repository.get<Task>("task", update.taskId);
+          if (
+            !task ||
+            task.projectId !== update.projectId ||
+            repository.get("project-lock", task.projectId) ||
+            task.revision !== update.expectedRevision ||
+            (task.controlVersion ?? 0) !== update.expectedControlVersion ||
+            (task.priority?.version ?? 0) !== update.expectedVersion
+          )
+            continue;
+          task.priority = structuredClone(update.priority);
+          if (
+            update.priority.evaluation.intent === "requested" &&
+            update.priority.evaluation.certainty === 4
+          )
+            task.trigger = "requested";
+          task.updatedAt = Date.now();
+          repository.put("task", task.id, task);
+          ids.push(task.id);
+        }
+        return ids;
+      });
+      if (applied.length) changed();
+      return applied;
     },
     control(input) {
       const actor = repository.conversationAuthor(input.authorId);
@@ -55,7 +103,7 @@ export function createWorkPort({
           continuation: input.continuation,
         },
       );
-      onChange();
+      changed();
       return structuredClone(result);
     },
     list: (meetingId) =>

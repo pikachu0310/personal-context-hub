@@ -12,6 +12,7 @@ export type ModelValue = {
   modeRevision: number;
   audioRevision?: number;
   controlVersions: Record<string, number>;
+  priorityVersions?: Record<string, { version: number; revision: number }>;
 };
 export interface TaskDecision {
   index: number;
@@ -35,6 +36,8 @@ export interface TaskApplication {
     error?: ReturnType<typeof describeError>;
   };
   decisions: TaskDecision[];
+  priorityDecisions?: Array<{ taskId: string; reason: string }>;
+  notification?: string;
   completedAt?: number;
 }
 
