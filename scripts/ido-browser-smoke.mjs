@@ -711,7 +711,9 @@ try {
     .getByRole("button", { name: "会議・議事録", exact: true })
     .last()
     .click();
-  await clientPage.getByText("詳細を見る", { exact: true }).click();
+  await clientPage
+    .getByRole("button", { name: "プロジェクト詳細", exact: true })
+    .click();
   await clientPage.getByText("UI担当", { exact: true }).waitFor();
   await page.getByText("クライアント", { exact: true }).first().click();
   await page
